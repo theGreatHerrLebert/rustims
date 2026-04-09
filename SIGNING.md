@@ -559,10 +559,10 @@ Approach vendors with working reference implementations from Phases 0 and 1 in h
 
 ## 16. Why This Group, Why Now
 
-The TimSim team is an unusual messenger, and that matters.
+This group is an unusual messenger, and that matters.
 
-We built a simulator capable of producing timsTOF data indistinguishable from real acquisitions. That gives us both the means and the obligation to sign simulated output first.
+We are not only users of mass spectrometry data. We are also builders of high-fidelity simulators and synthetic-data workflows, including TimSim, Synthedia, SMITER, and related tooling. That gives us both the means and the obligation to sign simulated output first.
 
-> We built the simulator. We are the first ones obligated to sign our output, because we are the first ones with the means to deceive at scale. Here is what that looks like. Now we would like to talk to vendors about the other half.
+> We build the simulators. We are among the first people obligated to sign our output, because we are among the first with the means to create synthetic data that can be mistaken for real acquisitions at scale. Here is what that looks like. Now we would like to talk to vendors about the other half.
 
-Shipping Phase 0 from our own tool is the most credible opening move in this initiative and the one fully within our control.
+Shipping Phase 0 from tools we control is the most credible opening move in this initiative. It shows the principle in working code before asking vendors, repositories, converters, or standards bodies to adopt the broader chain.
