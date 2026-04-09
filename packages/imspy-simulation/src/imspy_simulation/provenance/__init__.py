@@ -50,7 +50,9 @@ __all__ = [
     "Unsigned",
     "UnknownVersion",
     "canonicalize_d",
+    "canonicalize_mzml",
     "canonicalize_sqlite",
+    "sign_mzml_output",
     "sign_simulation_output",
     "verify_sidecar",
 ]
@@ -66,8 +68,18 @@ def canonicalize_sqlite(db_path):
     return _impl(db_path)
 
 
+def canonicalize_mzml(mzml_path):
+    from imspy_simulation.provenance.canonicalize_mzml import canonicalize_mzml as _impl
+    return _impl(mzml_path)
+
+
 def sign_simulation_output(*args, **kwargs):
     from imspy_simulation.provenance.sign import sign_simulation_output as _impl
+    return _impl(*args, **kwargs)
+
+
+def sign_mzml_output(*args, **kwargs):
+    from imspy_simulation.provenance.sign import sign_mzml_output as _impl
     return _impl(*args, **kwargs)
 
 

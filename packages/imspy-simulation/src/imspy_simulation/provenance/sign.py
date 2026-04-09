@@ -21,7 +21,18 @@ from imspy_simulation.provenance.canonicalize import (
     canonicalize_sqlite,
     compose_content_hash,
 )
-from imspy_simulation.provenance.envelope import ATTESTATION_TYPE, Payload, Sidecar
+from imspy_simulation.provenance.canonicalize_mzml import (
+    canonicalize_mzml,
+    compose_mzml_content_hash,
+)
+from imspy_simulation.provenance.envelope import (
+    ATTESTATION_TYPE,
+    ATTESTATION_TYPE_MZML,
+    MzmlPayload,
+    MzmlSidecar,
+    Payload,
+    Sidecar,
+)
 from imspy_simulation.provenance.errors import MissingArtifact, ProvenanceError
 from imspy_simulation.provenance.keys import (
     KeyPair,
@@ -220,3 +231,123 @@ def write_sidecar_atomic(sidecar_bytes: bytes, sidecar_path: Path) -> None:
             # Some filesystems do not support fsync; tolerate the failure.
             pass
     os.replace(tmp_path, sidecar_path)
+
+
+# ---------------------------------------------------------------------------
+# mzML signing
+# ---------------------------------------------------------------------------
+
+
+def sign_mzml_output(
+    *,
+    mzml_path: PathLike,
+    config_path: PathLike | None,
+    experiment_name: str,
+    tool_name: str = "TimSim",
+    tool_version: str = "unknown",
+    sidecar_path: PathLike | None = None,
+    private_key_path: PathLike | None = None,
+) -> Path:
+    """Hash, sign, and write a provenance sidecar for an mzML file.
+
+    Use this for any tool that emits mzML — TimSim's own simulator
+    does not (it writes Bruker .d), so this entry point is for
+    external simulators (Synthedia, SMITER, etc.) and converters
+    (msconvert outputs, custom pipelines).
+
+    Parameters
+    ----------
+    mzml_path
+        The mzML file to sign.
+    config_path
+        Optional path to the tool's config file. If None, the
+        ``config_hash`` is computed over an empty byte string and the
+        sidecar carries it as such (still distinct from "no config
+        field present at all" — both forms are deterministic).
+    experiment_name
+        The experiment / dataset name (free-form string).
+    tool_name, tool_version
+        The producing tool's identity, recorded in the payload.
+    sidecar_path
+        Where to write the sidecar JSON. Defaults to a sibling of the
+        mzml file named ``{mzml_stem}.provenance.json``.
+    private_key_path
+        Override path to an Ed25519 private key. If None, the default
+        location ``~/.config/timsim/keys/signing_key.pem`` is used (and
+        a key is generated there on first use).
+
+    Returns
+    -------
+    Path
+        The path to the written sidecar.
+    """
+    mzml_path = Path(mzml_path)
+    if not mzml_path.is_file():
+        raise MissingArtifact(f"mzml file does not exist: {mzml_path}")
+
+    if config_path is not None:
+        config_path = Path(config_path)
+        if not config_path.is_file():
+            raise MissingArtifact(f"config file does not exist: {config_path}")
+        config_bytes = config_path.read_bytes()
+    else:
+        config_bytes = b""
+
+    if sidecar_path is None:
+        sidecar_path = mzml_path.with_name(mzml_path.stem + ".provenance.json")
+    else:
+        sidecar_path = Path(sidecar_path)
+
+    # 1. Compute component hashes from disk.
+    mzml_hash = canonicalize_mzml(mzml_path)
+    config_hash = canonicalize_bytes(config_bytes)
+
+    # 1a. Copy the config bytes (if any) into the experiment directory
+    # so the verifier has something to check the signed config_hash
+    # against. Same convention as the .d signing path.
+    if config_path is not None:
+        sidecar_stem = sidecar_path.name
+        if sidecar_stem.endswith(".provenance.json"):
+            sidecar_stem = sidecar_stem[: -len(".provenance.json")]
+        else:
+            sidecar_stem = sidecar_path.stem
+        config_copy_path = sidecar_path.parent / f"{sidecar_stem}.config.toml"
+        config_copy_path.parent.mkdir(parents=True, exist_ok=True)
+        config_copy_path.write_bytes(config_bytes)
+
+    # 2. Compose the single content hash.
+    content_hash = compose_mzml_content_hash(
+        mzml_hash=mzml_hash,
+        config_hash=config_hash,
+    )
+
+    # 3. Resolve a keypair (load or create on first use).
+    keypair = _resolve_keypair(private_key_path)
+
+    # 4. Build the payload.
+    payload = MzmlPayload(
+        tool_name=str(tool_name),
+        tool_version=str(tool_version),
+        experiment_name=str(experiment_name),
+        config_hash=_hex(config_hash),
+        mzml_content_hash=_hex(mzml_hash),
+        content_hash=_hex(content_hash),
+        timestamp_utc=_utc_now_iso(),
+        key_id=keypair.key_id,
+        canonicalization_version="v0",
+    )
+
+    # 5. Sign the deterministic JSON serialization of the payload.
+    signed_bytes = payload.to_canonical_json()
+    signature = keypair.private_key.sign(signed_bytes)
+
+    sidecar = MzmlSidecar(
+        payload=payload,
+        signature=signature_to_b64(signature),
+        verifying_key=public_key_to_b64(keypair.public_key),
+        type=ATTESTATION_TYPE_MZML,
+    )
+
+    # 6. Write atomically.
+    write_sidecar_atomic(sidecar.to_json_bytes(), sidecar_path)
+    return sidecar_path

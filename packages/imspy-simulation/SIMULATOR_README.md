@@ -419,6 +419,41 @@ Without either flag, `timsim-verify` reports `(not pinned)` for the trust line a
 
 There is also a `--public-key PEM` flag that acts as a **consistency check** against an out-of-band copy of the trusted public key. If you have a known-good PEM of the signer (e.g. pasted from a collaborator's README), pass it via `--public-key`; the verifier requires the embedded `verifying_key` to match it byte-for-byte and refuses with `MalformedSidecar` otherwise. `--public-key` is **not** an alternative trust path — it cannot be used to verify a signature against a key different from the one in the sidecar. Use `--require-trusted` for ongoing trust decisions.
 
+### Signing mzML output (other simulators / converters)
+
+TimSim itself writes Bruker `.d`, but the same provenance scheme covers `mzML` for tools that emit it (Synthedia, SMITER, msconvert outputs, custom converters). The mzML canonicalization hashes spectrum content (m/z arrays, intensity arrays, RT, MS level, polarity, precursor info, ion mobility) in a form that survives whitespace, attribute reordering, indentation, and the optional indexed-mzML wrapper.
+
+```python
+from imspy_simulation.provenance import sign_mzml_output
+
+sidecar = sign_mzml_output(
+    mzml_path="output.mzML",
+    config_path="config.toml",       # optional
+    experiment_name="my_run",
+    tool_name="PeerSimulator",       # any tool name
+    tool_version="1.2.3",
+)
+```
+
+This produces `output.provenance.json` next to the mzML file and copies the config as `output.config.toml`. Verification uses the same CLI as for `.d`:
+
+```bash
+timsim-verify path/to/output.mzML
+# or
+timsim-verify path/to/output.provenance.json
+```
+
+The CLI auto-detects the sidecar format. mzML and `.d` sidecars use distinct attestation types (`timsim.provenance.v0` vs `timsim.provenance.mzml.v0`) so they cannot be confused with each other.
+
+**v0 mzML scope**:
+- ✓ Spectrum-level content (m/z, intensity, RT, MS level, polarity, precursor, ion mobility)
+- ✓ Uncompressed and zlib-compressed binary arrays
+- ✓ 32-bit and 64-bit float arrays
+- ✓ Indexed and non-indexed mzML
+- ✗ Numpress compression (raises `ProvenanceError`; Phase 1 work)
+- ✗ Run-level metadata (instrumentConfiguration text, dataProcessing history)
+- ✗ Chromatograms
+
 ## Citation
 
 If you use TIMSIM in your research, please cite:

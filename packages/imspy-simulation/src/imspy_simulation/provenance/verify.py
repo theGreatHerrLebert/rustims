@@ -25,7 +25,19 @@ from imspy_simulation.provenance.canonicalize import (
     canonicalize_sqlite,
     compose_content_hash,
 )
-from imspy_simulation.provenance.envelope import Payload, Sidecar
+from imspy_simulation.provenance.canonicalize_mzml import (
+    canonicalize_mzml,
+    compose_mzml_content_hash,
+)
+from imspy_simulation.provenance.envelope import (
+    ATTESTATION_TYPE,
+    ATTESTATION_TYPE_MZML,
+    MzmlPayload,
+    MzmlSidecar,
+    Payload,
+    Sidecar,
+    parse_sidecar,
+)
 from imspy_simulation.provenance.errors import (
     KeyNotFoundError,
     MalformedSidecar,
@@ -150,18 +162,32 @@ def _decode_hash(field_value: str) -> bytes:
 
 
 def find_sidecar_for(path: PathLike) -> Path | None:
-    """Given a path to a sidecar, an experiment dir, or a .d, return the sidecar path.
+    """Given a path to a sidecar, an experiment dir, a .d, or an .mzML, return the sidecar path.
 
-    Discovery rules (per plan §6.1):
+    Discovery rules:
         - If ``path`` is itself a sidecar JSON file, return it.
-        - If ``path`` is a directory, look for ``*.provenance.json`` inside it.
+        - If ``path`` is an ``.mzML`` file, look for ``{stem}.provenance.json``
+          in the same directory.
         - If ``path`` is a ``.d`` directory, look for the sidecar one level up.
+        - If ``path`` is any other directory, look for ``*.provenance.json``
+          inside it.
         - Otherwise return None.
     """
     path = Path(path)
 
     if path.is_file() and path.suffix == ".json" and ".provenance" in path.name:
         return path
+
+    if path.is_file() and path.suffix.lower() == ".mzml":
+        candidate = path.with_name(path.stem + ".provenance.json")
+        if candidate.is_file():
+            return candidate
+        # Also accept any *.provenance.json sibling if the convention
+        # was not followed at sign time.
+        siblings = sorted(path.parent.glob("*.provenance.json"))
+        if siblings:
+            return siblings[0]
+        return None
 
     if path.is_dir():
         # If this directory itself looks like a .d, search its parent first.
@@ -294,7 +320,22 @@ def verify_sidecar(
     if not sidecar_path.is_file():
         raise MalformedSidecar(f"sidecar file does not exist: {sidecar_path}")
 
-    sidecar = Sidecar.from_json_bytes(sidecar_path.read_bytes())
+    # Dispatch on the sidecar's attestation type. mzml sidecars take a
+    # completely different verification path because the artifact is a
+    # single file, not a directory, and the payload schema is different.
+    parsed = parse_sidecar(sidecar_path.read_bytes())
+    if isinstance(parsed, MzmlSidecar):
+        return _verify_mzml_sidecar(
+            sidecar_path,
+            parsed,
+            public_key_override=public_key_override,
+            config_path_override=config_path_override,
+            expected_key_id=expected_key_id,
+            require_trusted=require_trusted,
+            trusted_registry_path=trusted_registry_path,
+        )
+
+    sidecar = parsed
     payload = sidecar.payload
 
     # CRITICAL: derive the actual signer's key id from the embedded
@@ -643,4 +684,237 @@ def _evaluate_trust(
         status="ok",
         expected_key_id=expected_key_id or "",
         actual_key_id=actual_key_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# mzML verification path
+# ---------------------------------------------------------------------------
+
+
+def _find_unique_mzml(search_root: Path) -> Path | None:
+    """Find a unique .mzML file in ``search_root`` (case-insensitive suffix).
+
+    Returns None if zero or multiple are found. Path resolution is
+    INDEPENDENT of the sidecar payload so a tampered ``experiment_name``
+    field cannot redirect verification to a phantom file.
+    """
+    candidates: list[Path] = []
+    try:
+        children = list(search_root.iterdir())
+    except OSError:
+        return None
+    for child in children:
+        if child.is_file() and child.suffix.lower() == ".mzml":
+            candidates.append(child)
+    if len(candidates) == 1:
+        return candidates[0]
+    return None
+
+
+def _verify_mzml_sidecar(
+    sidecar_path: Path,
+    sidecar: MzmlSidecar,
+    *,
+    public_key_override: PathLike | None,
+    config_path_override: PathLike | None,
+    expected_key_id: str | None,
+    require_trusted: bool,
+    trusted_registry_path: PathLike | None,
+) -> VerificationResult:
+    """Verify an mzML sidecar by recomputing the canonical hash and signature.
+
+    Same defense layering as the .d path:
+      - Derive the actual signer key id from sidecar.verifying_key.
+      - Enforce payload.key_id consistency.
+      - --public-key is a byte-for-byte consistency check.
+      - Trust pinning (--expected-key-id, --require-trusted) layers on top.
+      - The mzml file is discovered independently of the payload.
+    """
+    payload = sidecar.payload
+
+    # Derive the actual signer key id from verifying_key. Same logic as
+    # the .d path; copy-pasted intentionally to keep the two paths
+    # readable independently.
+    try:
+        derived_signer_pubkey = public_key_from_b64(sidecar.verifying_key)
+    except (ValueError, TypeError) as e:
+        raise MalformedSidecar(
+            f"sidecar verifying_key field is not decodable: {e}"
+        ) from e
+    derived_signer_key_id = derive_key_id(derived_signer_pubkey)
+
+    if payload.key_id != derived_signer_key_id:
+        raise MalformedSidecar(
+            f"sidecar payload.key_id ({payload.key_id!r}) does not match "
+            f"the key id derived from sidecar.verifying_key "
+            f"({derived_signer_key_id!r}). This is consistent with a "
+            f"tampered or forged sidecar."
+        )
+
+    if public_key_override is not None:
+        from cryptography.hazmat.primitives import serialization
+
+        override_pubkey = load_public_key(public_key_override)
+        embedded_raw = derived_signer_pubkey.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        override_raw = override_pubkey.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        if embedded_raw != override_raw:
+            raise MalformedSidecar(
+                f"--public-key override does not match the verifying_key "
+                f"embedded in the sidecar."
+            )
+
+    # Discover the .mzML file independently of the payload.
+    save_path = sidecar_path.parent
+    mzml_path = _find_unique_mzml(save_path)
+    if mzml_path is None:
+        raise MissingArtifact(
+            f"could not find a unique .mzML file near {save_path}"
+        )
+
+    # Recompute the mzml content hash.
+    mzml_hash = canonicalize_mzml(mzml_path)
+
+    # Resolve the config file: explicit override wins, otherwise look
+    # for the conventional copy next to the sidecar. Same convention
+    # as the .d path: never fall back to the payload's signed value.
+    config_hash: bytes | None = None
+    config_check_status = STATUS_UNCHECKED
+    config_check_actual = ""
+    config_check_detail = ""
+
+    if config_path_override is not None:
+        config_resolved = Path(config_path_override)
+        if not config_resolved.is_file():
+            raise MissingArtifact(
+                f"--config override points at a missing file: {config_resolved}"
+            )
+        config_hash = canonicalize_bytes(config_resolved.read_bytes())
+        config_check_actual = _hex(config_hash)
+        config_check_status = (
+            STATUS_OK if payload.config_hash == config_check_actual else STATUS_MISMATCH
+        )
+    else:
+        # Conventional copy: {sidecar-stem}.config.toml next to the sidecar.
+        sidecar_stem = sidecar_path.name
+        if sidecar_stem.endswith(".provenance.json"):
+            sidecar_stem = sidecar_stem[: -len(".provenance.json")]
+        else:
+            sidecar_stem = sidecar_path.stem
+        conventional_config = sidecar_path.parent / f"{sidecar_stem}.config.toml"
+        if conventional_config.is_file():
+            config_hash = canonicalize_bytes(conventional_config.read_bytes())
+            config_check_actual = _hex(config_hash)
+            config_check_status = (
+                STATUS_OK if payload.config_hash == config_check_actual else STATUS_MISMATCH
+            )
+        elif payload.config_hash == _hex(canonicalize_bytes(b"")):
+            # The signer used config_path=None, so the signed config_hash
+            # is sha256(b""). We can recompute that without a file and
+            # compare; this is NOT tautological because b"" is a fixed
+            # constant, not a value pulled from the payload.
+            config_hash = canonicalize_bytes(b"")
+            config_check_actual = _hex(config_hash)
+            config_check_status = STATUS_OK
+        else:
+            config_check_detail = (
+                f"no config file found at {conventional_config} "
+                f"(pass --config to override)"
+            )
+
+    checks: list[FieldCheck] = []
+
+    expected_m = payload.mzml_content_hash
+    actual_m = _hex(mzml_hash)
+    checks.append(
+        FieldCheck(
+            name="mzml_content_hash",
+            expected=expected_m,
+            actual=actual_m,
+            status=STATUS_OK if expected_m == actual_m else STATUS_MISMATCH,
+        )
+    )
+
+    checks.append(
+        FieldCheck(
+            name="config_hash",
+            expected=payload.config_hash,
+            actual=config_check_actual,
+            status=config_check_status,
+            detail=config_check_detail,
+        )
+    )
+
+    if config_hash is None:
+        checks.append(
+            FieldCheck(
+                name="content_hash",
+                expected=payload.content_hash,
+                actual="",
+                status=STATUS_UNCHECKED,
+                detail="cannot recompose content_hash without the config file",
+            )
+        )
+    else:
+        composed = compose_mzml_content_hash(
+            mzml_hash=mzml_hash,
+            config_hash=config_hash,
+        )
+        checks.append(
+            FieldCheck(
+                name="content_hash",
+                expected=payload.content_hash,
+                actual=_hex(composed),
+                status=(
+                    STATUS_OK if payload.content_hash == _hex(composed) else STATUS_MISMATCH
+                ),
+            )
+        )
+
+    # Verify signature against the canonical payload bytes.
+    public_key = derived_signer_pubkey
+    try:
+        signature_bytes = signature_from_b64(sidecar.signature)
+    except (ValueError, MalformedSidecar) as e:
+        raise MalformedSidecar(
+            f"sidecar signature field is not decodable: {e}"
+        ) from e
+
+    signed_bytes = payload.to_canonical_json()
+
+    try:
+        public_key.verify(signature_bytes, signed_bytes)
+        signature_ok = True
+    except InvalidSignature:
+        signature_ok = False
+    except Exception:
+        signature_ok = False
+
+    trust = _evaluate_trust(
+        actual_key_id=derived_signer_key_id,
+        actual_pubkey=derived_signer_pubkey,
+        expected_key_id=expected_key_id,
+        require_trusted=require_trusted,
+        trusted_registry_path=trusted_registry_path,
+    )
+
+    overall_ok = (
+        signature_ok
+        and all(c.status == STATUS_OK for c in checks)
+        and trust.ok
+    )
+
+    return VerificationResult(
+        sidecar_path=sidecar_path,
+        payload=payload,
+        checks=checks,
+        signature_ok=signature_ok,
+        overall_ok=overall_ok,
+        trust=trust,
     )

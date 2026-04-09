@@ -121,9 +121,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def _print_header(result: VerificationResult) -> None:
     p = result.payload
+    # Both .d and mzml payloads share these fields by name. The
+    # producer-identity fields differ: .d Payload has simulator_name/
+    # simulator_version, MzmlPayload has tool_name/tool_version. Use
+    # getattr so the same renderer works for both.
+    producer_name = getattr(p, "simulator_name", None) or getattr(p, "tool_name", "")
+    producer_version = (
+        getattr(p, "simulator_version", None) or getattr(p, "tool_version", "")
+    )
     print("TimSim provenance verification")
     print(f"  experiment:        {p.experiment_name}")
-    print(f"  simulator:         {p.simulator_name} {p.simulator_version}")
+    print(f"  producer:          {producer_name} {producer_version}")
     print(f"  signed at:         {p.timestamp_utc}")
     print(f"  key id:            {p.key_id}")
     print(f"  canonicalization:  {p.canonicalization_version}")
