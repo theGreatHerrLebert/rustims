@@ -247,6 +247,119 @@ def test_expected_key_id_uses_derived_signer_not_payload_field(tmp_path):
     assert result.trust.actual_key_id == derived_id
 
 
+# ---------------------------------------------------------------------------
+# --public-key consistency check (Reviewer round-5)
+# ---------------------------------------------------------------------------
+
+
+def test_public_key_override_matching_embedded_succeeds(tmp_path):
+    """--public-key that matches the embedded verifying_key (the normal case) verifies."""
+    from cryptography.hazmat.primitives import serialization
+
+    _, _, _, sidecar, keypair = _build_signed_bundle_with_keypair(tmp_path)
+
+    pem_path = tmp_path / "trusted_pub.pem"
+    pem_path.write_bytes(
+        keypair.public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+
+    result = verify_sidecar(sidecar, public_key_override=pem_path)
+    assert result.overall_ok
+    assert result.signature_ok
+
+
+def test_public_key_override_mismatching_embedded_is_malformed(tmp_path):
+    """--public-key that does not match the embedded verifying_key is rejected.
+
+    This is the consistency-check semantics: --public-key is an
+    out-of-band assertion that the embedded key is what the user
+    expects. A mismatch means the sidecar is not what they thought it
+    was. We refuse rather than verify against the override (which
+    would create a split identity where signature verifies against
+    one key but trust attaches to a different one).
+    """
+    from cryptography.hazmat.primitives import serialization
+    from imspy_simulation.provenance.errors import MalformedSidecar
+
+    _, _, _, sidecar, _ = _build_signed_bundle_with_keypair(tmp_path)
+
+    other = generate_keypair()
+    other_pem = tmp_path / "other_pub.pem"
+    other_pem.write_bytes(
+        other.public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+
+    with pytest.raises(MalformedSidecar, match="--public-key override"):
+        verify_sidecar(sidecar, public_key_override=other_pem)
+
+
+def test_public_key_override_cannot_split_identity(tmp_path):
+    """The exact reviewer-round-5 scenario.
+
+    Sidecar has verifying_key = A. Payload is signed with B's private
+    key (math is broken against A). User passes --public-key = B's
+    PEM. Without the consistency check, the verifier would verify the
+    signature against B (math works) and attach trust to A (the
+    embedded label). After the fix, the consistency check catches the
+    mismatch between the override (B) and the embedded key (A) and
+    raises MalformedSidecar.
+    """
+    import base64
+    from cryptography.hazmat.primitives import serialization
+
+    from imspy_simulation.provenance.envelope import Payload
+    from imspy_simulation.provenance.errors import MalformedSidecar
+
+    a = generate_keypair()
+    b = generate_keypair()
+
+    # Sign with A normally.
+    d_path = make_minimal_d(tmp_path, name="bundle")
+    config_path = tmp_path / "bundle.toml"
+    config_path.write_bytes(b'[experiment]\nexperiment_name = "bundle"\n')
+    key_dir = tmp_path / "keys_a"
+    write_keypair(a, key_dir)
+    sidecar = sign_simulation_output(
+        d_path=d_path,
+        ground_truth_path=None,
+        config_path=config_path,
+        experiment_name="bundle",
+        simulator_version="dual-id",
+        private_key_path=key_dir / "signing_key.pem",
+    )
+
+    # Re-sign the (unmodified) payload with B but keep verifying_key = A.
+    blob = json.loads(sidecar.read_text())
+    payload = Payload.from_dict(blob["payload"])
+    sig_b = b.private_key.sign(payload.to_canonical_json())
+    blob["signature"] = "ed25519:base64:" + base64.b64encode(sig_b).decode()
+    sidecar.write_text(json.dumps(blob))
+
+    # Pass B's public key as --public-key (the attacker tries to
+    # convince the verifier to use B for the math while leaving the
+    # trust label as A).
+    b_pem = tmp_path / "b.pem"
+    b_pem.write_bytes(
+        b.public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+
+    with pytest.raises(MalformedSidecar, match="--public-key override"):
+        verify_sidecar(
+            sidecar,
+            public_key_override=b_pem,
+            expected_key_id=a.key_id,
+        )
+
+
 def test_inconsistent_payload_key_id_caught_without_trust_flags(tmp_path):
     """The consistency check is unconditional — it runs even without trust pinning.
 

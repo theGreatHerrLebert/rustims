@@ -27,8 +27,10 @@ from imspy_simulation.provenance.canonicalize import (
 )
 from imspy_simulation.provenance.envelope import Payload, Sidecar
 from imspy_simulation.provenance.errors import (
+    KeyNotFoundError,
     MalformedSidecar,
     MissingArtifact,
+    ProvenanceError,
     Unsigned,
 )
 from imspy_simulation.provenance.keys import (
@@ -324,6 +326,39 @@ def verify_sidecar(
             f"disagree. This is consistent with a tampered or forged sidecar."
         )
 
+    # If the caller supplied --public-key, it acts as a CONSISTENCY
+    # CHECK against the embedded verifying_key — NOT as an alternative
+    # trust path. Without this, an attacker could ship a sidecar with
+    # one verifying_key embedded, sign with a DIFFERENT private key,
+    # and convince the user to verify with --public-key=<the actual
+    # signer>. The math would work, but trust would attach to the
+    # embedded label, not the override key. We refuse the split
+    # identity by requiring the override to equal the embedded key
+    # byte-for-byte.
+    if public_key_override is not None:
+        from cryptography.hazmat.primitives import serialization
+
+        try:
+            override_pubkey = load_public_key(public_key_override)
+        except KeyNotFoundError:
+            raise  # propagate the explicit not-found
+        embedded_raw = derived_signer_pubkey.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        override_raw = override_pubkey.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        if embedded_raw != override_raw:
+            raise MalformedSidecar(
+                f"--public-key override does not match the verifying_key "
+                f"embedded in the sidecar. The override is a consistency "
+                f"check against an out-of-band copy of the trusted public "
+                f"key; if it does not match the embedded key, the sidecar "
+                f"is not what you thought it was."
+            )
+
     # Locate the .d INDEPENDENTLY of the payload, so a tampered
     # experiment_name field cannot redirect verification to a phantom
     # path. We accept either the conventional {save_path}/{exp}/{exp}.d
@@ -453,19 +488,17 @@ def verify_sidecar(
         )
 
     # Verify the signature against the canonical payload bytes. The
-    # verifying_key was already decoded at the top (derived_signer_pubkey),
-    # so we reuse it unless the caller explicitly overrode it. Decode
-    # errors on the signature field surface as MalformedSidecar so the
-    # CLI maps them to a clean exit code rather than a generic error.
+    # verifying_key was already decoded at the top (derived_signer_pubkey).
+    # If --public-key was supplied, we already enforced byte-for-byte
+    # equality above, so the override and the embedded key are the same
+    # key — there is no need to special-case it here. Decode errors on
+    # the signature field surface as MalformedSidecar.
+    public_key = derived_signer_pubkey
     try:
-        if public_key_override is not None:
-            public_key = load_public_key(public_key_override)
-        else:
-            public_key = derived_signer_pubkey
         signature_bytes = signature_from_b64(sidecar.signature)
     except (ValueError, MalformedSidecar) as e:
         raise MalformedSidecar(
-            f"sidecar signature/verifying_key field is not decodable: {e}"
+            f"sidecar signature field is not decodable: {e}"
         ) from e
 
     signed_bytes = payload.to_canonical_json()
