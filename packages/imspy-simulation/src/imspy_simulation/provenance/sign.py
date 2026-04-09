@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import os
+import shutil
 from pathlib import Path
 from typing import Union
 
@@ -21,7 +22,7 @@ from imspy_simulation.provenance.canonicalize import (
     compose_content_hash,
 )
 from imspy_simulation.provenance.envelope import ATTESTATION_TYPE, Payload, Sidecar
-from imspy_simulation.provenance.errors import MissingArtifact
+from imspy_simulation.provenance.errors import MissingArtifact, ProvenanceError
 from imspy_simulation.provenance.keys import (
     KeyPair,
     load_or_create_keypair,
@@ -124,17 +125,50 @@ def sign_simulation_output(
                 f"ground-truth database does not exist: {ground_truth_path}"
             )
 
+    # Refuse to sign if a stale rollback journal is present. Our
+    # canonical hasher opens analysis.tdf with mode=ro&immutable=1,
+    # which deliberately ignores the journal — that is the right
+    # behavior for hashing, but it means a stale journal would let us
+    # attest to a view that sqlite would roll back on the next write.
+    # Surfacing this as ProvenanceError lets the simulator hook's
+    # existing required=true path handle it uniformly.
+    _journal_path = d_path / "analysis.tdf-journal"
+    if _journal_path.exists():
+        raise ProvenanceError(
+            f"stale rollback journal at {_journal_path}; refusing to sign "
+            f"because the canonical hasher opens immutable and would attest "
+            f"to a view that sqlite would otherwise roll back"
+        )
+
     if sidecar_path is None:
         sidecar_path = d_path.parent / f"{experiment_name}.provenance.json"
     else:
         sidecar_path = Path(sidecar_path)
 
-    # 1. Compute component hashes.
+    # 1. Compute component hashes from disk.
     d_hash = canonicalize_d(d_path)
-    config_hash = canonicalize_bytes(config_path.read_bytes())
+    config_bytes = config_path.read_bytes()
+    config_hash = canonicalize_bytes(config_bytes)
     ground_truth_hash: bytes | None = None
     if ground_truth_path is not None:
         ground_truth_hash = canonicalize_sqlite(ground_truth_path)
+
+    # 1a. Copy the config bytes into the experiment directory next to
+    # the sidecar so that timsim-verify has something to recompute the
+    # config hash against. Without this, the verifier has nothing to
+    # check the signed config_hash against and the config part of the
+    # attestation is unverifiable. The copy is named
+    # ``{stem}.config.toml`` where ``{stem}`` is the sidecar basename
+    # minus ``.provenance.json`` — derivable from the sidecar path
+    # alone, no payload trust required.
+    sidecar_stem = sidecar_path.name
+    if sidecar_stem.endswith(".provenance.json"):
+        sidecar_stem = sidecar_stem[: -len(".provenance.json")]
+    else:
+        sidecar_stem = sidecar_path.stem
+    config_copy_path = sidecar_path.parent / f"{sidecar_stem}.config.toml"
+    config_copy_path.parent.mkdir(parents=True, exist_ok=True)
+    config_copy_path.write_bytes(config_bytes)
 
     # 2. Compose the single content hash.
     content_hash = compose_content_hash(

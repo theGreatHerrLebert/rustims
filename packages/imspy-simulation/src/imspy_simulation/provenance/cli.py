@@ -75,6 +75,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "embedded in the sidecar (suitable for the v0 prototype)."
         ),
     )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help=(
+            "Path to the config TOML to verify against. Default: look for "
+            "{sidecar-basename}.config.toml next to the sidecar (TimSim copies "
+            "this file there at sign time). If neither resolves, the config_hash "
+            "check is reported as UNCHECKED."
+        ),
+    )
     return parser
 
 
@@ -91,18 +102,22 @@ def _print_header(result: VerificationResult) -> None:
 
 def _print_checks(result: VerificationResult) -> None:
     width = max((len(c.name) for c in result.checks), default=0)
+    label_for = {
+        "ok": "OK       ",
+        "mismatch": "MISMATCH ",
+        "unchecked": "UNCHECKED",
+    }
     for check in result.checks:
-        status = "OK      " if check.ok else "MISMATCH"
-        marker = " " if check.ok else "*"
+        status_label = label_for.get(check.status, check.status.upper().ljust(9))
+        marker = " " if check.status == "ok" else "*"
         digest_short = check.expected[:24] + "..." if len(check.expected) > 24 else check.expected
-        print(f" {marker} {check.name:<{width}}  {status}  ({digest_short})")
-        if not check.ok and check.actual:
-            actual_short = (
-                check.actual[:24] + "..." if len(check.actual) > 24 else check.actual
-            )
+        print(f" {marker} {check.name:<{width}}  {status_label}  ({digest_short})")
+        if check.status == "mismatch" and check.actual:
             print(f"     expected:  {check.expected}")
             print(f"     actual:    {check.actual}")
-    sig_status = "OK      " if result.signature_ok else "MISMATCH"
+        elif check.status == "unchecked" and check.detail:
+            print(f"     note:      {check.detail}")
+    sig_status = "OK       " if result.signature_ok else "MISMATCH "
     sig_marker = " " if result.signature_ok else "*"
     print(f" {sig_marker} {'signature':<{width}}  {sig_status}  (ed25519)")
     print()
@@ -112,7 +127,12 @@ def _exit_for_failure(result: VerificationResult) -> int:
     """Pick the most specific exit code for a failed verification."""
     if not result.signature_ok:
         return EXIT_SIGNATURE_MISMATCH
-    if any(not c.ok for c in result.checks):
+    if any(c.status == "mismatch" for c in result.checks):
+        return EXIT_HASH_MISMATCH
+    if any(c.status == "unchecked" for c in result.checks):
+        # We could not verify everything; this is not a tamper but
+        # also not a clean VERIFIED. Use the hash-mismatch code so
+        # automation does not silently treat it as success.
         return EXIT_HASH_MISMATCH
     return EXIT_GENERIC
 
@@ -130,13 +150,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.strict:
             print(msg, file=sys.stderr)
             print("FAILED: --strict and no sidecar present", file=sys.stderr)
-        else:
-            print(msg)
-            print("UNSIGNED")
-        return EXIT_UNSIGNED
+            return EXIT_UNSIGNED
+        # Non-strict: unsigned is informational, NOT a failure. Print
+        # the message and return EXIT_OK so shell/CI users do not get a
+        # spurious failure on legitimately unsigned input. (Reviewer #2)
+        print(msg)
+        print("UNSIGNED")
+        return EXIT_OK
 
     try:
-        result = verify_sidecar(sidecar_path, public_key_override=args.public_key)
+        result = verify_sidecar(
+            sidecar_path,
+            public_key_override=args.public_key,
+            config_path_override=args.config,
+        )
     except KeyNotFoundError as e:
         print(f"timsim-verify: key error: {e}", file=sys.stderr)
         return EXIT_KEY_ERROR

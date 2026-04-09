@@ -362,9 +362,12 @@ After a signed run the layout is:
 ├── {experiment_name}.d/
 │   ├── analysis.tdf
 │   └── analysis.tdf_bin
-├── synthetic_data.db
+├── synthetic_data.db                   # ground truth (TimSim only)
+├── {experiment_name}.config.toml       # copy of the input config
 └── {experiment_name}.provenance.json   # the sidecar
 ```
+
+The config TOML is **copied** into the experiment directory at sign time so that the signed `config_hash` has something to verify against. The verifier reads this file, never the user's original input, and never falls back to the signed value (which would make the check tautological).
 
 Verify a signed output with the bundled CLI:
 
@@ -373,7 +376,7 @@ timsim-verify {save_path}/{experiment_name}
 # Expected: VERIFIED, exit 0
 ```
 
-The verifier recomputes a canonical content hash over the `.d` (designed to survive `VACUUM`, `REINDEX`, and page-size differences in `analysis.tdf`) and reports any mismatch field-by-field.
+The verifier recomputes a canonical content hash over the `.d` (designed to survive `VACUUM`, `REINDEX`, and page-size differences in `analysis.tdf`) and reports any mismatch field-by-field. If the config copy is missing and no `--config` override is given, the `config_hash` check is reported as `UNCHECKED` and the overall verification fails — `UNCHECKED` is never silently treated as `OK`.
 
 This is a **software-rooted** prototype: the signing key lives in `~/.config/timsim/keys/`, not in an HSM. It demonstrates the structural chain of custody but is not a substitute for instrument-rooted attestation. The embedded verifying key proves that the sidecar and the files match each other — it does not, on its own, prove the *identity* of the signer. To get that, pin a known-good public key out-of-band (a future iteration will add `--expected-key-fingerprint` for this). See `SIGNING.md` §9 for the full disclosure and the limitations of the Phase 0 prototype.
 

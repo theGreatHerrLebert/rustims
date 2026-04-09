@@ -244,13 +244,92 @@ def test_tamper_ground_truth(tmp_path):
     assert not gt_check.ok
 
 
-def test_tamper_config_file(tmp_path):
+def test_tamper_config_copy(tmp_path):
+    """Tampering the COPIED config next to the sidecar must be detected.
+
+    The verifier reads the config copy that sign() placed next to the
+    sidecar at sign time, NOT the user's original input. This is the
+    file the signature commits to and the file that must be tamper-
+    evident on verify.
+    """
     d, gt, config, sidecar = _build_signed_bundle(tmp_path)
-    config.write_bytes(b'[experiment]\nexperiment_name = "MUTATED"\n')
+    # Find the config copy by sidecar-derived filename — the same way
+    # the verifier does.
+    config_copy = sidecar.parent / sidecar.name.replace(
+        ".provenance.json", ".config.toml"
+    )
+    assert config_copy.is_file(), "sign() should have copied the config next to the sidecar"
+    config_copy.write_bytes(b'[experiment]\nexperiment_name = "MUTATED"\n')
     result = verify_sidecar(sidecar)
     assert not result.overall_ok
     cfg_check = next(c for c in result.checks if c.name == "config_hash")
-    assert not cfg_check.ok
+    assert cfg_check.status == "mismatch"
+
+
+def test_tamper_original_config_does_not_affect_verification(tmp_path):
+    """Mutating the user's original input config has no effect on verification.
+
+    The signed bytes are the bytes that were copied at sign time, not
+    a live reference to the user's input. This is the right behavior:
+    the bundle is self-contained from the moment sign() returns.
+    """
+    d, gt, config, sidecar = _build_signed_bundle(tmp_path)
+    config.write_bytes(b'[experiment]\nexperiment_name = "MUTATED-AFTERWARDS"\n')
+    result = verify_sidecar(sidecar)
+    assert result.overall_ok
+    cfg_check = next(c for c in result.checks if c.name == "config_hash")
+    assert cfg_check.status == "ok"
+
+
+def test_missing_config_copy_is_unchecked_not_tautology(tmp_path):
+    """If the config copy is missing and no override is given, the check is UNCHECKED.
+
+    Critically, the verifier must NOT fall back to the signed value
+    (which would make the check tautological — comparing the payload
+    hash to itself, always passes). overall_ok must be False.
+    """
+    d, gt, config, sidecar = _build_signed_bundle(tmp_path)
+    config_copy = sidecar.parent / sidecar.name.replace(
+        ".provenance.json", ".config.toml"
+    )
+    config_copy.unlink()
+
+    result = verify_sidecar(sidecar)
+    assert not result.overall_ok, (
+        "missing config must NOT be silently treated as verified"
+    )
+    cfg_check = next(c for c in result.checks if c.name == "config_hash")
+    assert cfg_check.status == "unchecked"
+    # The composed content_hash also goes UNCHECKED because we cannot
+    # reconstruct it without the config bytes.
+    content_check = next(c for c in result.checks if c.name == "content_hash")
+    assert content_check.status == "unchecked"
+
+
+def test_config_override_explicit_path(tmp_path):
+    """The --config override path is honored when the verifier is called directly."""
+    d, gt, config, sidecar = _build_signed_bundle(tmp_path)
+    # Delete the convention copy to prove the override is what matters.
+    config_copy = sidecar.parent / sidecar.name.replace(
+        ".provenance.json", ".config.toml"
+    )
+    config_copy.unlink()
+
+    result = verify_sidecar(sidecar, config_path_override=config)
+    assert result.overall_ok
+    cfg_check = next(c for c in result.checks if c.name == "config_hash")
+    assert cfg_check.status == "ok"
+
+
+def test_config_override_with_wrong_file_fails_loudly(tmp_path):
+    """A --config override pointing at unrelated bytes must fail, not pass."""
+    d, gt, config, sidecar = _build_signed_bundle(tmp_path)
+    wrong = tmp_path / "unrelated.toml"
+    wrong.write_bytes(b'[unrelated]\nfield = "wrong"\n')
+    result = verify_sidecar(sidecar, config_path_override=wrong)
+    assert not result.overall_ok
+    cfg_check = next(c for c in result.checks if c.name == "config_hash")
+    assert cfg_check.status == "mismatch"
 
 
 def test_tamper_swap_d_with_other(tmp_path, tmp_path_factory):

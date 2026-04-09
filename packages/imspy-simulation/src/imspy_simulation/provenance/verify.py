@@ -39,6 +39,14 @@ from imspy_simulation.provenance.keys import (
 
 PathLike = Union[str, Path]
 
+# Possible statuses for an individual FieldCheck. UNCHECKED means we
+# could not recompute this hash (e.g. the artifact is missing) — it is
+# DELIBERATELY treated as not-ok by overall_ok so that "we couldn't
+# verify it" never gets reported as VERIFIED.
+STATUS_OK = "ok"
+STATUS_MISMATCH = "mismatch"
+STATUS_UNCHECKED = "unchecked"
+
 
 @dataclass
 class FieldCheck:
@@ -47,11 +55,21 @@ class FieldCheck:
     name: str
     expected: str  # the hex digest from the sidecar (e.g. "sha256:abc...")
     actual: str  # the hex digest we recomputed (empty if not checked)
-    ok: bool
+    status: str  # one of STATUS_OK / STATUS_MISMATCH / STATUS_UNCHECKED
+    detail: str = ""  # optional human-readable explanation (e.g. "no config file found")
+
+    @property
+    def ok(self) -> bool:
+        """True iff the hash was computed AND matched the signed value."""
+        return self.status == STATUS_OK
 
     def __str__(self) -> str:
-        status = "OK" if self.ok else "MISMATCH"
-        return f"{self.name:<18} {status}   ({self.expected[:24]}...)"
+        label = {
+            STATUS_OK: "OK",
+            STATUS_MISMATCH: "MISMATCH",
+            STATUS_UNCHECKED: "UNCHECKED",
+        }.get(self.status, self.status.upper())
+        return f"{self.name:<18} {label}   ({self.expected[:24]}...)"
 
 
 @dataclass
@@ -153,17 +171,53 @@ def _find_unique_d(search_root: Path) -> Path | None:
     return None
 
 
+def _config_path_for_sidecar(sidecar_path: Path) -> Path:
+    """Return the conventional config-copy path for a given sidecar path.
+
+    Convention: a sidecar at ``foo.provenance.json`` has its config copy
+    at ``foo.config.toml`` in the same directory. The basename match is
+    derived from the sidecar filename, NOT from any payload field, so a
+    tampered ``experiment_name`` field cannot redirect this lookup.
+    """
+    name = sidecar_path.name
+    if name.endswith(".provenance.json"):
+        stem = name[: -len(".provenance.json")]
+    else:
+        stem = sidecar_path.stem
+    return sidecar_path.parent / f"{stem}.config.toml"
+
+
 def verify_sidecar(
     sidecar_path: PathLike,
     *,
     public_key_override: PathLike | None = None,
+    config_path_override: PathLike | None = None,
 ) -> VerificationResult:
     """Verify a sidecar by recomputing all referenced hashes and checking the signature.
+
+    Parameters
+    ----------
+    sidecar_path
+        Path to the ``*.provenance.json`` sidecar file.
+    public_key_override
+        Optional path to a PEM verifying key. If given, this key is used
+        instead of the one embedded in the sidecar. This is how a caller
+        pins verification to a known-trusted key — without it, the
+        embedded key only proves *integrity* (the sidecar and the files
+        match each other), not *identity*.
+    config_path_override
+        Optional path to the TOML config file to hash. If given, this
+        path is hashed and compared to ``payload.config_hash``. If not
+        given, we look for the conventional ``{stem}.config.toml`` next
+        to the sidecar. If neither resolves to a real file, the
+        ``config_hash`` check is reported as UNCHECKED — we **never**
+        fall back to the signed value, because that would make the
+        check tautological.
 
     Raises
     ------
     MalformedSidecar
-        Sidecar file exists but is unreadable or shape-incorrect.
+        Sidecar file does not exist, is unreadable, or has the wrong shape.
     UnknownVersion
         Sidecar has a ``type`` or ``canonicalization_version`` we cannot handle.
     MissingArtifact
@@ -193,8 +247,10 @@ def verify_sidecar(
 
     ground_truth_path = save_path / "synthetic_data.db"
 
-    # Recompute hashes.
+    # Recompute the .d hash.
     d_hash = canonicalize_d(d_path)
+
+    # Recompute the ground-truth hash if the payload claims one.
     ground_truth_hash: bytes | None = None
     if payload.ground_truth_hash:
         if not ground_truth_path.is_file():
@@ -204,18 +260,39 @@ def verify_sidecar(
             )
         ground_truth_hash = canonicalize_sqlite(ground_truth_path)
 
-    # The config file may not be co-located with the sidecar in all
-    # workflows. We can only re-hash it if we can find it. The user can
-    # supply it via CLI override in a future iteration; for v0 we attempt
-    # discovery and skip the check if absent.
+    # Resolve the config file: explicit override wins, otherwise look
+    # for the conventional copy next to the sidecar. We never fall back
+    # to the payload's signed value — that would make the check
+    # tautological (compare hash to itself => always passes).
     config_hash: bytes | None = None
+    config_check_status = STATUS_UNCHECKED
     config_check_actual = ""
-    candidate_configs = list(save_path.glob("*.toml"))
-    if candidate_configs:
-        # Use the first match. If multiple TOMLs sit next to the sidecar
-        # the user can disambiguate later; for now we accept the first.
-        config_hash = canonicalize_bytes(candidate_configs[0].read_bytes())
+    config_check_detail = ""
+
+    if config_path_override is not None:
+        config_resolved = Path(config_path_override)
+        if not config_resolved.is_file():
+            raise MissingArtifact(
+                f"--config override points at a missing file: {config_resolved}"
+            )
+        config_hash = canonicalize_bytes(config_resolved.read_bytes())
         config_check_actual = _hex(config_hash)
+        config_check_status = (
+            STATUS_OK if payload.config_hash == config_check_actual else STATUS_MISMATCH
+        )
+    else:
+        conventional_config = _config_path_for_sidecar(sidecar_path)
+        if conventional_config.is_file():
+            config_hash = canonicalize_bytes(conventional_config.read_bytes())
+            config_check_actual = _hex(config_hash)
+            config_check_status = (
+                STATUS_OK if payload.config_hash == config_check_actual else STATUS_MISMATCH
+            )
+        else:
+            config_check_detail = (
+                f"no config file found at {conventional_config} "
+                f"(pass --config to override)"
+            )
 
     checks: list[FieldCheck] = []
 
@@ -226,7 +303,7 @@ def verify_sidecar(
             name="d_content_hash",
             expected=expected_d,
             actual=actual_d,
-            ok=(expected_d == actual_d),
+            status=STATUS_OK if expected_d == actual_d else STATUS_MISMATCH,
         )
     )
 
@@ -238,42 +315,67 @@ def verify_sidecar(
                 name="ground_truth_hash",
                 expected=expected_g,
                 actual=actual_g,
-                ok=(expected_g == actual_g),
+                status=STATUS_OK if expected_g == actual_g else STATUS_MISMATCH,
             )
         )
 
-    if config_hash is not None:
-        checks.append(
-            FieldCheck(
-                name="config_hash",
-                expected=payload.config_hash,
-                actual=config_check_actual,
-                ok=(payload.config_hash == config_check_actual),
-            )
-        )
-
-    # Recompute the composed content hash and check it as well.
-    composed = compose_content_hash(
-        d_hash=d_hash,
-        ground_truth_hash=ground_truth_hash,
-        config_hash=config_hash if config_hash is not None else _decode_hash(payload.config_hash),
-    )
     checks.append(
         FieldCheck(
-            name="content_hash",
-            expected=payload.content_hash,
-            actual=_hex(composed),
-            ok=(payload.content_hash == _hex(composed)),
+            name="config_hash",
+            expected=payload.config_hash,
+            actual=config_check_actual,
+            status=config_check_status,
+            detail=config_check_detail,
         )
     )
 
-    # Verify the signature against the canonical payload bytes.
-    if public_key_override is not None:
-        public_key = load_public_key(public_key_override)
+    # Recompute the composed content hash. If we could not hash the
+    # config from disk, we mark the composed check UNCHECKED rather than
+    # use the signed value — same reasoning as above. The .d and ground
+    # truth components have already been recomputed independently, so
+    # any tampering on those is caught by their own per-field checks.
+    if config_hash is None:
+        checks.append(
+            FieldCheck(
+                name="content_hash",
+                expected=payload.content_hash,
+                actual="",
+                status=STATUS_UNCHECKED,
+                detail="cannot recompose content_hash without the config file",
+            )
+        )
     else:
-        public_key = public_key_from_b64(sidecar.verifying_key)
+        composed = compose_content_hash(
+            d_hash=d_hash,
+            ground_truth_hash=ground_truth_hash,
+            config_hash=config_hash,
+        )
+        checks.append(
+            FieldCheck(
+                name="content_hash",
+                expected=payload.content_hash,
+                actual=_hex(composed),
+                status=(
+                    STATUS_OK if payload.content_hash == _hex(composed) else STATUS_MISMATCH
+                ),
+            )
+        )
 
-    signature_bytes = signature_from_b64(sidecar.signature)
+    # Verify the signature against the canonical payload bytes. Decode
+    # errors on attacker-controlled fields surface as MalformedSidecar
+    # so the CLI maps them to a clean exit code rather than a generic
+    # error. (Reviewer #5)
+    try:
+        if public_key_override is not None:
+            public_key = load_public_key(public_key_override)
+        else:
+            public_key = public_key_from_b64(sidecar.verifying_key)
+        signature_bytes = signature_from_b64(sidecar.signature)
+    except (ValueError, MalformedSidecar) as e:
+        raise MalformedSidecar(
+            f"sidecar signature/verifying_key field is not decodable: {e}"
+        ) from e
+
     signed_bytes = payload.to_canonical_json()
 
     try:
@@ -284,7 +386,7 @@ def verify_sidecar(
     except Exception:
         signature_ok = False
 
-    overall_ok = signature_ok and all(c.ok for c in checks)
+    overall_ok = signature_ok and all(c.status == STATUS_OK for c in checks)
 
     return VerificationResult(
         sidecar_path=sidecar_path,

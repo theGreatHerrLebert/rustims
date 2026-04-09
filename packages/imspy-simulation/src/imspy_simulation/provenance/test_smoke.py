@@ -33,15 +33,6 @@ import tempfile
 import traceback
 from pathlib import Path
 
-# We import from the conftest in the test tree because that is the single
-# source of truth for the minimal-fixture builders. Sharing it here keeps
-# the smoke test and the unit tests honest about what "minimal .d" means.
-_HERE = Path(__file__).resolve()
-_PACKAGE_ROOT = _HERE.parents[3]  # imspy-simulation/
-_TEST_DIR = _PACKAGE_ROOT / "tests"
-if str(_TEST_DIR) not in sys.path:
-    sys.path.insert(0, str(_TEST_DIR))
-
 
 def _fail(reason: str) -> None:
     print(f"SMOKE FAILED: {reason}", file=sys.stderr)
@@ -49,15 +40,15 @@ def _fail(reason: str) -> None:
 
 
 def main() -> int:
-    try:
-        from test_provenance.conftest import (  # type: ignore[import-not-found]
-            make_minimal_d,
-            make_minimal_ground_truth,
-            tamper_byte,
-            tamper_sql_value,
-        )
-    except ImportError as e:
-        _fail(f"could not import test fixtures: {e}")
+    # Fixture builders live in the package itself (private module) so
+    # this smoke test runs from an installed wheel without needing the
+    # test tree to be present.
+    from imspy_simulation.provenance._fixtures import (
+        make_minimal_d,
+        make_minimal_ground_truth,
+        tamper_byte,
+        tamper_sql_value,
+    )
 
     from imspy_simulation.provenance import (
         HashMismatch,

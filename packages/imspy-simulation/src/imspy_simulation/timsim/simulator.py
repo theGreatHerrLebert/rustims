@@ -1267,33 +1267,26 @@ def main():
         except Exception:
             pass
 
-        # If a stale rollback journal is sitting next to analysis.tdf
-        # then sqlite would normally roll it back on the next read-write
-        # open. Our read-only immutable open ignores it. Refuse to sign
-        # in that state — it would attest to an inconsistent view.
-        _journal_path = d_path / "analysis.tdf-journal"
-        if _journal_path.exists():
-            logger.warning(
-                "  Provenance signing skipped: stale rollback journal at %s",
-                _journal_path,
+        # All "should-not-sign" conditions (stale rollback journal,
+        # missing artifact, etc.) live inside sign_simulation_output and
+        # surface as ProvenanceError. The required=true contract is
+        # therefore handled uniformly in the except branch below.
+        private_key_path = _raw_provenance_cfg.get('private_key_path') or None
+        try:
+            sidecar_path = sign_simulation_output(
+                d_path=d_path,
+                ground_truth_path=ground_truth_path,
+                config_path=cli_args.config,
+                experiment_name=name,
+                simulator_version=__version__,
+                private_key_path=private_key_path,
             )
-        else:
-            private_key_path = _raw_provenance_cfg.get('private_key_path') or None
-            try:
-                sidecar_path = sign_simulation_output(
-                    d_path=d_path,
-                    ground_truth_path=ground_truth_path,
-                    config_path=cli_args.config,
-                    experiment_name=name,
-                    simulator_version=__version__,
-                    private_key_path=private_key_path,
-                )
-                logger.info(f"  Provenance sidecar: {sidecar_path}")
-                logger.info("  Verify with: timsim-verify %s", experiment_dir)
-            except ProvenanceError as _provenance_exc:
-                logger.warning("  Provenance signing failed: %s", _provenance_exc)
-                if _raw_provenance_cfg.get('required', False):
-                    raise
+            logger.info(f"  Provenance sidecar: {sidecar_path}")
+            logger.info("  Verify with: timsim-verify %s", experiment_dir)
+        except ProvenanceError as _provenance_exc:
+            logger.warning("  Provenance signing failed: %s", _provenance_exc)
+            if _raw_provenance_cfg.get('required', False):
+                raise
 
     # Collect final statistics
     stats.n_proteins = len(proteins) if proteins is not None else 0
