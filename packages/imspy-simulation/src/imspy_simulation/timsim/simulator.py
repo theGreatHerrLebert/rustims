@@ -1221,6 +1221,80 @@ def main():
         quad_transmission_max_isotopes=config.quad_transmission_max_isotopes,
     )
 
+    # JOB 11: Provenance signing (Phase 0 prototype, see SIGNING.md)
+    # Reads the [provenance] section directly from the raw TOML so we do
+    # not have to thread new fields through SimulationConfig. Default is
+    # OFF — flip to default-ON only after the §1.1 container-invariance
+    # tests are stably green in CI.
+    try:
+        _raw_provenance_cfg = load_toml_config(cli_args.config).get('provenance', {}) or {}
+    except Exception as _provenance_cfg_exc:
+        logger.warning("  Could not re-read [provenance] config: %s", _provenance_cfg_exc)
+        _raw_provenance_cfg = {}
+
+    if _raw_provenance_cfg.get('sign', False):
+        from imspy_simulation.provenance import (
+            ProvenanceError,
+            sign_simulation_output,
+        )
+        logger.info(section_header("Signing Output", use_unicode))
+
+        # The on-disk layout (verified against acquisition.py:54 +
+        # build_acquisition.py:58 + acquisition.py:274) is:
+        #   {save_path}/{name}/{name}.d/
+        #   {save_path}/{name}/synthetic_data.db
+        # NOT {save_path}/synthetic_data.db at the top level.
+        experiment_dir = Path(save_path) / name
+        d_path = experiment_dir / f"{name}.d"
+        ground_truth_path = experiment_dir / "synthetic_data.db"
+        if not ground_truth_path.is_file():
+            ground_truth_path = None
+
+        # Close the simulator's open SQLite handles before hashing so we
+        # do not race them or miss an uncommitted final write. The
+        # canonical hasher uses mode=ro&immutable=1 which ignores
+        # journals — that is correct, but only if everything has been
+        # flushed first. We tolerate close() failing because some
+        # acquisition_builder branches do not expose .conn.
+        try:
+            acquisition_builder.tdf_writer.conn.commit()
+            acquisition_builder.tdf_writer.conn.close()
+        except Exception:
+            pass
+        try:
+            acquisition_builder.synthetics_handle.conn.commit()
+            acquisition_builder.synthetics_handle.conn.close()
+        except Exception:
+            pass
+
+        # If a stale rollback journal is sitting next to analysis.tdf
+        # then sqlite would normally roll it back on the next read-write
+        # open. Our read-only immutable open ignores it. Refuse to sign
+        # in that state — it would attest to an inconsistent view.
+        _journal_path = d_path / "analysis.tdf-journal"
+        if _journal_path.exists():
+            logger.warning(
+                "  Provenance signing skipped: stale rollback journal at %s",
+                _journal_path,
+            )
+        else:
+            private_key_path = _raw_provenance_cfg.get('private_key_path') or None
+            try:
+                sidecar_path = sign_simulation_output(
+                    d_path=d_path,
+                    ground_truth_path=ground_truth_path,
+                    config_path=cli_args.config,
+                    experiment_name=name,
+                    simulator_version=__version__,
+                    private_key_path=private_key_path,
+                )
+                logger.info(f"  Provenance sidecar: {sidecar_path}")
+                logger.info("  Verify with: timsim-verify %s", experiment_dir)
+            except ProvenanceError as _provenance_exc:
+                logger.warning("  Provenance signing failed: %s", _provenance_exc)
+                if _raw_provenance_cfg.get('required', False):
+                    raise
+
     # Collect final statistics
     stats.n_proteins = len(proteins) if proteins is not None else 0
     stats.n_peptides = len(peptides) if peptides is not None else 0

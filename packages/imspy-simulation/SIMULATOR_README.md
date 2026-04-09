@@ -342,6 +342,41 @@ pip install opentims-bruker-bridge
 - Increase `num_threads`
 - Use `lazy_frame_assembly = true` for large datasets
 
+## Provenance Signing (Phase 0 Prototype)
+
+TimSim can cryptographically sign its output `.d` and ground-truth database with an Ed25519 attestation. This is the working reference implementation of the proposal in [`SIGNING.md`](../../SIGNING.md). Enabling it produces a sidecar JSON file alongside the simulation output that binds the `.d`, the ground-truth DB, and the input config under a single signature.
+
+Enable in your TOML config:
+
+```toml
+[provenance]
+sign = true                # default: false (will flip to true after stabilization)
+required = false           # if true, signing failures abort the simulation
+private_key_path = ""      # default: ~/.config/timsim/keys/signing_key.pem
+```
+
+After a signed run the layout is:
+
+```
+{save_path}/{experiment_name}/
+├── {experiment_name}.d/
+│   ├── analysis.tdf
+│   └── analysis.tdf_bin
+├── synthetic_data.db
+└── {experiment_name}.provenance.json   # the sidecar
+```
+
+Verify a signed output with the bundled CLI:
+
+```bash
+timsim-verify {save_path}/{experiment_name}
+# Expected: VERIFIED, exit 0
+```
+
+The verifier recomputes a canonical content hash over the `.d` (designed to survive `VACUUM`, `REINDEX`, and page-size differences in `analysis.tdf`) and reports any mismatch field-by-field.
+
+This is a **software-rooted** prototype: the signing key lives in `~/.config/timsim/keys/`, not in an HSM. It demonstrates the structural chain of custody but is not a substitute for instrument-rooted attestation. The embedded verifying key proves that the sidecar and the files match each other — it does not, on its own, prove the *identity* of the signer. To get that, pin a known-good public key out-of-band (a future iteration will add `--expected-key-fingerprint` for this). See `SIGNING.md` §9 for the full disclosure and the limitations of the Phase 0 prototype.
+
 ## Citation
 
 If you use TIMSIM in your research, please cite:

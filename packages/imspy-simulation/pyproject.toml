@@ -21,6 +21,7 @@ dependencies = [
     "zstd>=1.5",
     "matplotlib>=3.5",
     "imspy-search>=0.4.0",
+    "cryptography>=42",  # Ed25519 signing for provenance attestations (SIGNING.md Phase 0)
 ]
 
 [project.optional-dependencies]
@@ -33,6 +34,7 @@ gui = [
 [project.scripts]
 timsim = "imspy_simulation.timsim.simulator:main"
 timsim-gui = "imspy_simulation.timsim.gui:main"
+timsim-verify = "imspy_simulation.provenance.cli:main"
 
 [build-system]
 requires = ["poetry-core"]
