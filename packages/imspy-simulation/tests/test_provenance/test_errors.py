@@ -248,16 +248,16 @@ def test_sign_with_stale_rollback_journal_raises(tmp_path):
 
     The canonical hasher opens analysis.tdf with mode=ro&immutable=1,
     which ignores the journal — so without this check we would attest
-    to a view that sqlite would otherwise roll back. (Reviewer #3)
+    to a view that sqlite would otherwise roll back. (Reviewer round-1 #3)
     """
-    from imspy_simulation.provenance.errors import ProvenanceError
+    from imspy_simulation.provenance.errors import SqliteNotQuiescent
     d = make_minimal_d(tmp_path, name="x")
     config = tmp_path / "c.toml"
     config.write_bytes(b"[experiment]\nexperiment_name = \"x\"\n")
     journal = d / "analysis.tdf-journal"
     journal.write_bytes(b"\x00" * 16)  # any non-empty journal-like file is enough
 
-    with pytest.raises(ProvenanceError, match="rollback journal"):
+    with pytest.raises(SqliteNotQuiescent):
         sign_simulation_output(
             d_path=d,
             ground_truth_path=None,
@@ -266,6 +266,106 @@ def test_sign_with_stale_rollback_journal_raises(tmp_path):
             simulator_version="test",
             private_key_path=None,
         )
+
+
+def test_sign_with_wal_sidecar_raises(tmp_path):
+    """A .d with a -wal sidecar (live WAL writer) must NOT be signed.
+
+    Reviewer round-2 #1: WAL-mode SQLite plus mode=ro&immutable=1 means
+    the canonical hasher sees the old main-DB image, not what readers
+    will get. Must refuse, not silently produce a misleading hash.
+    """
+    from imspy_simulation.provenance.errors import SqliteNotQuiescent
+    d = make_minimal_d(tmp_path, name="x")
+    config = tmp_path / "c.toml"
+    config.write_bytes(b"[experiment]\nexperiment_name = \"x\"\n")
+    (d / "analysis.tdf-wal").write_bytes(b"\x00" * 32)
+
+    with pytest.raises(SqliteNotQuiescent):
+        sign_simulation_output(
+            d_path=d,
+            ground_truth_path=None,
+            config_path=config,
+            experiment_name="x",
+            simulator_version="test",
+            private_key_path=None,
+        )
+
+
+def test_sign_with_shm_sidecar_raises(tmp_path):
+    """A .d with a -shm sidecar (WAL shared memory) must NOT be signed."""
+    from imspy_simulation.provenance.errors import SqliteNotQuiescent
+    d = make_minimal_d(tmp_path, name="x")
+    config = tmp_path / "c.toml"
+    config.write_bytes(b"[experiment]\nexperiment_name = \"x\"\n")
+    (d / "analysis.tdf-shm").write_bytes(b"\x00" * 32)
+
+    with pytest.raises(SqliteNotQuiescent):
+        sign_simulation_output(
+            d_path=d,
+            ground_truth_path=None,
+            config_path=config,
+            experiment_name="x",
+            simulator_version="test",
+            private_key_path=None,
+        )
+
+
+def test_sign_with_ground_truth_wal_raises(tmp_path):
+    """If the ground-truth DB has a WAL sidecar, signing must also refuse.
+
+    The check applies uniformly to every SQLite file we hash, not just
+    the .d's analysis.tdf. The synthetic_data.db is just as vulnerable.
+    """
+    from imspy_simulation.provenance.errors import SqliteNotQuiescent
+    d = make_minimal_d(tmp_path, name="x")
+    gt = make_minimal_ground_truth(tmp_path)
+    config = tmp_path / "c.toml"
+    config.write_bytes(b"[experiment]\nexperiment_name = \"x\"\n")
+    # Plant a -wal next to the ground-truth DB.
+    gt_wal = gt.with_name(gt.name + "-wal")
+    gt_wal.write_bytes(b"\x00" * 32)
+
+    with pytest.raises(SqliteNotQuiescent):
+        sign_simulation_output(
+            d_path=d,
+            ground_truth_path=gt,
+            config_path=config,
+            experiment_name="x",
+            simulator_version="test",
+            private_key_path=None,
+        )
+
+
+def test_verify_refuses_when_wal_sidecar_appears_after_signing(tmp_path):
+    """If a -wal appears between sign and verify, verify must refuse.
+
+    This is the failure mode where someone signs cleanly, then a writer
+    opens the .d in WAL mode and commits between sign and verify. The
+    verifier must NOT silently report VERIFIED — its view diverges from
+    what consumers will read.
+    """
+    from imspy_simulation.provenance.errors import SqliteNotQuiescent
+    d = make_minimal_d(tmp_path, name="x")
+    config = tmp_path / "c.toml"
+    config.write_bytes(b"[experiment]\nexperiment_name = \"x\"\n")
+    key_dir = tmp_path / "keys"
+    write_keypair(generate_keypair(), key_dir)
+
+    sidecar = sign_simulation_output(
+        d_path=d,
+        ground_truth_path=None,
+        config_path=config,
+        experiment_name="x",
+        simulator_version="test",
+        private_key_path=key_dir / "signing_key.pem",
+    )
+
+    # Drop a -wal next to analysis.tdf AFTER signing.
+    (d / "analysis.tdf-wal").write_bytes(b"\x00" * 32)
+
+    with pytest.raises(SqliteNotQuiescent):
+        verify_sidecar(sidecar)
 
 
 # ---------------------------------------------------------------------------

@@ -261,6 +261,119 @@ def test_modified_tdf_bin_changes_hash(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# SQLite quiescence — refuse to hash if -wal / -shm / -journal sidecars exist
+# ---------------------------------------------------------------------------
+#
+# These guard against the WAL-mode hashing inconsistency the second-round
+# reviewer reproduced: a writer in WAL mode commits to analysis.tdf-wal
+# without checkpointing, ordinary readers see the new data, but the
+# canonicalizer (which uses mode=ro&immutable=1) hashes the old main-DB
+# image. Without the guard, sign would attest to an unread view, and
+# verify would report VERIFIED against bytes consumers will never see.
+
+
+def test_canonicalize_rejects_wal_sidecar(tmp_path):
+    from imspy_simulation.provenance.errors import SqliteNotQuiescent
+
+    d = make_minimal_d(tmp_path)
+    wal = d / "analysis.tdf-wal"
+    wal.write_bytes(b"\x00" * 32)
+    with pytest.raises(SqliteNotQuiescent):
+        canonicalize_d(d)
+
+
+def test_canonicalize_rejects_shm_sidecar(tmp_path):
+    from imspy_simulation.provenance.errors import SqliteNotQuiescent
+
+    d = make_minimal_d(tmp_path)
+    shm = d / "analysis.tdf-shm"
+    shm.write_bytes(b"\x00" * 32)
+    with pytest.raises(SqliteNotQuiescent):
+        canonicalize_d(d)
+
+
+def test_canonicalize_rejects_journal_sidecar(tmp_path):
+    from imspy_simulation.provenance.errors import SqliteNotQuiescent
+
+    d = make_minimal_d(tmp_path)
+    journal = d / "analysis.tdf-journal"
+    journal.write_bytes(b"\x00" * 32)
+    with pytest.raises(SqliteNotQuiescent):
+        canonicalize_d(d)
+
+
+def test_canonicalize_after_wal_checkpoint_succeeds(tmp_path):
+    """Once -wal/-shm are absent (cleared by checkpoint or close), hashing works again.
+
+    This test does not assume WAL files remain after close — that is
+    platform- and version-dependent. We only assert the *end state*:
+    after we ensure no sidecars exist, canonicalize succeeds and the
+    hash reflects the WAL-applied changes.
+    """
+    import sqlite3
+    d = make_minimal_d(tmp_path)
+    tdf = d / "analysis.tdf"
+
+    h_before = canonicalize_d(d)
+
+    # Trigger WAL mode, write, and force a checkpoint+truncate so the
+    # main DB file fully reflects the change before closing.
+    conn = sqlite3.connect(tdf)
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute(
+        "UPDATE GlobalMetadata SET Value = 'WAL-MUTATED' WHERE Key = 'InstrumentName';"
+    )
+    conn.commit()
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+    conn.execute("PRAGMA journal_mode = DELETE;")
+    conn.close()
+
+    # Defensively clean any residual sidecars — some libsqlite versions
+    # leave a zero-byte -shm even after a clean DELETE journal switch.
+    for suffix in ("-wal", "-shm", "-journal"):
+        residual = d / ("analysis.tdf" + suffix)
+        if residual.exists():
+            residual.unlink()
+
+    # Hash succeeds and reflects the new content.
+    h_after = canonicalize_d(d)
+    assert h_after != h_before, (
+        "post-checkpoint hash should reflect the WAL-applied UPDATE"
+    )
+
+
+def test_canonicalize_with_wal_does_not_silently_return_old_hash(tmp_path):
+    """The reviewer's exact failure mode: WAL writes, hash unchanged.
+
+    Before the fix, this returned the OLD hash and a verifier would
+    report VERIFIED against bytes consumers will never see. Now it
+    must raise SqliteNotQuiescent so the user knows to checkpoint
+    before signing.
+    """
+    import sqlite3
+    from imspy_simulation.provenance.errors import SqliteNotQuiescent
+
+    d = make_minimal_d(tmp_path)
+    tdf = d / "analysis.tdf"
+
+    h_before = canonicalize_d(d)
+
+    conn = sqlite3.connect(tdf)
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute(
+        "UPDATE GlobalMetadata SET Value = 'WAL-MUTATED' WHERE Key = 'InstrumentName';"
+    )
+    conn.commit()
+    # Deliberately do NOT close — keep WAL files alive.
+
+    try:
+        with pytest.raises(SqliteNotQuiescent):
+            canonicalize_d(d)
+    finally:
+        conn.close()
+
+
 def test_compose_content_hash_includes_all_components():
     """The composed content hash must depend on each input component."""
     d = b"\x01" * 32

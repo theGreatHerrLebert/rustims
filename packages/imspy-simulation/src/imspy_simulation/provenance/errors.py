@@ -55,3 +55,32 @@ class Unsigned(ProvenanceError):
 
 class MissingArtifact(ProvenanceError):
     """The sidecar references an artifact (.d, ground truth) that does not exist on disk."""
+
+
+class SqliteNotQuiescent(ProvenanceError):
+    """A SQLite file we are about to hash has unflushed sidecar state.
+
+    Specifically, one of the following is present next to the .sqlite file:
+
+      - ``-wal``  : Write-Ahead Log with possibly committed-but-uncheckpointed pages
+      - ``-shm``  : WAL shared-memory file
+      - ``-journal``: rollback journal from a crashed or in-flight write
+
+    The canonical hasher opens with ``mode=ro&immutable=1``, which DELIBERATELY
+    ignores these sidecars. That is the right choice for hashing — but only if
+    they do not exist. If they do, the bytes the hasher sees can differ from
+    what an ordinary SQLite reader sees, which would let us attest to a view
+    that consumers will never read. Refusing here is the only safe option.
+    """
+
+    def __init__(self, db_path, sidecar_files):
+        self.db_path = db_path
+        self.sidecar_files = list(sidecar_files)
+        files_str = ", ".join(p.name for p in self.sidecar_files)
+        super().__init__(
+            f"refusing to hash {db_path}: SQLite sidecar files present "
+            f"({files_str}). Close all writers and run "
+            f"'PRAGMA wal_checkpoint(TRUNCATE)' or remove the journal "
+            f"before hashing — otherwise the hash would not represent "
+            f"what consumers will read."
+        )

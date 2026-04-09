@@ -125,20 +125,11 @@ def sign_simulation_output(
                 f"ground-truth database does not exist: {ground_truth_path}"
             )
 
-    # Refuse to sign if a stale rollback journal is present. Our
-    # canonical hasher opens analysis.tdf with mode=ro&immutable=1,
-    # which deliberately ignores the journal — that is the right
-    # behavior for hashing, but it means a stale journal would let us
-    # attest to a view that sqlite would roll back on the next write.
-    # Surfacing this as ProvenanceError lets the simulator hook's
-    # existing required=true path handle it uniformly.
-    _journal_path = d_path / "analysis.tdf-journal"
-    if _journal_path.exists():
-        raise ProvenanceError(
-            f"stale rollback journal at {_journal_path}; refusing to sign "
-            f"because the canonical hasher opens immutable and would attest "
-            f"to a view that sqlite would otherwise roll back"
-        )
+    # The journal/-wal/-shm quiescence check is centralized inside
+    # canonicalize_sqlite (see canonicalize._assert_sqlite_quiescent).
+    # Any of those sidecars present will surface as SqliteNotQuiescent,
+    # which is a ProvenanceError subclass, so the simulator hook's
+    # existing required=true handler catches it without special-casing.
 
     if sidecar_path is None:
         sidecar_path = d_path.parent / f"{experiment_name}.provenance.json"

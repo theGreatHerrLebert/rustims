@@ -22,6 +22,7 @@ from imspy_simulation.provenance.errors import (
     KeyNotFoundError,
     MalformedSidecar,
     MissingArtifact,
+    SqliteNotQuiescent,
     UnknownVersion,
 )
 from imspy_simulation.provenance.verify import (
@@ -167,6 +168,9 @@ def main(argv: list[str] | None = None) -> int:
     except KeyNotFoundError as e:
         print(f"timsim-verify: key error: {e}", file=sys.stderr)
         return EXIT_KEY_ERROR
+    except SqliteNotQuiescent as e:
+        print(f"timsim-verify: artifact error: {e}", file=sys.stderr)
+        return EXIT_SIDECAR_ERROR
     except (MalformedSidecar, UnknownVersion, MissingArtifact) as e:
         print(f"timsim-verify: sidecar error: {e}", file=sys.stderr)
         return EXIT_SIDECAR_ERROR

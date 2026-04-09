@@ -42,7 +42,15 @@ import unicodedata
 from pathlib import Path
 from typing import Iterator, Union
 
+from imspy_simulation.provenance.errors import SqliteNotQuiescent
+
 PathLike = Union[str, Path]
+
+# SQLite sidecar suffixes that, if present, mean the main DB file does
+# not represent the bytes ordinary readers will see. We refuse to hash
+# in their presence rather than silently producing a misleading digest.
+# See SqliteNotQuiescent in errors.py for the rationale.
+_SQLITE_SIDECAR_SUFFIXES = ("-journal", "-wal", "-shm")
 
 CANONICALIZATION_VERSION = "v0"
 
@@ -164,6 +172,29 @@ def _iter_canonical_sql_records(conn: sqlite3.Connection) -> Iterator[bytes]:
             yield b"".join(parts)
 
 
+def _assert_sqlite_quiescent(db_path: Path) -> None:
+    """Raise SqliteNotQuiescent if any SQLite sidecar exists next to ``db_path``.
+
+    The check is purely a filesystem stat — we do NOT open or modify the
+    file. This means it is safe to call from the verifier (which must be
+    side-effect free) as well as from the signer.
+
+    Detecting -wal/-shm at hash time is the only correct response to
+    WAL-mode SQLite files: ``mode=ro&immutable=1`` deliberately ignores
+    the WAL, so without this check the hash would describe a view that
+    ordinary readers will never see, and a verifier could attest VERIFIED
+    against a stale main-DB image.
+    """
+    db_path = Path(db_path)
+    found = []
+    for suffix in _SQLITE_SIDECAR_SUFFIXES:
+        candidate = db_path.with_name(db_path.name + suffix)
+        if candidate.exists():
+            found.append(candidate)
+    if found:
+        raise SqliteNotQuiescent(db_path, found)
+
+
 def canonicalize_sqlite(db_path: PathLike) -> bytes:
     """Return the SHA-256 of the canonical SQL dump of a SQLite file.
 
@@ -179,8 +210,14 @@ def canonicalize_sqlite(db_path: PathLike) -> bytes:
         - Any added or removed row
         - Any added or removed column or table
         - Any column type difference
+
+    Raises ``SqliteNotQuiescent`` if any SQLite sidecar (-journal, -wal,
+    -shm) exists alongside the file. This guard is centralized here so
+    every caller — sign, verify, smoke test, ad-hoc CLI use — gets the
+    same protection without having to remember it.
     """
     db_path = Path(db_path)
+    _assert_sqlite_quiescent(db_path)
     # Read-only URI mode so we never accidentally modify the database we're
     # hashing. immutable=1 also tells SQLite to skip locking, which is faster
     # and avoids creating -journal files next to the .d.
