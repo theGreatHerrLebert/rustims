@@ -72,7 +72,13 @@ pytestmark = pytest.mark.slow
 
 REAL_DDA_D = Path("/scratch/raw/dda/blanks/K240723_001_S1-A2_1_2772.d")
 REAL_DIA_D = Path("/media/hd02/data/raw/synchro/synchro-hela.d")
-SIM_DDA_D = Path("/tmp/timsim_dda_demo/out/TIMSIM-DDA-DEMO/TIMSIM-DDA-DEMO.d")
+# A durable TimSim DDA output from the paper's examples directory.
+# 8256 frames, 19k PasefFrameMsMsInfo rows, 19k Precursors — much
+# more representative than a freshly-generated few-peptide quickie.
+SIM_DDA_D = Path(
+    "/media/hd02/timsim/submission/examples/"
+    "TIMSIM-DDA-HELA-10K-001/TIMSIM-DDA-HELA-10K-001.d"
+)
 SIM_DIA_D = Path("/scratch/timsim-demo/TIMSIM-HeLa10K-001/TIMSIM-HeLa10K-001.d")
 
 # mzML diversity:
