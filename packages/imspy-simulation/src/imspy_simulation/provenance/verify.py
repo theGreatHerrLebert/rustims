@@ -73,6 +73,52 @@ class FieldCheck:
 
 
 @dataclass
+class TrustCheck:
+    """Trust-pinning result. Layered ON TOP of the integrity check.
+
+    Trust is conceptually orthogonal to integrity:
+
+      - Integrity (signature_ok + per-field hash checks): "the bytes match
+        what was signed by the key embedded in the sidecar". Always
+        evaluated.
+      - Trust (this struct): "the embedded key is who I expected it to
+        be". Only evaluated if the user passed --expected-key-id or
+        --require-trusted; otherwise reported as ``not_requested``.
+
+    A bundle that fails integrity but passes trust is still a failure.
+    A bundle that passes integrity but fails trust is also a failure.
+    Both must be true for overall_ok.
+
+    Status values:
+      - "not_requested": no trust check was requested by the caller.
+      - "ok":             the embedded key matched the user's expectation.
+      - "id_mismatch":    --expected-key-id was given but the sidecar's
+                          key_id is different.
+      - "not_in_registry": --require-trusted was given but the sidecar's
+                           signing key is not in the trusted-keys registry.
+      - "registry_pem_mismatch": --require-trusted was given, the
+                                 sidecar's key_id IS in the registry, but
+                                 the registered PEM differs from the
+                                 sidecar's embedded key. This catches
+                                 forgeries that reuse a trusted key_id
+                                 but ship different bytes.
+    """
+
+    status: str = "not_requested"
+    detail: str = ""
+    expected_key_id: str = ""
+    actual_key_id: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.status in ("ok", "not_requested")
+
+    @property
+    def was_requested(self) -> bool:
+        return self.status != "not_requested"
+
+
+@dataclass
 class VerificationResult:
     """The full result of verifying a sidecar."""
 
@@ -81,6 +127,7 @@ class VerificationResult:
     checks: list = field(default_factory=list)
     signature_ok: bool = False
     overall_ok: bool = False
+    trust: TrustCheck = field(default_factory=TrustCheck)
 
 
 def _hex(b: bytes) -> str:
@@ -192,6 +239,9 @@ def verify_sidecar(
     *,
     public_key_override: PathLike | None = None,
     config_path_override: PathLike | None = None,
+    expected_key_id: str | None = None,
+    require_trusted: bool = False,
+    trusted_registry_path: PathLike | None = None,
 ) -> VerificationResult:
     """Verify a sidecar by recomputing all referenced hashes and checking the signature.
 
@@ -201,10 +251,7 @@ def verify_sidecar(
         Path to the ``*.provenance.json`` sidecar file.
     public_key_override
         Optional path to a PEM verifying key. If given, this key is used
-        instead of the one embedded in the sidecar. This is how a caller
-        pins verification to a known-trusted key — without it, the
-        embedded key only proves *integrity* (the sidecar and the files
-        match each other), not *identity*.
+        instead of the one embedded in the sidecar.
     config_path_override
         Optional path to the TOML config file to hash. If given, this
         path is hashed and compared to ``payload.config_hash``. If not
@@ -213,6 +260,18 @@ def verify_sidecar(
         ``config_hash`` check is reported as UNCHECKED — we **never**
         fall back to the signed value, because that would make the
         check tautological.
+    expected_key_id
+        Optional ad-hoc trust pin. If given, the verifier requires the
+        signing key id to equal this value. Mismatch sets the trust
+        check status to ``id_mismatch`` and overall_ok to False.
+    require_trusted
+        If True, the signing key must be present in the trusted-keys
+        registry AND its embedded PEM must equal the registered PEM.
+        Mismatch sets the trust check status to ``not_in_registry`` or
+        ``registry_pem_mismatch`` and overall_ok to False.
+    trusted_registry_path
+        Optional override for the trusted-keys registry path. Default:
+        ``~/.config/timsim/trusted_keys.json``.
 
     Raises
     ------
@@ -222,9 +281,11 @@ def verify_sidecar(
         Sidecar has a ``type`` or ``canonicalization_version`` we cannot handle.
     MissingArtifact
         Sidecar references a ``.d`` or ``synthetic_data.db`` that does not exist.
+    SqliteNotQuiescent
+        A SQLite file we need to hash has -wal/-shm/-journal sidecars present.
 
-    Hash mismatches and signature mismatches do NOT raise; they appear
-    on the returned ``VerificationResult``.
+    Hash mismatches, signature mismatches, and trust mismatches do NOT
+    raise; they appear on the returned ``VerificationResult``.
     """
     sidecar_path = Path(sidecar_path)
     if not sidecar_path.is_file():
@@ -386,7 +447,20 @@ def verify_sidecar(
     except Exception:
         signature_ok = False
 
-    overall_ok = signature_ok and all(c.status == STATUS_OK for c in checks)
+    # Trust check (layered ON TOP of integrity).
+    trust = _evaluate_trust(
+        payload=payload,
+        sidecar=sidecar,
+        expected_key_id=expected_key_id,
+        require_trusted=require_trusted,
+        trusted_registry_path=trusted_registry_path,
+    )
+
+    overall_ok = (
+        signature_ok
+        and all(c.status == STATUS_OK for c in checks)
+        and trust.ok
+    )
 
     return VerificationResult(
         sidecar_path=sidecar_path,
@@ -394,4 +468,111 @@ def verify_sidecar(
         checks=checks,
         signature_ok=signature_ok,
         overall_ok=overall_ok,
+        trust=trust,
+    )
+
+
+def _evaluate_trust(
+    *,
+    payload: Payload,
+    sidecar: Sidecar,
+    expected_key_id: str | None,
+    require_trusted: bool,
+    trusted_registry_path: PathLike | None,
+) -> TrustCheck:
+    """Run the optional trust pinning checks. Returns a TrustCheck struct.
+
+    Both ``expected_key_id`` and ``require_trusted`` are evaluated. If
+    both are given and either fails, the FIRST failure to be discovered
+    is reported (id mismatch wins because it's a stronger user assertion).
+    """
+    actual_key_id = payload.key_id
+
+    # No trust pinning requested → always "ok" but flagged as not_requested
+    # so the CLI can render it as "(not pinned)" rather than "trusted".
+    if expected_key_id is None and not require_trusted:
+        return TrustCheck(
+            status="not_requested",
+            actual_key_id=actual_key_id,
+        )
+
+    # Ad-hoc pin via --expected-key-id.
+    if expected_key_id is not None:
+        if expected_key_id != actual_key_id:
+            return TrustCheck(
+                status="id_mismatch",
+                detail=(
+                    f"sidecar was signed by {actual_key_id!r} but caller "
+                    f"expected {expected_key_id!r}"
+                ),
+                expected_key_id=expected_key_id,
+                actual_key_id=actual_key_id,
+            )
+
+    # Registry-based trust check via --require-trusted.
+    if require_trusted:
+        # Local import to avoid a circular dep at module load time.
+        from imspy_simulation.provenance.trust import TrustedKeyRegistry
+
+        try:
+            registry = TrustedKeyRegistry.load(trusted_registry_path)
+        except MalformedSidecar as e:
+            return TrustCheck(
+                status="not_in_registry",
+                detail=f"trusted-keys registry is malformed: {e}",
+                actual_key_id=actual_key_id,
+            )
+
+        entry = registry.find(actual_key_id)
+        if entry is None:
+            return TrustCheck(
+                status="not_in_registry",
+                detail=(
+                    f"key {actual_key_id!r} is not in the trusted-keys "
+                    f"registry at {registry.path}. Add it with "
+                    f"'timsim-keys trust ...' if you trust this signer."
+                ),
+                actual_key_id=actual_key_id,
+            )
+
+        # The registry entry exists. Now make sure the embedded PEM
+        # matches what is registered, NOT just that the key_id matches.
+        # If they differ, someone shipped a sidecar that claims a
+        # trusted key id but signed with different bytes — a forgery.
+        try:
+            sidecar_pubkey = public_key_from_b64(sidecar.verifying_key)
+            registered_pubkey = entry.load_public_key()
+        except (ValueError, ProvenanceError) as e:
+            return TrustCheck(
+                status="registry_pem_mismatch",
+                detail=f"could not compare sidecar key to registered key: {e}",
+                actual_key_id=actual_key_id,
+            )
+
+        from cryptography.hazmat.primitives import serialization
+
+        sidecar_raw = sidecar_pubkey.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        registered_raw = registered_pubkey.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        if sidecar_raw != registered_raw:
+            return TrustCheck(
+                status="registry_pem_mismatch",
+                detail=(
+                    f"sidecar claims trusted key id {actual_key_id!r} "
+                    f"but its embedded public key does not match the one "
+                    f"in the registry. This is consistent with a forgery."
+                ),
+                actual_key_id=actual_key_id,
+            )
+
+    # All requested trust checks passed.
+    return TrustCheck(
+        status="ok",
+        expected_key_id=expected_key_id or "",
+        actual_key_id=actual_key_id,
     )

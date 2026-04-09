@@ -1,13 +1,16 @@
 """``timsim-verify`` command-line interface for the provenance subsystem.
 
-Exit codes (plan §6.3):
+Exit codes:
     0 — verified
     1 — generic error
     2 — key error (missing or unreadable)
-    3 — sidecar error (missing, malformed, unknown version, missing artifact)
+    3 — sidecar error (missing, malformed, unknown version, missing artifact,
+        SQLite not quiescent)
     4 — unsigned (only failure if --strict)
     5 — hash mismatch (tamper detected)
     6 — signature mismatch
+    7 — trust check failed (--expected-key-id mismatch, or key not in
+        trusted-keys registry under --require-trusted)
 """
 
 from __future__ import annotations
@@ -38,6 +41,7 @@ EXIT_SIDECAR_ERROR = 3
 EXIT_UNSIGNED = 4
 EXIT_HASH_MISMATCH = 5
 EXIT_SIGNATURE_MISMATCH = 6
+EXIT_KEY_NOT_TRUSTED = 7
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -87,6 +91,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "check is reported as UNCHECKED."
         ),
     )
+    parser.add_argument(
+        "--expected-key-id",
+        type=str,
+        default=None,
+        metavar="KEY_ID",
+        help=(
+            "Pin verification to a specific signing key id (e.g. "
+            "'timsim-local-q4ffrs376n5yefou'). If the sidecar's key_id "
+            "differs, verification fails with exit code 7. This is the "
+            "smallest way to convert integrity into identity: assert out "
+            "of band that you expect THIS signer."
+        ),
+    )
+    parser.add_argument(
+        "--require-trusted",
+        action="store_true",
+        help=(
+            "Require the sidecar's signing key to be present in the "
+            "trusted-keys registry (~/.config/timsim/trusted_keys.json). "
+            "Use 'timsim-keys trust ...' to add a key to the registry. "
+            "Without this flag, the embedded verifying key proves only "
+            "integrity, not identity."
+        ),
+    )
     return parser
 
 
@@ -121,20 +149,42 @@ def _print_checks(result: VerificationResult) -> None:
     sig_status = "OK       " if result.signature_ok else "MISMATCH "
     sig_marker = " " if result.signature_ok else "*"
     print(f" {sig_marker} {'signature':<{width}}  {sig_status}  (ed25519)")
+
+    # Trust line — only printed if a trust check was requested or failed.
+    trust = result.trust
+    if trust.was_requested or trust.status not in ("ok", "not_requested"):
+        trust_label = {
+            "ok": "TRUSTED  ",
+            "id_mismatch": "ID MISMTCH",
+            "not_in_registry": "NOT TRUSTD",
+            "registry_pem_mismatch": "PEM FORGED",
+            "not_requested": "(not pin) ",
+        }.get(trust.status, trust.status.upper().ljust(10))
+        marker = " " if trust.ok else "*"
+        print(f" {marker} {'trust':<{width}}  {trust_label} ({trust.actual_key_id})")
+        if not trust.ok and trust.detail:
+            print(f"     note:      {trust.detail}")
     print()
 
 
 def _exit_for_failure(result: VerificationResult) -> int:
-    """Pick the most specific exit code for a failed verification."""
+    """Pick the most specific exit code for a failed verification.
+
+    Order of precedence (most specific first):
+        - signature mismatch  -> 6
+        - hash mismatch       -> 5
+        - hash unchecked      -> 5 (we could not verify, treat as failure)
+        - trust failure       -> 7
+        - other               -> 1
+    """
     if not result.signature_ok:
         return EXIT_SIGNATURE_MISMATCH
     if any(c.status == "mismatch" for c in result.checks):
         return EXIT_HASH_MISMATCH
     if any(c.status == "unchecked" for c in result.checks):
-        # We could not verify everything; this is not a tamper but
-        # also not a clean VERIFIED. Use the hash-mismatch code so
-        # automation does not silently treat it as success.
         return EXIT_HASH_MISMATCH
+    if not result.trust.ok:
+        return EXIT_KEY_NOT_TRUSTED
     return EXIT_GENERIC
 
 
@@ -164,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
             sidecar_path,
             public_key_override=args.public_key,
             config_path_override=args.config,
+            expected_key_id=args.expected_key_id,
+            require_trusted=args.require_trusted,
         )
     except KeyNotFoundError as e:
         print(f"timsim-verify: key error: {e}", file=sys.stderr)

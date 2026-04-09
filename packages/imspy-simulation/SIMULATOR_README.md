@@ -378,7 +378,42 @@ timsim-verify {save_path}/{experiment_name}
 
 The verifier recomputes a canonical content hash over the `.d` (designed to survive `VACUUM`, `REINDEX`, and page-size differences in `analysis.tdf`) and reports any mismatch field-by-field. If the config copy is missing and no `--config` override is given, the `config_hash` check is reported as `UNCHECKED` and the overall verification fails — `UNCHECKED` is never silently treated as `OK`.
 
-This is a **software-rooted** prototype: the signing key lives in `~/.config/timsim/keys/`, not in an HSM. It demonstrates the structural chain of custody but is not a substitute for instrument-rooted attestation. The embedded verifying key proves that the sidecar and the files match each other — it does not, on its own, prove the *identity* of the signer. To get that, pin a known-good public key out-of-band (a future iteration will add `--expected-key-fingerprint` for this). See `SIGNING.md` §9 for the full disclosure and the limitations of the Phase 0 prototype.
+This is a **software-rooted** prototype: the signing key lives in `~/.config/timsim/keys/`, not in an HSM. It demonstrates the structural chain of custody but is not a substitute for instrument-rooted attestation. See `SIGNING.md` §9 for the full disclosure.
+
+### Trust model: integrity vs identity
+
+The embedded verifying key in the sidecar proves *integrity* — the bytes match what some key signed — but on its own it does **not** prove *identity*. Anyone can generate a fresh keypair and sign their own bundle; the math will still check out. To convert integrity into identity, the verifier must know which key it expects.
+
+Two layered ways to do this:
+
+1. **Ad-hoc pinning** with `--expected-key-id`:
+   ```bash
+   timsim-verify {save_path}/{experiment_name} \
+     --expected-key-id timsim-local-q4ffrs376n5yefou
+   ```
+   The verifier fails (exit 7) if the sidecar's key id is anything else. Useful for one-off checks.
+
+2. **Trusted-keys registry** with `--require-trusted`:
+   ```bash
+   # Inspect your local key (auto-generated on first use)
+   timsim-keys show
+
+   # Add a key to the registry (can be a sidecar, a directory, or a PEM file)
+   timsim-keys trust /path/to/{experiment}.provenance.json --comment "lab X"
+   timsim-keys trust /path/to/peer-public-key.pem --comment "collaborator Y"
+
+   # List trusted keys
+   timsim-keys list
+
+   # Verify a bundle, requiring its signing key to be in the registry
+   timsim-verify {save_path}/{experiment_name} --require-trusted
+
+   # Remove trust
+   timsim-keys untrust timsim-local-q4ffrs376n5yefou
+   ```
+   The registry stores the full public key, not just the id, so a forged sidecar that *claims* a trusted key id but ships different bytes is caught (`registry_pem_mismatch`). The `--comment` flag is required on `timsim-keys trust` to prevent thoughtless trust grants.
+
+Without either flag, `timsim-verify` reports `(not pinned)` for the trust line and only checks integrity. That is the correct default for ad-hoc inspection but should not be used for automated trust decisions.
 
 ## Citation
 

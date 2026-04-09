@@ -74,18 +74,82 @@ def test_missing_public_key_override_raises_key_not_found(tmp_path):
         verify_sidecar(sidecar, public_key_override=tmp_path / "no-such.pem")
 
 
-def test_load_private_key_unreadable_raises(tmp_path):
+def test_load_private_key_corrupt_raises_malformed_key(tmp_path):
+    """A corrupt PEM file must raise MalformedKey, not bare ValueError.
+
+    The simulator hook only catches ProvenanceError. Without this
+    wrapping, a corrupt key file would abort the simulation even with
+    [provenance] required = false. (Reviewer round-3)
+    """
+    from imspy_simulation.provenance.errors import MalformedKey
     junk = tmp_path / "junk.pem"
     junk.write_bytes(b"not a real key")
-    with pytest.raises(Exception):  # cryptography raises a ValueError or similar
+    with pytest.raises(MalformedKey):
         load_private_key(junk)
 
 
-def test_load_public_key_unreadable_raises(tmp_path):
+def test_load_public_key_corrupt_raises_malformed_key(tmp_path):
+    from imspy_simulation.provenance.errors import MalformedKey
     junk = tmp_path / "junk.pem"
     junk.write_bytes(b"not a real public key")
-    with pytest.raises(Exception):
+    with pytest.raises(MalformedKey):
         load_public_key(junk)
+
+
+def test_load_private_key_wrong_algorithm_raises_malformed_key(tmp_path):
+    """A valid PEM that holds a non-Ed25519 key is also MalformedKey."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from imspy_simulation.provenance.errors import MalformedKey
+
+    rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = rsa_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    rsa_path = tmp_path / "rsa.pem"
+    rsa_path.write_bytes(pem)
+    with pytest.raises(MalformedKey, match="not an Ed25519 private key"):
+        load_private_key(rsa_path)
+
+
+def test_sign_with_corrupt_private_key_raises_malformed_key(tmp_path):
+    """The simulator-hook contract: sign_simulation_output with a corrupt
+    key raises ProvenanceError (specifically MalformedKey, a subclass).
+
+    The hook catches ProvenanceError, so this means a corrupt key file
+    with required=false will produce a warning and continue, NOT abort
+    the simulation. Without the wrapping, ValueError bubbles past the
+    hook's except clause. (Reviewer round-3)
+    """
+    from imspy_simulation.provenance.errors import MalformedKey, ProvenanceError
+    d = make_minimal_d(tmp_path, name="x")
+    config = tmp_path / "c.toml"
+    config.write_bytes(b"[experiment]\nexperiment_name = \"x\"\n")
+    bad_key = tmp_path / "bad.pem"
+    bad_key.write_bytes(b"-----BEGIN PRIVATE KEY-----\nGARBAGE\n-----END PRIVATE KEY-----\n")
+
+    with pytest.raises(ProvenanceError):  # MalformedKey is a ProvenanceError
+        sign_simulation_output(
+            d_path=d,
+            ground_truth_path=None,
+            config_path=config,
+            experiment_name="x",
+            simulator_version="test",
+            private_key_path=bad_key,
+        )
+
+    # And the more specific check, since callers may want to distinguish.
+    with pytest.raises(MalformedKey):
+        sign_simulation_output(
+            d_path=d,
+            ground_truth_path=None,
+            config_path=config,
+            experiment_name="x",
+            simulator_version="test",
+            private_key_path=bad_key,
+        )
 
 
 # ---------------------------------------------------------------------------

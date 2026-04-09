@@ -35,6 +35,7 @@ gui = [
 timsim = "imspy_simulation.timsim.simulator:main"
 timsim-gui = "imspy_simulation.timsim.gui:main"
 timsim-verify = "imspy_simulation.provenance.cli:main"
+timsim-keys = "imspy_simulation.provenance.keys_cli:main"
 
 [build-system]
 requires = ["poetry-core"]

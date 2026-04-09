@@ -34,7 +34,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from imspy_simulation.provenance.errors import KeyNotFoundError
+from imspy_simulation.provenance.errors import KeyNotFoundError, MalformedKey
 
 PathLike = Union[str, Path]
 
@@ -131,26 +131,63 @@ def write_keypair(keypair: KeyPair, key_dir: PathLike | None = None) -> Path:
 
 
 def load_private_key(path: PathLike) -> Ed25519PrivateKey:
-    """Load an Ed25519 private key from a PEM file."""
+    """Load an Ed25519 private key from a PEM file.
+
+    Raises
+    ------
+    KeyNotFoundError
+        The file does not exist.
+    MalformedKey
+        The file exists but cannot be parsed as an Ed25519 PKCS#8 PEM
+        (corrupt, wrong armor, wrong algorithm). MalformedKey is a
+        ``ProvenanceError`` subclass so the simulator hook's
+        ``except ProvenanceError`` catches it and honors the
+        ``[provenance] required`` contract.
+    """
     path = Path(path)
     if not path.is_file():
         raise KeyNotFoundError(f"private key not found: {path}")
     pem = path.read_bytes()
-    key = serialization.load_pem_private_key(pem, password=None)
+    try:
+        key = serialization.load_pem_private_key(pem, password=None)
+    except (ValueError, TypeError) as e:
+        raise MalformedKey(
+            f"private key at {path} could not be parsed: {e}"
+        ) from e
     if not isinstance(key, Ed25519PrivateKey):
-        raise KeyNotFoundError(f"key at {path} is not an Ed25519 private key")
+        raise MalformedKey(
+            f"key at {path} is not an Ed25519 private key "
+            f"(got {type(key).__name__})"
+        )
     return key
 
 
 def load_public_key(path: PathLike) -> Ed25519PublicKey:
-    """Load an Ed25519 public key from a PEM file."""
+    """Load an Ed25519 public key from a PEM file.
+
+    Raises
+    ------
+    KeyNotFoundError
+        The file does not exist.
+    MalformedKey
+        The file exists but cannot be parsed as an Ed25519
+        SubjectPublicKeyInfo PEM.
+    """
     path = Path(path)
     if not path.is_file():
         raise KeyNotFoundError(f"public key not found: {path}")
     pem = path.read_bytes()
-    key = serialization.load_pem_public_key(pem)
+    try:
+        key = serialization.load_pem_public_key(pem)
+    except (ValueError, TypeError) as e:
+        raise MalformedKey(
+            f"public key at {path} could not be parsed: {e}"
+        ) from e
     if not isinstance(key, Ed25519PublicKey):
-        raise KeyNotFoundError(f"key at {path} is not an Ed25519 public key")
+        raise MalformedKey(
+            f"key at {path} is not an Ed25519 public key "
+            f"(got {type(key).__name__})"
+        )
     return key
 
 

@@ -14,6 +14,18 @@ class KeyNotFoundError(ProvenanceError):
     """A signing or verifying key was requested but not found on disk."""
 
 
+class MalformedKey(ProvenanceError):
+    """A key file exists on disk but cannot be parsed.
+
+    Distinct from ``KeyNotFoundError`` (which is "not present"). Raised
+    when, for example, a PEM file is corrupt, has the wrong armor, or
+    holds a key of the wrong algorithm. The simulator hook catches
+    ``ProvenanceError`` (the base class) so a malformed key respects the
+    ``[provenance] required = false`` contract — warn and continue,
+    rather than abort with a stack trace.
+    """
+
+
 class MalformedSidecar(ProvenanceError):
     """The sidecar JSON exists but is malformed, missing required fields, or has the wrong shape."""
 
