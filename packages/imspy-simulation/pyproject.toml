@@ -49,7 +49,10 @@ pytest-cov = "^4.1.0"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+# -m "not slow" makes the default suite fast (~1s for the provenance
+# tests). Run benchmarks explicitly with `pytest -m slow` or override
+# with `pytest -m ""`.
+addopts = "-v --tb=short -m \"not slow\""
 markers = [
-    "slow: marks tests that build large fixtures or run real simulations (deselect with '-m \"not slow\"')",
+    "slow: marks tests that build large fixtures or run real simulations (deselect by default; run with '-m slow' to include)",
 ]

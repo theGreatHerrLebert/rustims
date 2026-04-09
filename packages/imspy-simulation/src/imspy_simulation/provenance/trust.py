@@ -179,21 +179,27 @@ class TrustedKeyRegistry:
         return cls(path=registry_path, keys=keys)
 
     def save(self) -> None:
-        """Atomically write the registry to disk (write temp + rename)."""
+        """Atomically write the registry to disk (write temp + fsync + rename)."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         blob = {
             "schema": REGISTRY_SCHEMA,
             "keys": [k.to_dict() for k in self.keys],
         }
+        serialized = json.dumps(
+            blob, indent=2, sort_keys=True, ensure_ascii=False
+        ).encode("utf-8")
         tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-        tmp.write_text(
-            json.dumps(blob, indent=2, sort_keys=True, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        try:
-            os.fsync(os.open(tmp, os.O_RDONLY))
-        except OSError:
-            pass
+        # Open via context manager so the file descriptor is closed
+        # even if fsync raises. Mirrors the pattern in
+        # sign.write_sidecar_atomic.
+        with open(tmp, "wb") as f:
+            f.write(serialized)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                # Some filesystems do not support fsync; tolerate.
+                pass
         os.replace(tmp, self.path)
 
     def add(self, key: TrustedKey) -> None:
