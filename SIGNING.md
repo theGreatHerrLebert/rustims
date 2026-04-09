@@ -479,6 +479,205 @@ Expected reviewer or repository policy:
 - If a dataset is submitted as real instrument data and carries a TimSim/Synthedia/SMITER-style sidecar: flag it as declared-synthetic unless there is a separate valid vendor/instrument lineage chain.
 - If no sidecar is present: treat provenance as unknown, not proven real.
 
+#### Usage examples
+
+Concrete copy-pasteable workflows for the four operations: signing and verifying, for both TimSim `.d` output and externally produced mzML.
+
+##### TimSim `.d` — sign
+
+TimSim signs by default; opt out via `[provenance] sign = false` in the config:
+
+```toml
+# my_config.toml
+[paths]
+save_path = "/data/out"
+reference_path = "/data/blank.d"
+fasta_path = "/data/proteome.fasta"
+
+[experiment]
+experiment_name = "demo"
+acquisition_type = "DIA"
+gradient_length = 3600.0
+
+[provenance]
+sign = true            # default: true (set false to opt out)
+required = false       # default: false (set true to abort the run on signing failure)
+private_key_path = ""  # default: ~/.config/timsim/keys/signing_key.pem
+```
+
+```bash
+timsim my_config.toml
+```
+
+Produces:
+
+```
+/data/out/demo/
+├── demo.d/
+│   ├── analysis.tdf
+│   └── analysis.tdf_bin
+├── synthetic_data.db
+├── demo.config.toml          # the config copy that the sidecar binds to
+└── demo.provenance.json      # the sidecar
+```
+
+To sign an existing `.d` from the Python API (e.g. for an older TimSim run that did not have signing enabled):
+
+```python
+from imspy_simulation.provenance import sign_simulation_output
+
+sidecar = sign_simulation_output(
+    d_path="/data/out/demo/demo.d",
+    ground_truth_path="/data/out/demo/synthetic_data.db",  # or None
+    config_path="/data/out/demo/demo.config.toml",
+    experiment_name="demo",
+    simulator_version="0.4.1",
+)
+print(f"sidecar written to {sidecar}")
+```
+
+##### TimSim `.d` — verify
+
+```bash
+# Auto-discovers the sidecar
+timsim-verify /data/out/demo
+# or
+timsim-verify /data/out/demo/demo.provenance.json
+```
+
+Output on success:
+
+```
+TimSim provenance verification
+  experiment:        demo
+  producer:          TimSim 0.4.1
+  signed at:         2026-04-09T11:08:03.794Z
+  key id:            timsim-local-q4ffrs376n5yefou
+  canonicalization:  v0
+
+   d_content_hash     OK         (sha256:15921e30e80bfa82f...)
+   ground_truth_hash  OK         (sha256:15188f04e8a321996...)
+   config_hash        OK         (sha256:33c5da9ef6a51adb0...)
+   content_hash       OK         (sha256:c81872830ddb48887...)
+   signature          OK         (ed25519)
+
+VERIFIED
+```
+
+For higher-confidence verification, layer trust pinning on top:
+
+```bash
+# Pin to a specific expected signer
+timsim-verify /data/out/demo --expected-key-id timsim-local-q4ffrs376n5yefou
+
+# Require the signer to be in the local trusted-key registry
+timsim-verify /data/out/demo --require-trusted
+
+# Cross-check the embedded key against an out-of-band PEM
+timsim-verify /data/out/demo --public-key /etc/known_signer.pem
+```
+
+Exit codes:
+
+| Code | Meaning |
+|---|---|
+| `0` | Verified |
+| `1` | Generic / unexpected error |
+| `2` | Key error (missing or unreadable key file) |
+| `3` | Sidecar error (missing, malformed, unknown version, SQLite not quiescent) |
+| `4` | Unsigned (no sidecar found; only fails with `--strict`) |
+| `5` | Hash mismatch (tamper detected) |
+| `6` | Signature mismatch |
+| `7` | Trust pin failed (`--expected-key-id` mismatch or signer not in registry) |
+
+##### mzML — sign (any non-Bruker simulator or converter)
+
+TimSim itself writes Bruker `.d`, but the same provenance scheme covers mzML output from any other tool — Synthedia, SMITER, msconvert, custom simulators, etc. The signing API is one function call:
+
+```python
+from imspy_simulation.provenance import sign_mzml_output
+
+sidecar = sign_mzml_output(
+    mzml_path="/data/out/run.mzML",
+    config_path="/data/out/run_config.toml",  # or None if there is no config
+    experiment_name="run-001",
+    tool_name="Synthedia",       # any string; identifies the producing tool
+    tool_version="2.4.0",
+)
+```
+
+Produces:
+
+```
+/data/out/
+├── run.mzML
+├── run.config.toml          # the copied config (only if config_path was given)
+└── run.provenance.json      # the sidecar
+```
+
+The mzML canonicalization hashes spectrum-level content (m/z, intensity, ion mobility, charge, and any other binary array, plus RT, MS level, polarity, precursor info) in a form that survives whitespace, attribute reordering, indentation, binary-array order, and the optional indexed-mzML wrapper. **Numpress compression is not yet supported in v0** — it raises `ProvenanceError` rather than producing a misleading hash.
+
+##### mzML — verify
+
+```bash
+# The CLI auto-detects mzml vs .d from the sidecar's type tag
+timsim-verify /data/out/run.mzML
+# or
+timsim-verify /data/out/run.provenance.json
+```
+
+Output on success:
+
+```
+TimSim provenance verification
+  experiment:        run-001
+  producer:          Synthedia 2.4.0
+  signed at:         2026-04-09T11:55:44.401Z
+  key id:            timsim-local-q4ffrs376n5yefou
+  canonicalization:  v0
+
+   mzml_content_hash  OK         (sha256:38225b1c86640b151...)
+   config_hash        OK         (sha256:a7a86152e9f9f5200...)
+   content_hash       OK         (sha256:d4bf847b600cc2423...)
+   signature          OK         (ed25519)
+
+VERIFIED
+```
+
+The same trust flags work for mzML verification:
+
+```bash
+timsim-verify /data/out/run.mzML --expected-key-id timsim-local-...
+timsim-verify /data/out/run.mzML --require-trusted
+timsim-verify /data/out/run.mzML --public-key known_signer.pem
+```
+
+Multiple signed mzML bundles can coexist in one directory: the verifier uses the conventional `{sidecar_stem}.mzML` filename pairing first and only falls back to "unique sibling" if the convention does not resolve.
+
+##### Managing keys and trust (any format)
+
+```bash
+# Inspect the local signing key (auto-generated on first use)
+timsim-keys show
+
+# Export the local public key to share with collaborators
+timsim-keys export --to my_public_key.pem
+
+# Trust a key from a sidecar a collaborator sent you
+timsim-keys trust /data/in/their_run.provenance.json --comment "lab X production server"
+
+# Trust a key directly from a PEM file
+timsim-keys trust /etc/collaborator_pub.pem --comment "collaborator Y"
+
+# List trusted keys
+timsim-keys list
+
+# Remove trust
+timsim-keys untrust timsim-local-q4ffrs376n5yefou
+```
+
+The `--comment` flag is required on `timsim-keys trust` so that trust grants are deliberate, not absent-minded.
+
 #### How an attempted "simulated as real" submission fails
 
 This system does not magically detect every unsigned fake. It works by making honest simulator output self-identifying and by giving repositories and reviewers a concrete verification step.
