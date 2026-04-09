@@ -346,14 +346,16 @@ pip install opentims-bruker-bridge
 
 TimSim can cryptographically sign its output `.d` and ground-truth database with an Ed25519 attestation. This is the working reference implementation of the proposal in [`SIGNING.md`](../../SIGNING.md). Enabling it produces a sidecar JSON file alongside the simulation output that binds the `.d`, the ground-truth DB, and the input config under a single signature.
 
-Enable in your TOML config:
+Signing is **on by default**. Every successful `timsim` run produces a sidecar in the experiment directory unless you opt out:
 
 ```toml
 [provenance]
-sign = true                # default: false (will flip to true after stabilization)
+sign = true                # default: true — set to false to opt out
 required = false           # if true, signing failures abort the simulation
 private_key_path = ""      # default: ~/.config/timsim/keys/signing_key.pem
 ```
+
+The first run on a fresh machine auto-generates a software signing key at `~/.config/timsim/keys/signing_key.pem` and prints its key id. To inspect it later: `timsim-keys show`.
 
 After a signed run the layout is:
 

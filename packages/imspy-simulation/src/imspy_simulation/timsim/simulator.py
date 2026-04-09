@@ -1224,15 +1224,18 @@ def main():
     # JOB 11: Provenance signing (Phase 0 prototype, see SIGNING.md)
     # Reads the [provenance] section directly from the raw TOML so we do
     # not have to thread new fields through SimulationConfig. Default is
-    # OFF — flip to default-ON only after the §1.1 container-invariance
-    # tests are stably green in CI.
+    # ON — every successful TimSim run produces a signed sidecar unless
+    # the user explicitly opts out with [provenance] sign = false. The
+    # rationale is the §16 "we sign first" framing in SIGNING.md: the
+    # community norm we want to set is "honest simulators self-disclose,"
+    # and that norm only forms if the default behavior is to disclose.
     try:
         _raw_provenance_cfg = load_toml_config(cli_args.config).get('provenance', {}) or {}
     except Exception as _provenance_cfg_exc:
         logger.warning("  Could not re-read [provenance] config: %s", _provenance_cfg_exc)
         _raw_provenance_cfg = {}
 
-    if _raw_provenance_cfg.get('sign', False):
+    if _raw_provenance_cfg.get('sign', True):
         from imspy_simulation.provenance import (
             ProvenanceError,
             sign_simulation_output,

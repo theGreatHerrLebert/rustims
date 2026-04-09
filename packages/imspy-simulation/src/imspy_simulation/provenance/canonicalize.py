@@ -5,6 +5,36 @@ mass spectrometry data that survives container-level changes (SQLite VACUUM,
 REINDEX, page-size differences) because it operates on *content*, not on
 container bytes.
 
+VERSIONING DISCIPLINE
+=====================
+
+This file is the **v0** implementation. It is **frozen**: no changes are
+permitted to the canonicalization algorithm here, because the bytes it
+produces are the bytes that get hashed and signed. Any change would
+invalidate every existing v0 sidecar in the wild.
+
+If a future revision of the canonicalization is needed (for example, to
+support a new SQLite storage class, or to fix a real determinism bug
+discovered in the wild), it must:
+
+  1. Live in a NEW module, e.g. ``canonicalize_v1.py``.
+  2. Bump the ``canonicalization_version`` field in ``envelope.Payload``
+     and the ``CANONICALIZATION_VERSION`` constant in the new module.
+  3. Be dispatched by ``verify.verify_sidecar`` based on the sidecar's
+     ``canonicalization_version`` tag.
+  4. Coexist with this v0 implementation **indefinitely**, so that
+     pre-existing v0 sidecars remain verifiable forever.
+
+Changes that do NOT alter the byte output are still allowed: refactoring,
+internal helper rename, performance improvements, additional comments,
+type annotations, additional tests. The frozen-ness applies to the
+*observable byte output of canonicalize_value / canonicalize_sqlite /
+canonicalize_d / compose_content_hash on every input*, not to the source
+code text. If you make a change here, run the full
+``tests/test_provenance/test_canonicalize.py`` suite — every assertion
+in §1.1 (container invariance) and §1.2 (determinism) must still hold.
+
+
 Construction (see plan §3):
 
     canonical_sql_dump(db) emits a stream of records:
