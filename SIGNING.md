@@ -90,15 +90,22 @@ Three anchors — instrument, converter, repository — each contribute a distin
 At acquisition:
 
 ```
-H_raw = hash(canonicalize(RAW))
-Sig_V = sign_vendor(H_raw, instrument_id, timestamp)
+canonicalizer = vendor_canonicalizer(
+  vendor,
+  instrument_model,
+  acquisition_mode,
+  raw_format_version,
+  canonicalization_version
+)
+H_raw = hash(canonicalizer(RAW))
+Sig_V = sign_vendor(H_raw, instrument_id, timestamp, canonicalization_version)
 ```
 
 Embedded in RAW metadata: canonical hash, vendor signature, instrument ID, timestamp, certificate chain.
 
 **Guarantees:** RAW originates from a real instrument running vendor-signed firmware. RAW content integrity is verifiable.
 
-*Critical design question: what is canonicalized?* See §9.
+*Critical design question: what is canonicalized?* There is probably no universal `canonicalize(RAW)` function. RAW canonicalization is expected to be vendor-, instrument-, acquisition-mode-, and version-specific. See §9.
 
 ### Step 2 — Converter establishes lineage (RAW → mzML)
 
@@ -110,7 +117,7 @@ mzML provenance block:
   transformation:
     tool       = "ProteoWizard msconvert 3.0.24"
     parameters = {...}
-    H_mzML     = hash(canonicalize(mzML))
+    H_mzML     = hash(canonicalize_mzML_vN(mzML))
   Sig_D = sign_converter(upstream || transformation || H_mzML)
 ```
 
@@ -177,6 +184,25 @@ Shipping tracks 1 and 2 first builds a working reference implementation and comm
 
 Hashing raw file bytes is brittle: RAW files contain volatile metadata (timestamps, read-order artifacts, cache state). The canonical form must be over *content* — ordered spectra and declared metadata fields — not the container.
 
+There are two related but different canonicalization problems:
+
+1. **Open derived formats such as mzML.** The canonicalizer can be public and format-level: parse mzML, extract spectrum content and selected per-spectrum metadata, normalize representation, and hash that content form. This is what the current branch prototypes.
+2. **Vendor RAW formats.** The canonicalizer is likely a family of algorithms, not one function. It may depend on vendor, instrument model, acquisition mode, RAW format version, firmware/software version, and the vendor's internal definition of acquisition content. For some vendors, the practical route may be that the instrument software signs a vendor-produced canonical digest rather than exposing enough proprietary internals for an external canonicalizer.
+
+The RAW-side pseudocode should therefore be read as:
+
+```
+H_raw = hash(canonicalize_raw_vendor_vN(
+  raw_bytes_or_container,
+  vendor,
+  instrument_model,
+  acquisition_mode,
+  raw_format_version
+))
+```
+
+not as a single universal `canonicalize(RAW)` routine.
+
 **Prototype-first requirement.** Before any vendor conversation, the project ships a working canonical-content hasher that:
 
 - Operates on extracted mzML content, not container bytes
@@ -189,6 +215,9 @@ Open questions the prototype must answer:
 - What is in scope? (Spectra: yes. Acquisition log: maybe. Cache/temp state: no.)
 - How are floating-point m/z and intensity values canonicalized across platforms?
 - Can a canonical form be defined without exposing proprietary format internals? (Commitments over extracted content may satisfy vendors who resist canonicalization of the file itself.)
+- Which RAW fields are semantic acquisition content versus volatile storage state for each vendor and acquisition mode?
+- Does the vendor sign a canonical digest it computes internally, or does the community define an external extractor for each vendor format?
+- How are canonicalization versions negotiated and preserved so old signatures remain verifiable after the canonical form evolves?
 
 ### Key management and root of trust
 
