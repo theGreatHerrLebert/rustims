@@ -116,6 +116,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "integrity, not identity."
         ),
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help=(
+            "Emit a single machine-parseable JSON object on stdout instead "
+            "of the human-readable verification report. The exit code is "
+            "unchanged. Intended for automation: CI gates, repository "
+            "ingestion pipelines, batch verifiers, and similar."
+        ),
+    )
     return parser
 
 
@@ -197,9 +207,89 @@ def _exit_for_failure(result: VerificationResult) -> int:
     return EXIT_GENERIC
 
 
+# ---------------------------------------------------------------------------
+# JSON output mode
+# ---------------------------------------------------------------------------
+
+# Schema tag for the JSON envelope. Bumped only when the on-disk shape of
+# the verify-result JSON changes incompatibly. Adding new optional fields
+# is a non-breaking change.
+_JSON_SCHEMA = "timsim.verify-result.v0"
+
+
+def _result_to_json_dict(
+    result: VerificationResult, *, status: str, exit_code: int
+) -> dict:
+    """Convert a successful (or failed-but-evaluated) VerificationResult to JSON."""
+    return {
+        "schema": _JSON_SCHEMA,
+        "status": status,                 # "verified" or "failed"
+        "exit_code": exit_code,
+        "sidecar_path": str(result.sidecar_path),
+        "signature_ok": result.signature_ok,
+        "overall_ok": result.overall_ok,
+        "payload": asdict(result.payload),
+        "checks": [
+            {
+                "name": c.name,
+                "status": c.status,
+                "expected": c.expected,
+                "actual": c.actual,
+                "detail": c.detail,
+            }
+            for c in result.checks
+        ],
+        "trust": {
+            "status": result.trust.status,
+            "was_requested": result.trust.was_requested,
+            "expected_key_id": result.trust.expected_key_id,
+            "actual_key_id": result.trust.actual_key_id,
+            "detail": result.trust.detail,
+        },
+        "error": None,
+    }
+
+
+def _error_to_json_dict(
+    *,
+    status: str,
+    exit_code: int,
+    error_type: str,
+    error_message: str,
+    sidecar_path=None,
+) -> dict:
+    """Convert an error path (unsigned, malformed, missing artifact, etc.) to JSON.
+
+    Always emits the same top-level keys as the success path so consumers
+    can parse the output uniformly. Fields that do not apply to an error
+    are set to ``null``.
+    """
+    return {
+        "schema": _JSON_SCHEMA,
+        "status": status,                 # "unsigned" or "error"
+        "exit_code": exit_code,
+        "sidecar_path": str(sidecar_path) if sidecar_path is not None else None,
+        "signature_ok": None,
+        "overall_ok": False,
+        "payload": None,
+        "checks": None,
+        "trust": None,
+        "error": {
+            "type": error_type,
+            "message": error_message,
+        },
+    }
+
+
+def _emit_json(blob: dict) -> None:
+    """Print a JSON envelope to stdout, indented for human readability."""
+    print(json.dumps(blob, indent=2, sort_keys=True, ensure_ascii=False))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_arg_parser()
     args = parser.parse_args(argv)
+    json_mode = args.json
 
     sidecar_path = find_sidecar_for(args.path)
     if sidecar_path is None:
@@ -208,14 +298,30 @@ def main(argv: list[str] | None = None) -> int:
             f"This file or directory is unsigned."
         )
         if args.strict:
-            print(msg, file=sys.stderr)
-            print("FAILED: --strict and no sidecar present", file=sys.stderr)
+            if json_mode:
+                _emit_json(_error_to_json_dict(
+                    status="unsigned",
+                    exit_code=EXIT_UNSIGNED,
+                    error_type="Unsigned",
+                    error_message=msg,
+                ))
+            else:
+                print(msg, file=sys.stderr)
+                print("FAILED: --strict and no sidecar present", file=sys.stderr)
             return EXIT_UNSIGNED
         # Non-strict: unsigned is informational, NOT a failure. Print
         # the message and return EXIT_OK so shell/CI users do not get a
-        # spurious failure on legitimately unsigned input. (Reviewer #2)
-        print(msg)
-        print("UNSIGNED")
+        # spurious failure on legitimately unsigned input.
+        if json_mode:
+            _emit_json(_error_to_json_dict(
+                status="unsigned",
+                exit_code=EXIT_OK,
+                error_type="Unsigned",
+                error_message=msg,
+            ))
+        else:
+            print(msg)
+            print("UNSIGNED")
         return EXIT_OK
 
     try:
@@ -227,17 +333,71 @@ def main(argv: list[str] | None = None) -> int:
             require_trusted=args.require_trusted,
         )
     except (KeyNotFoundError, MalformedKey) as e:
-        print(f"timsim-verify: key error: {e}", file=sys.stderr)
+        if json_mode:
+            _emit_json(_error_to_json_dict(
+                status="error",
+                exit_code=EXIT_KEY_ERROR,
+                error_type=type(e).__name__,
+                error_message=str(e),
+                sidecar_path=sidecar_path,
+            ))
+        else:
+            print(f"timsim-verify: key error: {e}", file=sys.stderr)
         return EXIT_KEY_ERROR
     except SqliteNotQuiescent as e:
-        print(f"timsim-verify: artifact error: {e}", file=sys.stderr)
+        if json_mode:
+            _emit_json(_error_to_json_dict(
+                status="error",
+                exit_code=EXIT_SIDECAR_ERROR,
+                error_type=type(e).__name__,
+                error_message=str(e),
+                sidecar_path=sidecar_path,
+            ))
+        else:
+            print(f"timsim-verify: artifact error: {e}", file=sys.stderr)
         return EXIT_SIDECAR_ERROR
     except (MalformedSidecar, UnknownVersion, MissingArtifact) as e:
-        print(f"timsim-verify: sidecar error: {e}", file=sys.stderr)
+        if json_mode:
+            _emit_json(_error_to_json_dict(
+                status="error",
+                exit_code=EXIT_SIDECAR_ERROR,
+                error_type=type(e).__name__,
+                error_message=str(e),
+                sidecar_path=sidecar_path,
+            ))
+        else:
+            print(f"timsim-verify: sidecar error: {e}", file=sys.stderr)
         return EXIT_SIDECAR_ERROR
     except Exception as e:  # pragma: no cover - safety net
-        print(f"timsim-verify: unexpected error: {type(e).__name__}: {e}", file=sys.stderr)
+        if json_mode:
+            _emit_json(_error_to_json_dict(
+                status="error",
+                exit_code=EXIT_GENERIC,
+                error_type=type(e).__name__,
+                error_message=str(e),
+                sidecar_path=sidecar_path,
+            ))
+        else:
+            print(
+                f"timsim-verify: unexpected error: {type(e).__name__}: {e}",
+                file=sys.stderr,
+            )
         return EXIT_GENERIC
+
+    # Verification ran. Compute the exit code once so the JSON envelope
+    # can carry it (and so the human-readable path stays in sync).
+    if result.overall_ok:
+        result_exit_code = EXIT_OK
+        result_status = "verified"
+    else:
+        result_exit_code = _exit_for_failure(result)
+        result_status = "failed"
+
+    if json_mode:
+        _emit_json(_result_to_json_dict(
+            result, status=result_status, exit_code=result_exit_code
+        ))
+        return result_exit_code
 
     if args.print_payload:
         print(json.dumps(asdict(result.payload), indent=2, sort_keys=True))
@@ -246,12 +406,8 @@ def main(argv: list[str] | None = None) -> int:
     _print_header(result)
     _print_checks(result)
 
-    if result.overall_ok:
-        print("VERIFIED")
-        return EXIT_OK
-
-    print("FAILED")
-    return _exit_for_failure(result)
+    print("VERIFIED" if result.overall_ok else "FAILED")
+    return result_exit_code
 
 
 if __name__ == "__main__":

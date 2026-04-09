@@ -558,6 +558,163 @@ def test_cli_unsigned_strict_returns_unsigned_exit_code(tmp_path):
     assert rc == EXIT_UNSIGNED
 
 
+# ---------------------------------------------------------------------------
+# --json output mode
+# ---------------------------------------------------------------------------
+#
+# Automation-friendly machine-readable output. The exit codes are
+# unchanged; --json swaps the human-readable report for a single JSON
+# envelope on stdout. The schema tag is "timsim.verify-result.v0".
+
+
+def _run_cli_json(args, capsys):
+    """Helper: run timsim-verify and parse its stdout as JSON."""
+    from imspy_simulation.provenance.cli import main as cli_main
+    rc = cli_main(args)
+    captured = capsys.readouterr()
+    blob = json.loads(captured.out)
+    return rc, blob
+
+
+def _sign_clean_d_bundle(tmp_path):
+    """Build a clean .d bundle for the JSON-mode tests."""
+    d = make_minimal_d(tmp_path, name="json_demo")
+    config = tmp_path / "json_demo.toml"
+    config.write_bytes(b'[experiment]\nexperiment_name = "json_demo"\n')
+    key_dir = tmp_path / "keys"
+    write_keypair(generate_keypair(), key_dir)
+    sidecar = sign_simulation_output(
+        d_path=d,
+        ground_truth_path=None,
+        config_path=config,
+        experiment_name="json_demo",
+        simulator_version="json-test",
+        private_key_path=key_dir / "signing_key.pem",
+    )
+    return sidecar
+
+
+def test_cli_json_clean_verified_envelope(tmp_path, capsys):
+    sidecar = _sign_clean_d_bundle(tmp_path)
+    rc, blob = _run_cli_json([str(sidecar.parent), "--json"], capsys)
+    assert rc == 0
+    assert blob["schema"] == "timsim.verify-result.v0"
+    assert blob["status"] == "verified"
+    assert blob["exit_code"] == 0
+    assert blob["overall_ok"] is True
+    assert blob["signature_ok"] is True
+    assert blob["payload"]["experiment_name"] == "json_demo"
+    assert blob["payload"]["simulator_name"] == "TimSim"
+    # Every check is OK on a clean bundle.
+    assert all(c["status"] == "ok" for c in blob["checks"])
+    # Trust was not requested.
+    assert blob["trust"]["status"] == "not_requested"
+    assert blob["trust"]["was_requested"] is False
+    assert blob["error"] is None
+
+
+def test_cli_json_tampered_failed_envelope(tmp_path, capsys):
+    """Tampering one byte must surface as status='failed' with the
+    specific check that diverged listed in 'checks'."""
+    import sqlite3
+
+    sidecar = _sign_clean_d_bundle(tmp_path)
+    # Tamper a SQL value.
+    d_path = sidecar.parent / "json_demo.d"
+    conn = sqlite3.connect(d_path / "analysis.tdf")
+    conn.execute("UPDATE GlobalMetadata SET Value='STOLEN' WHERE Key='InstrumentName'")
+    conn.commit()
+    conn.close()
+
+    rc, blob = _run_cli_json([str(sidecar.parent), "--json"], capsys)
+    assert rc == 5  # EXIT_HASH_MISMATCH
+    assert blob["status"] == "failed"
+    assert blob["exit_code"] == 5
+    assert blob["overall_ok"] is False
+    # The d_content_hash check is the one that diverged.
+    d_check = next(c for c in blob["checks"] if c["name"] == "d_content_hash")
+    assert d_check["status"] == "mismatch"
+    assert d_check["expected"] != d_check["actual"]
+    assert d_check["expected"].startswith("sha256:")
+    # Signature is still OK because the payload bytes were not touched.
+    assert blob["signature_ok"] is True
+
+
+def test_cli_json_unsigned_envelope(tmp_path, capsys):
+    """An unsigned directory in non-strict mode: status='unsigned', exit 0."""
+    rc, blob = _run_cli_json([str(tmp_path), "--json"], capsys)
+    assert rc == 0
+    assert blob["schema"] == "timsim.verify-result.v0"
+    assert blob["status"] == "unsigned"
+    assert blob["exit_code"] == 0
+    assert blob["overall_ok"] is False
+    assert blob["payload"] is None
+    assert blob["checks"] is None
+    assert blob["error"]["type"] == "Unsigned"
+
+
+def test_cli_json_unsigned_strict_envelope(tmp_path, capsys):
+    """An unsigned directory in --strict mode: status='unsigned', exit 4."""
+    rc, blob = _run_cli_json([str(tmp_path), "--json", "--strict"], capsys)
+    assert rc == 4
+    assert blob["status"] == "unsigned"
+    assert blob["exit_code"] == 4
+
+
+def test_cli_json_malformed_sidecar_envelope(tmp_path, capsys):
+    """A corrupt sidecar surfaces as status='error' with the typed exception name."""
+    bad = tmp_path / "bad.provenance.json"
+    bad.write_bytes(b"this is not JSON {{{")
+    # Need a .d sibling so the sidecar is even discovered, otherwise
+    # we hit the "unsigned" path. We don't need it to be valid.
+    (tmp_path / "fake.d").mkdir()
+    (tmp_path / "fake.d" / "analysis.tdf").touch()
+    (tmp_path / "fake.d" / "analysis.tdf_bin").touch()
+
+    rc, blob = _run_cli_json([str(bad), "--json"], capsys)
+    assert rc == 3  # EXIT_SIDECAR_ERROR
+    assert blob["status"] == "error"
+    assert blob["error"]["type"] == "MalformedSidecar"
+    assert "JSON" in blob["error"]["message"] or "json" in blob["error"]["message"].lower()
+
+
+def test_cli_json_with_expected_key_id_pinning(tmp_path, capsys):
+    """When --expected-key-id is supplied, the trust block in the JSON
+    envelope reflects the pinning result."""
+    sidecar = _sign_clean_d_bundle(tmp_path)
+    # Wrong pin.
+    rc, blob = _run_cli_json(
+        [str(sidecar.parent), "--json",
+         "--expected-key-id", "timsim-local-totallywrongkey00"],
+        capsys,
+    )
+    assert rc == 7  # EXIT_KEY_NOT_TRUSTED
+    assert blob["status"] == "failed"
+    assert blob["trust"]["status"] == "id_mismatch"
+    assert blob["trust"]["was_requested"] is True
+    assert blob["trust"]["expected_key_id"] == "timsim-local-totallywrongkey00"
+
+
+def test_cli_json_envelope_is_well_formed(tmp_path, capsys):
+    """The emitted JSON parses cleanly via stdlib json.loads on every code path."""
+    # Clean.
+    sidecar = _sign_clean_d_bundle(tmp_path / "clean")
+    _, blob_clean = _run_cli_json([str(sidecar.parent), "--json"], capsys)
+    json.dumps(blob_clean)  # round-trip
+
+    # Unsigned.
+    _, blob_unsigned = _run_cli_json([str(tmp_path / "empty"), "--json"], capsys)
+    json.dumps(blob_unsigned)
+
+    # Both must contain the same top-level keys for uniform parsing.
+    expected_keys = {
+        "schema", "status", "exit_code", "sidecar_path", "signature_ok",
+        "overall_ok", "payload", "checks", "trust", "error",
+    }
+    assert set(blob_clean.keys()) == expected_keys
+    assert set(blob_unsigned.keys()) == expected_keys
+
+
 def test_signature_with_wrong_byte_length_is_malformed(tmp_path):
     """A signature whose decoded length isn't 64 bytes must surface as MalformedSidecar."""
     d = make_minimal_d(tmp_path, name="x")
