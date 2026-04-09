@@ -730,6 +730,185 @@ def test_verify_two_mzml_bundles_in_same_directory(tmp_path):
     assert result_b.overall_ok, [(c.name, c.status) for c in result_b.checks]
 
 
+# ---------------------------------------------------------------------------
+# Reviewer round-10: integer encoding metadata must affect the canonical hash
+# ---------------------------------------------------------------------------
+#
+# Charge arrays are typically encoded as integers. Before this fix the
+# canonicalizer collapsed every non-float encoding to width=0 / count=0
+# and emitted the precision tag as b"??" — meaning a converter that
+# switched the encoding cvParam from MS:1000519 (i32) to MS:1000522
+# (i64) would produce the same hash even though consumers would
+# interpret the bytes completely differently. The fix adds explicit
+# tags for i32 and i64 with correct widths.
+
+
+def _build_mzml_with_charge_array_encoding(
+    tmp_path: Path,
+    *,
+    name: str,
+    encoding_acc: str,
+    encoding_name: str,
+    raw_payload: bytes,
+) -> Path:
+    """Build a tiny mzml with a single charge-array binaryDataArray
+    using the given encoding cvParam and raw payload bytes."""
+    import base64
+
+    b64 = base64.b64encode(raw_payload).decode("ascii")
+    mzml = f'''<?xml version="1.0" encoding="utf-8"?>
+<mzML xmlns="http://psi.hupo.org/ms/mzml" version="1.1.0">
+  <run id="r"><spectrumList count="1">
+    <spectrum id="scan=1" index="0" defaultArrayLength="2">
+      <cvParam cvRef="MS" accession="MS:1000511" name="ms level" value="1"/>
+      <cvParam cvRef="MS" accession="MS:1000130" name="positive scan"/>
+      <binaryDataArrayList count="1">
+        <binaryDataArray encodedLength="{len(b64)}">
+          <cvParam cvRef="MS" accession="{encoding_acc}" name="{encoding_name}"/>
+          <cvParam cvRef="MS" accession="MS:1000576" name="no compression"/>
+          <cvParam cvRef="MS" accession="MS:1000516" name="charge array"/>
+          <binary>{b64}</binary>
+        </binaryDataArray>
+      </binaryDataArrayList>
+    </spectrum>
+  </spectrumList></run>
+</mzML>
+'''
+    p = tmp_path / f"{name}.mzML"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(mzml, encoding="utf-8")
+    return p
+
+
+def test_canonicalize_mzml_distinguishes_i32_from_i64_encoding(tmp_path):
+    """Same raw bytes, different encoding cvParam (i32 vs i64) → different hash.
+
+    The reviewer's exact reproduction. Before the fix, both encodings
+    were collapsed to b"?? "/width=0 and the only thing in the canonical
+    record that depended on encoding was a sha256 of the raw payload —
+    which is identical because the bytes are identical. The fix adds
+    explicit i32 and i64 tags with correct widths, so the precision
+    tag and the value count both differ.
+    """
+    import struct
+    raw = struct.pack("<ii", 1, 2)  # 8 bytes interpretable as 2x i32 or 1x i64
+    p32 = _build_mzml_with_charge_array_encoding(
+        tmp_path / "a",
+        name="i32",
+        encoding_acc="MS:1000519",
+        encoding_name="32-bit integer",
+        raw_payload=raw,
+    )
+    p64 = _build_mzml_with_charge_array_encoding(
+        tmp_path / "b",
+        name="i64",
+        encoding_acc="MS:1000522",
+        encoding_name="64-bit integer",
+        raw_payload=raw,
+    )
+    assert canonicalize_mzml(p32) != canonicalize_mzml(p64), (
+        "i32-vs-i64 encoding cvParam swap was not detected — the "
+        "canonical form is still collapsing integer encodings"
+    )
+
+
+def test_canonicalize_mzml_distinguishes_f32_from_i32_encoding(tmp_path):
+    """Same bytes interpreted as f32 vs i32 must hash differently."""
+    import struct
+    # 8 bytes that could be 2 f32s or 2 i32s — totally different values either way.
+    raw = b"\x00\x00\x80\x3f\x00\x00\x00\x40"  # f32: [1.0, 2.0]; i32: small
+    p_f = _build_mzml_with_charge_array_encoding(
+        tmp_path / "f",
+        name="f32",
+        encoding_acc="MS:1000521",
+        encoding_name="32-bit float",
+        raw_payload=raw,
+    )
+    p_i = _build_mzml_with_charge_array_encoding(
+        tmp_path / "i",
+        name="i32",
+        encoding_acc="MS:1000519",
+        encoding_name="32-bit integer",
+        raw_payload=raw,
+    )
+    assert canonicalize_mzml(p_f) != canonicalize_mzml(p_i)
+
+
+def test_canonicalize_mzml_distinguishes_f64_from_i64_encoding(tmp_path):
+    """Same bytes interpreted as f64 vs i64 must hash differently."""
+    import struct
+    raw = struct.pack("<d", 3.141592653589793)
+    p_f = _build_mzml_with_charge_array_encoding(
+        tmp_path / "f",
+        name="f64",
+        encoding_acc="MS:1000523",
+        encoding_name="64-bit float",
+        raw_payload=raw,
+    )
+    p_i = _build_mzml_with_charge_array_encoding(
+        tmp_path / "i",
+        name="i64",
+        encoding_acc="MS:1000522",
+        encoding_name="64-bit integer",
+        raw_payload=raw,
+    )
+    assert canonicalize_mzml(p_f) != canonicalize_mzml(p_i)
+
+
+def test_canonicalize_mzml_int_charge_array_tamper_detected(tmp_path):
+    """A realistic charge array (int32-encoded) with one byte tampered
+    must produce a different hash. This is the primary use case the
+    integer-encoding fix unlocks."""
+    import struct
+    clean = struct.pack("<iii", 1, 2, 3)
+    tampered = struct.pack("<iii", 1, 2, 99)
+    p_clean = _build_mzml_with_charge_array_encoding(
+        tmp_path / "a",
+        name="charges_clean",
+        encoding_acc="MS:1000519",
+        encoding_name="32-bit integer",
+        raw_payload=clean,
+    )
+    p_tampered = _build_mzml_with_charge_array_encoding(
+        tmp_path / "b",
+        name="charges_tampered",
+        encoding_acc="MS:1000519",
+        encoding_name="32-bit integer",
+        raw_payload=tampered,
+    )
+    assert canonicalize_mzml(p_clean) != canonicalize_mzml(p_tampered)
+
+
+def test_canonicalize_mzml_int32_value_count_is_correct(tmp_path):
+    """An i32 array with 4 bytes of payload reports value_count = 1
+    (4 bytes / 4 bytes per i32). The previous bug reported value_count = 0
+    for any non-float encoding because width was 0.
+
+    This is an indirect check: we build two i32 arrays with payloads
+    of different LENGTHS (1 value vs 2 values) but where the first
+    1-value payload is byte-for-byte identical to the first 4 bytes of
+    the 2-value payload. Without per-array value_count in the canonical
+    record, only the truncated payload's hash would differ — but with
+    value_count emitted, the records are doubly distinguished.
+
+    More importantly: a tampered i32 array of any length produces a
+    different hash. This locks in that integer arrays are truly part
+    of the canonical form, not just bytes-with-width-0.
+    """
+    import struct
+    one_val = struct.pack("<i", 42)
+    two_vals = struct.pack("<ii", 42, 43)
+    p1 = _build_mzml_with_charge_array_encoding(
+        tmp_path / "a", name="one", encoding_acc="MS:1000519",
+        encoding_name="32-bit integer", raw_payload=one_val,
+    )
+    p2 = _build_mzml_with_charge_array_encoding(
+        tmp_path / "b", name="two", encoding_acc="MS:1000519",
+        encoding_name="32-bit integer", raw_payload=two_vals,
+    )
+    assert canonicalize_mzml(p1) != canonicalize_mzml(p2)
+
+
 def test_verify_falls_back_to_unique_when_convention_misses(tmp_path):
     """If the sidecar's conventional pairing does not exist (e.g. the
     user renamed the mzml after signing) but only one mzml is present,

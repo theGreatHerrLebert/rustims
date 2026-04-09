@@ -87,8 +87,10 @@ _CV = {
     "iso_target":       "MS:1000827",
     "iso_lower_off":    "MS:1000828",
     "iso_upper_off":    "MS:1000829",
-    "binary_64":        "MS:1000523",
-    "binary_32":        "MS:1000521",
+    "binary_f64":       "MS:1000523",
+    "binary_f32":       "MS:1000521",
+    "binary_i64":       "MS:1000522",
+    "binary_i32":       "MS:1000519",
     "no_compression":   "MS:1000576",
     "zlib_compression": "MS:1000574",
     "numpress_linear":  "MS:1002312",
@@ -246,12 +248,40 @@ def _decode_binary_array(bda: ET.Element) -> bytes:
 
 
 def _array_precision_tag(bda: ET.Element) -> bytes:
-    """Return a stable tag for the precision of a binaryDataArray (b'f64', b'f32', b'??')."""
-    if _cv_present(bda, _CV["binary_64"]):
+    """Return a stable tag for the precision of a binaryDataArray.
+
+    Recognized: ``b"f64"``, ``b"f32"``, ``b"i64"``, ``b"i32"``. Anything
+    else returns ``b"??"`` and the canonical record will use width=0
+    (so its value count is reported as 0).
+
+    The check order is the priority order: if a malformed mzml has
+    multiple precision cvParams (which would already be a violation),
+    we resolve it deterministically. Floats first because they are
+    overwhelmingly the common case.
+
+    Including i32 and i64 closes the bypass where switching the
+    encoding cvParam from MS:1000519 to MS:1000522 (with identical
+    bytes) would have produced the same canonical hash even though
+    consumers would interpret the bytes completely differently.
+    """
+    if _cv_present(bda, _CV["binary_f64"]):
         return b"f64"
-    if _cv_present(bda, _CV["binary_32"]):
+    if _cv_present(bda, _CV["binary_f32"]):
         return b"f32"
+    if _cv_present(bda, _CV["binary_i64"]):
+        return b"i64"
+    if _cv_present(bda, _CV["binary_i32"]):
+        return b"i32"
     return b"??"
+
+
+def _precision_width(tag: bytes) -> int:
+    """Bytes per value for a precision tag, or 0 for unknown."""
+    if tag == b"f64" or tag == b"i64":
+        return 8
+    if tag == b"f32" or tag == b"i32":
+        return 4
+    return 0
 
 
 def _array_role_label(bda: ET.Element) -> str:
@@ -413,12 +443,7 @@ def _spectrum_record(spectrum: ET.Element) -> bytes:
             role_label = _array_role_label(bda)  # never None
             payload = _decode_binary_array(bda)
             tag = _array_precision_tag(bda)
-            if tag == b"f64":
-                width = 8
-            elif tag == b"f32":
-                width = 4
-            else:
-                width = 0
+            width = _precision_width(tag)
             count = (len(payload) // width) if width else 0
             digest = hashlib.sha256(payload).hexdigest().encode("ascii")
             arrays.append((role_label, tag, count, digest))
