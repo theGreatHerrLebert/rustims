@@ -32,6 +32,7 @@ from imspy_simulation.provenance.errors import (
     Unsigned,
 )
 from imspy_simulation.provenance.keys import (
+    derive_key_id,
     load_public_key,
     public_key_from_b64,
     signature_from_b64,
@@ -294,6 +295,35 @@ def verify_sidecar(
     sidecar = Sidecar.from_json_bytes(sidecar_path.read_bytes())
     payload = sidecar.payload
 
+    # CRITICAL: derive the actual signer's key id from the embedded
+    # verifying_key, NOT from payload.key_id. payload.key_id is an
+    # attacker-controllable signed string and using it for trust
+    # comparisons would let a forger lie about which key they used.
+    # The cryptographic identity is the verifying_key alone. Decode
+    # errors here are wrapped as MalformedSidecar later in the
+    # signature-loading block.
+    try:
+        derived_signer_pubkey = public_key_from_b64(sidecar.verifying_key)
+    except (ValueError, TypeError) as e:
+        raise MalformedSidecar(
+            f"sidecar verifying_key field is not decodable: {e}"
+        ) from e
+    derived_signer_key_id = derive_key_id(derived_signer_pubkey)
+
+    # Enforce consistency between the LABEL (payload.key_id) and the
+    # actual signer (derived_signer_key_id). If they disagree, the
+    # sidecar is malformed at best and a forgery attempt at worst —
+    # never silently accept the label. This catches the bypass where
+    # an attacker re-signs a payload they mutated to claim a different
+    # key id while keeping their own verifying_key.
+    if payload.key_id != derived_signer_key_id:
+        raise MalformedSidecar(
+            f"sidecar payload.key_id ({payload.key_id!r}) does not match "
+            f"the key id derived from sidecar.verifying_key "
+            f"({derived_signer_key_id!r}). The label and the actual signer "
+            f"disagree. This is consistent with a tampered or forged sidecar."
+        )
+
     # Locate the .d INDEPENDENTLY of the payload, so a tampered
     # experiment_name field cannot redirect verification to a phantom
     # path. We accept either the conventional {save_path}/{exp}/{exp}.d
@@ -422,15 +452,16 @@ def verify_sidecar(
             )
         )
 
-    # Verify the signature against the canonical payload bytes. Decode
-    # errors on attacker-controlled fields surface as MalformedSidecar
-    # so the CLI maps them to a clean exit code rather than a generic
-    # error. (Reviewer #5)
+    # Verify the signature against the canonical payload bytes. The
+    # verifying_key was already decoded at the top (derived_signer_pubkey),
+    # so we reuse it unless the caller explicitly overrode it. Decode
+    # errors on the signature field surface as MalformedSidecar so the
+    # CLI maps them to a clean exit code rather than a generic error.
     try:
         if public_key_override is not None:
             public_key = load_public_key(public_key_override)
         else:
-            public_key = public_key_from_b64(sidecar.verifying_key)
+            public_key = derived_signer_pubkey
         signature_bytes = signature_from_b64(sidecar.signature)
     except (ValueError, MalformedSidecar) as e:
         raise MalformedSidecar(
@@ -447,10 +478,13 @@ def verify_sidecar(
     except Exception:
         signature_ok = False
 
-    # Trust check (layered ON TOP of integrity).
+    # Trust check (layered ON TOP of integrity). The actual signer
+    # identity comes from the verifying_key, NOT from payload.key_id —
+    # we already enforced consistency above, but the trust evaluator
+    # treats the derived id as the canonical identity to be defensive.
     trust = _evaluate_trust(
-        payload=payload,
-        sidecar=sidecar,
+        actual_key_id=derived_signer_key_id,
+        actual_pubkey=derived_signer_pubkey,
         expected_key_id=expected_key_id,
         require_trusted=require_trusted,
         trusted_registry_path=trusted_registry_path,
@@ -474,20 +508,21 @@ def verify_sidecar(
 
 def _evaluate_trust(
     *,
-    payload: Payload,
-    sidecar: Sidecar,
+    actual_key_id: str,
+    actual_pubkey,
     expected_key_id: str | None,
     require_trusted: bool,
     trusted_registry_path: PathLike | None,
 ) -> TrustCheck:
     """Run the optional trust pinning checks. Returns a TrustCheck struct.
 
-    Both ``expected_key_id`` and ``require_trusted`` are evaluated. If
-    both are given and either fails, the FIRST failure to be discovered
-    is reported (id mismatch wins because it's a stronger user assertion).
-    """
-    actual_key_id = payload.key_id
+    ``actual_key_id`` MUST be derived from the embedded verifying_key by
+    the caller (verify_sidecar enforces this). Never accept payload.key_id
+    here — it is attacker-controllable and using it would let a forger
+    bypass --expected-key-id by lying in the signed payload.
 
+    Both ``expected_key_id`` and ``require_trusted`` are evaluated.
+    """
     # No trust pinning requested → always "ok" but flagged as not_requested
     # so the CLI can render it as "(not pinned)" rather than "trusted".
     if expected_key_id is None and not require_trusted:
@@ -535,12 +570,12 @@ def _evaluate_trust(
                 actual_key_id=actual_key_id,
             )
 
-        # The registry entry exists. Now make sure the embedded PEM
-        # matches what is registered, NOT just that the key_id matches.
-        # If they differ, someone shipped a sidecar that claims a
-        # trusted key id but signed with different bytes — a forgery.
+        # Defense in depth: even if the key id matches, compare the raw
+        # PEM bytes of the registered key to the actual signer's public
+        # key. This catches the (cryptographically improbable) case of
+        # an 80-bit key_id collision and is also defense against any
+        # unforeseen path where two distinct keys could share an id.
         try:
-            sidecar_pubkey = public_key_from_b64(sidecar.verifying_key)
             registered_pubkey = entry.load_public_key()
         except (ValueError, ProvenanceError) as e:
             return TrustCheck(
@@ -551,7 +586,7 @@ def _evaluate_trust(
 
         from cryptography.hazmat.primitives import serialization
 
-        sidecar_raw = sidecar_pubkey.public_bytes(
+        actual_raw = actual_pubkey.public_bytes(
             encoding=serialization.Encoding.Raw,
             format=serialization.PublicFormat.Raw,
         )
@@ -559,13 +594,13 @@ def _evaluate_trust(
             encoding=serialization.Encoding.Raw,
             format=serialization.PublicFormat.Raw,
         )
-        if sidecar_raw != registered_raw:
+        if actual_raw != registered_raw:
             return TrustCheck(
                 status="registry_pem_mismatch",
                 detail=(
-                    f"sidecar claims trusted key id {actual_key_id!r} "
-                    f"but its embedded public key does not match the one "
-                    f"in the registry. This is consistent with a forgery."
+                    f"sidecar's signing key id {actual_key_id!r} matches a "
+                    f"registry entry, but the public key bytes differ. "
+                    f"This is consistent with a key_id collision or forgery."
                 ),
                 actual_key_id=actual_key_id,
             )

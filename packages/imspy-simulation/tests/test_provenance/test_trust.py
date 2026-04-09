@@ -189,6 +189,89 @@ def test_verify_without_pinning_marks_trust_not_requested(tmp_path):
     assert result.trust.was_requested is False
 
 
+def test_expected_key_id_cannot_be_bypassed_by_payload_relabel(tmp_path):
+    """The reviewer's bypass must NOT work.
+
+    Scenario:
+      1. Sign a bundle with the FORGER's key (key B).
+      2. Mutate payload.key_id to a fake "victim" id (key A).
+      3. Re-sign the mutated payload with the FORGER's key — math still works.
+      4. Caller passes --expected-key-id A.
+
+    Before the fix, this returned VERIFIED + TRUSTED because the trust
+    check used payload.key_id (an attacker-controllable signed string)
+    instead of deriving the signer id from sidecar.verifying_key.
+
+    After the fix, the consistency check at parse time catches the
+    discrepancy and raises MalformedSidecar — payload.key_id (= fake A)
+    no longer matches the key id derived from the actual verifying_key
+    (= forger B).
+    """
+    import base64
+    from imspy_simulation.provenance.envelope import Payload
+    from imspy_simulation.provenance.errors import MalformedSidecar
+
+    _, _, _, sidecar, forger = _build_signed_bundle_with_keypair(tmp_path)
+    fake_id = "timsim-local-aaaaaaaaaaaaaaaa"
+
+    blob = json.loads(sidecar.read_text())
+    blob["payload"]["key_id"] = fake_id
+    payload = Payload.from_dict(blob["payload"])
+    new_sig = forger.private_key.sign(payload.to_canonical_json())
+    blob["signature"] = "ed25519:base64:" + base64.b64encode(new_sig).decode()
+    # verifying_key is still the forger's
+    sidecar.write_text(json.dumps(blob))
+
+    with pytest.raises(MalformedSidecar, match="payload.key_id"):
+        verify_sidecar(sidecar, expected_key_id=fake_id)
+
+
+def test_expected_key_id_uses_derived_signer_not_payload_field(tmp_path):
+    """A clean bundle: --expected-key-id matches the DERIVED signer key id.
+
+    The derived id and the payload id agree on a clean bundle, so the
+    user's experience is unchanged. This test exists to lock down the
+    contract: --expected-key-id is compared against the cryptographic
+    signer, not against a label.
+    """
+    from imspy_simulation.provenance.keys import derive_key_id
+
+    _, _, _, sidecar, keypair = _build_signed_bundle_with_keypair(tmp_path)
+    derived_id = derive_key_id(keypair.public_key)
+    # Sanity: on a clean bundle the two are equal.
+    assert derived_id == keypair.key_id
+
+    result = verify_sidecar(sidecar, expected_key_id=derived_id)
+    assert result.overall_ok
+    assert result.trust.status == "ok"
+    assert result.trust.actual_key_id == derived_id
+
+
+def test_inconsistent_payload_key_id_caught_without_trust_flags(tmp_path):
+    """The consistency check is unconditional — it runs even without trust pinning.
+
+    A sidecar where payload.key_id does not match derive(verifying_key)
+    is malformed regardless of whether the caller passed --expected-key-id
+    or --require-trusted. This guards against forgery attempts even on
+    casual ad-hoc verifies.
+    """
+    import base64
+    from imspy_simulation.provenance.envelope import Payload
+    from imspy_simulation.provenance.errors import MalformedSidecar
+
+    _, _, _, sidecar, forger = _build_signed_bundle_with_keypair(tmp_path)
+    blob = json.loads(sidecar.read_text())
+    blob["payload"]["key_id"] = "timsim-local-zzzzzzzzzzzzzzzz"
+    payload = Payload.from_dict(blob["payload"])
+    new_sig = forger.private_key.sign(payload.to_canonical_json())
+    blob["signature"] = "ed25519:base64:" + base64.b64encode(new_sig).decode()
+    sidecar.write_text(json.dumps(blob))
+
+    # No trust flags at all — must still be rejected.
+    with pytest.raises(MalformedSidecar, match="payload.key_id"):
+        verify_sidecar(sidecar)
+
+
 # ---------------------------------------------------------------------------
 # verify_sidecar with --require-trusted
 # ---------------------------------------------------------------------------
@@ -221,37 +304,33 @@ def test_require_trusted_with_key_not_in_registry(tmp_path):
 
 
 def test_require_trusted_catches_forged_key_id(tmp_path):
-    """If a sidecar claims a trusted key_id but embeds different public key
-    bytes, --require-trusted must reject it as registry_pem_mismatch.
+    """A sidecar that claims a trusted key id but signed with different bytes is rejected.
 
-    This is the forgery defense: comparing only key_ids would let an
-    attacker reuse a victim's key id with their own keypair. The
-    registry stores the FULL PEM, and the verifier compares raw key
-    bytes, not strings.
+    After the consistency-check fix, the forgery is caught at parse time
+    as MalformedSidecar BEFORE the trust layer runs (because the lied
+    payload.key_id no longer matches the key id derived from the
+    embedded verifying_key). This is a STRONGER defense than the
+    previous registry-PEM check because it does not require
+    --require-trusted to be set — the forgery is rejected unconditionally.
     """
     import base64
     from cryptography.hazmat.primitives import serialization
 
-    # Two keypairs.
+    from imspy_simulation.provenance.errors import MalformedSidecar
+
     victim = generate_keypair()
     forger = generate_keypair()
 
-    # Build a real signed bundle with the FORGER's key.
     _, _, _, sidecar, _ = _build_signed_bundle_with_keypair(tmp_path)
     blob = json.loads(sidecar.read_text())
 
-    # Re-point the sidecar's payload key_id at the VICTIM's id (the
-    # attacker is trying to ride the victim's reputation). The
-    # signature is now broken because the canonical bytes change, but
-    # we are testing the trust check, not the signature check, so
-    # also re-sign with the forger to keep signature_ok=True.
+    # Re-point payload.key_id at the VICTIM and re-sign with the FORGER.
     blob["payload"]["key_id"] = victim.key_id
-    # Re-canonicalize and re-sign.
     from imspy_simulation.provenance.envelope import Payload
     payload = Payload.from_dict(blob["payload"])
     forger_signature = forger.private_key.sign(payload.to_canonical_json())
     blob["signature"] = "ed25519:base64:" + base64.b64encode(forger_signature).decode()
-    # The verifying_key still belongs to the forger.
+    # verifying_key still belongs to the forger.
     forger_raw = forger.public_key.public_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
@@ -259,19 +338,21 @@ def test_require_trusted_catches_forged_key_id(tmp_path):
     blob["verifying_key"] = "ed25519:base64:" + base64.b64encode(forger_raw).decode()
     sidecar.write_text(json.dumps(blob))
 
-    # Trust the VICTIM's key in the registry.
     reg_path = tmp_path / "trusted.json"
     reg = TrustedKeyRegistry.load(reg_path)
     reg.add(trusted_key_from_public_key(victim.public_key, comment="victim"))
     reg.save()
 
-    result = verify_sidecar(
-        sidecar, require_trusted=True, trusted_registry_path=reg_path
-    )
-    # Integrity check passes (we re-signed) but trust must catch the forgery.
-    assert result.signature_ok
-    assert not result.overall_ok
-    assert result.trust.status == "registry_pem_mismatch"
+    # The consistency check rejects this BEFORE the trust check runs.
+    with pytest.raises(MalformedSidecar, match="payload.key_id"):
+        verify_sidecar(
+            sidecar, require_trusted=True, trusted_registry_path=reg_path
+        )
+
+    # And it rejects without --require-trusted too — the consistency
+    # check is unconditional.
+    with pytest.raises(MalformedSidecar, match="payload.key_id"):
+        verify_sidecar(sidecar)
 
 
 # ---------------------------------------------------------------------------

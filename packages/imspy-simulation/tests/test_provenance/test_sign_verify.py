@@ -155,7 +155,16 @@ def test_payload_modification_fails(tmp_path):
 
 
 def test_substitute_verifying_key_fails(tmp_path):
-    """Replacing the embedded verifying key with a different key invalidates the sig."""
+    """Replacing the embedded verifying key with a different key is rejected.
+
+    After the consistency-check fix, this is caught at parse time as
+    MalformedSidecar (the new verifying_key derives to a different
+    key id than the one in payload.key_id) BEFORE we even get to the
+    signature check. Either outcome is correct, but the typed
+    exception is the cleanest signal.
+    """
+    from imspy_simulation.provenance.errors import MalformedSidecar
+
     _, _, _, sidecar = _build_signed_bundle(tmp_path)
     blob = json.loads(sidecar.read_text())
     other = generate_keypair()
@@ -168,8 +177,8 @@ def test_substitute_verifying_key_fails(tmp_path):
     blob["verifying_key"] = "ed25519:base64:" + base64.b64encode(raw).decode()
     sidecar.write_text(json.dumps(blob))
 
-    result = verify_sidecar(sidecar)
-    assert not result.signature_ok
+    with pytest.raises(MalformedSidecar, match="payload.key_id"):
+        verify_sidecar(sidecar)
 
 
 # ---------------------------------------------------------------------------
