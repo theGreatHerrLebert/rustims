@@ -289,6 +289,188 @@ The system guarantees *bytes*, not *truth*. It does not prove:
 
 Phases 0 and 0.5 ship immediately and in parallel. Phases 1 through 4 proceed in sequence. A community engagement track runs continuously alongside all phases.
 
+### Current state of this branch
+
+This branch now contains a working Phase 0 reference implementation. It is not the full vendor-anchored chain of custody yet; it is the simulator/converter-side proof that the approach can work in concrete code.
+
+The scope is deliberately narrow: one tool family (TimSim plus the local provenance helpers), one codebase, and one primary device/output path (Bruker-shaped timsTOF `.d` data, with an added mzML signing path for non-Bruker simulator/converter output). This proves feasibility; it does not yet prove generality across instruments, vendors, converters, repositories, or independent implementations.
+
+#### Implemented
+
+| Status | Area | What exists now |
+|--------|------|-----------------|
+| DONE | TimSim `.d` signing | TimSim can self-sign Bruker-shaped `.d` output, including `analysis.tdf`, `analysis.tdf_bin`, optional `synthetic_data.db`, and the copied config bytes. |
+| DONE | `.d` canonicalization | SQLite content is canonicalized independently of page size, row insertion order, `VACUUM`, and `REINDEX`; `analysis.tdf_bin` is hashed as content bytes. |
+| DONE | SQLite quiescence safety | Signing and verification refuse SQLite files with `-wal`, `-shm`, or `-journal` sidecars so uncheckpointed state is not silently ignored. |
+| DONE | Sidecar envelope | Signed JSON sidecars carry type, payload, Ed25519 signature, embedded verifying key, key id, timestamp, component hashes, and composed content hash. |
+| DONE | Config binding | Signing copies the config next to the sidecar; verification recomputes the copied config hash or requires an explicit `--config`. Missing config is `UNCHECKED`, never a tautological pass. |
+| DONE | Verification CLI | `timsim-verify` verifies sidecars, reports field-level hash status, validates signatures, handles unsigned input, and returns distinct exit codes for sidecar, hash, signature, key, and trust failures. |
+| DONE | Trust model | Verifier derives identity from the embedded public key, checks `payload.key_id` consistency, supports `--expected-key-id`, supports a local trusted-key registry, and treats `--public-key` as a byte-for-byte consistency check. |
+| DONE | Key CLI | `timsim-keys` can show/export the local signing key, trust PEMs or sidecars, list trusted keys, and untrust key ids. |
+| DONE | mzML signing API | `sign_mzml_output(...)` signs mzML files from non-Bruker simulators or converters and writes `*.provenance.json` plus an optional copied config. |
+| DONE | mzML verification | The same verifier dispatches on sidecar type and verifies mzML sidecars independently from `.d` sidecars. Sidecar-to-mzML discovery first uses the conventional filename pairing, then falls back to unique sibling discovery. |
+| DONE | mzML canonicalization v0 | mzML hashing operates on spectrum content, not XML bytes. It is invariant to whitespace, attribute ordering, binary-array ordering, and indexed vs non-indexed mzML wrappers. |
+| DONE | mzML binary arrays | Every `binaryDataArray` is hashed, including m/z, intensity, ion mobility, charge, pressure, wavelength, and unknown future roles. Float and integer encodings (`f32`, `f64`, `i32`, `i64`) affect the canonical hash. |
+| DONE | Explicit unsupported mzML features | Numpress compression raises a provenance error instead of producing a misleading hash. Chromatograms and run-level metadata are intentionally out of v0 scope. |
+| DONE | Tests | The provenance test suite covers `.d` canonicalization, sign/verify, tamper detection, trust pinning, key CLI behavior, mzML roundtrip, mzML tamper cases, and slow performance benchmarks. |
+
+#### What this demonstrates
+
+| Claim | Current evidence |
+|-------|------------------|
+| Feasibility | A real simulator codebase can produce signed output sidecars and verify them later. |
+| Tamper detection | Post-signing edits to `.d`, mzML, ground-truth DB, config copies, payload fields, signatures, and key identity labels are detected. |
+| Practical workflow | Local CLI tools can generate keys, sign output, verify output, and apply simple trust pins. |
+| Cross-format shape | The same envelope and verifier can dispatch between `.d` and mzML sidecar types without confusing them. |
+
+#### What this does not demonstrate yet
+
+| Limitation | Meaning |
+|------------|---------|
+| One tool | The implementation lives in TimSim/imspy-simulation. Synthedia, SMITER, ProteoWizard, vendor converters, and repositories have not implemented the format. |
+| One codebase | There is not yet an independent implementation proving that the canonicalization and sidecar spec are sufficiently clear and portable. |
+| One primary device path | The `.d` implementation targets Bruker-shaped timsTOF output. Thermo RAW, SCIEX, Waters, and other vendor formats are not covered. |
+| Software key only | The signing key is local software state, not a hardware-protected instrument key. |
+| No ecosystem trust root | There is no vendor CA, repository countersignature, transparency log, revocation system, or PSI-standardized schema. |
+
+#### Missing or intentionally out of scope
+
+| Status | Area | Gap |
+|--------|------|-----|
+| MISSING | Vendor root of trust | No instrument or vendor signs RAW data yet. The current key is software-rooted and user-local, not instrument-bound or HSM-backed. |
+| MISSING | RAW authenticity | We cannot prove a dataset came from a real instrument. We can only prove that a signed bundle matches the bytes signed by a specific software key. |
+| MISSING | RAW -> mzML lineage | The mzML sidecar signs mzML content and config, but does not yet carry an upstream signed RAW attestation or signed converter transformation chain. |
+| MISSING | Repository countersigning | No repository ingestion signature exists yet. Uploader identity, affiliation, submission timestamp, and embargo state are not cryptographically bound. |
+| MISSING | Revocation and transparency | There is no public key transparency log, certificate hierarchy, revocation mechanism, or long-term archival trust policy. |
+| MISSING | Hardware attestation | No TPM/HSM-backed instrument key, firmware attestation, or per-instrument certificate chain exists. |
+| MISSING | Standalone signing procedure | The Python APIs exist, but the broader "standalone procedure" for signing arbitrary simulator output as a documented external workflow still needs to be factored out and hardened. |
+| PARTIAL | mzML content scope | Spectrum-level content is covered. Run-level metadata (`instrumentConfiguration`, `dataProcessing`, `softwareList`, `sourceFile`) is not signed in v0. |
+| PARTIAL | mzML format support | Uncompressed and zlib-compressed arrays are covered. Numpress compression, chromatograms, and ambiguous malformed binary-array metadata are not supported in v0. |
+| PARTIAL | Canonicalization versioning | v0 is frozen by discipline in code and sidecar fields, but future `v1` modules and multi-version verification policy are not implemented yet. |
+| PARTIAL | Ecosystem adoption | TimSim is the reference implementation. Synthedia, SMITER, converters, repositories, vendors, and HUPO-PSI are still future engagement work. |
+
+#### Practical interpretation
+
+What we can show today:
+
+- We can sign our own simulated `.d` output and detect post-signing tampering.
+- We can sign simulator/converter mzML output and detect spectrum-level tampering.
+- We can verify signatures, hashes, config binding, and signer identity pins with local tooling.
+- We can demonstrate a concrete sidecar format and canonicalization strategy to other simulator authors.
+
+What we cannot claim yet:
+
+- That a dataset is real instrument data.
+- That an mzML descends from a specific RAW acquisition.
+- That a repository, vendor, or public transparency service has vouched for it.
+- That the signer key was protected by hardware or controlled by an instrument.
+
+#### How this should be used
+
+The immediate use case is disclosure and verification of simulated data. A simulator or converter produces data, signs the output, and ships the sidecar plus copied config together with the data. A reviewer, repository, journal, or downstream user verifies the sidecar before trusting the dataset label.
+
+For TimSim `.d` output:
+
+1. The simulator writes the `.d` directory and optional `synthetic_data.db`.
+2. The provenance hook hashes the `.d`, the optional ground-truth DB, and the config bytes.
+3. It writes `{experiment}.provenance.json` and `{experiment}.config.toml` next to the output.
+4. The sidecar says, cryptographically, "these bytes were signed by this TimSim/software key at this time."
+
+For mzML output from another simulator or converter:
+
+1. The tool or wrapper calls `sign_mzml_output(...)` on the mzML file.
+2. The signer hashes canonical spectrum content plus config bytes.
+3. It writes `{mzml_stem}.provenance.json` and optionally `{mzml_stem}.config.toml`.
+4. The sidecar says, cryptographically, "this mzML content was signed by this software key at this time."
+
+The sidecar must travel with the data. A `.d` directory or mzML file without a sidecar is not automatically fake, but it is unsigned by this mechanism.
+
+#### Key system used in this prototype
+
+Phase 0 uses Ed25519 public-key signatures.
+
+| Item | Current implementation |
+|------|------------------------|
+| Signature algorithm | Ed25519 |
+| Private key file | `~/.config/timsim/keys/signing_key.pem` by default |
+| Private key encoding | PKCS#8 PEM, unencrypted |
+| Public key file | `~/.config/timsim/keys/verifying_key.pem` by default |
+| Public key encoding | SubjectPublicKeyInfo PEM |
+| Sidecar public key field | `verifying_key = "ed25519:base64:{raw_32_byte_public_key}"` |
+| Sidecar signature field | `signature = "ed25519:base64:{raw_signature}"` |
+| Key id file | `~/.config/timsim/keys/key_id` |
+| Key id derivation | `timsim-local-` + base32-lowercase BLAKE2b digest of the raw Ed25519 public key bytes |
+| Trust registry | `~/.config/timsim/trusted_keys.json` |
+
+On first signing, if no key exists, the tooling generates a local Ed25519 keypair. This is convenient for Phase 0, but it is intentionally a software key: anyone who can read or copy `signing_key.pem` can sign data as that key.
+
+Verification uses the public key embedded in the sidecar to check the signature. The verifier then derives the key id from that embedded public key and requires it to match `payload.key_id`. This prevents a sidecar from claiming one key id while actually being signed by another key.
+
+Trust is a separate layer:
+
+- `timsim-verify` with no trust flags proves internal integrity only: the bytes match the signature and hashes.
+- `--expected-key-id` pins the sidecar to one expected key id.
+- `--require-trusted` requires the signing public key to be present in the local trusted-key registry.
+- `--public-key` is a consistency check against an out-of-band public key copy; it must match the embedded sidecar key byte-for-byte.
+
+The current key system is not a vendor PKI. There is no certificate chain, no instrument certificate, no HSM, no revocation, and no transparency log. Those are future pieces of the vendor/repository trust chain.
+
+#### How people would check
+
+A consumer checks with the verifier:
+
+```bash
+timsim-verify path/to/output.provenance.json
+timsim-verify path/to/experiment_directory
+timsim-verify path/to/output.mzML
+```
+
+For higher confidence, the consumer pins identity:
+
+```bash
+timsim-verify path/to/output.mzML --expected-key-id timsim-local-...
+timsim-verify path/to/output.mzML --require-trusted
+timsim-verify path/to/output.mzML --public-key known_signer_public_key.pem
+```
+
+The checks answer separate questions:
+
+| Check | Meaning |
+|-------|---------|
+| Hash checks pass | The data, config copy, and signed component hashes still match. |
+| Signature passes | The payload was signed by the embedded public key. |
+| Key id consistency passes | The claimed key id matches the embedded public key. |
+| Trust pin passes | The signer is the key the user expected or has explicitly trusted. |
+| Sidecar type is simulator/mzML | The dataset is declared under this software provenance scheme, not vendor RAW provenance. |
+
+Expected reviewer or repository policy:
+
+- If a dataset is submitted as simulated or benchmark data: require a valid simulator/converter sidecar.
+- If a dataset is submitted as real instrument data: a simulator sidecar is not sufficient evidence of real origin.
+- If a dataset is submitted as real instrument data and carries a TimSim/Synthedia/SMITER-style sidecar: flag it as declared-synthetic unless there is a separate valid vendor/instrument lineage chain.
+- If no sidecar is present: treat provenance as unknown, not proven real.
+
+#### How an attempted "simulated as real" submission fails
+
+This system does not magically detect every unsigned fake. It works by making honest simulator output self-identifying and by giving repositories and reviewers a concrete verification step.
+
+A bad actor trying to sell or submit simulated data as real runs into three cases:
+
+| Attempt | What happens |
+|---------|--------------|
+| Submit signed simulator data as real | Verification succeeds, but the signer/type identifies the data as simulator/software-signed, not instrument-signed. Policy should reject the "real instrument" claim. |
+| Remove the simulator sidecar | Verification reports unsigned/no sidecar. The data no longer carries evidence of simulator origin, but it also has no evidence of real instrument origin. Policy should treat it as unproven provenance. |
+| Modify signed simulator data | Hash checks fail. The sidecar no longer matches the data. |
+| Rewrite the sidecar payload | Signature or key-id consistency fails unless the attacker controls the signing key. |
+| Re-sign with the attacker's own key | Integrity can pass, but trust pinning fails unless the reviewer/repository explicitly trusts that key. |
+| Claim "real RAW-derived mzML" with only an mzML simulator sidecar | The sidecar lacks upstream RAW/vendor attestation. It proves only mzML content signed by software, not lineage from an instrument. |
+
+The important distinction is:
+
+> A simulator signature is not a "real data" certificate. It is a disclosure mark plus tamper-evidence for simulated/software-produced data.
+
+The long-term vendor/repository chain is what would make the inverse claim possible: "this dataset originated from a real instrument and this mzML descends from that RAW." Phase 0 does not claim that yet.
+
 ### Community track — starts day one
 
 Formal HUPO-PSI standardization (Phase 4) cannot be the first PSI conversation. Informal engagement must run continuously:
