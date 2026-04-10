@@ -1,35 +1,22 @@
-"""TimSim provenance signing — Phase 0 prototype.
+"""imspy_simulation.provenance — moved to mzprov.
 
-Implements the §7 Step 1 vendor-signing pattern from SIGNING.md, applied to
-TimSim's own ``.d`` output. This is the working reference implementation
-that §9 of SIGNING.md mandates as a prerequisite for vendor conversations.
+The cryptographic provenance signing implementation that used to live in
+this module has moved to a standalone package: ``mzprov``. The canonical
+home for this code is the mzprov repository.
 
-This is a *software-rooted* prototype. The signing key lives on the user's
-filesystem; it is not HSM-backed and does not provide hardware-equivalent
-guarantees. The purpose is to demonstrate the structural chain of custody
-and to ship a working canonical-hashing scheme that survives container-level
-changes (SQLite VACUUM, REINDEX, page-size differences, etc.).
+This file is a thin re-export shim that preserves the existing
+``imspy_simulation.provenance`` import surface, so existing TimSim users
+and integration code (notably ``imspy_simulation.timsim.simulator``)
+continue to work unchanged.
 
-Public API:
+New code should import from ``mzprov`` directly:
 
-    canonicalize_d(d_path) -> bytes
-        Return a 32-byte SHA-256 over the canonical content of a ``.d``.
+    from mzprov import sign_simulation_output, sign_mzml_output, verify_sidecar
 
-    canonicalize_sqlite(db_path) -> bytes
-        Return a 32-byte SHA-256 over the canonical content of a SQLite file.
-
-    sign_simulation_output(...) -> Path
-        Sign a TimSim output (``.d`` + ground-truth DB + config) and write
-        the sidecar JSON. Returns the sidecar path.
-
-    verify_sidecar(sidecar_path, *, strict=False) -> VerificationResult
-        Re-canonicalize, recompute hashes, and verify the Ed25519 signature.
-
-See ``SIGNING.md`` for the conceptual framework and the floating-swinging-tide
-plan file for the implementation contract.
+For the migration rationale and plan, see ``MIGRATION_PLAN.md`` in the
+rustims branch.
 """
-
-from imspy_simulation.provenance.errors import (
+from mzprov import (
     HashMismatch,
     KeyNotFoundError,
     MalformedSidecar,
@@ -38,6 +25,12 @@ from imspy_simulation.provenance.errors import (
     SignatureMismatch,
     Unsigned,
     UnknownVersion,
+    canonicalize_d,
+    canonicalize_mzml,
+    canonicalize_sqlite,
+    sign_mzml_output,
+    sign_simulation_output,
+    verify_sidecar,
 )
 
 __all__ = [
@@ -56,33 +49,3 @@ __all__ = [
     "sign_simulation_output",
     "verify_sidecar",
 ]
-
-
-def canonicalize_d(d_path):
-    from imspy_simulation.provenance.canonicalize import canonicalize_d as _impl
-    return _impl(d_path)
-
-
-def canonicalize_sqlite(db_path):
-    from imspy_simulation.provenance.canonicalize import canonicalize_sqlite as _impl
-    return _impl(db_path)
-
-
-def canonicalize_mzml(mzml_path):
-    from imspy_simulation.provenance.canonicalize_mzml import canonicalize_mzml as _impl
-    return _impl(mzml_path)
-
-
-def sign_simulation_output(*args, **kwargs):
-    from imspy_simulation.provenance.sign import sign_simulation_output as _impl
-    return _impl(*args, **kwargs)
-
-
-def sign_mzml_output(*args, **kwargs):
-    from imspy_simulation.provenance.sign import sign_mzml_output as _impl
-    return _impl(*args, **kwargs)
-
-
-def verify_sidecar(*args, **kwargs):
-    from imspy_simulation.provenance.verify import verify_sidecar as _impl
-    return _impl(*args, **kwargs)
