@@ -4,6 +4,8 @@ The cryptographic provenance work that used to live in this file has
 been factored out into a standalone, multi-implementation specification
 repository named **mzprov**.
 
+**Repository:** <https://github.com/theGreatHerrLebert/mzprov>
+
 The factoring-out was triggered by the appearance of a second
 implementation (a C# port being written by a collaborator). With more
 than one implementation in flight, the right home for the design
@@ -86,6 +88,9 @@ any future third-language implementation) targets a written contract,
 and the reference test vector run is the conformance check.
 
 For the security considerations and the threat model in the format a
-reviewer will recognize, see the spec's
-[`security-considerations.md`](#) (in the mzprov repository) and the
-non-normative companion in [`docs/03-threat-model.md`](#).
+reviewer will recognize, see the spec's [`security-considerations.md`][sec]
+in the mzprov repository, and the non-normative companion in
+[`docs/03-threat-model.md`][threat].
+
+[sec]: https://github.com/theGreatHerrLebert/mzprov/blob/main/spec/security-considerations.md
+[threat]: https://github.com/theGreatHerrLebert/mzprov/blob/main/docs/03-threat-model.md
