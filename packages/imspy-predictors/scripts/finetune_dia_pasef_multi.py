@@ -1,11 +1,28 @@
 #!/usr/bin/env python
-"""Phase 1.1 — multi-task RT+CCS fine-tune for the calibrated-library pipeline.
+"""Phase 1.1 — multi-task RT+CCS fine-tune (DIAGNOSTIC ONLY, not production).
 
-Extends finetune_dia_pasef.py (RT-only) to fine-tune both retention time
-and CCS heads jointly on UnifiedPeptideModel. Same encoder is shared
-across heads, so one training pass calibrates both predictors against
-this run's anchor PSMs. Holdout is peptide-level (20% of unique
-sequences, seeded); MAE for each head reported on the same holdout.
+ARCHITECTURAL LIMITATION (discovered 2026-05-02): the off-the-shelf
+`imspy_predictors` checkpoints (rt/best_model.pt, ccs/best_model.pt,
+intensity/best_model.pt) are each pre-trained STANDALONE — each carries
+its own encoder weights paired with its own task head. There is no
+unified pre-trained encoder paired with all three heads.
+
+Loading from rt/best_model.pt with tasks=['rt', 'ccs'] gets the
+RT-paired encoder + RT head (good) + a FRESH RANDOMLY-INITIALIZED CCS
+head (bad). Linear projection then fits the random head's output to
+observed CCS, giving a ~30 Å² baseline MAE — much worse than the
+standalone CCS run's 13 Å² baseline (same data, but from
+ccs/best_model.pt where encoder + CCS head are correctly paired).
+
+For the production calibration-library pipeline, use the 3 per-task
+scripts: finetune_dia_pasef.py (RT), finetune_dia_pasef_ccs.py (CCS),
+finetune_dia_pasef_intensity.py (intensity). Each loads its own
+pre-trained checkpoint and fine-tunes cleanly. Library generation
+loads all three checkpoints independently.
+
+This multi-task script remains for future research (e.g., when a
+unified pre-trained encoder lands), and to validate the per-(peptide,
+charge) data-prep fix that this commit also lands.
 
 Intensity (the third predictor in UnifiedPeptideModel) is deferred to
 Phase 1.2 — the rescored CSV only carries scalar ms2_intensity, not the
@@ -180,18 +197,22 @@ def load_and_aggregate(
         f"CCS {df.observed_ccs.min():.1f}–{df.observed_ccs.max():.1f} Å²"
     )
 
-    # Aggregate per peptide.
+    # Aggregate per (peptide, charge). CCS depends on charge — averaging
+    # observed_ccs across charge states for the same peptide mixes two
+    # distinct targets and gives meaningless supervision. The CCS-only
+    # diagnostic (finetune_dia_pasef_ccs.py) caught this: switching to
+    # per-(peptide, charge) aggregation drops baseline+proj MAE from
+    # 31 Å² to 13 Å², and fine-tuned MAE from 30 → 6.85 Å² (−48%).
     df = df.rename(columns={"match_idx": "sequence"})
 
     def _mode_or_first(s: pd.Series):
         v = s.mode()
         return v.iloc[0] if len(v) else s.iloc[0]
 
-    agg = df.groupby("sequence", as_index=False).agg(
+    agg = df.groupby(["sequence", "charge"], as_index=False).agg(
         observed_rt=("rt", "mean"),
         observed_ims=("observed_ims", "mean"),
         observed_ccs=("observed_ccs", "mean"),
-        charge=("charge", _mode_or_first),
         calcmass=("calcmass", "mean"),
         collision_energy=("collision_energy", _mode_or_first),
         n_psm=("spec_idx", "size"),
@@ -210,13 +231,18 @@ def load_and_aggregate(
 def split_peptide_holdout(
     agg: pd.DataFrame, holdout_frac: float, seed: int
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Holdout split by UNIQUE peptide sequence (not row index). With
+    per-(peptide, charge) aggregation a peptide may appear at multiple
+    charges; splitting by row could leak the same sequence into both
+    train and test, defeating the held-out-peptide eval."""
     rng = np.random.default_rng(seed)
-    perm = rng.permutation(len(agg))
-    n_hold = int(round(len(agg) * holdout_frac))
-    return (
-        agg.iloc[perm[n_hold:]].reset_index(drop=True),
-        agg.iloc[perm[:n_hold]].reset_index(drop=True),
-    )
+    seqs = agg.sequence.unique()
+    perm = rng.permutation(len(seqs))
+    n_hold = int(round(len(seqs) * holdout_frac))
+    holdout_set = set(seqs[perm[:n_hold]])
+    train = agg[~agg.sequence.isin(holdout_set)].reset_index(drop=True)
+    hold = agg[agg.sequence.isin(holdout_set)].reset_index(drop=True)
+    return train, hold
 
 
 def make_tensors(
