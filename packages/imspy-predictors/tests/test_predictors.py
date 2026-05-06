@@ -128,6 +128,29 @@ class TestChargePredictor:
         assert torch.allclose(probs.sum(dim=1), torch.ones(batch_size), atol=1e-5)
 
 
+class TestIntensityPredictor:
+    """Test suite for native intensity helpers."""
+
+    def test_observed_fragments_to_intensity_target(self):
+        from imspy_predictors.intensity.predictors import (
+            observed_fragments_to_intensity_target,
+        )
+
+        class Fragments:
+            ion_types = ["IonType(Y)", "IonType(B)", "IonType(Y)"]
+            fragment_ordinals = [1, 2, 4]
+            charges = [1, 2, 3]
+            intensities = [10.0, 5.0, 1.0]
+
+        target = observed_fragments_to_intensity_target("PEPTIDE", 2, Fragments())
+
+        assert target.shape == (174,)
+        assert target[0] == 1.0
+        assert target[(2 - 1) * 6 + 4] == 0.5
+        assert target[(4 - 1) * 6 + 2] == -1.0
+        assert np.all(target[(len("PEPTIDE") - 1) * 6:] == -1.0)
+
+
 class TestBinomialChargeModel:
     """Test suite for binomial charge state model."""
 

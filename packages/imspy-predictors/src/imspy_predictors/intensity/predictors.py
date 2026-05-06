@@ -26,12 +26,77 @@ from imspy_predictors.intensity.utility import (
 
 from imspy_core.data import PeptideProductIonSeriesCollection, PeptideSequence
 from imspy_core.utility import remove_unimod_annotation
+from imspy_predictors.losses import masked_spectral_distance
+from imspy_predictors.utility import InMemoryCheckpoint
 
 # Lazy imports for optional dependencies
 from imspy_predictors.lazy_imports import (
     get_sagepy_fragment_utils,
     get_simulation_flatten_prosit,
 )
+
+
+def _ion_to_text(ion) -> str:
+    text = str(ion).lower()
+    if text in ("b", "y"):
+        return text
+    if text in ("iontype(b)", "iontype(y)"):
+        return text[-2]
+    if text.endswith(" b") or text.endswith(".b"):
+        return "b"
+    if text.endswith(" y") or text.endswith(".y"):
+        return "y"
+    return text[-1:]
+
+
+def observed_fragments_to_intensity_target(
+    sequence: str,
+    precursor_charge: int,
+    fragments,
+) -> np.ndarray:
+    """Build a native Prosit-layout target vector from observed Sage fragments.
+
+    Output layout is ordinal-major:
+    [y1+1, y1+2, y1+3, b1+1, b1+2, b1+3, y2+1, ...].
+    Impossible fragments are marked -1 for masked spectral loss; valid but
+    unmatched fragments remain zero.
+    """
+    sequence_length = len(remove_unimod_annotation(sequence))
+    target = np.zeros(174, dtype=np.float32)
+
+    target_3d = target.reshape(29, 6)
+    max_frag_pos = max(sequence_length - 1, 0)
+    if max_frag_pos < 29:
+        target_3d[max_frag_pos:, :] = -1.0
+    for ion_charge in range(1, 4):
+        if ion_charge > int(precursor_charge):
+            target_3d[:, ion_charge - 1] = -1.0
+            target_3d[:, ion_charge + 2] = -1.0
+
+    intensities = np.asarray(fragments.intensities, dtype=np.float32)
+    if intensities.size == 0:
+        return target
+    max_intensity = float(np.max(intensities))
+    if max_intensity <= 0:
+        return target
+
+    for ion_type, ordinal, charge, intensity in zip(
+        fragments.ion_types,
+        fragments.fragment_ordinals,
+        fragments.charges,
+        intensities,
+    ):
+        ion = _ion_to_text(ion_type)
+        ordinal = int(ordinal)
+        charge = int(charge)
+        if ion not in ("b", "y"):
+            continue
+        if not (1 <= ordinal <= 29 and 1 <= charge <= 3):
+            continue
+        slot = (ordinal - 1) * 6 + (charge - 1 if ion == "y" else 3 + charge - 1)
+        if target[slot] >= 0:
+            target[slot] = float(intensity) / max_intensity
+    return target
 
 
 def predict_intensities_prosit(
@@ -756,6 +821,169 @@ class DeepPeptideIntensityPredictor(IonIntensityPredictor):
             all_intensities.append(intensities)
 
         return np.vstack(all_intensities)
+
+    def fine_tune_model(
+        self,
+        data: pd.DataFrame,
+        batch_size: int = 64,
+        epochs: int = 50,
+        learning_rate: float = 1e-4,
+        patience: int = 5,
+        divide_collision_energy_by: float = 1e2,
+        verbose: bool = False,
+    ) -> None:
+        """
+        Fine-tune the native intensity model on observed 174-vector targets.
+
+        Args:
+            data: DataFrame with columns: sequence, charge, collision_energy,
+                intensity_target. The target must use the native ordinal-major
+                174-vector layout and mark impossible ions as -1.
+            batch_size: Training batch size
+            epochs: Maximum number of epochs
+            learning_rate: Learning rate
+            patience: Early stopping patience
+            divide_collision_energy_by: CE normalization factor
+            verbose: Whether to print progress
+        """
+        assert 'sequence' in data.columns, 'Data must contain column "sequence"'
+        assert 'charge' in data.columns, 'Data must contain column "charge"'
+        assert 'collision_energy' in data.columns, 'Data must contain column "collision_energy"'
+        assert 'intensity_target' in data.columns, 'Data must contain column "intensity_target"'
+
+        from torch.utils.data import DataLoader, TensorDataset
+
+        if len(data) < 2:
+            if verbose:
+                print("Skipping intensity fine-tune: need at least two PSMs")
+            return
+
+        sequences = data.sequence.tolist()
+        charges = data.charge.astype(np.int64).tolist()
+        collision_energies = (data.collision_energy.astype(float) / divide_collision_energy_by).tolist()
+        targets = np.vstack(data.intensity_target.to_numpy()).astype(np.float32)
+        if targets.shape != (len(data), 174):
+            raise ValueError(f"intensity_target must have shape (n, 174), got {targets.shape}")
+
+        tokens, charge_tensor, ce_tensor = self._preprocess(
+            sequences,
+            charges,
+            collision_energies,
+        )
+        tokens = tokens.to(self._device)
+        charge_tensor = charge_tensor.to(self._device)
+        ce_tensor = ce_tensor.to(self._device)
+        target_tensor = self._torch.tensor(targets, dtype=self._torch.float32, device=self._device)
+
+        n = len(sequences)
+        n_train = max(1, int(0.8 * n))
+        if n_train >= n:
+            n_train = n - 1
+        indices = self._torch.randperm(n, device=self._device)
+        train_idx = indices[:n_train]
+        val_idx = indices[n_train:]
+
+        train_dataset = TensorDataset(
+            tokens[train_idx],
+            charge_tensor[train_idx],
+            ce_tensor[train_idx],
+            target_tensor[train_idx],
+        )
+        val_dataset = TensorDataset(
+            tokens[val_idx],
+            charge_tensor[val_idx],
+            ce_tensor[val_idx],
+            target_tensor[val_idx],
+        )
+
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=batch_size)
+
+        self.model.train()
+        optimizer = self._torch.optim.Adam(self.model.parameters(), lr=learning_rate)
+        scheduler = self._torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, patience=3, min_lr=1e-6
+        )
+        checkpoint = InMemoryCheckpoint(patience=patience)
+
+        for epoch in range(epochs):
+            self.model.train()
+            for tokens_b, charge_b, ce_b, target_b in train_loader:
+                optimizer.zero_grad()
+                outputs = self.model(
+                    tokens_b,
+                    charge=charge_b,
+                    collision_energy=ce_b,
+                )
+                pred = outputs['intensity'] if 'intensity' in outputs else list(outputs.values())[0]
+                loss = masked_spectral_distance(target_b, pred)
+                loss.backward()
+                optimizer.step()
+
+            self.model.eval()
+            val_loss = 0.0
+            with self._torch.no_grad():
+                for tokens_b, charge_b, ce_b, target_b in val_loader:
+                    outputs = self.model(
+                        tokens_b,
+                        charge=charge_b,
+                        collision_energy=ce_b,
+                    )
+                    pred = outputs['intensity'] if 'intensity' in outputs else list(outputs.values())[0]
+                    val_loss += masked_spectral_distance(target_b, pred).item()
+            val_loss /= max(len(val_loader), 1)
+            scheduler.step(val_loss)
+
+            if verbose and epoch % 5 == 0:
+                print(f"Epoch {epoch}: intensity_val_loss={val_loss:.4f}")
+
+            if checkpoint.step(val_loss, self.model):
+                if verbose:
+                    print(f"Early stopping intensity fine-tune at epoch {epoch}")
+                break
+
+        checkpoint.restore(self.model)
+        self.model.eval()
+
+    def fine_tune_psms(
+        self,
+        psm_collection: List,
+        batch_size: int = 64,
+        epochs: int = 50,
+        learning_rate: float = 1e-4,
+        patience: int = 5,
+        verbose: bool = False,
+    ) -> None:
+        """Fine-tune the native intensity model from Sage PSM observed fragments."""
+        rows = []
+        for psm in psm_collection:
+            sequence = psm.sequence_modified if not psm.decoy else psm.sequence_decoy_modified
+            target = observed_fragments_to_intensity_target(
+                sequence,
+                psm.charge,
+                psm.sage_feature.fragments,
+            )
+            if np.any(target > 0):
+                rows.append({
+                    'sequence': sequence,
+                    'charge': int(psm.charge),
+                    'collision_energy': float(psm.collision_energy),
+                    'intensity_target': target,
+                })
+
+        if len(rows) < 2:
+            if verbose:
+                print("Skipping intensity fine-tune: no usable fragment targets")
+            return
+
+        self.fine_tune_model(
+            pd.DataFrame(rows),
+            batch_size=batch_size,
+            epochs=epochs,
+            learning_rate=learning_rate,
+            patience=patience,
+            verbose=verbose,
+        )
 
     def predict_intensities(
         self,
