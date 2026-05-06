@@ -433,14 +433,18 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, min_lr=1e-6)
         checkpoint = InMemoryCheckpoint(patience=patience)
 
+        history = {"epochs": [], "train_loss": [], "val_loss": []}
         for epoch in range(epochs):
             self.model.train()
+            train_loss = 0.0
             for tokens_b, rt_b in train_loader:
                 optimizer.zero_grad()
                 pred = _extract_prediction_mean(self.model(tokens_b), "rt")
                 loss = F.l1_loss(pred, rt_b)
                 loss.backward()
                 optimizer.step()
+                train_loss += loss.item()
+            train_loss /= max(len(train_loader), 1)
 
             self.model.eval()
             val_loss = 0
@@ -451,13 +455,19 @@ class DeepChromatographyApex(PeptideChromatographyApex):
             val_loss /= max(len(val_loader), 1)
             scheduler.step(val_loss)
 
+            history["epochs"].append(epoch)
+            history["train_loss"].append(float(train_loss))
+            history["val_loss"].append(float(val_loss))
+
             if verbose and epoch % 10 == 0:
-                print(f"Epoch {epoch}: val_loss={val_loss:.4f}")
+                print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
 
             if checkpoint.step(val_loss, self.model):
                 if verbose:
                     print(f"Early stopping at epoch {epoch}")
                 break
+
+        self._finetune_history = history
 
         checkpoint.restore(self.model)
         self.model.eval()

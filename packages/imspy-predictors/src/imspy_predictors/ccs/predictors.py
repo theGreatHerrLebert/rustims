@@ -633,7 +633,37 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         else:
             sequences = list(data.sequence_modified.values)
 
-        inv_mob = data.ims.values
+        # Drop training rows whose charge is outside the model's
+        # one-hot domain (1..4). They cannot be one-hot encoded without
+        # tripping F.one_hot's CUDA index assertion. Charges of 5+ leak
+        # through sage matching at ~0.15% on HeLa-class data even when
+        # precursor_charge is configured as [2, 4].
+        n_total = len(sequences)
+        valid_mask = (charges >= 1) & (charges <= 4)
+        n_invalid = int((~valid_mask).sum())
+        if n_invalid:
+            warnings.warn(
+                f"fine_tune_model: dropping {n_invalid} of {n_total} training "
+                f"PSMs with charge outside [1, 4].",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            sequences = [s for s, m in zip(sequences, valid_mask) if m]
+            mz = [m for m, ok in zip(mz, valid_mask) if ok]
+            charges = charges[valid_mask]
+            inv_mob = data.ims.values[valid_mask]
+        else:
+            inv_mob = data.ims.values
+
+        if len(sequences) == 0:
+            warnings.warn(
+                "fine_tune_model: no PSMs in valid charge range; skipping fine-tune.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self._finetune_history = {"epochs": [], "train_loss": [], "val_loss": []}
+            return
+
         ccs = np.array([
             one_over_k0_to_ccs(i, m, z)
             for i, m, z in zip(inv_mob, mz, charges)
@@ -681,6 +711,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         )
         checkpoint = InMemoryCheckpoint(patience=patience)
 
+        history = {"epochs": [], "train_loss": [], "val_loss": []}
         for epoch in range(epochs):
             # Training
             self.model.train()
@@ -704,6 +735,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                 loss.backward()
                 optimizer.step()
                 train_loss += loss.item()
+            train_loss /= max(len(train_loader), 1)
 
             # Validation
             self.model.eval()
@@ -727,8 +759,12 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
             val_loss /= max(len(val_loader), 1)
             scheduler.step(val_loss)
 
+            history["epochs"].append(epoch)
+            history["train_loss"].append(float(train_loss))
+            history["val_loss"].append(float(val_loss))
+
             if verbose and epoch % 10 == 0:
-                print(f"Epoch {epoch}: val_loss={val_loss:.4f}")
+                print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
 
             if checkpoint.step(val_loss, self.model):
                 if verbose:
@@ -737,6 +773,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         checkpoint.restore(self.model)
         self.model.eval()
+        self._finetune_history = history
 
     def simulate_ion_mobilities_pandas(
         self,
