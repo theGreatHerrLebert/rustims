@@ -96,6 +96,22 @@ def predict_retention_time(
         ps.retention_time_predicted = rt
 
 
+def _extract_prediction_mean(pred, key: Optional[str] = None):
+    """Extract the mean tensor from legacy, tuple, and dict model outputs."""
+    if isinstance(pred, dict):
+        if key is None:
+            if len(pred) != 1:
+                raise KeyError(
+                    "Cannot infer prediction key from multi-task model output."
+                )
+            pred = next(iter(pred.values()))
+        else:
+            pred = pred[key]
+    if isinstance(pred, tuple):
+        pred = pred[0]
+    return pred
+
+
 class PeptideChromatographyApex(ABC):
     """Abstract base class for chromatographic separation prediction."""
 
@@ -421,7 +437,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
             self.model.train()
             for tokens_b, rt_b in train_loader:
                 optimizer.zero_grad()
-                pred = self.model(tokens_b)
+                pred = _extract_prediction_mean(self.model(tokens_b), "rt")
                 loss = F.l1_loss(pred, rt_b)
                 loss.backward()
                 optimizer.step()
@@ -430,9 +446,9 @@ class DeepChromatographyApex(PeptideChromatographyApex):
             val_loss = 0
             with torch.no_grad():
                 for tokens_b, rt_b in val_loader:
-                    pred = self.model(tokens_b)
+                    pred = _extract_prediction_mean(self.model(tokens_b), "rt")
                     val_loss += F.l1_loss(pred, rt_b).item()
-            val_loss /= len(val_loader)
+            val_loss /= max(len(val_loader), 1)
             scheduler.step(val_loss)
 
             if verbose and epoch % 10 == 0:

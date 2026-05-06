@@ -51,6 +51,22 @@ class TestCCSPredictor:
         assert len(slopes) == 4  # Charges 1-4 (with 0 for charge 1)
         assert len(intercepts) == 4
 
+    def test_ccs_extract_prediction_mean(self):
+        """Test CCS fine-tune helper handles dict and tuple outputs."""
+        from imspy_predictors.ccs.predictors import (
+            _extract_prediction_mean,
+            _extract_prediction_std,
+        )
+
+        mean = torch.ones(3, 1)
+        std = torch.full((3, 1), 0.1)
+
+        assert _extract_prediction_mean((mean, std)) is mean
+        assert _extract_prediction_mean({"ccs": (mean, std)}, "ccs") is mean
+        assert _extract_prediction_mean({"ccs": mean}, "ccs") is mean
+        assert _extract_prediction_std((mean, std)) is std
+        assert _extract_prediction_std({"ccs": (mean, std)}, "ccs") is std
+
 
 class TestRTPredictor:
     """Test suite for retention time predictors."""
@@ -74,6 +90,16 @@ class TestRTPredictor:
         rt = rt_model(sequences)
 
         assert rt.shape == (batch_size, 1)
+
+    def test_rt_extract_prediction_mean(self):
+        """Test RT fine-tune helper handles dict and tuple outputs."""
+        from imspy_predictors.rt.predictors import _extract_prediction_mean
+
+        mean = torch.ones(3, 1)
+
+        assert _extract_prediction_mean(mean, "rt") is mean
+        assert _extract_prediction_mean((mean,), "rt") is mean
+        assert _extract_prediction_mean({"rt": mean}, "rt") is mean
 
 
 class TestChargePredictor:

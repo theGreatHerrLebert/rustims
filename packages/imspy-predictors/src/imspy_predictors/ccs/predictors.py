@@ -88,6 +88,31 @@ def predict_inverse_ion_mobility(
         ps.inverse_ion_mobility_predicted = mob
 
 
+def _extract_prediction_mean(pred, key: Optional[str] = None):
+    """Extract the mean tensor from legacy, tuple, and dict model outputs."""
+    if isinstance(pred, dict):
+        if key is None:
+            if len(pred) != 1:
+                raise KeyError(
+                    "Cannot infer prediction key from multi-task model output."
+                )
+            pred = next(iter(pred.values()))
+        else:
+            pred = pred[key]
+    if isinstance(pred, tuple):
+        pred = pred[0]
+    return pred
+
+
+def _extract_prediction_std(pred, key: Optional[str] = None):
+    """Extract an uncertainty tensor when a model output exposes one."""
+    if isinstance(pred, dict):
+        pred = pred[key] if key is not None else next(iter(pred.values()))
+    if isinstance(pred, tuple) and len(pred) > 1:
+        return pred[1]
+    return None
+
+
 def get_sqrt_slopes_and_intercepts(
     mz: NDArray,
     charge: NDArray,
@@ -467,7 +492,8 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         tokens = self._preprocess_sequences(sequences)
         mz_tensor = torch.tensor(mz, dtype=torch.float32, device=self._device)
         charges_onehot = F.one_hot(
-            torch.tensor(charges, device=self._device) - 1, num_classes=4
+            torch.tensor(charges, dtype=torch.long, device=self._device) - 1,
+            num_classes=4,
         ).float()
 
         # Predict in batches
@@ -482,18 +508,18 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                 # Handle different model types
                 if hasattr(self.model, 'predict_ccs'):
                     # UnifiedPeptideModel
-                    ccs, ccs_std = self.model.predict_ccs(
+                    ccs_pred = self.model.predict_ccs(
                         batch_tokens,
                         batch_mz,
                         torch.argmax(batch_charges, dim=1) + 1,
                     )
+                    ccs = _extract_prediction_mean(ccs_pred, "ccs")
+                    ccs_std = _extract_prediction_std(ccs_pred, "ccs")
                 else:
                     # Legacy PyTorchCCSPredictor
                     result = self.model(batch_mz, batch_charges, batch_tokens)
-                    if isinstance(result, tuple):
-                        ccs, ccs_std = result[0], result[1] if len(result) > 1 else None
-                    else:
-                        ccs, ccs_std = result, None
+                    ccs = _extract_prediction_mean(result, "ccs")
+                    ccs_std = _extract_prediction_std(result, "ccs")
 
                 all_ccs.append(ccs.cpu().numpy())
                 if ccs_std is not None:
@@ -546,8 +572,14 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         assert 'calcmass' in data.columns, 'Data must contain column "calcmass"'
         assert 'ims' in data.columns, 'Data must contain column "ims"'
 
-        mz = [calculate_mz(m, z) for m, z in zip(data.calcmass.values, data.charge.values.astype(np.int32))]
-        charges = data.charge.values.astype(np.int32)
+        mz = [
+            calculate_mz(m, z)
+            for m, z in zip(
+                data.calcmass.values,
+                data.charge.values.astype(np.int64),
+            )
+        ]
+        charges = data.charge.values.astype(np.int64)
 
         if decoys_separate:
             sequences = []
@@ -569,7 +601,8 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         tokens = self._preprocess_sequences(sequences)
         mz_tensor = torch.tensor(mz, dtype=torch.float32, device=self._device)
         charges_onehot = F.one_hot(
-            torch.tensor(charges, device=self._device) - 1, num_classes=4
+            torch.tensor(charges, dtype=torch.long, device=self._device) - 1,
+            num_classes=4,
         ).float()
         ccs_tensor = torch.tensor(ccs, dtype=torch.float32, device=self._device).unsqueeze(1)
 
@@ -616,15 +649,14 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
                 # Handle different model types
                 if hasattr(self.model, 'predict_ccs'):
-                    pred, _ = self.model.predict_ccs(
+                    pred = self.model.predict_ccs(
                         tokens_b,
                         mz_b,
                         torch.argmax(charge_b, dim=1) + 1,
                     )
                 else:
-                    pred, _ = self.model(mz_b, charge_b, tokens_b)
-                    if isinstance(pred, tuple):
-                        pred = pred[0]
+                    pred = self.model(mz_b, charge_b, tokens_b)
+                pred = _extract_prediction_mean(pred, "ccs")
 
                 loss = F.l1_loss(pred, ccs_b)
                 loss.backward()
@@ -639,19 +671,18 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                     mz_b, charge_b, tokens_b, ccs_b = batch
 
                     if hasattr(self.model, 'predict_ccs'):
-                        pred, _ = self.model.predict_ccs(
+                        pred = self.model.predict_ccs(
                             tokens_b,
                             mz_b,
                             torch.argmax(charge_b, dim=1) + 1,
                         )
                     else:
-                        pred, _ = self.model(mz_b, charge_b, tokens_b)
-                        if isinstance(pred, tuple):
-                            pred = pred[0]
+                        pred = self.model(mz_b, charge_b, tokens_b)
+                    pred = _extract_prediction_mean(pred, "ccs")
 
                     val_loss += F.l1_loss(pred, ccs_b).item()
 
-            val_loss /= len(val_loader)
+            val_loss /= max(len(val_loader), 1)
             scheduler.step(val_loss)
 
             if verbose and epoch % 10 == 0:
