@@ -9,6 +9,7 @@ Classes:
     - PyTorchCCSPredictor: PyTorch transformer-based model
 """
 
+import warnings
 from typing import List, Tuple, Optional, Union
 from abc import ABC, abstractmethod
 
@@ -484,15 +485,53 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
             return_uncertainty: If True, also return predicted uncertainty (std)
 
         Returns:
-            Inverse ion mobilities (1/K0), or tuple of (1/K0, std) if return_uncertainty=True
+            Inverse ion mobilities (1/K0), or tuple of (1/K0, std) if
+            return_uncertainty=True. Charges outside the model's
+            ``[1, _CHARGE_MAX]`` domain return ``NaN`` rather than
+            triggering a CUDA-side index assertion.
         """
         self.model.eval()
 
-        # Prepare data
-        tokens = self._preprocess_sequences(sequences)
-        mz_tensor = torch.tensor(mz, dtype=torch.float32, device=self._device)
+        # The model's charge embedding has 4 slots (charges 1..4).
+        # Anything outside that range cannot be one-hot encoded without
+        # tripping F.one_hot's index assertion (silent on CPU, hard
+        # CUDA crash on GPU). Filter such rows out, predict on the
+        # rest, and return NaN at their positions so downstream sees
+        # "no prediction" instead of a process-killing assert.
+        n_total = len(sequences)
+        charges_arr = np.asarray(charges, dtype=np.int64)
+        valid_mask = (charges_arr >= 1) & (charges_arr <= 4)
+        n_invalid = int((~valid_mask).sum())
+        if n_invalid:
+            warnings.warn(
+                f"simulate_ion_mobilities: {n_invalid} of {n_total} input "
+                f"PSMs have charge outside [1, 4]; returning NaN for them.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+        valid_idx = np.flatnonzero(valid_mask)
+        inverse_mobility = np.full(n_total, np.nan, dtype=np.float64)
+        inverse_mobility_std = (
+            np.full(n_total, np.nan, dtype=np.float64) if return_uncertainty else None
+        )
+
+        if valid_idx.size == 0:
+            return (
+                (inverse_mobility, inverse_mobility_std)
+                if return_uncertainty
+                else inverse_mobility
+            )
+
+        valid_sequences = [sequences[i] for i in valid_idx]
+        valid_charges = charges_arr[valid_idx].tolist()
+        valid_mz = [mz[i] for i in valid_idx]
+
+        # Prepare data on the filtered subset.
+        tokens = self._preprocess_sequences(valid_sequences)
+        mz_tensor = torch.tensor(valid_mz, dtype=torch.float32, device=self._device)
         charges_onehot = F.one_hot(
-            torch.tensor(charges, dtype=torch.long, device=self._device) - 1,
+            torch.tensor(valid_charges, dtype=torch.long, device=self._device) - 1,
             num_classes=4,
         ).float()
 
@@ -500,7 +539,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         all_ccs = []
         all_ccs_std = []
         with torch.no_grad():
-            for i in range(0, len(sequences), batch_size):
+            for i in range(0, len(valid_sequences), batch_size):
                 batch_tokens = tokens[i:i + batch_size]
                 batch_mz = mz_tensor[i:i + batch_size]
                 batch_charges = charges_onehot[i:i + batch_size]
@@ -527,18 +566,21 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         ccs = np.concatenate(all_ccs, axis=0).flatten()
 
-        # Convert CCS to inverse mobility
-        inverse_mobility = np.array([
+        # Convert CCS to inverse mobility on the valid subset, then
+        # scatter back into the full output array.
+        valid_inverse_mobility = np.array([
             ccs_to_one_over_k0(c, m, z)
-            for c, m, z in zip(ccs, mz, charges)
+            for c, m, z in zip(ccs, valid_mz, valid_charges)
         ])
+        inverse_mobility[valid_idx] = valid_inverse_mobility
 
         if return_uncertainty and all_ccs_std:
             ccs_std = np.concatenate(all_ccs_std, axis=0).flatten()
-            inverse_mobility_std = np.array([
+            valid_inverse_mobility_std = np.array([
                 ccs_to_one_over_k0(s, m, z)
-                for s, m, z in zip(ccs_std, mz, charges)
+                for s, m, z in zip(ccs_std, valid_mz, valid_charges)
             ])
+            inverse_mobility_std[valid_idx] = valid_inverse_mobility_std
             return inverse_mobility, inverse_mobility_std
 
         return inverse_mobility
