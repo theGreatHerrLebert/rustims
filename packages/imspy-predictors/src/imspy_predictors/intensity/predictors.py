@@ -62,23 +62,38 @@ def observed_fragments_to_intensity_target(
 ) -> np.ndarray:
     """Build a native Prosit-layout target vector from observed Sage fragments.
 
-    Output layout is ordinal-major:
-    ``[y1+1, y1+2, y1+3, b1+1, b1+2, b1+3, y2+1, ...]``. Impossible
-    fragments are marked ``-1`` so ``masked_spectral_distance`` ignores
-    them; valid but unmatched fragments remain zero (so the model learns
-    "this ion is possible but wasn't observed").
+    Output layout is **charge-major** matching
+    ``imspy_simulation.utility.flatten_prosit_array`` (the canonical
+    Prosit/imspy 174-vec decoder):
+
+        [0:29]   y+1   (positions 1..29)
+        [29:58]  b+1
+        [58:87]  y+2
+        [87:116] b+2
+        [116:145] y+3
+        [145:174] b+3
+
+    so ``slot = (charge-1)*58 + (0 if ion=="y" else 29) + (ordinal-1)``.
+
+    Impossible fragments are marked ``-1`` so ``masked_spectral_distance``
+    ignores them; valid but unmatched fragments remain zero (so the model
+    learns "this ion is possible but wasn't observed").
     """
     sequence_length = len(remove_unimod_annotation(sequence))
     target = np.zeros(174, dtype=np.float32)
 
-    target_3d = target.reshape(29, 6)
     max_frag_pos = max(sequence_length - 1, 0)
-    if max_frag_pos < 29:
-        target_3d[max_frag_pos:, :] = -1.0
-    for ion_charge in range(1, 4):
-        if ion_charge > int(precursor_charge):
-            target_3d[:, ion_charge - 1] = -1.0
-            target_3d[:, ion_charge + 2] = -1.0
+    for c_idx in range(3):
+        base_y = c_idx * 58
+        base_b = c_idx * 58 + 29
+        # Positions past sequence_length-1 are impossible.
+        if max_frag_pos < 29:
+            target[base_y + max_frag_pos: base_y + 29] = -1.0
+            target[base_b + max_frag_pos: base_b + 29] = -1.0
+        # Charges above the precursor charge are impossible.
+        if (c_idx + 1) > int(precursor_charge):
+            target[base_y: base_y + 29] = -1.0
+            target[base_b: base_b + 29] = -1.0
 
     intensities = np.asarray(fragments.intensities, dtype=np.float32)
     if intensities.size == 0:
@@ -100,7 +115,7 @@ def observed_fragments_to_intensity_target(
             continue
         if not (1 <= ordinal <= 29 and 1 <= charge <= 3):
             continue
-        slot = (ordinal - 1) * 6 + (charge - 1 if ion == "y" else 3 + charge - 1)
+        slot = (charge - 1) * 58 + (0 if ion == "y" else 29) + (ordinal - 1)
         if target[slot] >= 0:
             target[slot] = float(intensity) / max_intensity
     return target
