@@ -606,6 +606,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         )
         checkpoint = InMemoryCheckpoint(patience=patience)
 
+        history = {"epochs": [], "train_loss": [], "val_loss": []}
         for epoch in range(epochs):
             # Training
             self.model.train()
@@ -630,6 +631,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                 loss.backward()
                 optimizer.step()
                 train_loss += loss.item()
+            train_loss /= max(len(train_loader), 1)
 
             # Validation
             self.model.eval()
@@ -654,8 +656,15 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
             val_loss /= len(val_loader)
             scheduler.step(val_loss)
 
-            if verbose and epoch % 10 == 0:
-                print(f"Epoch {epoch}: val_loss={val_loss:.4f}")
+            history["epochs"].append(epoch)
+            history["train_loss"].append(float(train_loss))
+            history["val_loss"].append(float(val_loss))
+
+            # Print every 5 epochs (was 10) — matches RT/intensity pattern so
+            # the report's per-head FT plot has comparable point density.
+            if verbose and epoch % 5 == 0:
+                print(f"Epoch {epoch}: im train_loss={train_loss:.4f} "
+                      f"val_loss={val_loss:.4f}")
 
             if checkpoint.step(val_loss, self.model):
                 if verbose:
@@ -664,6 +673,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         checkpoint.restore(self.model)
         self.model.eval()
+        self._finetune_history = history
 
     def simulate_ion_mobilities_pandas(
         self,
