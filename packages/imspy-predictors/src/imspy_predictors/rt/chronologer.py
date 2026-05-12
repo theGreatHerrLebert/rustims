@@ -268,13 +268,26 @@ if _TORCH_AVAILABLE:
 
             n = len(kept_idx)
             gen = torch.Generator(device='cpu').manual_seed(42)
-            perm = torch.randperm(n, generator=gen).to(self.device)
-            n_val = max(1, int(n * val_frac))
-            val_idx = perm[:n_val]
-            train_idx = perm[n_val:]
+            # Group-aware (peptide-level) split: same sequence -> same fold.
+            # PSM-level random split leaks because the same modseq often
+            # appears at many spectra; the predictor is deterministic per
+            # sequence, so val loss collapses to the instrument's RT-noise
+            # floor (~10 s) and doesn't measure generalization.
+            kept_seqs = [str(sequences[i]) for i in kept_idx]
+            uniq_seqs, inv = np.unique(np.asarray(kept_seqs), return_inverse=True)
+            n_groups = len(uniq_seqs)
+            n_val_groups = max(1, int(n_groups * val_frac))
+            perm_groups = torch.randperm(n_groups, generator=gen).numpy()
+            val_groups = set(perm_groups[:n_val_groups].tolist())
+            mask_val = np.fromiter((g in val_groups for g in inv),
+                                       dtype=bool, count=n)
+            val_idx   = torch.from_numpy(np.flatnonzero(mask_val)).to(self.device)
+            train_idx = torch.from_numpy(np.flatnonzero(~mask_val)).to(self.device)
             if verbose:
-                print(f"[chrono-ft] {n} encodable samples → "
-                      f"train {len(train_idx)}, val {len(val_idx)}")
+                print(f"[chrono-ft] {n} encodable samples ({n_groups:,} "
+                      f"unique modseqs) → train PSMs {len(train_idx):,}, "
+                      f"val PSMs {len(val_idx):,} "
+                      f"(val groups: {n_val_groups:,})")
 
             if freeze_base:
                 for p in self.model.base.parameters():
