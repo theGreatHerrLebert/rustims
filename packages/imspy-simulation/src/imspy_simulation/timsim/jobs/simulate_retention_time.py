@@ -58,7 +58,22 @@ def simulate_retention_times(
 
         chrono = Chronologer.from_base(base_model_path=str(chronologer_base_path))
         out = peptides.copy()
-        seqs = out["sequence_modified"].astype(str).tolist()
+        # Resolve the sequence column exactly as
+        # DeepChromatographyApex.simulate_separation_times_pandas does:
+        # prefer the modified-sequence column, fall back to plain
+        # `sequence` (all that exists pre-modification — e.g. at the
+        # gradient-start filter); decoy rows use the decoy column.
+        if "sequence" not in out.columns:
+            raise KeyError("peptides DataFrame must contain a 'sequence' column")
+        if "sequence_modified" in out.columns:
+            seq_series = out["sequence_modified"].astype(str)
+        else:
+            seq_series = out["sequence"].astype(str)
+        if "decoy" in out.columns and "sequence_decoy_modified" in out.columns:
+            dec = out["decoy"].fillna(False).astype(bool)
+            seq_series = seq_series.where(
+                ~dec, out["sequence_decoy_modified"].astype(str))
+        seqs = seq_series.tolist()
         rt_min = np.asarray(chrono.simulate_separation_times(seqs), dtype=float)
 
         finite = np.isfinite(rt_min)
