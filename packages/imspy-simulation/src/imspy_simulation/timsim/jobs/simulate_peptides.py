@@ -4,9 +4,9 @@ from typing import Optional
 from collections import Counter
 from imspy_core.data.peptide import PeptideSequence
 
-from imspy_predictors.rt.predictors import DeepChromatographyApex, load_deep_retention_time_predictor
 from imspy_predictors.ionization.predictors import predict_peptide_flyability_with_koina
-from imspy_predictors.utility import load_tokenizer_from_resources
+
+from .simulate_retention_time import simulate_retention_times
 
 def sample_peptides_from_proteins(table, num_peptides_total=250_000, down_sample: bool = True):
 
@@ -72,6 +72,8 @@ def simulate_peptides(
         max_length: int = 30,
         proteome_mix: bool = False,
         use_koina_model: Optional[str] = None,
+        rt_model_kind: str = "local",
+        chronologer_base_path: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Simulate peptides from a protein table.
@@ -165,18 +167,21 @@ def simulate_peptides(
         if verbose:
             print("Simulating retention times for peptides and filtering ...")
 
-        RTColumn = DeepChromatographyApex(
-            model=load_deep_retention_time_predictor(),
-            tokenizer=load_tokenizer_from_resources(tokenizer_name='tokenizer-ptm'),
-            verbose=False
-        )
-
         # rename column for compatibility
         peptide_table.rename(columns={"decoys": "decoy"}, inplace=True)
 
-        peptide_rt = RTColumn.simulate_separation_times_pandas(
-            data=peptide_table.copy(),
+        # Reuse the RT job so the gradient-start filter stays consistent
+        # with the simulation's actual RT axis — including the opt-in
+        # Chronologer backend (rt_model_kind). use_koina_model is left None:
+        # this function's use_koina_model is the flyability model, not an
+        # RT model, and the filter has always used the local RT predictor.
+        peptide_rt = simulate_retention_times(
+            peptides=peptide_table.copy(),
+            verbose=False,
             gradient_length=gradient_length,
+            use_koina_model=None,
+            rt_model_kind=rt_model_kind,
+            chronologer_base_path=chronologer_base_path,
         )
 
         min_rt = gradient_length * min_rt_percent / 100

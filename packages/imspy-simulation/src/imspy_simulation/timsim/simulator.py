@@ -321,6 +321,13 @@ def get_default_settings() -> dict:
         # RT models: "local", "Deeplc_hela_hf", "Chronologer_RT", "AlphaPeptDeep_rt_generic", "Prosit_2019_irt"
         'rt_model': None,
         'koina_rt_model': None,  # Deprecated alias for rt_model
+        # RT predictor backend: 'local' (default — DeepChromatographyApex,
+        # optionally a Koina model via rt_model) or 'chronologer' (opt-in
+        # local Chronologer predictor; requires chronologer_base_path). The
+        # 'local' default keeps the published benchmark RT axis engine-
+        # neutral; 'chronologer' is a development/debugging RT axis.
+        'rt_model_kind': 'local',
+        'chronologer_base_path': None,
         # CCS models: "local", "AlphaPeptDeep_ccs_generic", "IM2Deep"
         'ccs_model': None,
         # Intensity models: "local"/"prosit", "alphapeptdeep", "ms2pip", or full Koina name
@@ -864,6 +871,8 @@ def main():
                 verbose=not config.silent_mode,
                 gradient_length=config.gradient_length,
                 use_koina_model=rt_model,
+                rt_model_kind=config.rt_model_kind,
+                chronologer_base_path=config.chronologer_base_path,
             )
 
         if config.rt_variation_std is not None:
@@ -984,6 +993,8 @@ def main():
                 min_length=config.min_len,
                 max_length=config.max_len,
                 proteome_mix=config.proteome_mix,
+                rt_model_kind=config.rt_model_kind,
+                chronologer_base_path=config.chronologer_base_path,
             )
 
             if config.proteome_mix:
@@ -1036,6 +1047,8 @@ def main():
             verbose=not config.silent_mode,
             gradient_length=acquisition_builder.gradient_length,
             use_koina_model=rt_model,
+            rt_model_kind=config.rt_model_kind,
+            chronologer_base_path=config.chronologer_base_path,
         )
 
         # Workaround for the correct column ordering
