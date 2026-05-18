@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `rustdf/src/cluster/utility.rs`."><title>utility.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-ca0dd0c4.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdf" data-themes="" data-resource-suffix="" data-rustdoc-version="1.93.1 (01f6ddf75 2026-02-11)" data-channel="1.93.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-a3946164.js" data-settings-js="settings-c38705f0.js" ><script src="../../../static.files/storage-e2aeef58.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-a410ff4d.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-263c88ec.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">rustdf/cluster/</div>utility.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Utility functions for DIA clustering.
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `rustdf/src/cluster/utility.rs`."><title>utility.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="rustdf" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../../../static.files/src-script-813739b1.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1><div class="sub-heading">rustdf/cluster/</div>utility.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap digits-4"><pre class="rust"><code><a href=#1 id=1 data-nosnippet>1</a><span class="doccomment">//! Utility functions for DIA clustering.
 <a href=#2 id=2 data-nosnippet>2</a>//!
 <a href=#3 id=3 data-nosnippet>3</a>//! This module provides various utility functions organized into logical sections:
 <a href=#4 id=4 data-nosnippet>4</a>//!
@@ -303,7 +303,7 @@
 <a href=#303 id=303 data-nosnippet>303</a>    offsets.push(<span class="number">0</span>);
 <a href=#304 id=304 data-nosnippet>304</a>    <span class="kw">let </span><span class="kw-2">mut </span>cur_bin: <span class="prelude-ty">Option</span>&lt;usize&gt; = <span class="prelude-val">None</span>;
 <a href=#305 id=305 data-nosnippet>305</a>    <span class="kw">for </span>(bin, scan, val) <span class="kw">in </span>items.into_iter() {
-<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">if </span>cur_bin.map_or(<span class="bool-val">true</span>, |cb| <span class="macro">cb !</span>= bin) {
+<a href=#306 id=306 data-nosnippet>306</a>        <span class="kw">if </span>cur_bin.map_or(<span class="bool-val">true</span>, |cb| cb != bin) {
 <a href=#307 id=307 data-nosnippet>307</a>            unique_bins.push(bin);
 <a href=#308 id=308 data-nosnippet>308</a>            offsets.push(offsets.last().copied().unwrap());
 <a href=#309 id=309 data-nosnippet>309</a>            cur_bin = <span class="prelude-val">Some</span>(bin);
@@ -413,7 +413,7 @@
 <a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">while </span>wl &gt; <span class="number">0 </span>&amp;&amp; y_smoothed[wl] &gt; half { wl -= <span class="number">1</span>; }
 <a href=#414 id=414 data-nosnippet>414</a>        <span class="kw">let </span>left_x = <span class="kw">if </span>wl &lt; i &amp;&amp; wl + <span class="number">1 </span>&lt; n {
 <a href=#415 id=415 data-nosnippet>415</a>            <span class="kw">let </span>y0 = y_smoothed[wl]; <span class="kw">let </span>y1 = y_smoothed[wl + <span class="number">1</span>];
-<a href=#416 id=416 data-nosnippet>416</a>            wl <span class="kw">as </span>f32 + <span class="kw">if </span><span class="macro">y1 !</span>= y0 { (half - y0) / (y1 - y0) } <span class="kw">else </span>{ <span class="number">0.0 </span>}
+<a href=#416 id=416 data-nosnippet>416</a>            wl <span class="kw">as </span>f32 + <span class="kw">if </span>y1 != y0 { (half - y0) / (y1 - y0) } <span class="kw">else </span>{ <span class="number">0.0 </span>}
 <a href=#417 id=417 data-nosnippet>417</a>        } <span class="kw">else </span>{ wl <span class="kw">as </span>f32 };
 <a href=#418 id=418 data-nosnippet>418</a>
 <a href=#419 id=419 data-nosnippet>419</a>        <span class="comment">// right crossing
@@ -421,7 +421,7 @@
 <a href=#421 id=421 data-nosnippet>421</a>        <span class="kw">while </span>wr + <span class="number">1 </span>&lt; n &amp;&amp; y_smoothed[wr] &gt; half { wr += <span class="number">1</span>; }
 <a href=#422 id=422 data-nosnippet>422</a>        <span class="kw">let </span>right_x = <span class="kw">if </span>wr &gt; i &amp;&amp; wr &lt; n {
 <a href=#423 id=423 data-nosnippet>423</a>            <span class="kw">let </span>y0 = y_smoothed[wr - <span class="number">1</span>]; <span class="kw">let </span>y1 = y_smoothed[wr];
-<a href=#424 id=424 data-nosnippet>424</a>            (wr - <span class="number">1</span>) <span class="kw">as </span>f32 + <span class="kw">if </span><span class="macro">y1 !</span>= y0 { (half - y0) / (y1 - y0) } <span class="kw">else </span>{ <span class="number">0.0 </span>}
+<a href=#424 id=424 data-nosnippet>424</a>            (wr - <span class="number">1</span>) <span class="kw">as </span>f32 + <span class="kw">if </span>y1 != y0 { (half - y0) / (y1 - y0) } <span class="kw">else </span>{ <span class="number">0.0 </span>}
 <a href=#425 id=425 data-nosnippet>425</a>        } <span class="kw">else </span>{ wr <span class="kw">as </span>f32 };
 <a href=#426 id=426 data-nosnippet>426</a>
 <a href=#427 id=427 data-nosnippet>427</a>        <span class="kw">let </span>width = (right_x - left_x).max(<span class="number">0.0</span>);
@@ -623,7 +623,7 @@
 <a href=#623 id=623 data-nosnippet>623</a>    <span class="kw">while </span>l &gt; <span class="number">0 </span>&amp;&amp; trace_raw[l] &gt; thr { l -= <span class="number">1</span>; }
 <a href=#624 id=624 data-nosnippet>624</a>    <span class="kw">let </span>left_x = <span class="kw">if </span>l &lt; i_max {
 <a href=#625 id=625 data-nosnippet>625</a>        <span class="kw">let </span>y0 = trace_raw[l]; <span class="kw">let </span>y1 = trace_raw[l + <span class="number">1</span>];
-<a href=#626 id=626 data-nosnippet>626</a>        l <span class="kw">as </span>f32 + <span class="kw">if </span><span class="macro">y1 !</span>= y0 { (thr - y0) / (y1 - y0) } <span class="kw">else </span>{ <span class="number">0.0 </span>}
+<a href=#626 id=626 data-nosnippet>626</a>        l <span class="kw">as </span>f32 + <span class="kw">if </span>y1 != y0 { (thr - y0) / (y1 - y0) } <span class="kw">else </span>{ <span class="number">0.0 </span>}
 <a href=#627 id=627 data-nosnippet>627</a>    } <span class="kw">else </span>{ l <span class="kw">as </span>f32 };
 <a href=#628 id=628 data-nosnippet>628</a>
 <a href=#629 id=629 data-nosnippet>629</a>    <span class="comment">// right crossing
@@ -631,7 +631,7 @@
 <a href=#631 id=631 data-nosnippet>631</a>    <span class="kw">while </span>r + <span class="number">1 </span>&lt; n &amp;&amp; trace_raw[r] &gt; thr { r += <span class="number">1</span>; }
 <a href=#632 id=632 data-nosnippet>632</a>    <span class="kw">let </span>right_x = <span class="kw">if </span>r &gt; i_max &amp;&amp; r &lt; n {
 <a href=#633 id=633 data-nosnippet>633</a>        <span class="kw">let </span>y0 = trace_raw[r - <span class="number">1</span>]; <span class="kw">let </span>y1 = trace_raw[r];
-<a href=#634 id=634 data-nosnippet>634</a>        (r - <span class="number">1</span>) <span class="kw">as </span>f32 + <span class="kw">if </span><span class="macro">y1 !</span>= y0 { (thr - y0) / (y1 - y0) } <span class="kw">else </span>{ <span class="number">0.0 </span>}
+<a href=#634 id=634 data-nosnippet>634</a>        (r - <span class="number">1</span>) <span class="kw">as </span>f32 + <span class="kw">if </span>y1 != y0 { (thr - y0) / (y1 - y0) } <span class="kw">else </span>{ <span class="number">0.0 </span>}
 <a href=#635 id=635 data-nosnippet>635</a>    } <span class="kw">else </span>{ r <span class="kw">as </span>f32 };
 <a href=#636 id=636 data-nosnippet>636</a>
 <a href=#637 id=637 data-nosnippet>637</a>    <span class="kw">let </span>width_frames = (right_x - left_x).max(<span class="number">0.0</span>).round() <span class="kw">as </span>usize;
@@ -1034,7 +1034,7 @@
 <a href=#1034 id=1034 data-nosnippet>1034</a></span><span class="kw">fn </span>compatible_fast(a: <span class="kw-2">&amp;</span>ImPeak1D, b: <span class="kw-2">&amp;</span>ImPeak1D, params: <span class="kw-2">&amp;</span>StitchParams) -&gt; bool {
 <a href=#1035 id=1035 data-nosnippet>1035</a>    <span class="comment">// 1) Window group (unless crossing allowed)
 <a href=#1036 id=1036 data-nosnippet>1036</a>    </span><span class="kw">if </span>!params.allow_cross_groups {
-<a href=#1037 id=1037 data-nosnippet>1037</a>        <span class="kw">if </span>a.<span class="macro">window_group !</span>= b.window_group {
+<a href=#1037 id=1037 data-nosnippet>1037</a>        <span class="kw">if </span>a.window_group != b.window_group {
 <a href=#1038 id=1038 data-nosnippet>1038</a>            <span class="kw">return </span><span class="bool-val">false</span>;
 <a href=#1039 id=1039 data-nosnippet>1039</a>        }
 <a href=#1040 id=1040 data-nosnippet>1040</a>    }
@@ -1200,7 +1200,7 @@
 <a href=#1200 id=1200 data-nosnippet>1200</a>        }
 <a href=#1201 id=1201 data-nosnippet>1201</a>
 <a href=#1202 id=1202 data-nosnippet>1202</a>        <span class="comment">// window_group
-<a href=#1203 id=1203 data-nosnippet>1203</a>        </span><span class="kw">if </span><span class="macro">wg_agg !</span>= p.window_group {
+<a href=#1203 id=1203 data-nosnippet>1203</a>        </span><span class="kw">if </span>wg_agg != p.window_group {
 <a href=#1204 id=1204 data-nosnippet>1204</a>            wg_agg = <span class="prelude-val">None</span>;
 <a href=#1205 id=1205 data-nosnippet>1205</a>        }
 <a href=#1206 id=1206 data-nosnippet>1206</a>
