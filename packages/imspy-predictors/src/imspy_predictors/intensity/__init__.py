@@ -3,6 +3,7 @@
 from imspy_predictors.intensity.predictors import (
     IonIntensityPredictor,
     Prosit2023TimsTofWrapper,
+    calibrate_nce,
     get_collision_energy_calibration_factor,
     remove_unimod_annotation,
     predict_fragment_intensities_with_koina,
@@ -25,6 +26,7 @@ __all__ = [
     'IonIntensityPredictor',
     'Prosit2023TimsTofWrapper',
     # Utilities
+    'calibrate_nce',
     'get_collision_energy_calibration_factor',
     'remove_unimod_annotation',
     'post_process_predicted_fragment_spectra',

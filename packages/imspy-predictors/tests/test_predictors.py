@@ -51,6 +51,22 @@ class TestCCSPredictor:
         assert len(slopes) == 4  # Charges 1-4 (with 0 for charge 1)
         assert len(intercepts) == 4
 
+    def test_ccs_extract_prediction_mean(self):
+        """Test CCS fine-tune helper handles dict and tuple outputs."""
+        from imspy_predictors.ccs.predictors import (
+            _extract_prediction_mean,
+            _extract_prediction_std,
+        )
+
+        mean = torch.ones(3, 1)
+        std = torch.full((3, 1), 0.1)
+
+        assert _extract_prediction_mean((mean, std)) is mean
+        assert _extract_prediction_mean({"ccs": (mean, std)}, "ccs") is mean
+        assert _extract_prediction_mean({"ccs": mean}, "ccs") is mean
+        assert _extract_prediction_std((mean, std)) is std
+        assert _extract_prediction_std({"ccs": (mean, std)}, "ccs") is std
+
 
 class TestRTPredictor:
     """Test suite for retention time predictors."""
@@ -74,6 +90,16 @@ class TestRTPredictor:
         rt = rt_model(sequences)
 
         assert rt.shape == (batch_size, 1)
+
+    def test_rt_extract_prediction_mean(self):
+        """Test RT fine-tune helper handles dict and tuple outputs."""
+        from imspy_predictors.rt.predictors import _extract_prediction_mean
+
+        mean = torch.ones(3, 1)
+
+        assert _extract_prediction_mean(mean, "rt") is mean
+        assert _extract_prediction_mean((mean,), "rt") is mean
+        assert _extract_prediction_mean({"rt": mean}, "rt") is mean
 
 
 class TestChargePredictor:
@@ -100,6 +126,29 @@ class TestChargePredictor:
         assert probs.shape == (batch_size, 4)
         # Should be valid probabilities
         assert torch.allclose(probs.sum(dim=1), torch.ones(batch_size), atol=1e-5)
+
+
+class TestIntensityPredictor:
+    """Test suite for native intensity helpers."""
+
+    def test_observed_fragments_to_intensity_target(self):
+        from imspy_predictors.intensity.predictors import (
+            observed_fragments_to_intensity_target,
+        )
+
+        class Fragments:
+            ion_types = ["IonType(Y)", "IonType(B)", "IonType(Y)"]
+            fragment_ordinals = [1, 2, 4]
+            charges = [1, 2, 3]
+            intensities = [10.0, 5.0, 1.0]
+
+        target = observed_fragments_to_intensity_target("PEPTIDE", 2, Fragments())
+
+        assert target.shape == (174,)
+        assert target[0] == 1.0
+        assert target[(2 - 1) * 6 + 4] == 0.5
+        assert target[(4 - 1) * 6 + 2] == -1.0
+        assert np.all(target[(len("PEPTIDE") - 1) * 6:] == -1.0)
 
 
 class TestBinomialChargeModel:
