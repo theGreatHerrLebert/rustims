@@ -128,21 +128,17 @@ def predict_intensities_prosit(
     # the intensity predictor model
     prosit_model = Prosit2023TimsTofWrapper(verbose=False)
 
-    # sample for collision energy calibration
-    sample = list(sorted(psm_collection, key=lambda x: x.hyperscore, reverse=True))[:int(2 ** 11)]
-
+    # Calibrate one absolute NCE for the run (calibrate_nce drops decoys and
+    # caps the sample internally). The model conditions on a per-run NCE, so
+    # every PSM is predicted at that single value -- not observed CE + offset.
     if calibrate_collision_energy:
-        collision_energy_calibration_factor, _ = get_collision_energy_calibration_factor(
-            list(filter(lambda match: match.decoy is not True, sample)),
-            prosit_model,
-            verbose=verbose
-        )
-
+        calibration = calibrate_nce(prosit_model, psm_collection, verbose=verbose)
+        calibrated_nce = float(calibration["best_nce"])
+        for ps in psm_collection:
+            ps.collision_energy_calibrated = calibrated_nce
     else:
-        collision_energy_calibration_factor = 0.0
-
-    for ps in psm_collection:
-        ps.collision_energy_calibrated = ps.collision_energy + collision_energy_calibration_factor
+        for ps in psm_collection:
+            ps.collision_energy_calibrated = ps.collision_energy
 
     intensity_pred = prosit_model.predict_intensities(
         [p.sequence_modified for p in psm_collection],
@@ -162,57 +158,111 @@ def predict_intensities_prosit(
         psm.prosit_predicted_intensities = psm_intensity.prosit_predicted_intensities
 
 
+def calibrate_nce(
+        model,
+        psms: List,
+        nce_grid: Optional[List[int]] = None,
+        per_charge: bool = False,
+        max_sample: int = 2048,
+        verbose: bool = False,
+) -> dict:
+    """Calibrate the absolute normalized collision energy (NCE) for a run.
+
+    The intensity model conditions on a per-run NCE scalar -- it was fine-tuned
+    on ``collision_energy_aligned_normed`` (domain ~7-43). Calibration sweeps
+    absolute NCE values, predicts every PSM at each, and returns the value that
+    maximizes the mean predicted-vs-observed spectral angle.
+
+    This is an *absolute* sweep, NOT an offset on the observed collision energy:
+    the observed CE (e.g. the Bruker mobility-ramped value) is a different
+    physical quantity and must not be added to. One NCE is returned per run.
+
+    Note: This function requires sagepy (via the imspy-search package).
+
+    Args:
+        model: an intensity predictor exposing ``predict_intensities(sequences,
+            charges, collision_energies, batch_size=, flatten=True)`` -- e.g.
+            Prosit2023TimsTofWrapper or DeepPeptideIntensityPredictor.
+        psms: sagepy Psm objects carrying observed fragments. Decoys are dropped.
+        nce_grid: absolute NCE values to sweep (default ``range(15, 51)``).
+        per_charge: also report the best NCE separately per precursor charge.
+        max_sample: cap the calibration sample; if exceeded, the highest-scoring
+            PSMs (by hyperscore) are kept.
+        verbose: whether to print progress.
+
+    Returns:
+        dict: ``{best_nce, curve: [(nce, mean_spectral_angle), ...], n_psms}``;
+        also ``per_charge: {charge: best_nce}`` when ``per_charge`` is True.
+    """
+    associate_fragment_ions_with_prosit_predicted_intensities, _ = get_sagepy_fragment_utils()
+
+    if nce_grid is None:
+        nce_grid = list(range(15, 51))
+    nce_grid = [int(x) for x in nce_grid]
+
+    targets = [p for p in psms if not getattr(p, "decoy", False)]
+    if not targets:
+        raise ValueError("calibrate_nce: no target PSMs to calibrate on")
+    if max_sample and len(targets) > max_sample:
+        targets = sorted(targets, key=lambda p: getattr(p, "hyperscore", 0.0),
+                         reverse=True)[:max_sample]
+
+    def _sweep(sample):
+        # sequence_modified (not sequence) -- the prediction is mod-aware.
+        seqs = [p.sequence_modified for p in sample]
+        chgs = np.array([p.charge for p in sample])
+        curve = []
+        for nce in tqdm(nce_grid, disable=not verbose, desc="calibrating NCE", ncols=100):
+            intensities = model.predict_intensities(
+                seqs, chgs, [float(nce)] * len(sample),
+                batch_size=2048, flatten=True,
+            )
+            scored = associate_fragment_ions_with_prosit_predicted_intensities(
+                sample, intensities
+            )
+            sa = float(np.mean([x.spectral_angle_similarity for x in scored]))
+            curve.append((int(nce), sa))
+        best = curve[int(np.argmax([s for _, s in curve]))][0]
+        return int(best), curve
+
+    best_nce, curve = _sweep(targets)
+    result = {"best_nce": best_nce, "curve": curve, "n_psms": len(targets)}
+
+    if per_charge:
+        pc = {}
+        for z in sorted({int(p.charge) for p in targets}):
+            sub = [p for p in targets if int(p.charge) == z]
+            if len(sub) < 100:
+                continue
+            pc[z], _ = _sweep(sub)
+        result["per_charge"] = pc
+
+    if verbose:
+        print(f"calibrate_nce: best NCE = {best_nce} "
+              f"(mean spectral angle {max(s for _, s in curve):.4f}, "
+              f"n = {len(targets)})")
+    return result
+
+
 def get_collision_energy_calibration_factor(
         sample: List,
         model: 'Prosit2023TimsTofWrapper',
-        lower: int = -30,
-        upper: int = 30,
         verbose: bool = False,
 ) -> Tuple[float, List[float]]:
-    """
-    Get the collision energy calibration factor for a given sample.
+    """DEPRECATED -- use :func:`calibrate_nce`.
 
-    Note: This function requires sagepy (via imspy-search package).
-
-    Args:
-        sample: a list of PeptideSpectrumMatch objects (sagepy Psm objects)
-        model: a Prosit2023TimsTofWrapper object
-        lower: lower bound for the search
-        upper: upper bound for the search
-        verbose: whether to print progress
+    BEHAVIOR CHANGED. This previously returned an *offset* added to each PSM's
+    ``collision_energy`` and -- a bug -- calibrated on the unmodified sequence.
+    It now delegates to :func:`calibrate_nce` and returns the **absolute** best
+    NCE. Callers must set ``collision_energy_calibrated = best_nce`` directly,
+    NOT ``collision_energy + factor``.
 
     Returns:
-        Tuple[float, List[float]]: the collision energy calibration factor and the angle similarities
+        Tuple[float, List[float]]: the absolute best NCE and the per-NCE mean
+        spectral angles.
     """
-    associate_fragment_ions_with_prosit_predicted_intensities, Psm = get_sagepy_fragment_utils()
-
-    cos_target, cos_decoy = [], []
-
-    if verbose:
-        print(f"Searching for collision energy calibration factor between {lower} and {upper} ...")
-
-    for i in tqdm(range(lower, upper), disable=not verbose, desc='calibrating CE', ncols=100):
-        I = model.predict_intensities(
-            [p.sequence for p in sample],
-            np.array([p.charge for p in sample]),
-            [p.collision_energy + i for p in sample],
-            batch_size=2048,
-            flatten=True
-        )
-
-        psm_i = associate_fragment_ions_with_prosit_predicted_intensities(sample, I)
-        target = list(filter(lambda x: not x.decoy, psm_i))
-        decoy = list(filter(lambda x: x.decoy, psm_i))
-
-        cos_target.append((i, np.mean([x.spectral_angle_similarity for x in target])))
-        cos_decoy.append((i, np.mean([x.spectral_angle_similarity for x in decoy])))
-
-    calibration_factor, similarities = cos_target[np.argmax([x[1] for x in cos_target])][0], [x[1] for x in cos_target]
-
-    if verbose:
-        print(f"Best calibration factor: {calibration_factor}, with similarity: {np.max(np.round(similarities, 2))}")
-
-    return calibration_factor, similarities
+    calibration = calibrate_nce(model, sample, verbose=verbose)
+    return float(calibration["best_nce"]), [sa for _, sa in calibration["curve"]]
 
 
 class IonIntensityPredictor(ABC):
