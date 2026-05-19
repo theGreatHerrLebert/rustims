@@ -63,6 +63,9 @@ impl TimsDataset {
     /// # Arguments
     /// * `data_path` - Path to the .d folder
     /// * `in_memory` - Whether to load all data into memory
+    /// * `bruker_lib_path` - Path to the Bruker SDK shared library; used to
+    ///   derive an accurate m/z calibration. Pass "NO_SDK" (or an empty
+    ///   string) to skip and use the 2-point boundary m/z model.
     /// * `im_lookup` - Pre-computed scan→1/K0 lookup table from Bruker SDK
     ///
     /// # Returns
@@ -70,6 +73,7 @@ impl TimsDataset {
     pub fn new_with_calibration(
         data_path: &str,
         in_memory: bool,
+        bruker_lib_path: &str,
         im_lookup: Vec<f64>,
     ) -> Self {
         let global_meta_data = read_global_meta_sql(data_path).unwrap();
@@ -81,6 +85,7 @@ impl TimsDataset {
         let loader = match in_memory {
             true => TimsDataLoader::new_in_memory_with_calibration(
                 data_path,
+                bruker_lib_path,
                 tof_max_index,
                 mz_lower,
                 mz_upper,
@@ -88,6 +93,7 @@ impl TimsDataset {
             ),
             false => TimsDataLoader::new_lazy_with_calibration(
                 data_path,
+                bruker_lib_path,
                 tof_max_index,
                 mz_lower,
                 mz_upper,
