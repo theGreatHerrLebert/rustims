@@ -119,9 +119,21 @@ impl PyTimsDatasetDDA {
     /// # Create dataset with calibration (fast + accurate)
     /// dataset = py_dda.PyTimsDatasetDDA.with_calibration("sample.d", False, im_lookup.tolist())
     /// ```
+    ///
+    /// `bruker_lib_path` (optional) supplies the Bruker SDK shared library so an
+    /// accurate m/z calibration can be derived. When omitted (default "NO_SDK")
+    /// the converter falls back to the 2-point boundary m/z model, which can
+    /// have a large m/z error on some datasets.
     #[staticmethod]
-    pub fn with_calibration(data_path: &str, in_memory: bool, im_lookup: Vec<f64>) -> Self {
-        let dataset = TimsDatasetDDA::new_with_calibration(data_path, in_memory, im_lookup);
+    #[pyo3(signature = (data_path, in_memory, im_lookup, bruker_lib_path = "NO_SDK"))]
+    pub fn with_calibration(
+        data_path: &str,
+        in_memory: bool,
+        im_lookup: Vec<f64>,
+        bruker_lib_path: &str,
+    ) -> Self {
+        let dataset =
+            TimsDatasetDDA::new_with_calibration(data_path, in_memory, bruker_lib_path, im_lookup);
         PyTimsDatasetDDA { inner: dataset }
     }
 
