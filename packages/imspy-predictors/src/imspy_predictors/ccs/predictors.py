@@ -678,13 +678,29 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         ).float()
         ccs_tensor = torch.tensor(ccs, dtype=torch.float32, device=self._device).unsqueeze(1)
 
-        # Split data
+        # Group-aware (peptide × charge) split: same (modseq, charge) → same
+        # fold. PSM-level random split would leak — the predictor is
+        # deterministic per (sequence, charge) so identical inputs in
+        # train and val collapse val loss to the instrument's IM-noise
+        # floor, not the model's generalization.
         n = len(sequences)
-        n_train = int(0.8 * n)
-        indices = torch.randperm(n)
-
-        train_idx = indices[:n_train]
-        val_idx = indices[n_train:]
+        group_keys = np.array([f"{s}_{int(c)}" for s, c in zip(sequences, charges)])
+        uniq, inv = np.unique(group_keys, return_inverse=True)
+        n_groups = len(uniq)
+        n_val_groups = max(1, int(n_groups * 0.2))
+        if n_val_groups >= n_groups:
+            n_val_groups = n_groups - 1
+        rng_np = np.random.default_rng(42)
+        perm_groups = rng_np.permutation(n_groups)
+        val_groups = set(perm_groups[:n_val_groups].tolist())
+        mask_val = np.fromiter((g in val_groups for g in inv),
+                                   dtype=bool, count=n)
+        val_idx   = torch.from_numpy(np.flatnonzero(mask_val))
+        train_idx = torch.from_numpy(np.flatnonzero(~mask_val))
+        if verbose:
+            print(f"[im-ft] {n} PSMs ({n_groups:,} unique (modseq,charge)) → "
+                  f"train {len(train_idx):,}, val {len(val_idx):,} "
+                  f"(val groups: {n_val_groups:,})")
 
         # Create datasets
         train_dataset = TensorDataset(
@@ -763,8 +779,11 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
             history["train_loss"].append(float(train_loss))
             history["val_loss"].append(float(val_loss))
 
-            if verbose and epoch % 10 == 0:
-                print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
+            # Print every 5 epochs (was 10) — matches RT/intensity pattern so
+            # the report's per-head FT plot has comparable point density.
+            if verbose and epoch % 5 == 0:
+                print(f"Epoch {epoch}: im train_loss={train_loss:.4f} "
+                      f"val_loss={val_loss:.4f}")
 
             if checkpoint.step(val_loss, self.model):
                 if verbose:
