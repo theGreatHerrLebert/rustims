@@ -340,7 +340,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
 
         # Load model
         if model is None:
-            self.model = load_deep_retention_time_predictor()
+            self.model = load_deep_retention_time_predictor(backend="transformer")
         else:
             self.model = model
 
