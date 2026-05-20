@@ -550,9 +550,13 @@ impl TimsDatasetDDA {
             let frame = &frames[idx];
 
             // === XIC and Mobilogram: Extract from isotope range (or single m/z if no mono_mz) ===
+            // Scan range is unbounded; the inv_mobility window (im_min/im_max) does
+            // the mobility selection. A hardcoded scan cap (e.g. 0..1000) silently
+            // drops signal on methods configured with more than that many scans
+            // per frame (high mobility-resolution / wide IM range acquisitions).
             let xic_filtered = frame.filter_ranged(
                 xic_mz_min, xic_mz_max,
-                0, 1000,
+                0, i32::MAX,
                 im_min, im_max,
                 0.0, 1e9,
                 0, i32::MAX,
