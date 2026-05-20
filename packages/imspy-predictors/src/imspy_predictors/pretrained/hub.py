@@ -29,7 +29,9 @@ _RELEASE_BASE = (
 )
 
 # Maps the *package-relative* path (as used by callers of get_model_path)
-# to its download URL and expected SHA-256 hash.
+# to its download URL and expected SHA-256 hash. Entries default to the
+# rustims models GitHub Release; an explicit "url" overrides that for
+# vendor-free upstream redistributions (e.g. Chronologer).
 MODELS = {
     "ccs/best_model.pt": {
         "filename": "ccs-best_model.pt",
@@ -50,6 +52,15 @@ MODELS = {
     "pretrained_encoder.pt": {
         "filename": "pretrained_encoder.pt",
         "sha256": "43ccc2f836bf3d81943ddce353ade9628e7d036421ba5b5c182bf163e496385e",
+    },
+    # Chronologer base weights — fetched directly from upstream Searle Lab
+    # (Apache-2.0, attribution preserved in imspy_predictors.rt.chronologer).
+    # We deliberately do not re-host: pulls from the upstream repo so any
+    # future fix or retraining propagates automatically.
+    "rt/chronologer_base.pt": {
+        "filename": "chronologer_base.pt",
+        "url": "https://github.com/searlelab/chronologer/raw/main/models/Chronologer_20220601193755.pt",
+        "sha256": "1a500c246b49a1a23643bce7f2df86d5a107359bf0ec34365531c73431b6c0b3",
     },
 }
 
@@ -153,7 +164,7 @@ def ensure_model(model_name: str) -> Path:
 
     # 3. Download into a temp file in the same filesystem, then atomic-rename.
     cached_path.parent.mkdir(parents=True, exist_ok=True)
-    url = f"{_RELEASE_BASE}/{meta['filename']}"
+    url = meta.get("url") or f"{_RELEASE_BASE}/{meta['filename']}"
     logger.info("Downloading model '%s' from %s ...", model_name, url)
 
     tmp_fd, tmp_path = tempfile.mkstemp(

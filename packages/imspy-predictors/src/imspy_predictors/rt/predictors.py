@@ -228,11 +228,19 @@ def load_deep_retention_time_predictor(backend: Optional[str] = None):
     """
     Load a pretrained retention time predictor model.
 
+    Defaults to **Chronologer** (Searle Lab, Apache-2.0) — a residual-CNN that
+    reaches roughly 4× tighter median residual than the imspy transformer
+    baseline on timsTOF data. Pass ``backend="transformer"`` to opt back into
+    the legacy imspy ``UnifiedPeptideModel`` RT predictor.
+
     Args:
-        backend: Kept for backward compatibility, ignored (always uses PyTorch)
+        backend: ``"chronologer"`` (default, or pass ``None``) loads the
+            Chronologer wrapper. ``"transformer"`` loads the legacy imspy
+            transformer RT model. Any other value is treated as the default.
 
     Returns:
-        Loaded PyTorch model
+        Either a :class:`Chronologer` wrapper or the legacy transformer
+        PyTorch model, depending on ``backend``.
     """
     if not TORCH_AVAILABLE:
         raise ImportError(
@@ -240,6 +248,25 @@ def load_deep_retention_time_predictor(backend: Optional[str] = None):
             "Install with: pip install torch"
         )
 
+    backend = (backend or "chronologer").lower()
+
+    if backend == "chronologer":
+        # Default: Chronologer is the goto RT predictor on timsTOF data.
+        # Falls back to the transformer path only if Chronologer can't be
+        # constructed (e.g. upstream `chronologer` package not installed, or
+        # the base-weights download is unreachable).
+        try:
+            from imspy_predictors.rt.chronologer import Chronologer
+            base_path = get_model_path('rt/chronologer_base.pt')
+            return Chronologer.from_base(str(base_path))
+        except (ImportError, FileNotFoundError, RuntimeError) as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Chronologer load failed (%s); falling back to transformer.", e,
+            )
+            backend = "transformer"
+
+    # Transformer path (legacy / fallback).
     # Try to load UnifiedPeptideModel first (new architecture)
     try:
         from imspy_predictors.models import UnifiedPeptideModel
