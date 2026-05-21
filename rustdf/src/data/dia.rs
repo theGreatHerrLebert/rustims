@@ -6,6 +6,7 @@ use crate::data::meta::{
     read_dia_ms_ms_info, read_dia_ms_ms_windows, read_global_meta_sql, read_meta_data_sql,
     DiaMsMisInfo, DiaMsMsWindow, FrameMeta, GlobalMetaData,
 };
+use mscore::data::spectrum::MsType;
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
 use rand::prelude::IteratorRandom;
@@ -558,41 +559,53 @@ impl TimsDatasetDIA {
             .collect()
     }
 
+    /// Sample MS1 noise from `num_frames` random precursor frames in the
+    /// reference dataset, sum them into one combined TimsFrame, and stamp
+    /// the result's `ms_type` as `MsType::Precursor` so downstream
+    /// `simulated + noise` adds don't collapse the simulated frame's type
+    /// to `MsType::Unknown`.
+    ///
+    /// Empty-fallback handling
+    /// -----------------------
+    /// `loader.get_frame()` returns `TimsFrame::default()` (which is
+    /// `frame_id=0, ms_type=MsType::Unknown`) when the requested raw
+    /// frame has no scan data. If one of those Default-shaped frames is
+    /// the first element fed into the inner accumulator, every subsequent
+    /// `sampled_frame + frame` retains `frame_id=0, ms_type=Unknown` via
+    /// `TimsFrame::Add`'s correct "LHS frame_id wins; mismatched ms_type
+    /// → Unknown" semantics. That corrupted noise then leaks through the
+    /// outer simulator add. The fix here:
+    ///   1. Skip empty / Default-shaped candidates before they enter the
+    ///      accumulator (`scan.is_empty()` or `ms_type == Unknown`),
+    ///   2. Use a bounded retry pool so we don't hang on degenerate
+    ///      references (e.g. a near-empty blank gradient),
+    ///   3. Stamp the returned frame's `ms_type` explicitly — purely
+    ///      defensive, documents the post-condition.
     pub fn sample_precursor_signal(
         &self,
         num_frames: usize,
         max_intensity: f64,
         take_probability: f64,
     ) -> TimsFrame {
-        // get all precursor frames
-        let precursor_frames = self.meta_data.iter().filter(|x| x.ms_ms_type == 0);
-
-        // randomly sample num_frames
+        let target_type = MsType::Precursor;
+        let pool: Vec<&FrameMeta> = self
+            .meta_data
+            .iter()
+            .filter(|x| x.ms_ms_type == 0)
+            .collect();
         let mut rng = rand::thread_rng();
-        let mut sampled_frames: Vec<TimsFrame> = Vec::new();
-
-        // go through each frame and sample the data
-        for frame in precursor_frames.choose_multiple(&mut rng, num_frames) {
-            let frame_id = frame.id;
-            let frame_data = self
-                .loader
-                .get_frame(frame_id as u32)
-                .filter_ranged(0.0, 2000.0, 0, 1000, 0.0, 5.0, 1.0, max_intensity, 0, i32::MAX)
-                .generate_random_sample(take_probability);
-            sampled_frames.push(frame_data);
-        }
-
-        // get the first frame
-        let mut sampled_frame = sampled_frames.remove(0);
-
-        // sum all the other frames to the first frame
-        for frame in sampled_frames {
-            sampled_frame = sampled_frame + frame;
-        }
-
-        sampled_frame
+        let mut sampled_frames: Vec<TimsFrame> =
+            self.collect_typed_noise_samples(&pool, num_frames, max_intensity,
+                                             take_probability, &mut rng,
+                                             |meta| meta.id as u32);
+        Self::accumulate_or_typed_empty(&mut sampled_frames, target_type)
     }
 
+    /// Sample MS2 noise restricted to a window_group from the reference
+    /// dataset. See `sample_precursor_signal` for the leak diagnosis and
+    /// the design notes; the only difference here is the candidate pool
+    /// (DIA-MS²-info filtered by window_group) and the type stamp
+    /// (`MsType::FragmentDia`).
     pub fn sample_fragment_signal(
         &self,
         num_frames: usize,
@@ -600,40 +613,82 @@ impl TimsDatasetDIA {
         max_intensity: f64,
         take_probability: f64,
     ) -> TimsFrame {
-        // get all fragment frames, filter by window_group
-        let fragment_frames: Vec<u32> = self
+        let target_type = MsType::FragmentDia;
+        let pool: Vec<u32> = self
             .dia_ms_ms_info
             .iter()
             .filter(|x| x.window_group == window_group)
             .map(|x| x.frame_id)
             .collect();
-
-        // randomly sample num_frames
         let mut rng = rand::thread_rng();
-        let mut sampled_frames: Vec<TimsFrame> = Vec::new();
+        let mut sampled_frames: Vec<TimsFrame> =
+            self.collect_typed_noise_samples(&pool, num_frames, max_intensity,
+                                             take_probability, &mut rng,
+                                             |&fid| fid);
+        Self::accumulate_or_typed_empty(&mut sampled_frames, target_type)
+    }
 
-        // go through each frame and sample the data
-        for frame_id in fragment_frames
-            .into_iter()
-            .choose_multiple(&mut rng, num_frames)
-        {
-            let frame_data = self
+    /// Internal: pull up to `num_frames` non-empty TimsFrames from `pool`
+    /// via the loader, with bounded retry to skip empty raws.
+    /// `key_fn` lifts a pool element to a frame_id.
+    fn collect_typed_noise_samples<T>(
+        &self,
+        pool: &[T],
+        num_frames: usize,
+        max_intensity: f64,
+        take_probability: f64,
+        rng: &mut impl rand::Rng,
+        key_fn: impl Fn(&T) -> u32,
+    ) -> Vec<TimsFrame> {
+        let mut out: Vec<TimsFrame> = Vec::with_capacity(num_frames);
+        if pool.is_empty() || num_frames == 0 {
+            return out;
+        }
+        let max_attempts = (num_frames * 8).max(16);
+        let mut attempts = 0usize;
+        use rand::seq::SliceRandom;
+        while out.len() < num_frames && attempts < max_attempts {
+            attempts += 1;
+            let Some(candidate_meta) = pool.choose(rng) else { break };
+            let candidate = self
                 .loader
-                .get_frame(frame_id)
-                .filter_ranged(0.0, 2000.0, 0, 1000, 0.0, 5.0, 1.0, max_intensity, 0, i32::MAX)
+                .get_frame(key_fn(candidate_meta))
+                .filter_ranged(0.0, 2000.0, 0, 1000, 0.0, 5.0, 1.0,
+                               max_intensity, 0, i32::MAX)
                 .generate_random_sample(take_probability);
-            sampled_frames.push(frame_data);
+            // Skip the loader's empty-frame Default-fallback so the
+            // returned noise never carries MsType::Unknown into the
+            // outer simulator add.
+            if candidate.scan.is_empty() || candidate.ms_type == MsType::Unknown {
+                continue;
+            }
+            out.push(candidate);
         }
+        out
+    }
 
-        // get the first frame
-        let mut sampled_frame = sampled_frames.remove(0);
-
-        // sum all the other frames to the first frame
-        for frame in sampled_frames {
-            sampled_frame = sampled_frame + frame;
+    /// Internal: fold a Vec of typed noise samples into one via Add, and
+    /// return a *typed* empty TimsFrame if the input was empty so callers
+    /// don't get Default::default()'s Unknown back.
+    fn accumulate_or_typed_empty(
+        samples: &mut Vec<TimsFrame>,
+        target_type: MsType,
+    ) -> TimsFrame {
+        if samples.is_empty() {
+            return TimsFrame::new(
+                0, target_type, 0.0,
+                vec![], vec![], vec![], vec![], vec![],
+            );
         }
-
-        sampled_frame
+        let mut acc = samples.remove(0);
+        for f in samples.drain(..) {
+            acc = acc + f;
+        }
+        // Belt-and-braces: if the inner Add chain somehow collapsed to
+        // Unknown despite the input filter, restore the type the caller
+        // explicitly asked for.
+        acc.ms_type = target_type;
+        acc
     }
 
     /// All DIA window_group IDs present in the file (sorted unique).
@@ -1479,5 +1534,91 @@ fn thin_stride(total: usize, cap: usize) -> usize {
         1
     } else {
         (total + cap - 1) / cap
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mscore::data::spectrum::MsType;
+    use mscore::timstof::frame::TimsFrame;
+
+    fn make_frame(frame_id: i32, ms_type: MsType) -> TimsFrame {
+        // minimal non-empty frame: one scan at scan=10, mobility=0.8, tof=500,
+        // mz=500.0, intensity=10.0 — enough for Add to have something to merge.
+        TimsFrame::new(
+            frame_id,
+            ms_type,
+            0.0,
+            vec![10],
+            vec![0.8],
+            vec![500],
+            vec![500.0],
+            vec![10.0],
+        )
+    }
+
+    #[test]
+    fn accumulate_or_typed_empty_returns_typed_empty_when_pool_is_empty() {
+        // The whole point of the fix: an empty sample pool must not
+        // return TimsFrame::default() (frame_id=0, ms_type=Unknown). It
+        // must return a typed empty so the caller's `frame + noise`
+        // doesn't collapse the simulated frame's ms_type to Unknown.
+        let mut samples: Vec<TimsFrame> = vec![];
+        let noise = TimsDatasetDIA::accumulate_or_typed_empty(
+            &mut samples, MsType::Precursor,
+        );
+        assert_eq!(noise.ms_type, MsType::Precursor,
+                   "typed-empty must carry the requested MsType, not Unknown");
+        assert!(noise.scan.is_empty());
+        assert!(noise.ims_frame.mz.is_empty());
+    }
+
+    #[test]
+    fn accumulate_or_typed_empty_stamps_type_even_after_inner_unknown() {
+        // Belt-and-braces: even if some path managed to insert an
+        // MsType::Unknown sample into the accumulator (which the outer
+        // filter should prevent), the final stamp must restore the
+        // requested type so downstream `simulated + noise` doesn't see
+        // a mismatched operand.
+        let mut samples = vec![
+            make_frame(1, MsType::Unknown),
+            make_frame(2, MsType::FragmentDia),
+        ];
+        let noise = TimsDatasetDIA::accumulate_or_typed_empty(
+            &mut samples, MsType::FragmentDia,
+        );
+        assert_eq!(noise.ms_type, MsType::FragmentDia);
+    }
+
+    #[test]
+    fn accumulate_preserves_type_on_clean_input() {
+        let mut samples = vec![
+            make_frame(1, MsType::FragmentDia),
+            make_frame(2, MsType::FragmentDia),
+            make_frame(3, MsType::FragmentDia),
+        ];
+        let noise = TimsDatasetDIA::accumulate_or_typed_empty(
+            &mut samples, MsType::FragmentDia,
+        );
+        assert_eq!(noise.ms_type, MsType::FragmentDia);
+        // Inputs were merged; the accumulator should hold a non-empty frame.
+        assert!(!noise.scan.is_empty());
+    }
+
+    #[test]
+    fn typed_empty_frame_uses_correct_default_frame_id() {
+        // Empty-pool fallback should use frame_id=0 — same as
+        // TimsFrame::default() — but with the requested ms_type stamped.
+        // This pairs with the writer-side Frames.Id uniqueness check
+        // (packages/imspy-simulation/src/imspy_simulation/tdf.py):
+        // empty noise frames must not silently pollute the Frames table.
+        let mut samples: Vec<TimsFrame> = vec![];
+        let noise = TimsDatasetDIA::accumulate_or_typed_empty(
+            &mut samples, MsType::Precursor,
+        );
+        assert_eq!(noise.frame_id, 0);
+        assert_eq!(noise.ims_frame.retention_time, 0.0);
     }
 }
