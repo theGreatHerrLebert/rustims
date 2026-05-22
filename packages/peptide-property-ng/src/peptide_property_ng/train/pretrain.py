@@ -26,6 +26,7 @@ from peptide_property_ng.data.chronologer_rt import prepare_chronologer_examples
 from peptide_property_ng.data.collate import make_collate_fn
 from peptide_property_ng.data.hf_intensity import prepare_hf_intensity_examples
 from peptide_property_ng.data.sage_dataset import SagePropertyDataset
+from peptide_property_ng.data.splits import peptide_split
 from peptide_property_ng.eval.metrics import evaluate_split
 from peptide_property_ng.losses import MultiTaskLoss
 from peptide_property_ng.model.config import PRESETS, instrument_id
@@ -138,12 +139,13 @@ def main() -> None:
             print(f"  only {len(examples)} examples — skipping", flush=True)
             continue
 
-        # random hold-out for a stage metric
-        gen = torch.Generator().manual_seed(args.seed)
-        perm = torch.randperm(len(examples), generator=gen).tolist()
-        n_val = max(args.batch_size, int(len(examples) * args.val_frac))
-        val_ex = [examples[i] for i in perm[:n_val]]
-        train_ex = [examples[i] for i in perm[n_val:]]
+        # peptide-level hold-out — a peptide never crosses train/val within a
+        # stage (stage metrics are pretraining diagnostics, not the final eval).
+        train_ex, val_ex = [], []
+        for ex in examples:
+            bucket = peptide_split(ex["stripped"], val_frac=args.val_frac,
+                                   test_frac=0.0, seed=args.seed)
+            (val_ex if bucket == "val" else train_ex).append(ex)
         print(f"  {len(train_ex):,} train / {len(val_ex):,} val  [prepared in {time.time()-t0:.0f}s]",
               flush=True)
 

@@ -30,8 +30,8 @@ IM_MIN, IM_MAX = 0.5, 1.9
 
 
 def normalize_inverse_mobility(one_over_k0: float) -> float:
-    """Map an inverse ion mobility (1/K0) value to ~[0,1]."""
-    return (float(one_over_k0) - IM_MIN) / (IM_MAX - IM_MIN)
+    """Map an inverse ion mobility (1/K0) value to [0,1], clipped at the fixed bounds."""
+    return float(np.clip((float(one_over_k0) - IM_MIN) / (IM_MAX - IM_MIN), 0.0, 1.0))
 
 _RES_COLS = [
     "psm_id", "peptide", "stripped_peptide", "charge", "calcmass",

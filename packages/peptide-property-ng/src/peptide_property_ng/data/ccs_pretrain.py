@@ -36,8 +36,8 @@ CCS_MIN, CCS_MAX = 200.0, 1200.0
 
 
 def normalize_ccs(ccs: float) -> float:
-    """Map a CCS value (Angstrom^2) to ~[0,1]."""
-    return (float(ccs) - CCS_MIN) / (CCS_MAX - CCS_MIN)
+    """Map a CCS value (Angstrom^2) to [0,1], clipped at the fixed bounds."""
+    return float(np.clip((float(ccs) - CCS_MIN) / (CCS_MAX - CCS_MIN), 0.0, 1.0))
 
 
 def _tokens_to_proforma(tokens: list[str]) -> str | None:
