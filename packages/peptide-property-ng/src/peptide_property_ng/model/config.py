@@ -12,7 +12,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-# timsTOF-focused instrument vocabulary (from timstof_catalog.tsv instrument_model).
+# Instrument vocabulary — timsTOF-focused (the target domain), plus `orbitrap`
+# so Orbitrap-HCD pretraining corpora (PROSPECT) carry a distinct id and the
+# instrument embedding can learn the HCD<->PASEF domain shift.
 INSTRUMENTS: tuple[str, ...] = (
     "unknown",
     "timsTOF",
@@ -22,6 +24,7 @@ INSTRUMENTS: tuple[str, ...] = (
     "timsTOF SCP",
     "timsTOF Ultra",
     "timsTOF fleX",
+    "orbitrap",
 )
 ACQUISITION_MODES: tuple[str, ...] = (
     "unknown",

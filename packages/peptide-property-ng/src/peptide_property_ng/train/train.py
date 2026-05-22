@@ -61,6 +61,8 @@ def main() -> None:
     ap.add_argument("--weight-decay", type=float, default=0.01)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--patience", type=int, default=4)
+    ap.add_argument("--init-from", default=None,
+                    help="checkpoint to initialise weights from (e.g. a pretrained.pt)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--out", default="runs/prototype")
     args = ap.parse_args()
@@ -98,6 +100,11 @@ def main() -> None:
 
     device = args.device
     model = UnifiedPeptidePropertyModel(cfg, CompositionTable.load()).to(device)
+    if args.init_from:
+        ckpt = torch.load(args.init_from, map_location=device)
+        missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=False)
+        print(f"initialised from {args.init_from} "
+              f"(missing={len(missing)}, unexpected={len(unexpected)})")
     print(f"model: '{args.preset}' preset, {model.num_parameters():,} parameters, device={device}")
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     loss_fn = MultiTaskLoss()
