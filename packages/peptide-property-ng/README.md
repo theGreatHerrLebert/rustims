@@ -14,7 +14,7 @@ production model. See `docs/nn-architecture-exploration/` in the
 |---|---|---|
 | Modifications | opaque `[UNIMOD:N]` tokens (no chemistry) | **hybrid**: per-mod token **+** atomic-composition feature |
 | Unseen mods | embedding stays ~random | generalize via chemistry; open-vocab |
-| Conditioning | dormant instrument embedding, never used | instrument / acq-mode / charge / m-z / CE inside the encoder |
+| Conditioning | dormant instrument embedding, never used | instrument / acq-mode in the encoder; charge / m-z / CE at the heads (keeps the charge head leak-free) |
 | Intensity output | fixed 174-vector → 30-residue cap | **fragment-indexed** → no length cap |
 | Backbone | bespoke transformer | built on **Depthcharge** primitives |
 
