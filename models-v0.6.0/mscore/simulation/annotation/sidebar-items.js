@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SourceType"],"struct":["ContributionSource","MzSpectrumAnnotated","MzSpectrumAnnotatedVectorized","PeakAnnotation","SignalAttributes","TimsFrameAnnotated","TimsSpectrumAnnotated"]};
