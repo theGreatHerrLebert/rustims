@@ -102,6 +102,12 @@ def main() -> None:
     model = UnifiedPeptidePropertyModel(cfg, CompositionTable.load()).to(device)
     if args.init_from:
         ckpt = torch.load(args.init_from, map_location=device)
+        ckpt_preset = ckpt.get("preset")
+        if ckpt_preset is not None and ckpt_preset != args.preset:
+            raise SystemExit(
+                f"--init-from checkpoint is preset '{ckpt_preset}', but --preset is "
+                f"'{args.preset}'; they must match (the architectures differ)."
+            )
         missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=False)
         print(f"initialised from {args.init_from} "
               f"(missing={len(missing)}, unexpected={len(unexpected)})")

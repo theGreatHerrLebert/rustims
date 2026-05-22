@@ -35,13 +35,38 @@ from peptide_property_ng.modifications.composition import CompositionTable
 _STAGE_METRIC = {"intensity": "intensity_sa", "ccs": "ccs_mae", "rt": "rt_mae"}
 
 
-def _default_stages() -> list[dict]:
-    """Curriculum: each stage = (name, task, builder taking a per-stage cap)."""
+def _default_stages(
+    chronologer_db: str | None = None, ccs_glob: str | None = None
+) -> list[dict]:
+    """Curriculum: each stage = name, task, and a builder taking a per-stage cap.
+
+    The order is deliberate: the auxiliary tasks (RT, CCS) run first and
+    intensity runs last, so the shared encoder ends tuned for the priority task
+    rather than left drifted toward RT — a catastrophic-forgetting mitigation.
+    Within intensity, the broad Orbitrap corpora precede the timsTOF one.
+    """
+    rt_kw = {} if chronologer_db is None else {"db_path": chronologer_db}
+    ccs_kw = {} if ccs_glob is None else {"data_glob": ccs_glob}
     return [
         {
-            "name": "intensity-orbitrap", "task": "intensity",
+            "name": "rt-chronologer", "task": "rt",
+            "build": lambda cap: prepare_chronologer_examples(cap=cap, **rt_kw),
+        },
+        {
+            "name": "ccs-ionmob", "task": "ccs",
+            "build": lambda cap: prepare_ccs_examples(
+                cap=cap, instrument=instrument_id("timsTOF Pro"), **ccs_kw),
+        },
+        {
+            "name": "intensity-prospect", "task": "intensity",
             "build": lambda cap: prepare_hf_intensity_examples(
                 "Wilhelmlab/prospect-ptms-ms2", split="train", cap=cap,
+                instrument=instrument_id("orbitrap")),
+        },
+        {
+            "name": "intensity-prosit2025", "task": "intensity",
+            "build": lambda cap: prepare_hf_intensity_examples(
+                "Wilhelmlab/Prosit-2025-lac-ms2", split="train", cap=cap,
                 instrument=instrument_id("orbitrap")),
         },
         {
@@ -49,15 +74,6 @@ def _default_stages() -> list[dict]:
             "build": lambda cap: prepare_hf_intensity_examples(
                 "Wilhelmlab/timsTOF-ms2", split="train", cap=cap,
                 instrument=instrument_id("timsTOF Pro")),
-        },
-        {
-            "name": "ccs-ionmob", "task": "ccs",
-            "build": lambda cap: prepare_ccs_examples(
-                cap=cap, instrument=instrument_id("timsTOF Pro")),
-        },
-        {
-            "name": "rt-chronologer", "task": "rt",
-            "build": lambda cap: prepare_chronologer_examples(cap=cap),
         },
     ]
 
@@ -87,6 +103,10 @@ def main() -> None:
     ap.add_argument("--val-frac", type=float, default=0.03)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--stages", default="all", help="comma-separated stage names, or 'all'")
+    ap.add_argument("--chronologer-db", default=None,
+                    help="path to Chronologer_DB_*.gz (default: the package's known local path)")
+    ap.add_argument("--ccs-glob", default=None,
+                    help="glob for ionmob *_unique_unimod*.parquet (default: known local path)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--out", default="runs/pretrain")
     args = ap.parse_args()
@@ -103,7 +123,7 @@ def main() -> None:
     collate = make_collate_fn(cfg.pad_token_id, cfg.max_charge)
     print(f"model: '{args.preset}' preset, {model.num_parameters():,} parameters, device={device}")
 
-    stages = _default_stages()
+    stages = _default_stages(args.chronologer_db, args.ccs_glob)
     if args.stages != "all":
         wanted = {s.strip() for s in args.stages.split(",")}
         stages = [s for s in stages if s["name"] in wanted]
@@ -142,11 +162,12 @@ def main() -> None:
             history.append({"stage": name, "epoch": epoch,
                              "train_loss": train_loss, "val": val})
 
-        torch.save(
-            {"model_state_dict": model.state_dict(), "preset": args.preset, "stage": name},
-            out_dir / "pretrained.pt",
-        )
-        print(f"  saved -> {out_dir}/pretrained.pt", flush=True)
+        # Save a per-stage checkpoint (so the campaign fine-tune can pick the
+        # handoff point, not just the post-RT state) and the running pretrained.pt.
+        ckpt = {"model_state_dict": model.state_dict(), "preset": args.preset, "stage": name}
+        torch.save(ckpt, out_dir / f"after-{name}.pt")
+        torch.save(ckpt, out_dir / "pretrained.pt")
+        print(f"  saved -> {out_dir}/after-{name}.pt  (+ pretrained.pt)", flush=True)
 
     (out_dir / "pretrain_history.json").write_text(json.dumps(history, indent=2))
     print(

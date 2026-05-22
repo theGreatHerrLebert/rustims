@@ -74,7 +74,10 @@ def prepare_hf_intensity_examples(
             stripped = _UNIMOD_RE.sub("", modseq)
             if length != len(stripped) or not 3 <= length <= max_len:
                 continue
-            charge = int(np.argmax(row["precursor_charge_onehot"])) + 1
+            onehot = row["precursor_charge_onehot"]
+            if sum(onehot) != 1:
+                continue  # malformed / all-zero one-hot -> skip rather than default to charge 1
+            charge = int(np.argmax(onehot)) + 1
             try:
                 target = prosit174_to_sites(row["intensities_raw"], length)
             except ValueError:

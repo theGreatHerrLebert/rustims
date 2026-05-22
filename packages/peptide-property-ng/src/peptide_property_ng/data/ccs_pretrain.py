@@ -28,6 +28,17 @@ DEFAULT_CCS_GLOB = (
 )
 _UNIMOD_RE = re.compile(r"\[UNIMOD:\d+\]")
 
+# CCS (Angstrom^2) is min-max normalised to ~[0,1] with fixed bounds so the CCS
+# head sees the *same target scale* in pretraining (CCS) and fine-tuning (Sage
+# 1/K0, normalised the same way in sage_dataset.py) — this avoids the negative
+# transfer of feeding a ~400-scale target into a [0,1]-scale head.
+CCS_MIN, CCS_MAX = 200.0, 1200.0
+
+
+def normalize_ccs(ccs: float) -> float:
+    """Map a CCS value (Angstrom^2) to ~[0,1]."""
+    return (float(ccs) - CCS_MIN) / (CCS_MAX - CCS_MIN)
+
 
 def _tokens_to_proforma(tokens: list[str]) -> str | None:
     """ionmob ``sequence-tokenized`` list -> a ProForma string, or ``None`` to skip.
@@ -95,20 +106,24 @@ def prepare_ccs_examples(
             stripped = _UNIMOD_RE.sub("", pf)
             if length != len(stripped) or not 3 <= length <= max_len:
                 continue
+            ccs_val, mz_val, z = float(ccs[i]), float(mz[i]), int(charge[i])
+            if not (np.isfinite(ccs_val) and ccs_val > 0
+                    and np.isfinite(mz_val) and mz_val > 0 and z >= 1):
+                continue  # skip malformed rows rather than emit a NaN target
             examples.append(
                 {
                     "accession": "ionmob",
                     "stripped": stripped,
                     "modseq": pf,
                     "tokens": np.asarray(residue_ids, dtype=np.int64),
-                    "charge": int(charge[i]),
-                    "precursor_mz": float(mz[i]),
+                    "charge": z,
+                    "precursor_mz": mz_val,
                     "collision_energy": 0.0,
                     "instrument": int(instrument),
                     "acq_mode": int(acq_mode),
                     # masked placeholder — CCS pretraining runs only the CCS task
                     "intensity_target": np.full((length - 1, 6), -1.0, dtype=np.float32),
-                    "ccs_target": float(ccs[i]),
+                    "ccs_target": normalize_ccs(ccs_val),
                     "ccs_valid": True,
                     "rt_target": float("nan"),
                     "rt_valid": False,

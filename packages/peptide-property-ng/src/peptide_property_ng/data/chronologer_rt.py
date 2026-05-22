@@ -28,7 +28,12 @@ _UNIMOD_RE = re.compile(r"\[UNIMOD:\d+\]")
 
 
 def _normalise_hi(hi: float) -> float:
-    return (float(hi) - HI_MIN) / (HI_MAX - HI_MIN)
+    """HI -> ~[0,1], clipped (a few records sit just outside the fixed bounds).
+
+    A non-finite HI propagates as NaN through ``np.clip`` and is filtered by the
+    caller.
+    """
+    return float(np.clip((float(hi) - HI_MIN) / (HI_MAX - HI_MIN), 0.0, 1.0))
 
 
 def prepare_chronologer_examples(
@@ -68,6 +73,9 @@ def prepare_chronologer_examples(
             length = len(residue_ids)
             if length != len(stripped) or not 3 <= length <= max_len:
                 continue
+            rt = _normalise_hi(hi[start + j])
+            if not np.isfinite(rt):
+                continue  # non-finite HI -> useless as an RT example
             examples.append(
                 {
                     "accession": "Chronologer",
@@ -83,7 +91,7 @@ def prepare_chronologer_examples(
                     "intensity_target": np.full((length - 1, 6), -1.0, dtype=np.float32),
                     "ccs_target": float("nan"),
                     "ccs_valid": False,
-                    "rt_target": _normalise_hi(hi[start + j]),
+                    "rt_target": rt,
                     "rt_valid": True,
                 }
             )

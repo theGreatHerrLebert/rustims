@@ -23,6 +23,16 @@ from peptide_property_ng.data.splits import peptide_split
 
 _PROTON = 1.007276
 
+# Inverse ion mobility (1/K0) is min-max normalised to ~[0,1] with fixed bounds,
+# matching the CCS normalisation in ccs_pretrain.py so the CCS/IM head sees one
+# consistent target scale across pretraining (CCS) and fine-tuning (1/K0).
+IM_MIN, IM_MAX = 0.5, 1.9
+
+
+def normalize_inverse_mobility(one_over_k0: float) -> float:
+    """Map an inverse ion mobility (1/K0) value to ~[0,1]."""
+    return (float(one_over_k0) - IM_MIN) / (IM_MAX - IM_MIN)
+
 _RES_COLS = [
     "psm_id", "peptide", "stripped_peptide", "charge", "calcmass",
     "aligned_rt", "ion_mobility", "spectrum_q", "is_decoy", "rank",
@@ -166,7 +176,7 @@ def prepare_examples(
                 "instrument": int(instrument),
                 "acq_mode": int(acq_mode),
                 "intensity_target": target,
-                "ccs_target": im,
+                "ccs_target": normalize_inverse_mobility(im),
                 "ccs_valid": bool(np.isfinite(im) and im > 0.0),
                 "rt_target": rt,
                 "rt_valid": bool(np.isfinite(rt)),

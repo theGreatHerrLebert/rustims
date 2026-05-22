@@ -1,8 +1,10 @@
 """Ion-mobility head — a per-charge physics prior plus a learned correction.
 
-Predicts inverse reduced ion mobility (1/K0), the raw quantity Sage reports in
-its ``ion_mobility`` column — this avoids baking a Mason-Schamp CCS conversion
-(with its gas/temperature constants) into the prototype.
+Predicts a min-max-normalised ion-mobility target in ~[0,1]. Both data sources
+are normalised to that same scale with fixed bounds (campaign data = Sage
+``ion_mobility`` 1/K0; pretraining data = ionmob CCS — see the data loaders),
+so the head sees one consistent target scale and no Mason-Schamp CCS<->1/K0
+conversion is needed.
 
 The physics prior ``1/K0 ~ slope[z]*sqrt(m/z) + intercept[z]`` is ported from
 the production ``SquareRootProjectionLayer`` (imspy_predictors); slopes and
@@ -21,9 +23,10 @@ from peptide_property_ng.model.config import ModelConfig
 class SqrtMzProjection(nn.Module):
     """Per-charge physics prior: ``property ~ slope[z]*sqrt(m/z) + intercept[z]``."""
 
-    def __init__(self, max_charge: int, slope_init: float = 0.03, intercept_init: float = 0.60):
+    def __init__(self, max_charge: int, slope_init: float = 0.0, intercept_init: float = 0.5):
         super().__init__()
-        # Index by charge state directly (row 0 unused). Init at a 1/K0 ballpark.
+        # Index by charge state directly (row 0 unused). Init at the centre of the
+        # normalised [0,1] target range; the per-charge slopes are learnable.
         self.slopes = nn.Parameter(torch.full((max_charge + 1,), float(slope_init)))
         self.intercepts = nn.Parameter(torch.full((max_charge + 1,), float(intercept_init)))
 
