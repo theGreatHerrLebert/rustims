@@ -47,6 +47,18 @@ def test_complementary_ions_share_a_site():
     assert t[2, 0] == 0.9   # y3 at site 2
 
 
+def test_all_six_channels_pinned():
+    """Pin every channel — a charge permutation within a y/b triplet must fail."""
+    length = 5  # 4 sites; ordinal 2 -> b2 at site 1, y2 at site L-1-2 = 2
+    v = _prosit_vector({
+        (2, 0): 0.1, (2, 1): 0.2, (2, 2): 0.3,   # y2 charges 1,2,3
+        (2, 3): 0.4, (2, 4): 0.5, (2, 5): 0.6,   # b2 charges 1,2,3
+    })
+    t = prosit174_to_sites(v, length)
+    assert list(t[1, 3:6]) == [0.4, 0.5, 0.6]    # b2 -> site 1, b+1/b+2/b+3
+    assert list(t[2, 0:3]) == [0.1, 0.2, 0.3]    # y2 -> site 2, y+1/y+2/y+3
+
+
 def test_minus_one_mask_carries_through():
     t = prosit174_to_sites(np.full(PROSIT_VECTOR_LEN, -1.0, np.float32), 10)
     assert (t == -1.0).all()
