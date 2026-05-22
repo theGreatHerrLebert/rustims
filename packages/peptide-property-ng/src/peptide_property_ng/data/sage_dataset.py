@@ -82,7 +82,8 @@ def prepare_examples(
     """Load and prepare one dataset's PSMs into a list of example dicts."""
     from imspy_predictors.intensity.predictors import observed_fragments_to_intensity_target
     from imspy_predictors.utilities.tokenizers import ProformaTokenizer
-    from sagepy_rescore.sage_loader import _parse_sage_peptide
+
+    from peptide_property_ng.data.mass_to_unimod import parse_delta_mass_peptide
 
     sage_dir = Path(sage_dir)
     res_path = sage_dir / "results.sage.parquet"
@@ -127,7 +128,7 @@ def prepare_examples(
     # Sage emits delta-mass peptides; convert to UNIMOD, then tokenise in one batch.
     # Batch tokenisation right-pads to the batch-max length, so the attention
     # mask is needed to recover each peptide's true token count.
-    parsed = [_parse_sage_peptide(p) for p in df["peptide"]]
+    parsed = [parse_delta_mass_peptide(p) for p in df["peptide"]]
     tok = ProformaTokenizer.with_defaults()
     _encoded = tok([m for _, m in parsed])
     token_ids, attn_mask = _encoded["input_ids"], _encoded["attention_mask"]

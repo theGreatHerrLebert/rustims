@@ -48,7 +48,8 @@ def prepare_chronologer_examples(
     """Load the Chronologer DB into RT-pretraining example dicts."""
     import pandas as pd
     from imspy_predictors.utilities.tokenizers import ProformaTokenizer
-    from sagepy_rescore.sage_loader import _parse_sage_peptide
+
+    from peptide_property_ng.data.mass_to_unimod import parse_delta_mass_peptide
 
     df = pd.read_csv(db_path, sep="\t", compression="gzip", usecols=["PeptideModSeq", "HI"])
     if cap is not None and len(df) > cap:
@@ -57,7 +58,7 @@ def prepare_chronologer_examples(
     hi = df["HI"].to_numpy(dtype=np.float32)
 
     tok = ProformaTokenizer.with_defaults()
-    parsed = [_parse_sage_peptide(p) for p in peptides]  # [+mass] -> UNIMOD
+    parsed = [parse_delta_mass_peptide(p) for p in peptides]  # [+mass] -> UNIMOD
 
     examples: list[dict] = []
     chunk = 20000  # tokenise in chunks (batch tokenisation right-pads to the chunk max)
