@@ -92,8 +92,8 @@ class ModelConfig:
     # INSTRUMENTS / ACQUISITION_MODES later gets the next free id without
     # resizing the embedding -- so existing checkpoints stay loadable and the
     # new id simply starts from an untrained row, ready to fine-tune.
-    n_instruments: int = 32  # 9 ids in use (see INSTRUMENTS); the rest reserved
-    n_acq_modes: int = 16    # 7 ids in use (see ACQUISITION_MODES); the rest reserved
+    n_instruments: int = 64  # 9 ids in use (see INSTRUMENTS); the rest reserved
+    n_acq_modes: int = 32    # 7 ids in use (see ACQUISITION_MODES); the rest reserved
 
     # heads
     n_ion_channels: int = 6  # b/y ions x fragment charges 1-3 (Prosit-compatible)
