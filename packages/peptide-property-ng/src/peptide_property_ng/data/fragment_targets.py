@@ -1,64 +1,67 @@
-"""Fragment-indexed intensity targets from Sage ``matched_fragments``.
+"""Fragment-intensity targets.
 
-Each peptide of length ``L`` yields an ``(L-1, 6)`` target — one row per
-cleavage site, six channels for b/y ions at fragment charges 1-3. This is the
-variable-length successor to Prosit's fixed 174-vector (no 30-residue cap).
+The MS2 intensity target the model trains against is **cleavage-site-indexed**:
+``(L-1, 6)`` — one row per cleavage site, channels ``[y+1, y+2, y+3, b+1, b+2, b+3]``.
 
-Convention (Prosit / imspy compatible):
-  -1   physically impossible channel (fragment charge > precursor charge)
-   0   possible but unobserved fragment
-  0..1 observed, base-peak-normalised intensity
-The masked spectral-angle loss ignores -1 entries.
+Both data sources reach it through the *same single conversion*,
+``prosit174_to_sites``:
+  - Public Wilhelmlab HF datasets store intensities natively as the Prosit
+    174-vector.
+  - Sage search results are turned into that 174-vector by the proven
+    ``imspy_predictors`` encoder ``observed_fragments_to_intensity_target``
+    (see ``data/sage_dataset.py``) — the fragment→vector encoding is *not*
+    re-implemented here.
+
+So there is exactly one place where the ordinal→site remap happens, and it is
+this file.
+
+Convention (Prosit / imspy compatible): ``-1`` = impossible/masked channel,
+``0`` = possible but unobserved, ``0..1`` = observed (base-peak-normalised).
 """
 from __future__ import annotations
 
 import numpy as np
 
-# Channel order: y ions at charge 1/2/3, then b ions at charge 1/2/3.
+# Channel order — verified against imspy_predictors/intensity/utility.py:211
+# ("Ion types in order: y+1, y+2, y+3, b+1, b+2, b+3").
 ION_CHANNELS: tuple[str, ...] = ("y+1", "y+2", "y+3", "b+1", "b+2", "b+3")
 N_ION_CHANNELS = len(ION_CHANNELS)
-MAX_FRAGMENT_CHARGE = 3
+
+# The Prosit 174-vector covers fragment ordinals 1..29 (peptides up to 30 aa).
+PROSIT_MAX_ORDINAL = 29
+PROSIT_VECTOR_LEN = PROSIT_MAX_ORDINAL * N_ION_CHANNELS  # 174
 
 
-def build_intensity_target(
-    peptide_len: int,
-    precursor_charge: int,
-    frag_type: np.ndarray,       # ('b'|'y') per matched fragment
-    frag_ordinal: np.ndarray,    # int
-    frag_charge: np.ndarray,     # int
-    frag_intensity: np.ndarray,  # float
-) -> np.ndarray:
-    """Return the ``(peptide_len - 1, 6)`` intensity target for one PSM."""
+def prosit174_to_sites(intensities_174, peptide_len: int) -> np.ndarray:
+    """Convert a Prosit 174-element intensity vector to our site-indexed target.
+
+    The Prosit vector is **ordinal-indexed**: reshaped to (29, 6), row ``r`` holds
+    the ions of fragment ordinal ``r+1`` — ``y_{r+1}`` in columns 0:3, ``b_{r+1}``
+    in columns 3:6.
+
+    Our ``(L-1, 6)`` target is **cleavage-site-indexed**: site ``i`` holds the two
+    ions produced by cleaving bond ``i`` — the b ion ``b_{i+1}`` and its
+    *complementary* y ion ``y_{L-1-i}``. The b and y of one cleavage have
+    different ordinals (``b_k`` pairs with ``y_{L-k}``), so this is a genuine
+    remap, not a reshape.
+
+    Mapping (``L`` = peptide_len, ``n_sites`` = L-1):
+        site i, b channels (3:6)  <-  ordinal i+1    ->  Prosit row i
+        site i, y channels (0:3)  <-  ordinal L-1-i  ->  Prosit row (L-1-i)-1 = L-2-i
+
+    The ``-1`` masked-channel markers in the Prosit vector carry through.
+    """
+    arr = np.asarray(intensities_174, dtype=np.float32).reshape(-1)
+    if arr.size != PROSIT_VECTOR_LEN:
+        raise ValueError(f"expected {PROSIT_VECTOR_LEN} intensity values, got {arr.size}")
+    prosit = arr.reshape(PROSIT_MAX_ORDINAL, N_ION_CHANNELS)  # row r -> fragment ordinal r+1
+
     n_sites = peptide_len - 1
-    target = np.zeros((n_sites, N_ION_CHANNELS), dtype=np.float32)
+    if not 1 <= n_sites <= PROSIT_MAX_ORDINAL:
+        raise ValueError(f"peptide_len {peptide_len} outside the 174-vector range [2, 30]")
 
-    # Mark fragment charges above the precursor charge as impossible.
-    for fc in range(1, MAX_FRAGMENT_CHARGE + 1):
-        if fc > precursor_charge:
-            target[:, fc - 1] = -1.0          # y channel
-            target[:, 3 + fc - 1] = -1.0      # b channel
-
-    for ftype, ordi, fch, inten in zip(
-        frag_type, frag_ordinal, frag_charge, frag_intensity
-    ):
-        fch = int(fch)
-        if fch < 1 or fch > MAX_FRAGMENT_CHARGE:
-            continue
-        ordi = int(ordi)
-        if ftype == "b":
-            site, channel = ordi - 1, 3 + fch - 1
-        elif ftype == "y":
-            # cleavage site i produces y_{n_sites - i + ...}: y_o sits at site n_sites - o
-            site, channel = n_sites - ordi, fch - 1
-        else:
-            continue
-        if 0 <= site < n_sites and target[site, channel] >= 0.0:
-            target[site, channel] = max(target[site, channel], float(inten))
-
-    # Base-peak normalisation over the observed (positive) entries.
-    observed = target > 0.0
-    if observed.any():
-        peak = float(target[observed].max())
-        if peak > 0.0:
-            target[observed] /= peak
+    target = np.full((n_sites, N_ION_CHANNELS), -1.0, dtype=np.float32)
+    for i in range(n_sites):
+        target[i, 3:6] = prosit[i, 3:6]                  # b_{i+1}
+        target[i, 0:3] = prosit[n_sites - 1 - i, 0:3]    # y_{L-1-i}  (Prosit row L-2-i)
     return target

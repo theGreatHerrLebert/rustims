@@ -10,6 +10,7 @@ from __future__ import annotations
 import glob
 from collections import defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pyarrow as pa
@@ -17,7 +18,7 @@ import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from torch.utils.data import Dataset
 
-from peptide_property_ng.data.fragment_targets import build_intensity_target
+from peptide_property_ng.data.fragment_targets import prosit174_to_sites
 from peptide_property_ng.data.splits import peptide_split
 
 _PROTON = 1.007276
@@ -63,12 +64,13 @@ def prepare_examples(
     cap: int = 8000,
     q_max: float = 0.01,
     min_peaks: int = 6,
-    max_len: int = 64,
+    max_len: int = 30,  # the Prosit 174-vector intensity encoding caps peptides at 30 aa
     seed: int = 0,
     instrument: int = 0,
     acq_mode: int = 0,
 ) -> list[dict]:
     """Load and prepare one dataset's PSMs into a list of example dicts."""
+    from imspy_predictors.intensity.predictors import observed_fragments_to_intensity_target
     from imspy_predictors.utilities.tokenizers import ProformaTokenizer
     from sagepy_rescore.sage_loader import _parse_sage_peptide
 
@@ -139,13 +141,14 @@ def prepare_examples(
         cols = by_psm.get(df["psm_id"][k])
         if not cols or not cols[0]:
             continue  # no matched fragments -> no intensity target
-        target = build_intensity_target(
-            length, charge,
-            np.asarray(cols[0]),
-            np.asarray(cols[1], dtype=np.int32),
-            np.asarray(cols[2], dtype=np.int32),
-            np.asarray(cols[3], dtype=np.float32),
+        # Encode fragments with the proven imspy encoder (Sage fragments ->
+        # Prosit 174-vector), then the single shared 174 -> site conversion.
+        frag = SimpleNamespace(
+            ion_types=cols[0], fragment_ordinals=cols[1],
+            charges=cols[2], intensities=cols[3],
         )
+        prosit174 = observed_fragments_to_intensity_target(stripped, charge, frag)
+        target = prosit174_to_sites(prosit174, length)
 
         im = df["ion_mobility"][k]
         rt = df["aligned_rt"][k]

@@ -1,53 +1,62 @@
-"""Tests for fragment-indexed intensity-target construction.
+"""Tests for the Prosit-174 -> site-indexed intensity-target conversion.
 
-Channel layout: y+1=0, y+2=1, y+3=2, b+1=3, b+2=4, b+3=5.
+This conversion is the single place the ordinal->site remap happens, and it is
+easy to get wrong — hence the explicit b/y placement tests below.
 """
 import numpy as np
+import pytest
 
-from peptide_property_ng.data.fragment_targets import N_ION_CHANNELS, build_intensity_target
+from peptide_property_ng.data.fragment_targets import (
+    N_ION_CHANNELS,
+    PROSIT_MAX_ORDINAL,
+    PROSIT_VECTOR_LEN,
+    prosit174_to_sites,
+)
 
 
-def test_by_ion_site_placement():
-    """b_o -> site o-1 ; y_o -> site (L-1)-o ; base-peak normalised."""
+def _prosit_vector(entries: dict[tuple[int, int], float]) -> np.ndarray:
+    """Build a 174-vector; ``entries`` maps (fragment_ordinal, channel) -> value."""
+    v = np.zeros((PROSIT_MAX_ORDINAL, N_ION_CHANNELS), np.float32)
+    for (ordinal, channel), value in entries.items():
+        v[ordinal - 1, channel] = value
+    return v.reshape(-1)
+
+
+def test_b_ion_site_mapping():
+    """b_k (Prosit ordinal k) lands at site k-1, b channels (3:6)."""
     length = 5  # 4 cleavage sites
-    ftype = np.array(["b", "b", "y", "y"])
-    ford = np.array([1, 4, 1, 4], dtype=np.int32)
-    fch = np.array([1, 1, 1, 1], dtype=np.int32)
-    finten = np.array([10.0, 40.0, 20.0, 80.0], dtype=np.float32)
-
-    t = build_intensity_target(length, 2, ftype, ford, fch, finten)
+    t = prosit174_to_sites(_prosit_vector({(1, 3): 0.11, (4, 3): 0.44}), length)
     assert t.shape == (length - 1, N_ION_CHANNELS)
-    assert t[0, 3] == 10.0 / 80.0   # b1 -> site 0, channel b+1
-    assert t[3, 3] == 40.0 / 80.0   # b4 -> site 3, channel b+1
-    assert t[3, 0] == 20.0 / 80.0   # y1 -> site 3, channel y+1
-    assert t[0, 0] == 80.0 / 80.0   # y4 -> site 0, channel y+1 (base peak)
+    assert t[0, 3] == 0.11   # b1 -> site 0
+    assert t[3, 3] == 0.44   # b4 -> site 3
 
 
-def test_impossible_fragment_charges_masked():
-    """Precursor charge 1 -> fragment charges 2 and 3 are impossible (-1)."""
-    t = build_intensity_target(
-        5, 1, np.array(["b"]), np.array([1], np.int32),
-        np.array([1], np.int32), np.array([5.0], np.float32),
-    )
-    assert (t[:, 1] == -1).all() and (t[:, 2] == -1).all()   # y+2, y+3
-    assert (t[:, 4] == -1).all() and (t[:, 5] == -1).all()   # b+2, b+3
-    assert (t[:, 0] >= 0).all() and (t[:, 3] >= 0).all()     # charge-1 channels valid
+def test_y_ion_site_mapping():
+    """y_o (Prosit ordinal o) lands at site L-1-o, y channels (0:3)."""
+    length = 5
+    t = prosit174_to_sites(_prosit_vector({(1, 0): 0.81, (4, 0): 0.84}), length)
+    assert t[3, 0] == 0.81   # y1 -> site L-1-1 = 3
+    assert t[0, 0] == 0.84   # y4 -> site L-1-4 = 0
 
 
-def test_unobserved_possible_fragment_is_zero():
-    """An observable-but-unmatched fragment is 0 (a real zero peak), not masked."""
-    t = build_intensity_target(
-        5, 2, np.array(["b"]), np.array([1], np.int32),
-        np.array([1], np.int32), np.array([5.0], np.float32),
-    )
-    assert t[0, 3] == 1.0                       # b1 observed -> base peak
-    assert t[1, 3] == 0.0 and t[2, 3] == 0.0    # unobserved but possible -> 0
+def test_complementary_ions_share_a_site():
+    """Site i must hold b_{i+1} and y_{L-1-i} — the complementary pair of one cleavage."""
+    length = 6  # site 2 should carry b3 and y3
+    t = prosit174_to_sites(_prosit_vector({(3, 3): 0.3, (3, 0): 0.9}), length)
+    assert t[2, 3] == 0.3   # b3 at site 2
+    assert t[2, 0] == 0.9   # y3 at site 2
 
 
-def test_out_of_range_ordinal_ignored():
-    """A fragment ordinal beyond the peptide is dropped, not crashed on."""
-    t = build_intensity_target(
-        5, 2, np.array(["b"]), np.array([99], np.int32),
-        np.array([1], np.int32), np.array([5.0], np.float32),
-    )
-    assert (t[t >= 0] == 0).all()  # nothing placed
+def test_minus_one_mask_carries_through():
+    t = prosit174_to_sites(np.full(PROSIT_VECTOR_LEN, -1.0, np.float32), 10)
+    assert (t == -1.0).all()
+
+
+def test_shape_and_bounds():
+    v = np.zeros(PROSIT_VECTOR_LEN, np.float32)
+    assert prosit174_to_sites(v, 30).shape == (29, N_ION_CHANNELS)  # max peptide length
+    assert prosit174_to_sites(v, 3).shape == (2, N_ION_CHANNELS)
+    with pytest.raises(ValueError):
+        prosit174_to_sites(v, 31)               # peptide longer than the 174-vector
+    with pytest.raises(ValueError):
+        prosit174_to_sites(np.zeros(100), 10)   # wrong vector length
