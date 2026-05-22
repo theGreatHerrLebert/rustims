@@ -87,8 +87,13 @@ class ModelConfig:
 
     # conditioning
     max_charge: int = 8
-    n_instruments: int = len(INSTRUMENTS)
-    n_acq_modes: int = len(ACQUISITION_MODES)
+    # Embedding *capacity* for instrument / acquisition-mode ids, deliberately
+    # larger than the current vocabularies. A new instrument or mode appended to
+    # INSTRUMENTS / ACQUISITION_MODES later gets the next free id without
+    # resizing the embedding -- so existing checkpoints stay loadable and the
+    # new id simply starts from an untrained row, ready to fine-tune.
+    n_instruments: int = 32  # 9 ids in use (see INSTRUMENTS); the rest reserved
+    n_acq_modes: int = 16    # 7 ids in use (see ACQUISITION_MODES); the rest reserved
 
     # heads
     n_ion_channels: int = 6  # b/y ions x fragment charges 1-3 (Prosit-compatible)
@@ -97,6 +102,14 @@ class ModelConfig:
     def __post_init__(self) -> None:
         if self.d_model % self.n_heads != 0:
             raise ValueError(f"d_model {self.d_model} not divisible by n_heads {self.n_heads}")
+        if len(INSTRUMENTS) > self.n_instruments:
+            raise ValueError(
+                f"{len(INSTRUMENTS)} instruments exceed embedding capacity {self.n_instruments}"
+            )
+        if len(ACQUISITION_MODES) > self.n_acq_modes:
+            raise ValueError(
+                f"{len(ACQUISITION_MODES)} acquisition modes exceed capacity {self.n_acq_modes}"
+            )
 
 
 # First-prototype preset — roughly on par with the production BASE encoder so
