@@ -7,6 +7,7 @@ Example:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import time
 from pathlib import Path
@@ -49,6 +50,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Train the unified peptide property model.")
     ap.add_argument("--datasets-glob", default="/scratch/claudius-proteomics/*")
     ap.add_argument("--preset", default="small", choices=sorted(PRESETS))
+    ap.add_argument("--comp-fusion", default=None,
+                    choices=["add", "gate", "token_only", "composition_only"],
+                    help="modification-encoding fusion / ablation (default: preset value)")
     ap.add_argument("--cap", type=int, default=4000, help="max PSMs sampled per dataset")
     ap.add_argument("--max-datasets", type=int, default=0, help="limit datasets (0 = all)")
     ap.add_argument("--epochs", type=int, default=12)
@@ -81,6 +85,8 @@ def main() -> None:
         raise SystemExit("no training examples — check --datasets-glob")
 
     cfg = PRESETS[args.preset]
+    if args.comp_fusion:
+        cfg = dataclasses.replace(cfg, comp_fusion=args.comp_fusion)
     collate = make_collate_fn(cfg.pad_token_id, cfg.max_charge)
     loaders = {
         name: DataLoader(
@@ -126,6 +132,14 @@ def main() -> None:
                 print(f"early stop (no val SA gain for {args.patience} epochs)")
                 break
 
+    if best_epoch == -1:
+        print("warning: no epoch improved val SA; saving the final model as best.pt")
+        torch.save(
+            {"model_state_dict": model.state_dict(), "preset": args.preset,
+             "epoch": epoch, "val": val},
+            out_dir / "best.pt",
+        )
+        best_epoch = epoch
     ckpt = torch.load(out_dir / "best.pt", map_location=device)
     model.load_state_dict(ckpt["model_state_dict"])
     test = evaluate_split(model, loaders["test"], device)

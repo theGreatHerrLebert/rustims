@@ -54,7 +54,12 @@ class HybridResidueEmbedding(nn.Module):
         ``"gate"`` — ``token + sigmoid(g) * composition`` with a learnable
         per-channel gate ``g`` (init 0 → gate 0.5); the recommended upgrade if
         the unseen-modification probe shows the composition branch is ignored.
+        ``"token_only"`` / ``"composition_only"`` — ablation modes that drop one
+        branch, for measuring each branch's contribution (e.g. the
+        unseen-modification probe's control is ``token_only``).
     """
+
+    _FUSIONS = ("add", "gate", "token_only", "composition_only")
 
     def __init__(
         self,
@@ -65,8 +70,8 @@ class HybridResidueEmbedding(nn.Module):
         fusion: str = "add",
     ):
         super().__init__()
-        if fusion not in ("add", "gate"):
-            raise ValueError(f"unknown fusion '{fusion}'")
+        if fusion not in self._FUSIONS:
+            raise ValueError(f"unknown fusion '{fusion}'; expected one of {self._FUSIONS}")
         self.d_model = d_model
         self.pad_token_id = pad_token_id
         self.fusion = fusion
@@ -86,8 +91,12 @@ class HybridResidueEmbedding(nn.Module):
 
     def forward(self, tokens: torch.Tensor) -> torch.Tensor:
         """tokens: (batch, seq_len) long  ->  (batch, seq_len, d_model)."""
-        token_vec = self.token_emb(tokens)
+        if self.fusion == "token_only":
+            return self.token_emb(tokens)
         comp_vec = self.comp_encoder(self.composition[tokens])
+        if self.fusion == "composition_only":
+            return comp_vec
+        token_vec = self.token_emb(tokens)
         if self.fusion == "gate":
             comp_vec = torch.sigmoid(self.gate) * comp_vec
         return token_vec + comp_vec

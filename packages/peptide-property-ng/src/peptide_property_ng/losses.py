@@ -22,6 +22,16 @@ def masked_spectral_angle(pred: torch.Tensor, target: torch.Tensor, eps: float =
     return 2.0 * torch.arccos(cos) / math.pi
 
 
+def intensity_signal_mask(target: torch.Tensor) -> torch.Tensor:
+    """``(B,)`` bool — True where a target has at least one observed (positive) peak.
+
+    A target with no positive b/y charge-1-3 peak is degenerate: the spectral
+    angle against it is a constant with zero gradient, so such samples are
+    excluded from the intensity loss and metric rather than diluting them.
+    """
+    return (target > 0).flatten(1).any(dim=1)
+
+
 class MultiTaskLoss:
     """Weighted sum of per-task losses; tasks with no valid targets are skipped.
 
@@ -44,9 +54,10 @@ class MultiTaskLoss:
         parts: dict[str, torch.Tensor] = {}
 
         if "intensity" in outputs:
-            parts["intensity"] = masked_spectral_angle(
-                outputs["intensity"], batch["intensity_target"]
-            ).mean()
+            sa = masked_spectral_angle(outputs["intensity"], batch["intensity_target"])
+            signal = intensity_signal_mask(batch["intensity_target"])
+            if signal.any():
+                parts["intensity"] = sa[signal].mean()
 
         if "ccs" in outputs:
             mean, _std = outputs["ccs"]

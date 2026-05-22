@@ -40,6 +40,19 @@ class PeptidePropertyEncoder(AnalyteTransformerEncoder):
         )
         self.cfg = cfg
 
+        # Fail loudly on a composition-table / config mismatch rather than
+        # silently indexing the wrong chemistry vectors.
+        if composition_table.vocab_size != cfg.vocab_size:
+            raise ValueError(
+                f"composition table vocab {composition_table.vocab_size} != "
+                f"cfg.vocab_size {cfg.vocab_size} — rebuild the table or fix the config"
+            )
+        if composition_table.n_elements != cfg.n_elements:
+            raise ValueError(
+                f"composition table has {composition_table.n_elements} elements != "
+                f"cfg.n_elements {cfg.n_elements}"
+            )
+
         # The base class built a plain nn.Embedding token encoder; drop it and
         # use the hybrid residue embedding instead.
         del self.token_encoder

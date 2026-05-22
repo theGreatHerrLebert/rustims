@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import torch
 
-from peptide_property_ng.losses import masked_spectral_angle
+from peptide_property_ng.losses import intensity_signal_mask, masked_spectral_angle
 
 
 def _pearson(x: torch.Tensor, y: torch.Tensor) -> float:
@@ -35,8 +35,9 @@ def evaluate_split(model, loader, device: str = "cpu") -> dict[str, float]:
 
         if "intensity" in out:
             sa = 1.0 - masked_spectral_angle(out["intensity"], batch["intensity_target"])
-            sa_sum += float(sa.sum())
-            sa_n += sa.numel()
+            signal = intensity_signal_mask(batch["intensity_target"])
+            sa_sum += float(sa[signal].sum())
+            sa_n += int(signal.sum())
 
         if "ccs" in out:
             mean, _ = out["ccs"]

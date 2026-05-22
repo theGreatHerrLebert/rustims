@@ -78,8 +78,9 @@ class ModelConfig:
     pad_token_id: int = 61
     n_elements: int = 31  # atomic-composition channels (see modifications.composition)
 
-    # hybrid embedding
-    comp_fusion: str = "add"  # "add" | "gate"
+    # hybrid embedding fusion: "add" | "gate" | "token_only" | "composition_only"
+    # ("token_only" / "composition_only" are ablation modes)
+    comp_fusion: str = "add"
 
     # conditioning
     max_charge: int = 8
