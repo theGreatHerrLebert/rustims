@@ -7,6 +7,7 @@ tokenises, and builds per-task targets.
 """
 from __future__ import annotations
 
+import csv
 import glob
 from collections import defaultdict
 from pathlib import Path
@@ -199,6 +200,27 @@ class SagePropertyDataset(Dataset):
         return self.examples[i]
 
 
+def load_catalog_metadata(catalog_path: str | Path) -> dict[str, tuple[int, int]]:
+    """Read ``timstof_catalog.tsv`` -> ``{accession: (instrument_id, acq_id)}``.
+
+    Unknown / missing values map to id 0 via ``instrument_id`` / ``acquisition_id``.
+    """
+    from peptide_property_ng.model.config import acquisition_id, instrument_id
+
+    out: dict[str, tuple[int, int]] = {}
+    with open(catalog_path) as f:
+        reader = csv.DictReader(f, delimiter="\t")
+        for row in reader:
+            acc = (row.get("accession") or "").strip()
+            if not acc:
+                continue
+            out[acc] = (
+                instrument_id(row.get("instrument_model")),
+                acquisition_id(row.get("acquisition_mode")),
+            )
+    return out
+
+
 def build_split_datasets(
     sage_dirs: list[str | Path],
     *,
@@ -206,12 +228,30 @@ def build_split_datasets(
     seed: int = 0,
     val_frac: float = 0.1,
     test_frac: float = 0.1,
+    catalog_path: str | Path | None = None,
     **prepare_kwargs,
 ) -> dict[str, SagePropertyDataset]:
-    """Prepare every dataset and split peptide-level into train / val / test."""
+    """Prepare every dataset and split peptide-level into train / val / test.
+
+    If ``catalog_path`` is given (a ``timstof_catalog.tsv``), per-dataset
+    ``instrument`` and ``acq_mode`` ids are looked up by accession and passed to
+    ``prepare_examples`` — so the encoder's metadata conditioning actually sees
+    the right instrument instead of falling back to ``unknown``. Otherwise the
+    loader's defaults (0/unknown) are used.
+    """
+    metadata: dict[str, tuple[int, int]] = (
+        load_catalog_metadata(catalog_path) if catalog_path else {}
+    )
     examples: list[dict] = []
     for sage_dir in sage_dirs:
-        examples.extend(prepare_examples(sage_dir, cap=cap, seed=seed, **prepare_kwargs))
+        sage_dir_p = Path(sage_dir)
+        accession = _accession(sage_dir_p)
+        kw = dict(prepare_kwargs)
+        if accession in metadata:
+            instr, acq = metadata[accession]
+            kw.setdefault("instrument", instr)
+            kw.setdefault("acq_mode", acq)
+        examples.extend(prepare_examples(sage_dir_p, cap=cap, seed=seed, **kw))
 
     buckets: dict[str, list[dict]] = {"train": [], "val": [], "test": []}
     for ex in examples:

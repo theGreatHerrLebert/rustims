@@ -34,6 +34,8 @@ ACQUISITION_MODES: tuple[str, ...] = (
     "diaPASEF",
     "PRM",
     "MALDI",
+    "PASEF",        # catalog's dominant value (716 deposits)
+    "single-cell",  # catalog: 70 deposits
 )
 INSTRUMENT_TO_ID: dict[str, int] = {n: i for i, n in enumerate(INSTRUMENTS)}
 ACQ_TO_ID: dict[str, int] = {n: i for i, n in enumerate(ACQUISITION_MODES)}

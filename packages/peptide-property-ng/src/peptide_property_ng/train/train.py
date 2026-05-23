@@ -49,6 +49,8 @@ def train_epoch(model, loader, loss_fn, optimizer, device) -> dict[str, float]:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Train the unified peptide property model.")
     ap.add_argument("--datasets-glob", default="/scratch/claudius-proteomics/*")
+    ap.add_argument("--catalog", default=None,
+                    help="path to timstof_catalog.tsv for per-dataset instrument/acq conditioning")
     ap.add_argument("--preset", default="small", choices=sorted(PRESETS))
     ap.add_argument("--comp-fusion", default=None,
                     choices=["add", "gate", "token_only", "composition_only"],
@@ -79,7 +81,8 @@ def main() -> None:
 
     print(f"[{time.strftime('%H:%M:%S')}] preparing examples (cap {args.cap}/dataset) ...", flush=True)
     t0 = time.time()
-    splits = build_split_datasets(sage_dirs, cap=args.cap, seed=args.seed)
+    splits = build_split_datasets(sage_dirs, cap=args.cap, seed=args.seed,
+                                  catalog_path=args.catalog)
     for name, ds in splits.items():
         print(f"  {name}: {len(ds):,} examples")
     print(f"  prepared in {time.time() - t0:.0f}s")
