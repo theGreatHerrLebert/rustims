@@ -10,12 +10,19 @@ from torch.nn import functional as F
 def masked_spectral_angle(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
     """Per-sample spectral-angle distance in ``[0, 1]`` (0 = identical spectra).
 
-    ``pred`` / ``target`` are ``(B, sites, channels)``. Entries where
-    ``target < 0`` are masked out (impossible / padded fragment channels).
+    Canonical Prosit / Sage-fine-tune loss: mask ``target > 0`` (only observed
+    peaks contribute). Zeros are treated as "unmatched / unknown" rather than
+    real "no peak" labels — which is the correct interpretation for Sage
+    ``matched_fragments`` (Sage only reports peaks it matched) and matches the
+    production v4 / imspy_predictors `masked_spectral_distance` convention.
+
+    Pretraining on PROSPECT-style densely-annotated targets is unaffected in
+    practice — there the observable b/y positions almost all carry positive
+    intensity, so `> 0` and `>= 0` masks coincide.
     """
-    mask = (target >= 0).float()
+    mask = (target > 0).float()
     p = (pred * mask).reshape(pred.shape[0], -1)
-    t = (target.clamp(min=0.0) * mask).reshape(target.shape[0], -1)
+    t = (target * mask).reshape(target.shape[0], -1)
     p = F.normalize(p, dim=1, eps=eps)
     t = F.normalize(t, dim=1, eps=eps)
     cos = (p * t).sum(dim=1).clamp(-1.0 + eps, 1.0 - eps)
