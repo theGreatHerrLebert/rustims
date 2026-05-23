@@ -79,6 +79,10 @@ def prepare_examples(
     seed: int = 0,
     instrument: int = 0,
     acq_mode: int = 0,
+    # Sage doesn't surface per-PSM CE for timsTOF diaPASEF; the intensity head's CE
+    # FiLM was tuned by pretraining around the timsTOF-ms2 median (~0.26 normalised).
+    # Default to that here so the head is fed an in-distribution CE rather than 0.
+    default_ce: float = 0.26,
 ) -> list[dict]:
     """Load and prepare one dataset's PSMs into a list of example dicts."""
     from imspy_predictors.intensity.predictors import observed_fragments_to_intensity_target
@@ -174,7 +178,7 @@ def prepare_examples(
                 "tokens": np.asarray(residue_ids, dtype=np.int64),
                 "charge": charge,
                 "precursor_mz": mz,
-                "collision_energy": 0.0,  # not in Sage output for timsTOF diaPASEF
+                "collision_energy": float(default_ce),
                 "instrument": int(instrument),
                 "acq_mode": int(acq_mode),
                 "intensity_target": target,

@@ -51,6 +51,9 @@ def main() -> None:
     ap.add_argument("--datasets-glob", default="/scratch/claudius-proteomics/*")
     ap.add_argument("--catalog", default=None,
                     help="path to timstof_catalog.tsv for per-dataset instrument/acq conditioning")
+    ap.add_argument("--default-ce", type=float, default=0.26,
+                    help="default normalized collision energy for Sage PSMs that lack one "
+                         "(~0.26 = timsTOF-ms2 median, in-distribution for the pretrained CE FiLM)")
     ap.add_argument("--preset", default="small", choices=sorted(PRESETS))
     ap.add_argument("--comp-fusion", default=None,
                     choices=["add", "gate", "token_only", "composition_only"],
@@ -82,7 +85,7 @@ def main() -> None:
     print(f"[{time.strftime('%H:%M:%S')}] preparing examples (cap {args.cap}/dataset) ...", flush=True)
     t0 = time.time()
     splits = build_split_datasets(sage_dirs, cap=args.cap, seed=args.seed,
-                                  catalog_path=args.catalog)
+                                  catalog_path=args.catalog, default_ce=args.default_ce)
     for name, ds in splits.items():
         print(f"  {name}: {len(ds):,} examples")
     print(f"  prepared in {time.time() - t0:.0f}s")
