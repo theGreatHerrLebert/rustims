@@ -83,6 +83,7 @@ def prepare_examples(
     # FiLM was tuned by pretraining around the timsTOF-ms2 median (~0.26 normalised).
     # Default to that here so the head is fed an in-distribution CE rather than 0.
     default_ce: float = 0.26,
+    ce_calibration: dict[tuple[str, int], float] | None = None,
 ) -> list[dict]:
     """Load and prepare one dataset's PSMs into a list of example dicts."""
     from imspy_predictors.intensity.predictors import observed_fragments_to_intensity_target
@@ -154,7 +155,8 @@ def prepare_examples(
 
         charge = int(df["charge"][k])
         mz = (float(df["calcmass"][k]) + charge * _PROTON) / charge
-        cols = by_psm.get(df["psm_id"][k])
+        psm_id = int(df["psm_id"][k])
+        cols = by_psm.get(psm_id)
         if not cols or not cols[0]:
             continue  # no matched fragments -> no intensity target
         # Encode fragments with the proven imspy encoder (Sage fragments ->
@@ -170,15 +172,21 @@ def prepare_examples(
         rt = df["aligned_rt"][k]
         im = float(im) if im is not None else float("nan")
         rt = float(rt) if rt is not None else float("nan")
+        ce_val = float(default_ce)
+        if ce_calibration is not None:
+            cal = ce_calibration.get((accession, psm_id))
+            if cal is not None:
+                ce_val = float(cal)
         examples.append(
             {
                 "accession": accession,
+                "psm_id": psm_id,
                 "stripped": stripped,
                 "modseq": modseq,
                 "tokens": np.asarray(residue_ids, dtype=np.int64),
                 "charge": charge,
                 "precursor_mz": mz,
-                "collision_energy": float(default_ce),
+                "collision_energy": ce_val,
                 "instrument": int(instrument),
                 "acq_mode": int(acq_mode),
                 "intensity_target": target,
@@ -225,6 +233,20 @@ def load_catalog_metadata(catalog_path: str | Path) -> dict[str, tuple[int, int]
     return out
 
 
+def load_ce_calibration(parquet_path: str | Path) -> dict[tuple[str, int], float]:
+    """Read a CE calibration parquet -> ``{(accession, psm_id): calibrated_ce}``.
+
+    The parquet must have columns ``accession`` (string), ``psm_id`` (int64),
+    ``calibrated_ce`` (float). Missing keys at lookup time fall back to the
+    dataset's ``default_ce`` — so partial calibrations are safe.
+    """
+    table = pq.read_table(parquet_path)
+    accs = table["accession"].to_pylist()
+    pids = table["psm_id"].to_pylist()
+    ces = table["calibrated_ce"].to_pylist()
+    return {(a, int(p)): float(c) for a, p, c in zip(accs, pids, ces)}
+
+
 def build_split_datasets(
     sage_dirs: list[str | Path],
     *,
@@ -233,6 +255,7 @@ def build_split_datasets(
     val_frac: float = 0.1,
     test_frac: float = 0.1,
     catalog_path: str | Path | None = None,
+    ce_calibration: dict[tuple[str, int], float] | None = None,
     **prepare_kwargs,
 ) -> dict[str, SagePropertyDataset]:
     """Prepare every dataset and split peptide-level into train / val / test.
@@ -242,6 +265,10 @@ def build_split_datasets(
     ``prepare_examples`` — so the encoder's metadata conditioning actually sees
     the right instrument instead of falling back to ``unknown``. Otherwise the
     loader's defaults (0/unknown) are used.
+
+    If ``ce_calibration`` is given, each PSM's collision energy is overridden by
+    the calibrated value for that ``(accession, psm_id)``; PSMs not in the map
+    fall back to ``default_ce``.
     """
     metadata: dict[str, tuple[int, int]] = (
         load_catalog_metadata(catalog_path) if catalog_path else {}
@@ -255,7 +282,8 @@ def build_split_datasets(
             instr, acq = metadata[accession]
             kw.setdefault("instrument", instr)
             kw.setdefault("acq_mode", acq)
-        examples.extend(prepare_examples(sage_dir_p, cap=cap, seed=seed, **kw))
+        examples.extend(prepare_examples(sage_dir_p, cap=cap, seed=seed,
+                                         ce_calibration=ce_calibration, **kw))
 
     buckets: dict[str, list[dict]] = {"train": [], "val": [], "test": []}
     for ex in examples:

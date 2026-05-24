@@ -16,7 +16,9 @@ import torch
 from torch.utils.data import DataLoader
 
 from peptide_property_ng.data.collate import make_collate_fn
-from peptide_property_ng.data.sage_dataset import build_split_datasets, discover_sage_dirs
+from peptide_property_ng.data.sage_dataset import (
+    build_split_datasets, discover_sage_dirs, load_ce_calibration,
+)
 from peptide_property_ng.eval.metrics import evaluate_split
 from peptide_property_ng.losses import MultiTaskLoss
 from peptide_property_ng.model.config import PRESETS
@@ -28,14 +30,14 @@ def _to_device(batch: dict, device: str) -> dict:
     return {k: v.to(device) for k, v in batch.items()}
 
 
-def train_epoch(model, loader, loss_fn, optimizer, device) -> dict[str, float]:
+def train_epoch(model, loader, loss_fn, optimizer, device, tasks=None) -> dict[str, float]:
     model.train()
     totals: dict[str, float] = {}
     n_batches = 0
     for batch in loader:
         batch = _to_device(batch, device)
         optimizer.zero_grad()
-        loss, parts = loss_fn(model(batch), batch)
+        loss, parts = loss_fn(model(batch, tasks=tasks), batch)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
@@ -54,10 +56,17 @@ def main() -> None:
     ap.add_argument("--default-ce", type=float, default=0.26,
                     help="default normalized collision energy for Sage PSMs that lack one "
                          "(~0.26 = timsTOF-ms2 median, in-distribution for the pretrained CE FiLM)")
+    ap.add_argument("--ce-calibration", default=None,
+                    help="parquet of per-PSM calibrated CEs (from calibrate_ce.py); "
+                         "overrides default_ce per (accession, psm_id) where present")
     ap.add_argument("--preset", default="small", choices=sorted(PRESETS))
     ap.add_argument("--comp-fusion", default=None,
                     choices=["add", "gate", "token_only", "composition_only"],
                     help="modification-encoding fusion / ablation (default: preset value)")
+    ap.add_argument("--intensity-head", default=None,
+                    choices=["site", "pooled"],
+                    help="intensity head topology: 'site' (local FiLM, default) or "
+                         "'pooled' (v4-style Prosit-174 attention-pooled ablation)")
     ap.add_argument("--cap", type=int, default=4000, help="max PSMs sampled per dataset")
     ap.add_argument("--max-datasets", type=int, default=0, help="limit datasets (0 = all)")
     ap.add_argument("--epochs", type=int, default=12)
@@ -68,6 +77,12 @@ def main() -> None:
     ap.add_argument("--patience", type=int, default=4)
     ap.add_argument("--init-from", default=None,
                     help="checkpoint to initialise weights from (e.g. a pretrained.pt)")
+    ap.add_argument("--tasks", default="intensity,ccs,rt,charge",
+                    help="comma-separated tasks to train + evaluate; restricts forward and loss "
+                         "(e.g. 'intensity' for a specialized fine-tune)")
+    ap.add_argument("--freeze-encoder", action="store_true",
+                    help="freeze the shared encoder (only the task heads train) -- linear-probe / "
+                         "feature-extraction mode on the pretrained encoder")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     ap.add_argument("--out", default="runs/prototype")
     args = ap.parse_args()
@@ -83,9 +98,13 @@ def main() -> None:
     print(f"  {len(sage_dirs)} datasets")
 
     print(f"[{time.strftime('%H:%M:%S')}] preparing examples (cap {args.cap}/dataset) ...", flush=True)
+    ce_cal = load_ce_calibration(args.ce_calibration) if args.ce_calibration else None
+    if ce_cal is not None:
+        print(f"  CE calibration loaded: {len(ce_cal):,} keys from {args.ce_calibration}")
     t0 = time.time()
     splits = build_split_datasets(sage_dirs, cap=args.cap, seed=args.seed,
-                                  catalog_path=args.catalog, default_ce=args.default_ce)
+                                  catalog_path=args.catalog, default_ce=args.default_ce,
+                                  ce_calibration=ce_cal)
     for name, ds in splits.items():
         print(f"  {name}: {len(ds):,} examples")
     print(f"  prepared in {time.time() - t0:.0f}s")
@@ -95,6 +114,8 @@ def main() -> None:
     cfg = PRESETS[args.preset]
     if args.comp_fusion:
         cfg = dataclasses.replace(cfg, comp_fusion=args.comp_fusion)
+    if args.intensity_head:
+        cfg = dataclasses.replace(cfg, intensity_head=args.intensity_head)
     collate = make_collate_fn(cfg.pad_token_id, cfg.max_charge)
     loaders = {
         name: DataLoader(
@@ -117,16 +138,27 @@ def main() -> None:
         missing, unexpected = model.load_state_dict(ckpt["model_state_dict"], strict=False)
         print(f"initialised from {args.init_from} "
               f"(missing={len(missing)}, unexpected={len(unexpected)})")
-    print(f"model: '{args.preset}' preset, {model.num_parameters():,} parameters, device={device}")
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+
+    task_list = [t.strip() for t in args.tasks.split(",") if t.strip()]
+    if args.freeze_encoder:
+        for p in model.encoder.parameters():
+            p.requires_grad = False
+        n_frozen = sum(p.numel() for p in model.encoder.parameters())
+        print(f"encoder frozen: {n_frozen:,} params no longer training")
+
+    n_train = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"model: '{args.preset}' preset, {model.num_parameters():,} total parameters, "
+          f"{n_train:,} trainable, device={device}, tasks={task_list}")
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad],
+                                  lr=args.lr, weight_decay=args.weight_decay)
     loss_fn = MultiTaskLoss()
 
     best_sa, best_epoch, bad = -1.0, -1, 0
     history: list[dict] = []
     for epoch in range(1, args.epochs + 1):
         t0 = time.time()
-        tr = train_epoch(model, loaders["train"], loss_fn, optimizer, device)
-        val = evaluate_split(model, loaders["val"], device)
+        tr = train_epoch(model, loaders["train"], loss_fn, optimizer, device, tasks=task_list)
+        val = evaluate_split(model, loaders["val"], device, tasks=task_list)
         history.append({"epoch": epoch, "train": tr, "val": val})
         print(
             f"[{time.strftime('%H:%M:%S')}] epoch {epoch:2d}  "
@@ -161,7 +193,7 @@ def main() -> None:
         best_epoch = epoch
     ckpt = torch.load(out_dir / "best.pt", map_location=device)
     model.load_state_dict(ckpt["model_state_dict"])
-    test = evaluate_split(model, loaders["test"], device)
+    test = evaluate_split(model, loaders["test"], device, tasks=task_list)
     print(f"\n=== test (best epoch {best_epoch}) ===")
     for k, v in test.items():
         print(f"  {k:16s} {v:.4f}")

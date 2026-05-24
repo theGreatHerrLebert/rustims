@@ -14,6 +14,7 @@ Default curriculum (each stage is single-task; the shared encoder accumulates):
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import time
 from pathlib import Path
@@ -97,6 +98,10 @@ def _train_task_epoch(model, loader, task, loss_fn, optimizer, device) -> float:
 def main() -> None:
     ap = argparse.ArgumentParser(description="Staged pretraining for the unified model.")
     ap.add_argument("--preset", default="small", choices=sorted(PRESETS))
+    ap.add_argument("--intensity-head", default=None,
+                    choices=["site", "pooled"],
+                    help="intensity head topology (default: preset value); "
+                         "use 'pooled' to pretrain the v4-style Prosit-174 head")
     ap.add_argument("--cap", type=int, default=50000, help="max examples per stage (0 = all)")
     ap.add_argument("--epochs", type=int, default=3, help="epochs per stage")
     ap.add_argument("--batch-size", type=int, default=128)
@@ -116,6 +121,8 @@ def main() -> None:
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     cfg = PRESETS[args.preset]
+    if args.intensity_head:
+        cfg = dataclasses.replace(cfg, intensity_head=args.intensity_head)
     device = args.device
     cap = None if args.cap == 0 else args.cap
 

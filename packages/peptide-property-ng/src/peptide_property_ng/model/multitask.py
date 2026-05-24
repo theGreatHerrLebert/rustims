@@ -8,6 +8,7 @@ from peptide_property_ng.model.config import SMALL, ModelConfig
 from peptide_property_ng.model.encoder import PeptidePropertyEncoder
 from peptide_property_ng.model.heads.ccs import IonMobilityHead
 from peptide_property_ng.model.heads.intensity import IntensityHead
+from peptide_property_ng.model.heads.intensity_pooled import PooledIntensityHead
 from peptide_property_ng.model.heads.scalar import ChargeHead, RetentionTimeHead
 from peptide_property_ng.modifications.composition import CompositionTable
 
@@ -43,9 +44,15 @@ class UnifiedPeptidePropertyModel(nn.Module):
         if composition_table is None:
             composition_table = CompositionTable.load()
         self.encoder = PeptidePropertyEncoder(cfg, composition_table)
-        self.heads = nn.ModuleDict(
-            {t: self.HEAD_TYPES[t](cfg) for t in cfg.tasks}
-        )
+        # Intensity head is dispatched on cfg.intensity_head ("site" | "pooled").
+        # Other heads always use the canonical class. Stored under one key
+        # ("intensity") regardless, so checkpoint code keys are stable.
+        head_types: dict[str, type[nn.Module]] = dict(self.HEAD_TYPES)
+        if cfg.intensity_head == "pooled":
+            head_types["intensity"] = PooledIntensityHead
+        elif cfg.intensity_head != "site":
+            raise ValueError(f"unknown intensity_head '{cfg.intensity_head}'")
+        self.heads = nn.ModuleDict({t: head_types[t](cfg) for t in cfg.tasks})
 
     def forward(
         self,
@@ -60,9 +67,18 @@ class UnifiedPeptidePropertyModel(nn.Module):
         )
         out: dict[str, object] = {}
         if "intensity" in active:
-            out["intensity"] = self.heads["intensity"](
-                latent, batch["charge"], batch["collision_energy"]
-            )
+            head = self.heads["intensity"]
+            if isinstance(head, PooledIntensityHead):
+                pad_mask = batch["tokens"] == self.cfg.pad_token_id
+                out["intensity"] = head(
+                    latent, batch["charge"], batch["collision_energy"],
+                    instrument=batch.get("instrument"),
+                    padding_mask=pad_mask,
+                )
+            else:
+                out["intensity"] = head(
+                    latent, batch["charge"], batch["collision_energy"]
+                )
         if "ccs" in active:
             out["ccs"] = self.heads["ccs"](latent, batch["charge"], batch["precursor_mz"])
         if "rt" in active:

@@ -20,6 +20,11 @@ def masked_spectral_angle(pred: torch.Tensor, target: torch.Tensor, eps: float =
     practice — there the observable b/y positions almost all carry positive
     intensity, so `> 0` and `>= 0` masks coincide.
     """
+    # Pooled head outputs a fixed (B, 29, n_ion) grid; site head outputs
+    # (B, L-1, n_ion). Slice pred to the batch's target sites so both shapes
+    # work transparently here.
+    if pred.shape[1] > target.shape[1]:
+        pred = pred[:, : target.shape[1], :]
     mask = (target > 0).float()
     p = (pred * mask).reshape(pred.shape[0], -1)
     t = (target * mask).reshape(target.shape[0], -1)

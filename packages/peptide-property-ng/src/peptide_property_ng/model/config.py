@@ -100,6 +100,9 @@ class ModelConfig:
     # heads
     n_ion_channels: int = 6  # b/y ions x fragment charges 1-3 (Prosit-compatible)
     tasks: tuple[str, ...] = ("intensity", "ccs", "rt", "charge")
+    # intensity head topology: "site" (local FiLM, per-cleavage-site) or
+    # "pooled" (v4-style attention-pooled Prosit-174); see heads/intensity_pooled.py
+    intensity_head: str = "site"
 
     def __post_init__(self) -> None:
         if self.d_model % self.n_heads != 0:

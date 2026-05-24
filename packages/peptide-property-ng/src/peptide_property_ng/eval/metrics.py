@@ -16,8 +16,12 @@ def _pearson(x: torch.Tensor, y: torch.Tensor) -> float:
 
 
 @torch.no_grad()
-def evaluate_split(model, loader, device: str = "cpu") -> dict[str, float]:
+def evaluate_split(model, loader, device: str = "cpu",
+                   tasks: list[str] | None = None) -> dict[str, float]:
     """Run the model over a DataLoader and return per-task metrics.
+
+    ``tasks`` restricts the forward to the named tasks (e.g. ``["intensity"]``);
+    metrics for skipped tasks come back as ``nan``.
 
     Returns: intensity spectral angle (similarity, higher better), CCS / RT
     median absolute error, RT Pearson r, charge accuracy.
@@ -31,7 +35,7 @@ def evaluate_split(model, loader, device: str = "cpu") -> dict[str, float]:
 
     for batch in loader:
         batch = {k: v.to(device) for k, v in batch.items()}
-        out = model(batch)
+        out = model(batch, tasks=tasks)
 
         if "intensity" in out:
             sa = 1.0 - masked_spectral_angle(out["intensity"], batch["intensity_target"])
