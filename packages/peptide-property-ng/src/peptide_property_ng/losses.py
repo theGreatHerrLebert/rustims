@@ -7,7 +7,12 @@ import torch
 from torch.nn import functional as F
 
 
-def masked_spectral_angle(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+def masked_spectral_angle(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    norm_eps: float = 1e-8,
+    clamp_eps: float = 1e-4,
+) -> torch.Tensor:
     """Per-sample spectral-angle distance in ``[0, 1]`` (0 = identical spectra).
 
     Canonical Prosit / Sage-fine-tune loss: mask ``target > 0`` (only observed
@@ -16,9 +21,18 @@ def masked_spectral_angle(pred: torch.Tensor, target: torch.Tensor, eps: float =
     ``matched_fragments`` (Sage only reports peaks it matched) and matches the
     production v4 / imspy_predictors `masked_spectral_distance` convention.
 
+    The two eps are deliberately decoupled:
+      - ``norm_eps`` (1e-8) keeps ``F.normalize`` accurate for non-degenerate
+        magnitudes;
+      - ``clamp_eps`` (1e-4) bounds ``arccos``'s near-boundary derivative
+        (≈ -1/sqrt(2·clamp_eps), so ~70 instead of ~7000 at 1e-8). With 1e-8
+        the SA-loss backward NaN-s on sparse one-positive-fragment targets
+        whose normalize-to-one-hot forces cos exactly to ±1; with 1e-4 those
+        same samples are absorbed by the clamp (grad 0 above 1-clamp_eps).
+
     Pretraining on PROSPECT-style densely-annotated targets is unaffected in
-    practice — there the observable b/y positions almost all carry positive
-    intensity, so `> 0` and `>= 0` masks coincide.
+    practice — observable b/y positions almost all carry positive intensity,
+    so the > 0 vs >= 0 masks coincide and cos rarely hits the boundary.
     """
     # Pooled head outputs a fixed (B, 29, n_ion) grid; site head outputs
     # (B, L-1, n_ion). Slice pred to the batch's target sites so both shapes
@@ -28,9 +42,9 @@ def masked_spectral_angle(pred: torch.Tensor, target: torch.Tensor, eps: float =
     mask = (target > 0).float()
     p = (pred * mask).reshape(pred.shape[0], -1)
     t = (target * mask).reshape(target.shape[0], -1)
-    p = F.normalize(p, dim=1, eps=eps)
-    t = F.normalize(t, dim=1, eps=eps)
-    cos = (p * t).sum(dim=1).clamp(-1.0 + eps, 1.0 - eps)
+    p = F.normalize(p, dim=1, eps=norm_eps)
+    t = F.normalize(t, dim=1, eps=norm_eps)
+    cos = (p * t).sum(dim=1).clamp(-1.0 + clamp_eps, 1.0 - clamp_eps)
     return 2.0 * torch.arccos(cos) / math.pi
 
 

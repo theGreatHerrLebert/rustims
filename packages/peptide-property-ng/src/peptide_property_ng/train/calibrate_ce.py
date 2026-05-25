@@ -136,12 +136,23 @@ def main() -> None:
     print(f"  total {len(examples):,} prepared examples to calibrate "
           f"({len(splits['train']):,} train + {len(splits['val']):,} val + {len(splits['test']):,} test)")
 
+    import dataclasses
     ckpt = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
     preset = ckpt.get("preset", "small")
     cfg = PRESETS[preset]
+    intensity_head = ckpt.get("intensity_head")
+    if intensity_head is None:
+        # Legacy checkpoint without metadata — infer from the state-dict keys.
+        keys = ckpt["model_state_dict"].keys()
+        if any("heads.intensity.attention." in k for k in keys):
+            intensity_head = "pooled"
+        else:
+            intensity_head = "site"
+    cfg = dataclasses.replace(cfg, intensity_head=intensity_head)
     model = UnifiedPeptidePropertyModel(cfg, CompositionTable.load()).to(args.device)
     model.load_state_dict(ckpt["model_state_dict"])
-    print(f"  checkpoint preset={preset}, {model.num_parameters():,} parameters")
+    print(f"  checkpoint preset={preset}, intensity_head={intensity_head}, "
+          f"{model.num_parameters():,} parameters")
 
     n_pts = int(round((args.ce_max - args.ce_min) / args.ce_step)) + 1
     ce_grid = torch.linspace(args.ce_min, args.ce_max, n_pts)

@@ -165,7 +165,11 @@ def main() -> None:
         for epoch in range(1, args.epochs + 1):
             te = time.time()
             train_loss = _train_task_epoch(model, train_loader, task, loss_fn, optimizer, device)
-            val = evaluate_split(model, val_loader, device)
+            # Restrict eval to the current stage's task: other heads' outputs are
+            # at shapes the current corpus's targets/placeholders don't share
+            # (eg. pooled-head intensity (B,29,6) vs Chronologer's (B,L-1,6) for
+            # L up to max_seq_len), and per-stage metrics are diagnostic anyway.
+            val = evaluate_split(model, val_loader, device, tasks=[task])
             print(f"  epoch {epoch}: train_loss={train_loss:.4f}  "
                   f"val[{metric}]={val[metric]:.4f}  [{time.time()-te:.0f}s]", flush=True)
             history.append({"stage": name, "epoch": epoch,
@@ -173,7 +177,12 @@ def main() -> None:
 
         # Save a per-stage checkpoint (so the campaign fine-tune can pick the
         # handoff point, not just the post-RT state) and the running pretrained.pt.
-        ckpt = {"model_state_dict": model.state_dict(), "preset": args.preset, "stage": name}
+        ckpt = {
+            "model_state_dict": model.state_dict(),
+            "preset": args.preset,
+            "intensity_head": cfg.intensity_head,
+            "stage": name,
+        }
         torch.save(ckpt, out_dir / f"after-{name}.pt")
         torch.save(ckpt, out_dir / "pretrained.pt")
         print(f"  saved -> {out_dir}/after-{name}.pt  (+ pretrained.pt)", flush=True)

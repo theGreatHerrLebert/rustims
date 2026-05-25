@@ -68,6 +68,14 @@ class PeptidePropertyEncoder(AnalyteTransformerEncoder):
         self.instrument_emb = nn.Embedding(cfg.n_instruments, cfg.d_model)
         self.acq_emb = nn.Embedding(cfg.n_acq_modes, cfg.d_model)
 
+        # PyTorch's TransformerEncoder converts padded batches to a NestedTensor
+        # for the SDPA fast path; the backward pass on that path returns NaN
+        # gradients on certain shape combinations (silently observed as the
+        # `_nested_tensor_from_mask` warning we kept seeing — actually the smoke).
+        # Disable the fast path: slightly slower forward, finite gradients.
+        if hasattr(self.transformer_encoder, "enable_nested_tensor"):
+            self.transformer_encoder.enable_nested_tensor = False
+
     def global_token_hook(  # noqa: D102 (documented on the class)
         self,
         tokens: torch.Tensor,

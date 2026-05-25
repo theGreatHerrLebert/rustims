@@ -174,6 +174,7 @@ def main() -> None:
             best_sa, best_epoch, bad = val["intensity_sa"], epoch, 0
             torch.save(
                 {"model_state_dict": model.state_dict(), "preset": args.preset,
+                 "intensity_head": cfg.intensity_head,
                  "epoch": epoch, "val": val},
                 out_dir / "best.pt",
             )

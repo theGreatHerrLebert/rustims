@@ -119,9 +119,15 @@ def main() -> None:
                                   ce_calibration=ce_cal)
     ds = splits[args.split]
 
+    import dataclasses
     ckpt = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
     preset = ckpt.get("preset", "small")
     cfg = PRESETS[preset]
+    intensity_head = ckpt.get("intensity_head")
+    if intensity_head is None:
+        keys = ckpt["model_state_dict"].keys()
+        intensity_head = "pooled" if any("heads.intensity.attention." in k for k in keys) else "site"
+    cfg = dataclasses.replace(cfg, intensity_head=intensity_head)
     collate = make_collate_fn(cfg.pad_token_id, cfg.max_charge)
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate)
     model = UnifiedPeptidePropertyModel(cfg, CompositionTable.load()).to(args.device)
