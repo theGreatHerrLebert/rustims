@@ -96,6 +96,22 @@ def predict_retention_time(
         ps.retention_time_predicted = rt
 
 
+def _extract_prediction_mean(pred, key: Optional[str] = None):
+    """Extract the mean tensor from legacy, tuple, and dict model outputs."""
+    if isinstance(pred, dict):
+        if key is None:
+            if len(pred) != 1:
+                raise KeyError(
+                    "Cannot infer prediction key from multi-task model output."
+                )
+            pred = next(iter(pred.values()))
+        else:
+            pred = pred[key]
+    if isinstance(pred, tuple):
+        pred = pred[0]
+    return pred
+
+
 class PeptideChromatographyApex(ABC):
     """Abstract base class for chromatographic separation prediction."""
 
@@ -212,11 +228,19 @@ def load_deep_retention_time_predictor(backend: Optional[str] = None):
     """
     Load a pretrained retention time predictor model.
 
+    Defaults to **Chronologer** (Searle Lab, Apache-2.0) — a residual-CNN that
+    reaches roughly 4× tighter median residual than the imspy transformer
+    baseline on timsTOF data. Pass ``backend="transformer"`` to opt back into
+    the legacy imspy ``UnifiedPeptideModel`` RT predictor.
+
     Args:
-        backend: Kept for backward compatibility, ignored (always uses PyTorch)
+        backend: ``"chronologer"`` (default, or pass ``None``) loads the
+            Chronologer wrapper. ``"transformer"`` loads the legacy imspy
+            transformer RT model. Any other value is treated as the default.
 
     Returns:
-        Loaded PyTorch model
+        Either a :class:`Chronologer` wrapper or the legacy transformer
+        PyTorch model, depending on ``backend``.
     """
     if not TORCH_AVAILABLE:
         raise ImportError(
@@ -224,6 +248,25 @@ def load_deep_retention_time_predictor(backend: Optional[str] = None):
             "Install with: pip install torch"
         )
 
+    backend = (backend or "chronologer").lower()
+
+    if backend == "chronologer":
+        # Default: Chronologer is the goto RT predictor on timsTOF data.
+        # Falls back to the transformer path only if Chronologer can't be
+        # constructed (e.g. upstream `chronologer` package not installed, or
+        # the base-weights download is unreachable).
+        try:
+            from imspy_predictors.rt.chronologer import Chronologer
+            base_path = get_model_path('rt/chronologer_base.pt')
+            return Chronologer.from_base(str(base_path))
+        except (ImportError, FileNotFoundError, RuntimeError) as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Chronologer load failed (%s); falling back to transformer.", e,
+            )
+            backend = "transformer"
+
+    # Transformer path (legacy / fallback).
     # Try to load UnifiedPeptideModel first (new architecture)
     try:
         from imspy_predictors.models import UnifiedPeptideModel
@@ -297,7 +340,7 @@ class DeepChromatographyApex(PeptideChromatographyApex):
 
         # Load model
         if model is None:
-            self.model = load_deep_retention_time_predictor()
+            self.model = load_deep_retention_time_predictor(backend="transformer")
         else:
             self.model = model
 
@@ -417,31 +460,41 @@ class DeepChromatographyApex(PeptideChromatographyApex):
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, min_lr=1e-6)
         checkpoint = InMemoryCheckpoint(patience=patience)
 
+        history = {"epochs": [], "train_loss": [], "val_loss": []}
         for epoch in range(epochs):
             self.model.train()
+            train_loss = 0.0
             for tokens_b, rt_b in train_loader:
                 optimizer.zero_grad()
-                pred = self.model(tokens_b)
+                pred = _extract_prediction_mean(self.model(tokens_b), "rt")
                 loss = F.l1_loss(pred, rt_b)
                 loss.backward()
                 optimizer.step()
+                train_loss += loss.item()
+            train_loss /= max(len(train_loader), 1)
 
             self.model.eval()
             val_loss = 0
             with torch.no_grad():
                 for tokens_b, rt_b in val_loader:
-                    pred = self.model(tokens_b)
+                    pred = _extract_prediction_mean(self.model(tokens_b), "rt")
                     val_loss += F.l1_loss(pred, rt_b).item()
-            val_loss /= len(val_loader)
+            val_loss /= max(len(val_loader), 1)
             scheduler.step(val_loss)
 
+            history["epochs"].append(epoch)
+            history["train_loss"].append(float(train_loss))
+            history["val_loss"].append(float(val_loss))
+
             if verbose and epoch % 10 == 0:
-                print(f"Epoch {epoch}: val_loss={val_loss:.4f}")
+                print(f"Epoch {epoch}: train_loss={train_loss:.4f} val_loss={val_loss:.4f}")
 
             if checkpoint.step(val_loss, self.model):
                 if verbose:
                     print(f"Early stopping at epoch {epoch}")
                 break
+
+        self._finetune_history = history
 
         checkpoint.restore(self.model)
         self.model.eval()

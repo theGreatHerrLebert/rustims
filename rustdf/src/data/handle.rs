@@ -84,6 +84,41 @@ fn derive_mz_calibration(
     Some((intercept, slope))
 }
 
+/// Build a `LookupIndexConverter`, preferring an SDK-derived m/z calibration.
+///
+/// The `LookupIndexConverter` always carries the pre-computed scan→1/K0 lookup
+/// for ion mobility. For m/z it normally uses a 2-point boundary model
+/// (`LookupIndexConverter::new`), which can have a large m/z error on some
+/// datasets. When a valid `bruker_lib_path` is supplied, m/z is instead
+/// calibrated with the same regression fit used by the `Calibrated` converter
+/// (`derive_mz_calibration`). Falls back to the boundary model when the SDK is
+/// unavailable (e.g. macOS, or `bruker_lib_path` is empty / "NO_SDK").
+fn build_lookup_converter(
+    bruker_lib_path: &str,
+    data_path: &str,
+    tof_max_index: u32,
+    mz_lower: f64,
+    mz_upper: f64,
+    im_lookup: Vec<f64>,
+) -> LookupIndexConverter {
+    match derive_mz_calibration(bruker_lib_path, data_path, tof_max_index) {
+        Some((intercept, slope)) => {
+            LookupIndexConverter::with_mz_fit(intercept, slope, im_lookup)
+        }
+        None => {
+            if !bruker_lib_path.is_empty() && bruker_lib_path != "NO_SDK" {
+                eprintln!(
+                    "Warning: Could not derive m/z calibration from SDK at '{}'. \
+                    Falling back to the 2-point boundary model, which may have a \
+                    large m/z error on some datasets.",
+                    bruker_lib_path
+                );
+            }
+            LookupIndexConverter::new(mz_lower, mz_upper, tof_max_index, im_lookup)
+        }
+    }
+}
+
 fn lzf_decompress(data: &[u8], max_output_size: usize) -> Result<Vec<u8>, Box<dyn Error>> {
     let decompressed_data = lzf::decompress(data, max_output_size)
         .map_err(|e| format!("LZF decompression failed: {}", e))?;
@@ -912,6 +947,9 @@ impl TimsDataLoader {
     ///
     /// # Arguments
     /// * `data_path` - Path to the .d folder
+    /// * `bruker_lib_path` - Path to the Bruker SDK shared library; used to
+    ///   derive an accurate m/z calibration. Pass "NO_SDK" (or an empty
+    ///   string) to skip and use the 2-point boundary m/z model.
     /// * `tof_max_index` - Maximum TOF index (from GlobalMetaData)
     /// * `mz_lower` - Minimum m/z value (from GlobalMetaData)
     /// * `mz_upper` - Maximum m/z value (from GlobalMetaData)
@@ -921,6 +959,7 @@ impl TimsDataLoader {
     /// A new TimsDataLoader with LookupIndexConverter
     pub fn new_lazy_with_calibration(
         data_path: &str,
+        bruker_lib_path: &str,
         tof_max_index: u32,
         mz_lower: f64,
         mz_upper: f64,
@@ -928,10 +967,12 @@ impl TimsDataLoader {
     ) -> Self {
         let raw_data_layout = TimsRawDataLayout::new(data_path);
 
-        let index_converter = TimsIndexConverter::Lookup(LookupIndexConverter::new(
+        let index_converter = TimsIndexConverter::Lookup(build_lookup_converter(
+            bruker_lib_path,
+            data_path,
+            tof_max_index,
             mz_lower,
             mz_upper,
-            tof_max_index,
             im_lookup,
         ));
 
@@ -948,6 +989,9 @@ impl TimsDataLoader {
     ///
     /// # Arguments
     /// * `data_path` - Path to the .d folder
+    /// * `bruker_lib_path` - Path to the Bruker SDK shared library; used to
+    ///   derive an accurate m/z calibration. Pass "NO_SDK" (or an empty
+    ///   string) to skip and use the 2-point boundary m/z model.
     /// * `tof_max_index` - Maximum TOF index (from GlobalMetaData)
     /// * `mz_lower` - Minimum m/z value (from GlobalMetaData)
     /// * `mz_upper` - Maximum m/z value (from GlobalMetaData)
@@ -957,6 +1001,7 @@ impl TimsDataLoader {
     /// A new TimsDataLoader with LookupIndexConverter
     pub fn new_in_memory_with_calibration(
         data_path: &str,
+        bruker_lib_path: &str,
         tof_max_index: u32,
         mz_lower: f64,
         mz_upper: f64,
@@ -964,10 +1009,12 @@ impl TimsDataLoader {
     ) -> Self {
         let raw_data_layout = TimsRawDataLayout::new(data_path);
 
-        let index_converter = TimsIndexConverter::Lookup(LookupIndexConverter::new(
+        let index_converter = TimsIndexConverter::Lookup(build_lookup_converter(
+            bruker_lib_path,
+            data_path,
+            tof_max_index,
             mz_lower,
             mz_upper,
-            tof_max_index,
             im_lookup,
         ));
 
@@ -1337,6 +1384,30 @@ impl LookupIndexConverter {
         let tof_intercept: f64 = mz_min.sqrt();
         let tof_slope: f64 = (mz_max.sqrt() - tof_intercept) / tof_max_index as f64;
 
+        // Get IM bounds for inverse conversion
+        let im_min = im_lookup.iter().cloned().fold(f64::INFINITY, f64::min);
+        let im_max = im_lookup.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+        Self {
+            tof_intercept,
+            tof_slope,
+            im_lookup,
+            im_min,
+            im_max,
+        }
+    }
+
+    /// Create a `LookupIndexConverter` with regression-derived m/z coefficients.
+    ///
+    /// Uses `sqrt(mz) = tof_intercept + tof_slope * tof` with coefficients fitted
+    /// from the Bruker SDK (see `derive_mz_calibration`), instead of the 2-point
+    /// boundary model in `new`. Preferred whenever the SDK is available.
+    ///
+    /// # Arguments
+    /// * `tof_intercept` - Intercept of the sqrt(mz)-vs-tof regression
+    /// * `tof_slope` - Slope of the sqrt(mz)-vs-tof regression
+    /// * `im_lookup` - Pre-computed scan→1/K0 lookup table from Bruker SDK
+    pub fn with_mz_fit(tof_intercept: f64, tof_slope: f64, im_lookup: Vec<f64>) -> Self {
         // Get IM bounds for inverse conversion
         let im_min = im_lookup.iter().cloned().fold(f64::INFINITY, f64::min);
         let im_max = im_lookup.iter().cloned().fold(f64::NEG_INFINITY, f64::max);

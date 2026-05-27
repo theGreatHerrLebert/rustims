@@ -15,6 +15,37 @@ import imspy_connector
 ims = imspy_connector.py_dataset
 
 
+def validate_frames_id_uniqueness(meta_df: pd.DataFrame) -> None:
+    """Raise if the accumulated Frames rows have duplicate ``Id`` values.
+
+    Bruker's `.tdf` schema relies on ``Frames.Id`` being unique and
+    contiguous; downstream readers that hash by Id (OpenTIMS, ionmaiden's
+    ``d2ms1``) throw ``IndexError: unordered_map::at`` on duplicates.
+    The reference-noise sampler used to emit ``MsType::Unknown`` frames
+    that propagated duplicate ``frame_id=1, retention_time=0.0`` metadata
+    to the writer (see rustdf/src/data/dia.rs for the upstream fix).
+    This guard catches the failure at the writer boundary so a corrupt
+    `.d` is never emitted.
+    """
+    if meta_df.empty or "Id" not in meta_df.columns:
+        return
+    n_total = len(meta_df)
+    n_unique = meta_df["Id"].nunique()
+    if n_unique == n_total:
+        return
+    dupe_ids = (
+        meta_df["Id"].value_counts().loc[lambda s: s > 1].head(5)
+    )
+    raise RuntimeError(
+        f"Frames.Id is not unique — {n_total - n_unique} duplicates "
+        f"among {n_total} rows. Top duplicate Ids "
+        f"(Id -> count): {dupe_ids.to_dict()}. This indicates an "
+        f"upstream bug in the simulation pipeline (most commonly "
+        f"the reference-noise sampler emitting MsType::Unknown "
+        f"frames; see rustdf/src/data/dia.rs)."
+    )
+
+
 class TDFWriter:
     def __init__(self, helper_handle: TimsDataset, path: str = "./", exp_name: str = "RAW.d", offset_bytes: int = 64, verbose: bool=False) -> None:
 
@@ -255,7 +286,36 @@ class TDFWriter:
         return pd.DataFrame(self.frame_meta_data)
 
     def write_frame_meta_data(self) -> None:
-        self._create_table(self.conn, self.get_frame_meta_data(), "Frames")
+        """Materialize accumulated Frames rows to the analysis.tdf SQLite.
+
+        Enforces a duplicate-Id check before write: Bruker's `.tdf` schema
+        relies on `Frames.Id` being unique and contiguous, and downstream
+        readers that hash by Id (OpenTIMS, ionmaiden's `d2ms1`) throw
+        `IndexError: unordered_map::at` on duplicates. We surface the
+        violation here with a diagnostic so it's caught at the writer
+        boundary rather than emitting a corrupt `.d` that fails late.
+
+        See rustdf/src/data/dia.rs `sample_precursor_signal` /
+        `sample_fragment_signal` for the upstream sampler fix that
+        prevents the noise-pipeline from producing duplicate-Id rows in
+        the first place. The check below is the defence-in-depth.
+        """
+        meta_df = self.get_frame_meta_data()
+        validate_frames_id_uniqueness(meta_df)
+        self._create_table(self.conn, meta_df, "Frames")
+        # Defence-in-depth: a UNIQUE INDEX makes any future direct INSERTs
+        # to Frames also fail loudly on duplicate Id.
+        try:
+            self.conn.execute(
+                'CREATE UNIQUE INDEX IF NOT EXISTS idx_frames_id_unique '
+                'ON "Frames"(Id)'
+            )
+        except sqlite3.IntegrityError as e:  # pragma: no cover
+            raise RuntimeError(
+                f"Frames.Id UNIQUE INDEX creation failed: {e}. The "
+                f"in-memory dedupe check above missed something — please "
+                f"file a bug with the analysis.tdf path."
+            ) from e
 
     def write_calibration_info(self, mz_standard_deviation_ppm: float = 0.15) -> None:
         try:
