@@ -1,3 +1,4 @@
+pub mod acquisition;
 pub mod containers;
 pub mod dda;
 pub mod dia;
