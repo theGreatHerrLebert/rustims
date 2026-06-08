@@ -47,7 +47,7 @@ def validate_frames_id_uniqueness(meta_df: pd.DataFrame) -> None:
 
 
 class TDFWriter:
-    def __init__(self, helper_handle: TimsDataset, path: str = "./", exp_name: str = "RAW.d", offset_bytes: int = 64, verbose: bool=False) -> None:
+    def __init__(self, helper_handle: TimsDataset, path: str = "./", exp_name: str = "RAW.d", offset_bytes: int = 64, verbose: bool=False, use_rust_compression: bool=False) -> None:
 
         self.path = Path(path)
         self.exp_name = exp_name
@@ -59,6 +59,17 @@ class TDFWriter:
         self.helper_handle = helper_handle
         self.offset_bytes = offset_bytes
         self.verbose = verbose
+        # When True, the per-frame tdf_bin realdata is produced by the Rust
+        # encoder (imspy_connector get_data_for_compression) instead of the
+        # NumPy/Numba get_compressible_data. The Python dedup+lexsort over
+        # (scan, tof) is kept either way so frame metadata stays correct; the
+        # Rust encoder reproduces it byte-for-byte (see scripts/parity_tof_writer.py).
+        # Also togglable globally via TIMSIM_RUST_COMPRESSION=1 so a stock
+        # `timsim` run can exercise the Rust writer without code changes.
+        import os
+        self.use_rust_compression = use_rust_compression or os.environ.get(
+            "TIMSIM_RUST_COMPRESSION", "0"
+        ) not in ("0", "", "false", "False")
 
         self.__conn_native = None
         self._setup_connections()
@@ -251,8 +262,16 @@ class TDFWriter:
         tof = unique_tof[sort_idx]
         intensity = summed_intensity[sort_idx].astype(np.uint32)
 
-        # get the real data as interleaved bytes
-        real_data = get_compressible_data(tof, scan, intensity, self.helper_handle.num_scans)
+        # get the real data as interleaved bytes (Rust encoder or NumPy/Numba)
+        if self.use_rust_compression:
+            real_data = ims.get_data_for_compression(
+                tof.astype(np.uint32).tolist(),
+                scan.astype(np.uint32).tolist(),
+                intensity.astype(np.uint32).tolist(),
+                int(self.helper_handle.num_scans),
+            )
+        else:
+            real_data = get_compressible_data(tof, scan, intensity, self.helper_handle.num_scans)
         # compress the data
         return intensity, zstd.ZSTD_compress(bytes(real_data), 0)
 
