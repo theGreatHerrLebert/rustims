@@ -35,6 +35,26 @@ class RetentionTimeHead(nn.Module):
         return self.net(latent[:, 0]).squeeze(-1)  # (B,)
 
 
+class RTSigmaHead(nn.Module):
+    """Predict the RT elution-peak *shape* width (gradient-normalised EMG sigma).
+
+    A positive scalar per peptide, read from the encoder global token only (same
+    leakage-free footing as the RT-apex head). Output is the gradient-normalised
+    sigma; timsim rescales by the target gradient at simulation time (see the
+    SIM shape-predictor design). ``lambda`` (EMG tail) is deliberately *not*
+    predicted — it is unidentifiable at timsTOF MS1 frame sampling, so it stays
+    sampled by timsim. softplus keeps sigma strictly positive.
+    """
+
+    def __init__(self, cfg: ModelConfig):
+        super().__init__()
+        self.net = _mlp(cfg.d_model, cfg.d_model, 1)
+
+    def forward(self, latent: torch.Tensor) -> torch.Tensor:
+        raw = self.net(latent[:, 0]).squeeze(-1)  # (B,)
+        return nn.functional.softplus(raw) + 1e-4
+
+
 class ChargeHead(nn.Module):
     """Predict precursor-charge logits — class ``j`` corresponds to charge ``j + 1``."""
 

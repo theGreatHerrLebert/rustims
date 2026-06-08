@@ -9,7 +9,7 @@ from peptide_property_ng.model.encoder import PeptidePropertyEncoder
 from peptide_property_ng.model.heads.ccs import IonMobilityHead
 from peptide_property_ng.model.heads.intensity import IntensityHead
 from peptide_property_ng.model.heads.intensity_pooled import PooledIntensityHead
-from peptide_property_ng.model.heads.scalar import ChargeHead, RetentionTimeHead
+from peptide_property_ng.model.heads.scalar import ChargeHead, RetentionTimeHead, RTSigmaHead
 from peptide_property_ng.modifications.composition import CompositionTable
 
 
@@ -20,6 +20,7 @@ class UnifiedPeptidePropertyModel(nn.Module):
       - ``intensity`` : ``(B, L-1, n_ion_channels)`` in ``[0, 1]``
       - ``ccs``       : ``(mean (B,), std (B,))`` — inverse ion mobility, 1/K0
       - ``rt``        : ``(B,)`` — normalised retention time
+      - ``rt_sigma``  : ``(B,)`` — gradient-normalised RT EMG peak-width (timsim shape)
       - ``charge``    : ``(B, max_charge)`` logits (class j -> charge j+1)
 
     The input ``batch`` dict carries: ``tokens`` (B, L) long, ``charge`` (B,)
@@ -31,6 +32,7 @@ class UnifiedPeptidePropertyModel(nn.Module):
         "intensity": IntensityHead,
         "ccs": IonMobilityHead,
         "rt": RetentionTimeHead,
+        "rt_sigma": RTSigmaHead,
         "charge": ChargeHead,
     }
 
@@ -83,6 +85,8 @@ class UnifiedPeptidePropertyModel(nn.Module):
             out["ccs"] = self.heads["ccs"](latent, batch["charge"], batch["precursor_mz"])
         if "rt" in active:
             out["rt"] = self.heads["rt"](latent)
+        if "rt_sigma" in active:
+            out["rt_sigma"] = self.heads["rt_sigma"](latent)
         if "charge" in active:
             out["charge"] = self.heads["charge"](latent)
         return out

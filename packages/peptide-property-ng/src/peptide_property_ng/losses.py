@@ -62,12 +62,20 @@ class MultiTaskLoss:
     """Weighted sum of per-task losses; tasks with no valid targets are skipped.
 
     - intensity : masked spectral-angle distance
-    - ccs       : Gaussian negative log-likelihood (mean, std) vs 1/K0
+    - ccs       : L1 on the mean 1/K0
+    - im_sigma  : L1 on the ccs head's std vs the measured IM Gaussian width
+                  (timsim shape target; masked to peptides with a valid label)
     - rt        : L1 on normalised retention time
+    - rt_sigma  : L1 on the gradient-normalised RT EMG peak-width (timsim shape)
     - charge    : cross-entropy
+
+    The two shape terms (``im_sigma``, ``rt_sigma``) are *additive and optional*:
+    they contribute only when the batch carries the corresponding target+mask,
+    so existing (shape-free) training is unchanged.
     """
 
-    DEFAULT_WEIGHTS = {"intensity": 1.0, "ccs": 1.0, "rt": 0.5, "charge": 0.3}
+    DEFAULT_WEIGHTS = {"intensity": 1.0, "ccs": 1.0, "im_sigma": 0.5,
+                       "rt": 0.5, "rt_sigma": 0.5, "charge": 0.3}
 
     def __init__(self, weights: dict[str, float] | None = None):
         self.weights = dict(self.DEFAULT_WEIGHTS if weights is None else weights)
@@ -86,7 +94,7 @@ class MultiTaskLoss:
                 parts["intensity"] = sa[signal].mean()
 
         if "ccs" in outputs:
-            mean, _std = outputs["ccs"]
+            mean, std = outputs["ccs"]
             valid = batch["ccs_valid"]
             if valid.any():
                 # L1 on the mean — stable for the prototype. Gaussian-NLL on
@@ -94,11 +102,25 @@ class MultiTaskLoss:
                 # destabilises the fixed-weight multi-task sum; revisit together
                 # with uncertainty-based task weighting.
                 parts["ccs"] = F.l1_loss(mean[valid], batch["ccs_target"][valid])
+            # IM peak-width (timsim Gaussian sigma): supervise the head's std on
+            # the subset of peptides that carry a measured IM-sigma label. L1
+            # (not Gaussian-NLL) per the design — the std is the timsim shape param.
+            if "im_sigma_target" in batch and "im_sigma_valid" in batch:
+                sv = batch["im_sigma_valid"]
+                if sv.any():
+                    parts["im_sigma"] = F.l1_loss(std[sv], batch["im_sigma_target"][sv])
 
         if "rt" in outputs:
             valid = batch["rt_valid"]
             if valid.any():
                 parts["rt"] = F.l1_loss(outputs["rt"][valid], batch["rt_target"][valid])
+
+        if "rt_sigma" in outputs and "rt_sigma_target" in batch:
+            sv = batch["rt_sigma_valid"]
+            if sv.any():
+                parts["rt_sigma"] = F.l1_loss(
+                    outputs["rt_sigma"][sv], batch["rt_sigma_target"][sv]
+                )
 
         if "charge" in outputs:
             parts["charge"] = F.cross_entropy(outputs["charge"], batch["charge_target"])
