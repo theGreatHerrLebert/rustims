@@ -55,7 +55,14 @@ mod thermo {
     /// The template supplies the frequency grid + calibration; synthetic peaks
     /// are placed at their exact m/z within each packet's byte budget. The
     /// calibration is read once from the first scan (it is ≈constant across a
-    /// run); each scan's own frequency grid is taken from its profile.
+    /// run); each scan's own frequency grid is taken from its profile. For MS2,
+    /// a descriptor's [`IsolationWindow`] (center/width/CE) is authored into the
+    /// scan event via `set_isolation`, so the output's MS2 metadata reflects the
+    /// intended scheme rather than only the template's.
+    ///
+    /// Current limitation: this *replaces* the template scan's signal. A future
+    /// **overlay** mode (keep the real template signal and add simulated peaks)
+    /// would support the "reference run = layout + real noise" real⊕sim workflow.
     pub struct ThermoRawWriter {
         raw: RawFile,
         out_path: PathBuf,
@@ -135,7 +142,15 @@ mod thermo {
                     )
                 })?;
                 self.cent_cur += 1;
-                self.raw.author_centroids(t, &scan.peaks)
+                self.raw.author_centroids(t, &scan.peaks)?;
+                // Author the descriptor's isolation window + CE into the scan
+                // event so the output's MS2 metadata reflects the intended
+                // scheme, not just the template's.
+                if let Some(iso) = scan.isolation {
+                    self.raw
+                        .set_isolation(t, iso.center_mz, iso.width_mz, iso.collision_energy)?;
+                }
+                Ok(())
             }
         }
 
@@ -222,6 +237,15 @@ mod tests {
         assert!((cents[0].mz - 150.1).abs() < 0.01);
         assert!((cents[2].mz - 610.3).abs() < 0.01);
 
-        eprintln!("thermo_roundtrip OK: MS1 {:?}, MS2 {} peaks", ms1_mz, cents.len());
+        // The authored isolation window + CE must be reflected in the scan event.
+        let ev = rf.scan_event(cent_scan.unwrap()).expect("ms2 scan event");
+        assert!((ev.isolation_center - 500.0).abs() < 0.01, "authored isolation center");
+        assert!((ev.isolation_width - 2.0).abs() < 0.01, "authored isolation width");
+        assert!((ev.collision_energy - 25.0).abs() < 0.1, "authored CE");
+
+        eprintln!(
+            "thermo_roundtrip OK: MS1 {:?}, MS2 {} peaks, MS2 iso {:.2}±{:.2} CE {:.1}",
+            ms1_mz, cents.len(), ev.isolation_center, ev.isolation_width, ev.collision_energy
+        );
     }
 }
