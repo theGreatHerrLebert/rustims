@@ -40,9 +40,46 @@ pub fn zstd_compress(decompressed_data: &[u8], compression_level: i32) -> io::Re
     Ok(compressed_data)
 }
 
+/// Deduplicate `(scan, tof)` pairs (summing their intensities) and return the
+/// arrays sorted ascending by `(scan, tof)`.
+///
+/// The Bruker `tdf_bin` layout requires this ordering: [`modify_tofs`] delta-
+/// encodes TOF within each scan (so TOFs must ascend within a scan) and
+/// [`get_peak_cnts`] walks scans assuming they ascend. The Python writer
+/// enforces the same invariant via an `np.unique` dedup + `np.lexsort((tof,
+/// scan))` before encoding; the Rust write path previously fed raw, unsorted
+/// frame data straight into the encoder, producing negative/garbage TOF deltas
+/// that vendor readers (e.g. DiaNN) reject. Mirroring the Python preprocessing
+/// here keeps the two writers byte-for-byte identical.
+fn sort_dedup_scan_tof(
+    scans: &[u32],
+    tofs: &[u32],
+    intensities: &[u32],
+) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+    use std::collections::HashMap;
+    let mut acc: HashMap<(u32, u32), u64> = HashMap::with_capacity(scans.len());
+    for i in 0..scans.len() {
+        *acc.entry((scans[i], tofs[i])).or_insert(0) += intensities[i] as u64;
+    }
+    let mut pairs: Vec<((u32, u32), u64)> = acc.into_iter().collect();
+    // Sort by scan, then tof — matches numpy's lexsort((tof, scan)).
+    pairs.sort_unstable_by_key(|&((s, t), _)| (s, t));
+
+    let n = pairs.len();
+    let mut out_scan = Vec::with_capacity(n);
+    let mut out_tof = Vec::with_capacity(n);
+    let mut out_int = Vec::with_capacity(n);
+    for ((s, t), inten) in pairs {
+        out_scan.push(s);
+        out_tof.push(t);
+        out_int.push(inten.min(u32::MAX as u64) as u32);
+    }
+    (out_scan, out_tof, out_int)
+}
+
 pub fn reconstruct_compressed_data(
     scans: Vec<u32>,
-    mut tofs: Vec<u32>,
+    tofs: Vec<u32>,
     intensities: Vec<u32>,
     total_scans: u32,
     compression_level: i32,
@@ -50,6 +87,9 @@ pub fn reconstruct_compressed_data(
     // Ensuring all vectors have the same length
     assert_eq!(scans.len(), tofs.len());
     assert_eq!(scans.len(), intensities.len());
+
+    // Dedup + sort by (scan, tof) so TOF delta-encoding stays monotonic.
+    let (scans, mut tofs, intensities) = sort_dedup_scan_tof(&scans, &tofs, &intensities);
 
     // Modify TOFs based on scans
     modify_tofs(&mut tofs, &scans);
@@ -269,10 +309,14 @@ pub fn get_data_for_compression(
     intensities: &Vec<u32>,
     max_scans: u32,
 ) -> Vec<u8> {
+    // Dedup + sort by (scan, tof) so TOF delta-encoding stays monotonic.
+    let (scans, tofs, intensities) = sort_dedup_scan_tof(scans, tofs, intensities);
+
     let mut tof_copy = tofs.clone();
     modify_tofs(&mut tof_copy, &scans);
     let peak_cnts = get_peak_cnts(max_scans, &scans);
-    let interleaved: Vec<u32> = tofs
+    // Interleave the delta-encoded TOFs (`tof_copy`), not the raw `tofs`.
+    let interleaved: Vec<u32> = tof_copy
         .iter()
         .zip(intensities.iter())
         .flat_map(|(tof, intensity)| vec![*tof, *intensity])
