@@ -39,13 +39,23 @@ pub trait AcquisitionWriter {
 }
 
 #[cfg(feature = "thermo")]
-pub use thermo::ThermoRawWriter;
+pub use thermo::{ThermoRawWriter, WriteMode};
 
 #[cfg(feature = "thermo")]
 mod thermo {
     use super::*;
     use std::path::{Path, PathBuf};
     use thermorawfile::{Calibration, RawFile};
+
+    /// How `ThermoRawWriter` combines simulated peaks with the template scan.
+    #[derive(Clone, Copy, Debug)]
+    pub enum WriteMode {
+        /// Replace the template scan's signal with the simulated peaks.
+        Replace,
+        /// Add simulated peaks onto the template's real signal (real⊕sim);
+        /// `merge_tol_ppm` merges near-coincident centroids on MS2.
+        Overlay { merge_tol_ppm: f64 },
+    }
 
     /// Authors scans into a Thermo `.raw` by **template-mutation**: open a real
     /// `.raw`, overwrite template scans of matching type in acquisition order
@@ -73,6 +83,7 @@ mod thermo {
         centroid_scans: Vec<u32>,
         prof_cur: usize,
         cent_cur: usize,
+        mode: WriteMode,
     }
 
     impl ThermoRawWriter {
@@ -114,7 +125,16 @@ mod thermo {
                 centroid_scans,
                 prof_cur: 0,
                 cent_cur: 0,
+                mode: WriteMode::Replace,
             })
+        }
+
+        /// Set the write mode (default [`WriteMode::Replace`]). Use
+        /// [`WriteMode::Overlay`] for the reference-run = layout + real-noise
+        /// (real⊕sim) workflow.
+        pub fn with_mode(mut self, mode: WriteMode) -> Self {
+            self.mode = mode;
+            self
         }
 
         /// Template MS1/MS2 capacity, so callers can check a run fits.
@@ -133,7 +153,12 @@ mod thermo {
                     )
                 })?;
                 self.prof_cur += 1;
-                self.raw.author_profile(t, &scan.peaks, &self.calib)
+                match self.mode {
+                    WriteMode::Replace => self.raw.author_profile(t, &scan.peaks, &self.calib),
+                    WriteMode::Overlay { .. } => {
+                        self.raw.overlay_profile(t, &scan.peaks, &self.calib)
+                    }
+                }
             } else {
                 let t = *self.centroid_scans.get(self.cent_cur).ok_or_else(|| {
                     io::Error::new(
@@ -142,15 +167,29 @@ mod thermo {
                     )
                 })?;
                 self.cent_cur += 1;
-                self.raw.author_centroids(t, &scan.peaks)?;
-                // Author the descriptor's isolation window + CE into the scan
-                // event so the output's MS2 metadata reflects the intended
-                // scheme, not just the template's.
-                if let Some(iso) = scan.isolation {
-                    self.raw
-                        .set_isolation(t, iso.center_mz, iso.width_mz, iso.collision_energy)?;
+                match self.mode {
+                    WriteMode::Replace => {
+                        self.raw.author_centroids(t, &scan.peaks)?;
+                        // Author the descriptor's isolation window + CE into the
+                        // scan event so the output's MS2 metadata reflects the
+                        // intended scheme, not just the template's.
+                        if let Some(iso) = scan.isolation {
+                            self.raw.set_isolation(
+                                t,
+                                iso.center_mz,
+                                iso.width_mz,
+                                iso.collision_energy,
+                            )?;
+                        }
+                        Ok(())
+                    }
+                    // Overlay keeps the template's real signal + acquisition
+                    // metadata (the scheme is derived from this template), so the
+                    // isolation/CE are left as the template's.
+                    WriteMode::Overlay { merge_tol_ppm } => {
+                        self.raw.overlay_centroids(t, &scan.peaks, merge_tol_ppm)
+                    }
                 }
-                Ok(())
             }
         }
 
@@ -247,5 +286,59 @@ mod tests {
             "thermo_roundtrip OK: MS1 {:?}, MS2 {} peaks, MS2 iso {:.2}±{:.2} CE {:.1}",
             ms1_mz, cents.len(), ev.isolation_center, ev.isolation_width, ev.collision_energy
         );
+    }
+
+    // Gated: overlay (real⊕sim) — sim peaks added onto the template's real signal.
+    #[test]
+    fn thermo_overlay() {
+        let template = match std::env::var("TIMSIM_ASTRAL_TEMPLATE") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP thermo_overlay: set TIMSIM_ASTRAL_TEMPLATE=<astral .raw>");
+                return;
+            }
+        };
+        let out = std::env::temp_dir().join("rustdf_thermo_overlay.raw");
+
+        // Baseline counts from the untouched template.
+        let base = thermorawfile::RawFile::open(&template).unwrap();
+        let (mut prof_scan, mut cent_scan) = (None, None);
+        for i in 0..base.index.len() {
+            let scan = base.first_scan + i as u32;
+            let pkt = (base.data_addr + base.index[i].offset) as usize;
+            let psize = u32::from_le_bytes(base.bytes[pkt + 4..pkt + 8].try_into().unwrap());
+            if psize > 0 && prof_scan.is_none() { prof_scan = Some(scan); }
+            if psize == 0 && cent_scan.is_none() { cent_scan = Some(scan); }
+        }
+        let base_pts = base.profile(prof_scan.unwrap()).unwrap().point_count();
+        let base_cents = base.centroid_peaks(cent_scan.unwrap()).len();
+
+        let mut w = ThermoRawWriter::from_template(&template, &out)
+            .expect("open")
+            .with_mode(WriteMode::Overlay { merge_tol_ppm: 10.0 });
+        w.write_scan(&ScanDescriptor {
+            ms_level: 1, retention_time: 0.0, isolation: None,
+            peaks: vec![(555.5, 9.9e5), (744.4, 7.7e5)],
+        }).unwrap();
+        w.write_scan(&ScanDescriptor {
+            ms_level: 2, retention_time: 0.01,
+            isolation: Some(IsolationWindow { center_mz: 490.0, width_mz: 2.0, collision_energy: 25.0 }),
+            peaks: vec![(333.33, 5.0e5), (888.88, 4.0e5)],
+        }).unwrap();
+        w.finalize().unwrap();
+
+        let rf = thermorawfile::RawFile::open(&out).unwrap();
+        assert!(rf.checksum_valid());
+        let cal = rf.calibration_at_event(rf.scantrailer_addr as usize + 4).unwrap();
+        let prof = rf.profile(prof_scan.unwrap()).unwrap();
+        // Real signal retained (point count grew, not replaced) + sim m/z present.
+        assert!(prof.point_count() >= base_pts, "real profile points dropped");
+        let has = |mz: f64| prof.chunks.iter().any(|c|
+            (0..c.signal.len()).any(|j| (prof.mz_of_bin(c.first_bin + j as u32, &cal) - mz).abs() < 0.02));
+        assert!(has(555.5) && has(744.4), "sim MS1 peaks missing");
+        let cents = rf.centroid_peaks(cent_scan.unwrap());
+        assert!(cents.len() >= base_cents + 1, "MS2 real centroids not retained / sim not added");
+        eprintln!("thermo_overlay OK: MS1 {}->{} pts (+sim), MS2 {}->{} centroids",
+            base_pts, prof.point_count(), base_cents, cents.len());
     }
 }
