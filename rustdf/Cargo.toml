@@ -40,7 +40,7 @@ rustc-hash = "2.1.0"
 bincode = "1.3.3"
 polars = { version = "0.43.1", features = ["ndarray", "parquet", "dtype-u8"] }
 # Thermo .raw writer (private repo; only built with the `thermo` feature)
-thermorawfile = { git = "https://github.com/theGreatHerrLebert/thermorawfile", rev = "c245dc662813809378bfd58de34fc52aa9a41485", optional = true }
+thermorawfile = { git = "https://github.com/theGreatHerrLebert/thermorawfile", rev = "9f4c0affe60a639759883fb569d3c9f5f7601856", optional = true }
 
 [features]
 # Off by default: enables the Thermo .raw AcquisitionWriter. Requires build-time
