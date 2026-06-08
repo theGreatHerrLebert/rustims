@@ -1,3 +1,23 @@
+Reading additional input from stdin...
+OpenAI Codex v0.136.0
+--------
+workdir: /scratch/timsim-demo/SUBMISSION/rustims
+model: gpt-5.5
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: medium
+reasoning summaries: none
+session id: 019ea811-037b-7470-9546-c0956400e2ce
+--------
+user
+Review this Rust module: a vendor-neutral DIA acquisition SCHEME for a mass-spec simulator (TimSim). It is the INPUT/design side (what acquisition to simulate); a separate AcquisitionWriter is the output side. The model was already design-reviewed (converged on: ordered cycle of events, DiaMs2Frame as the explicit physical unit holding Vec<DiaWindow>, DiaGeometry to split mobility off the m/z-only IsolationWindow, CollisionEnergyPolicy enum incl. Unknown, Ms1Event first-class, version+Provenance+validate). This review is of the IMPLEMENTATION.
+
+Context to trust: thermorawfile::scan_event(scan) returns {ms_order(1=MS1,2=MS2), analyzer(4=FTMS,7=ASTMS,0=ITMS), isolation_center, isolation_width, collision_energy} and works per-scan (uniform stride); RawFile exposes pub first_scan/last_scan/data_addr/bytes/index, and ScanIndexEntry has pub time/offset; packet profile_size is u32 at packet+4. from_thermo_raw is verified to extract 1 MS1 + 15 MS2 windows from a real Astral file.
+
+Focus: 1) from_thermo_raw correctness — the first-cycle boundary detection (first MS1 .. next MS1), RT/cycle_time computation, mz_range derivation from window edges, analyzer/data_mode mapping, and edge cases (no MS2 before first MS1, only one cycle in the file so cycle_time stays 0, MS2 before any MS1, scan_event returning None mid-cycle, instrument detection via any_astms). 2) validate() completeness and correctness vs the model's invariants — anything it should reject but doesn't (e.g. overlapping/duplicate windows, MS1-only cycle, non-finite mz centers vs range membership, Linear CE finiteness, num_cycles with start>gradient). 3) the windows() iterator and num_cycles() arithmetic (truncation, negatives). 4) API/model soundness for the two consumers (extraction vs injection) and for the deferred Bruker/SCIEX extractors. 5) any correctness/robustness bug. Concrete, ranked by severity, cap ~750 words.
+
+<stdin>
 //! Vendor-neutral DIA acquisition **scheme** (input/design side).
 //!
 //! An [`AcquisitionScheme`] describes one DIA cycle as an *ordered sequence of
@@ -12,7 +32,6 @@
 //! Astral/SCIEX MS2 scan (one window) are both represented without overloading a
 //! `window_group` id to imply simultaneity.
 
-#[cfg(feature = "thermo")]
 use std::io;
 
 /// Current scheme schema version.
@@ -108,10 +127,7 @@ pub struct DiaWindow {
 pub struct Ms1Event {
     pub analyzer: Analyzer,
     pub data_mode: DataMode,
-    /// The MS1 acquisition m/z range, if known. `None` when not recoverable
-    /// (e.g. Thermo `scan_event` does not carry it — it must not be confused
-    /// with the DIA window coverage in [`AcquisitionScheme::mz_range`]).
-    pub mz_range: Option<(f64, f64)>,
+    pub mz_range: (f64, f64),
     pub duration_s: Option<f64>,
 }
 
@@ -199,11 +215,7 @@ impl AcquisitionScheme {
                 cycle_time_s,
                 gradient_length_s,
                 start_time_s,
-            } if cycle_time_s.is_finite()
-                && cycle_time_s > 0.0
-                && gradient_length_s.is_finite()
-                && start_time_s.is_finite() =>
-            {
+            } if cycle_time_s > 0.0 => {
                 Some(((gradient_length_s - start_time_s).max(0.0) / cycle_time_s) as u64)
             }
             _ => None,
@@ -253,146 +265,51 @@ impl AcquisitionScheme {
         if self.cycle.is_empty() {
             return Err("empty cycle".into());
         }
+        if self.ms1_count() == 0 {
+            return Err("cycle has no MS1 event".into());
+        }
         let (lo, hi) = self.mz_range;
         if !(lo.is_finite() && hi.is_finite()) || lo >= hi {
             return Err(format!("invalid mz_range ({lo}, {hi})"));
         }
-        // Structure: exactly one MS1, as the first event, then >= 1 MS2 frame.
-        if !matches!(self.cycle.first(), Some(AcquisitionEvent::Ms1(_))) {
-            return Err("cycle must begin with an MS1 event".into());
-        }
-        if self.ms1_count() != 1 {
-            return Err(format!(
-                "cycle must contain exactly one MS1 event (has {})",
-                self.ms1_count()
-            ));
-        }
-        if !self
-            .cycle
-            .iter()
-            .any(|e| matches!(e, AcquisitionEvent::DiaMs2Frame(_)))
-        {
-            return Err("cycle has no MS2 frames".into());
-        }
-
-        let check_dur = |d: Option<f64>, what: &str| -> Result<(), String> {
-            match d {
-                Some(v) if !(v.is_finite() && v > 0.0) => {
-                    Err(format!("{what} duration must be finite and > 0"))
-                }
-                _ => Ok(()),
-            }
-        };
-
         for ev in &self.cycle {
-            match ev {
-                AcquisitionEvent::Ms1(m) => {
-                    check_dur(m.duration_s, "MS1")?;
-                    if let Some((a, b)) = m.mz_range {
-                        if !(a.is_finite() && b.is_finite()) || a >= b {
-                            return Err(format!("invalid MS1 mz_range ({a}, {b})"));
-                        }
-                    }
+            if let AcquisitionEvent::DiaMs2Frame(frame) = ev {
+                if frame.windows.is_empty() {
+                    return Err("MS2 frame has no windows".into());
                 }
-                AcquisitionEvent::DiaMs2Frame(frame) => {
-                    check_dur(frame.duration_s, "MS2 frame")?;
-                    if frame.windows.is_empty() {
-                        return Err("MS2 frame has no windows".into());
+                if frame.windows.len() > 1 && self.instrument != InstrumentKind::TimsTofDia {
+                    return Err(
+                        "multi-window MS2 frame is only valid for timsTOF (mobility-partitioned)"
+                            .into(),
+                    );
+                }
+                for w in &frame.windows {
+                    if !(w.isolation.width_mz.is_finite() && w.isolation.width_mz > 0.0) {
+                        return Err("window width must be finite and > 0".into());
                     }
-                    let multi = frame.windows.len() > 1;
-                    if multi && self.instrument != InstrumentKind::TimsTofDia {
-                        return Err(
-                            "multi-window MS2 frame is only valid for timsTOF (mobility-partitioned)"
-                                .into(),
-                        );
+                    if !w.isolation.center_mz.is_finite() {
+                        return Err("window center m/z is not finite".into());
                     }
-                    for (i, w) in frame.windows.iter().enumerate() {
-                        if !(w.isolation.width_mz.is_finite() && w.isolation.width_mz > 0.0) {
-                            return Err("window width must be finite and > 0".into());
+                    if let CollisionEnergyPolicy::Value(v) = w.collision_energy {
+                        if !v.is_finite() {
+                            return Err("non-finite collision energy".into());
                         }
-                        if !w.isolation.center_mz.is_finite()
-                            || !w.isolation.lower().is_finite()
-                            || !w.isolation.upper().is_finite()
-                        {
-                            return Err("window m/z is not finite".into());
-                        }
-                        if w.isolation.lower() < lo - 1e-6 || w.isolation.upper() > hi + 1e-6 {
-                            return Err(format!(
-                                "window [{:.4}, {:.4}] outside mz_range [{lo:.4}, {hi:.4}]",
-                                w.isolation.lower(),
-                                w.isolation.upper()
-                            ));
-                        }
-                        match w.collision_energy {
-                            CollisionEnergyPolicy::Value(v) => {
-                                if !v.is_finite() || v < 0.0 {
-                                    return Err("collision energy must be finite and >= 0".into());
-                                }
-                            }
-                            CollisionEnergyPolicy::Linear {
-                                intercept,
-                                slope_per_mz,
-                            } => {
-                                if !intercept.is_finite() || !slope_per_mz.is_finite() {
-                                    return Err("non-finite linear CE coefficients".into());
-                                }
-                                match w.collision_energy.at(w.isolation.center_mz) {
-                                    Some(ce) if ce.is_finite() && ce >= 0.0 => {}
-                                    _ => {
-                                        return Err(
-                                            "linear CE resolves to non-finite or negative".into()
-                                        )
-                                    }
-                                }
-                            }
-                            CollisionEnergyPolicy::Unknown => {}
-                        }
-                        match w.geometry {
-                            DiaGeometry::TimsMobility {
-                                scan_start,
-                                scan_end,
-                            } => {
-                                if self.instrument != InstrumentKind::TimsTofDia {
-                                    return Err("mobility geometry is only valid for timsTOF".into());
-                                }
-                                if scan_start > scan_end {
-                                    return Err("mobility scan_start > scan_end".into());
-                                }
-                            }
-                            DiaGeometry::MzOnly => {
-                                if multi {
-                                    return Err(
-                                        "multi-window timsTOF frame requires mobility geometry on every window"
-                                            .into(),
-                                    );
-                                }
-                            }
-                        }
-                        // Within one frame, windows must not overlap in BOTH m/z
-                        // and mobility (overlap across sequential frames is fine).
-                        for w2 in &frame.windows[..i] {
-                            let mz_overlap = w.isolation.lower() < w2.isolation.upper()
-                                && w2.isolation.lower() < w.isolation.upper();
-                            let im_overlap = match (w.geometry, w2.geometry) {
-                                (
-                                    DiaGeometry::TimsMobility {
-                                        scan_start: a0,
-                                        scan_end: a1,
-                                    },
-                                    DiaGeometry::TimsMobility {
-                                        scan_start: b0,
-                                        scan_end: b1,
-                                    },
-                                ) => a0 <= b1 && b0 <= a1,
-                                _ => true, // m/z-only windows share all mobility
-                            };
-                            if mz_overlap && im_overlap {
+                    }
+                    match w.geometry {
+                        DiaGeometry::TimsMobility {
+                            scan_start,
+                            scan_end,
+                        } => {
+                            if self.instrument != InstrumentKind::TimsTofDia {
                                 return Err(
-                                    "windows within one frame overlap in both m/z and mobility"
-                                        .into(),
+                                    "mobility geometry is only valid for timsTOF".into()
                                 );
                             }
+                            if scan_start > scan_end {
+                                return Err("mobility scan_start > scan_end".into());
+                            }
                         }
+                        DiaGeometry::MzOnly => {}
                     }
                 }
             }
@@ -411,9 +328,6 @@ impl AcquisitionScheme {
                 }
                 if !start_time_s.is_finite() || start_time_s < 0.0 {
                     return Err("start_time_s must be finite and >= 0".into());
-                }
-                if start_time_s > gradient_length_s {
-                    return Err("start_time_s must be <= gradient_length_s".into());
                 }
             }
         }
@@ -455,32 +369,24 @@ impl AcquisitionScheme {
 
         let mut cycle: Vec<AcquisitionEvent> = Vec::new();
         let mut seen_ms1 = false;
-        let mut closed = false;
         let mut start_rt = 0.0f64;
         let mut cycle_time_s = 0.0f64;
         let mut win_lo = f64::INFINITY;
         let mut win_hi = f64::NEG_INFINITY;
+        let mut any_astms = false;
 
         for scan in raw.first_scan..=raw.last_scan {
             let ev = match raw.scan_event(scan) {
                 Some(e) => e,
-                None => {
-                    // A missing event *inside* the selected cycle would silently
-                    // drop a window — reject it. Before the first MS1 it's ignorable.
-                    if seen_ms1 {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("missing scan event for scan {scan} inside the first cycle"),
-                        ));
-                    }
-                    continue;
-                }
+                None => continue,
             };
+            if ev.analyzer == 7 {
+                any_astms = true;
+            }
             if ev.ms_order <= 1 {
                 if seen_ms1 {
                     // start of the next cycle -> close this one
                     cycle_time_s = (rt_of(scan) - start_rt).max(0.0);
-                    closed = true;
                     break;
                 }
                 seen_ms1 = true;
@@ -488,7 +394,7 @@ impl AcquisitionScheme {
                 cycle.push(AcquisitionEvent::Ms1(Ms1Event {
                     analyzer: analyzer_of(ev.analyzer),
                     data_mode: data_mode_of(scan),
-                    mz_range: None, // scan_event does not carry the MS1 range
+                    mz_range: (0.0, 0.0), // filled below
                     duration_s: None,
                 }));
             } else if seen_ms1 {
@@ -511,36 +417,27 @@ impl AcquisitionScheme {
             }
         }
 
-        if !seen_ms1 {
+        if cycle.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "template has no MS1 scan",
-            ));
-        }
-        if !closed {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "template has only one cycle (no second MS1 to bound it); cannot determine cycle time",
+                "no scan events found in template",
             ));
         }
         let mz_range = if win_lo.is_finite() && win_hi > win_lo {
             (win_lo, win_hi)
         } else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "first cycle has no usable MS2 isolation windows",
-            ));
+            (0.0, 0.0)
         };
+        for ev in &mut cycle {
+            if let AcquisitionEvent::Ms1(m) = ev {
+                m.mz_range = mz_range;
+            }
+        }
         let gradient_length_s = raw.index.last().map(|e| e.time).unwrap_or(0.0);
         let n_ms2 = cycle
             .iter()
             .filter(|e| matches!(e, AcquisitionEvent::DiaMs2Frame(_)))
             .count();
-        // Instrument from the analyzers of events actually in the cycle (an ASTMS
-        // MS2 frame ⇒ Orbitrap Astral), not from incidental scans elsewhere.
-        let any_astms = cycle.iter().any(|e| {
-            matches!(e, AcquisitionEvent::DiaMs2Frame(f) if f.analyzer == Analyzer::Astms)
-        });
 
         Ok(AcquisitionScheme {
             version: SCHEME_VERSION,
@@ -588,7 +485,7 @@ mod tests {
             Ms1Event {
                 analyzer: Analyzer::Ftms,
                 data_mode: DataMode::Profile,
-                mz_range: Some((390.0, 900.0)),
+                mz_range: (390.0, 900.0),
                 duration_s: None,
             },
             linear_windows(5),
@@ -620,7 +517,7 @@ mod tests {
                 AcquisitionEvent::Ms1(Ms1Event {
                     analyzer: Analyzer::Ftms,
                     data_mode: DataMode::Profile,
-                    mz_range: Some((390.0, 900.0)),
+                    mz_range: (390.0, 900.0),
                     duration_s: None,
                 }),
                 AcquisitionEvent::DiaMs2Frame(frame),
@@ -637,73 +534,6 @@ mod tests {
             },
         };
         assert!(s.validate().is_err());
-    }
-
-    #[test]
-    fn validate_rejects_bad_schemes() {
-        let repeat = RepeatPolicy::FixedCycleTime {
-            cycle_time_s: 1.0,
-            gradient_length_s: 600.0,
-            start_time_s: 0.0,
-        };
-        let ms1 = || Ms1Event {
-            analyzer: Analyzer::Ftms,
-            data_mode: DataMode::Profile,
-            mz_range: Some((390.0, 900.0)),
-            duration_s: None,
-        };
-        let win = || DiaWindow {
-            isolation: IsolationWindow {
-                center_mz: 500.0,
-                width_mz: 10.0,
-            },
-            collision_energy: CollisionEnergyPolicy::Value(25.0),
-            geometry: DiaGeometry::MzOnly,
-        };
-        let frame = |w: DiaWindow| {
-            AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
-                windows: vec![w],
-                analyzer: Analyzer::Astms,
-                data_mode: DataMode::Centroid,
-                duration_s: None,
-            })
-        };
-        let mk = |cycle: Vec<AcquisitionEvent>| AcquisitionScheme {
-            version: SCHEME_VERSION,
-            instrument: InstrumentKind::OrbitrapAstral,
-            cycle,
-            repeat,
-            mz_range: (390.0, 900.0),
-            provenance: Provenance {
-                source: SchemeSource::Programmatic,
-                notes: String::new(),
-            },
-        };
-
-        // valid baseline
-        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), frame(win())]).validate().is_ok());
-        // MS2 first (no leading MS1)
-        assert!(mk(vec![frame(win()), AcquisitionEvent::Ms1(ms1())]).validate().is_err());
-        // two MS1 in a cycle
-        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), AcquisitionEvent::Ms1(ms1()), frame(win())]).validate().is_err());
-        // MS1 with no MS2 frame
-        assert!(mk(vec![AcquisitionEvent::Ms1(ms1())]).validate().is_err());
-        // window outside mz_range
-        let mut oob = win();
-        oob.isolation.center_mz = 2000.0;
-        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), frame(oob)]).validate().is_err());
-        // negative collision energy
-        let mut neg = win();
-        neg.collision_energy = CollisionEnergyPolicy::Value(-5.0);
-        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), frame(neg)]).validate().is_err());
-        // bad event duration
-        let bad_dur = AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
-            windows: vec![win()],
-            analyzer: Analyzer::Astms,
-            data_mode: DataMode::Centroid,
-            duration_s: Some(-1.0),
-        });
-        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), bad_dur]).validate().is_err());
     }
 
     #[cfg(feature = "thermo")]
@@ -738,3 +568,95 @@ mod tests {
         );
     }
 }
+</stdin>
+codex
+**Findings**
+
+1. **High: single-cycle files produce an unusable scheme.**  
+   `from_thermo_raw()` returns `cycle_time_s = 0.0` when no second MS1 exists, while `validate()` rejects it. Extraction should return `InvalidData`, or derive cycle time using a documented method. Returning an object guaranteed to fail validation is misleading.
+
+2. **High: missing scan metadata silently corrupts the extracted cycle.**  
+   `scan_event(scan) == None` is always skipped. Once the opening MS1 has been found, a missing event can silently remove an MS2 window while still yielding a valid-looking scheme. Missing events inside the selected cycle should be an extraction error. Skipping them before the first MS1 is reasonable.
+
+3. **High: `validate()` permits MS1-only and incorrectly ordered cycles.**  
+   It only requires at least one MS1. It accepts:
+   - an MS1-only cycle,
+   - cycles beginning with MS2,
+   - multiple MS1 events inside one cycle.
+
+   Given the cycle definition, validation should require exactly one MS1, as the first event, followed by at least one MS2 frame. The extractor currently returns an MS1-only object when two MS1 scans are consecutive; its `(0, 0)` range merely causes an indirect validation failure.
+
+4. **High: event durations are completely unchecked.**  
+   `Some(NaN)`, negative, zero, or infinite durations pass validation. Because durations control RT placement, require finite positive values. If the consumer schedules events consecutively, also reject a total known duration exceeding `cycle_time_s`.
+
+5. **Medium: isolation edges and range membership are not validated.**  
+   A finite center and width can still overflow to infinite `lower()`/`upper()`. Windows can also lie partially or entirely outside `AcquisitionScheme::mz_range`. Validate finite edges and containment. MS1 `mz_range` values likewise receive no validation.
+
+6. **Medium: Thermo extraction conflates DIA coverage with the MS1 scan range.**  
+   The extractor assigns window-edge coverage to `Ms1Event::mz_range`, despite the supplied `scan_event` data not containing the MS1 acquisition range. Those concepts need not match. This should either be extracted from other Thermo metadata or represented as unknown/optional rather than invented.
+
+7. **Medium: `CollisionEnergyPolicy::Linear` is unchecked.**  
+   Both coefficients may be non-finite, and evaluation can overflow at a window center. Validate coefficients and resolved CE for each applicable window. `Value` should probably also reject negative CE if the model treats CE as physical energy.
+
+8. **Medium: `any_astms` can misclassify the instrument.**  
+   It is updated before checking the cycle boundary and for scans preceding the first MS1. Thus an unrelated ASTMS scan, including the next cycle’s boundary MS1, can classify the extracted scheme as Astral. Determine instrument from analyzers of events actually inserted into the cycle, preferably its MS2 frames.
+
+9. **Medium: multi-window tims frames are under-constrained.**  
+   Validation allows a timsTOF frame containing multiple `MzOnly` windows, despite the stated model that simultaneous windows are mobility-partitioned. Require `TimsMobility` for multi-window frames. Within one frame, reject duplicate or physically intersecting windows where both m/z and mobility intervals overlap. Do not reject overlap globally across sequential frames: overlapping DIA schemes can be intentional.
+
+10. **Medium: repeat validation omits `start_time_s <= gradient_length_s`.**  
+    Such a scheme currently validates and `num_cycles()` silently returns zero. This is better treated as contradictory input.
+
+11. **Low: `num_cycles()` is unsafe on unvalidated values.**  
+    It checks only `cycle_time_s > 0`; infinity and non-finite gradient/start values can reach float-to-integer casts and produce saturated or surprising results. Check all operands for finiteness. Flooring/truncation is otherwise correct for “full cycles,” and clamping negative spans is unnecessary once validation rejects them.
+
+12. **Low: `windows()` is correct.**  
+    It preserves cycle/frame/window ordering and borrows without allocation, which suits both extraction and injection consumers.
+
+Tests should directly cover missing mid-cycle metadata, consecutive MS1 scans, a one-cycle file, ASTMS scans outside the selected cycle, invalid durations/linear CE, out-of-range edges, cycle ordering, and non-finite `num_cycles()` inputs.
+tokens used
+9,071
+**Findings**
+
+1. **High: single-cycle files produce an unusable scheme.**  
+   `from_thermo_raw()` returns `cycle_time_s = 0.0` when no second MS1 exists, while `validate()` rejects it. Extraction should return `InvalidData`, or derive cycle time using a documented method. Returning an object guaranteed to fail validation is misleading.
+
+2. **High: missing scan metadata silently corrupts the extracted cycle.**  
+   `scan_event(scan) == None` is always skipped. Once the opening MS1 has been found, a missing event can silently remove an MS2 window while still yielding a valid-looking scheme. Missing events inside the selected cycle should be an extraction error. Skipping them before the first MS1 is reasonable.
+
+3. **High: `validate()` permits MS1-only and incorrectly ordered cycles.**  
+   It only requires at least one MS1. It accepts:
+   - an MS1-only cycle,
+   - cycles beginning with MS2,
+   - multiple MS1 events inside one cycle.
+
+   Given the cycle definition, validation should require exactly one MS1, as the first event, followed by at least one MS2 frame. The extractor currently returns an MS1-only object when two MS1 scans are consecutive; its `(0, 0)` range merely causes an indirect validation failure.
+
+4. **High: event durations are completely unchecked.**  
+   `Some(NaN)`, negative, zero, or infinite durations pass validation. Because durations control RT placement, require finite positive values. If the consumer schedules events consecutively, also reject a total known duration exceeding `cycle_time_s`.
+
+5. **Medium: isolation edges and range membership are not validated.**  
+   A finite center and width can still overflow to infinite `lower()`/`upper()`. Windows can also lie partially or entirely outside `AcquisitionScheme::mz_range`. Validate finite edges and containment. MS1 `mz_range` values likewise receive no validation.
+
+6. **Medium: Thermo extraction conflates DIA coverage with the MS1 scan range.**  
+   The extractor assigns window-edge coverage to `Ms1Event::mz_range`, despite the supplied `scan_event` data not containing the MS1 acquisition range. Those concepts need not match. This should either be extracted from other Thermo metadata or represented as unknown/optional rather than invented.
+
+7. **Medium: `CollisionEnergyPolicy::Linear` is unchecked.**  
+   Both coefficients may be non-finite, and evaluation can overflow at a window center. Validate coefficients and resolved CE for each applicable window. `Value` should probably also reject negative CE if the model treats CE as physical energy.
+
+8. **Medium: `any_astms` can misclassify the instrument.**  
+   It is updated before checking the cycle boundary and for scans preceding the first MS1. Thus an unrelated ASTMS scan, including the next cycle’s boundary MS1, can classify the extracted scheme as Astral. Determine instrument from analyzers of events actually inserted into the cycle, preferably its MS2 frames.
+
+9. **Medium: multi-window tims frames are under-constrained.**  
+   Validation allows a timsTOF frame containing multiple `MzOnly` windows, despite the stated model that simultaneous windows are mobility-partitioned. Require `TimsMobility` for multi-window frames. Within one frame, reject duplicate or physically intersecting windows where both m/z and mobility intervals overlap. Do not reject overlap globally across sequential frames: overlapping DIA schemes can be intentional.
+
+10. **Medium: repeat validation omits `start_time_s <= gradient_length_s`.**  
+    Such a scheme currently validates and `num_cycles()` silently returns zero. This is better treated as contradictory input.
+
+11. **Low: `num_cycles()` is unsafe on unvalidated values.**  
+    It checks only `cycle_time_s > 0`; infinity and non-finite gradient/start values can reach float-to-integer casts and produce saturated or surprising results. Check all operands for finiteness. Flooring/truncation is otherwise correct for “full cycles,” and clamping negative spans is unnecessary once validation rejects them.
+
+12. **Low: `windows()` is correct.**  
+    It preserves cycle/frame/window ordering and borrows without allocation, which suits both extraction and injection consumers.
+
+Tests should directly cover missing mid-cycle metadata, consecutive MS1 scans, a one-cycle file, ASTMS scans outside the selected cycle, invalid durations/linear CE, out-of-range edges, cycle ordering, and non-finite `num_cycles()` inputs.
