@@ -156,8 +156,18 @@ impl EventTimeline {
                 "explicit event durations ({explicit_sum}) exceed cycle_time_s ({cycle_time_s})"
             ));
         }
+        // Unspecified events split the remaining cycle time; if the explicit
+        // durations leave nothing for them, the schedule would emit zero-exposure
+        // (no-signal) events — reject it rather than silently drop their signal.
         let per_unspecified = if n_unspecified > 0 {
-            ((cycle_time_s - explicit_sum) / n_unspecified as f64).max(0.0)
+            let remaining = cycle_time_s - explicit_sum;
+            if remaining <= 1e-12 {
+                return Err(format!(
+                    "explicit durations ({explicit_sum}) leave no time for {n_unspecified} \
+                     unspecified event(s) in cycle_time_s {cycle_time_s}"
+                ));
+            }
+            remaining / n_unspecified as f64
         } else {
             0.0
         };
@@ -360,6 +370,14 @@ pub fn project_mobility_ion_legacy(
     step_size: f64,
 ) -> Vec<(i32, f64)> {
     assert_eq!(scan_ids.len(), scan_mobilities.len(), "scan_ids/mobilities length mismatch");
+    if scan_ids.is_empty() {
+        return Vec::new();
+    }
+    // Point mass (zero/invalid spread): single nearest scan, no CDF div-by-zero.
+    if !(sigma > 0.0) {
+        let idx = nearest_scan_ascending(scan_mobilities, mean);
+        return vec![(scan_ids[idx] as i32, 1.0)];
+    }
     let occ =
         calculate_scan_occurrence_gaussian(scan_mobilities, mean, sigma, target_p, step_size, 5.0, 5.0);
     let time_map: HashMap<i32, f64> =
@@ -368,15 +386,30 @@ pub fn project_mobility_ion_legacy(
     occ.into_iter().zip(abund).collect()
 }
 
+/// Index of the grid entry nearest to `value` (grid assumed non-empty).
+fn nearest_scan_ascending(grid: &[f64], value: f64) -> usize {
+    grid.iter()
+        .enumerate()
+        .min_by(|(_, a), (_, b)| {
+            (**a - value)
+                .abs()
+                .partial_cmp(&(**b - value).abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(0)
+}
+
 // --------------------------------------------------------------------------- //
 // Projections (Accurate)
 // --------------------------------------------------------------------------- //
 
-/// Time projection: for each peptide, the `(cycle_index, abundance)` list over
-/// the run's MS1 events. The index is the MS1 ordinal, which equals the cycle
-/// index because [`EventTimeline::from_scheme`] validates exactly one MS1 per
-/// cycle — it is NOT a global event index (MS2 events are interleaved). Replaces
-/// the legacy `frame_occurrence`/`frame_abundance`.
+/// Time projection: for each peptide, the `(global_event_index, abundance)` list
+/// over **every** acquisition event in the run (MS1 and MS2 alike), integrating
+/// the EMG over each event's true `[start, end]` exposure interval. The index is
+/// the position in `timeline.events` (i.e. `EventSlot::global_index`), so MS2
+/// events receive their own RT abundance rather than reusing the MS1 value — this
+/// matches the legacy `frame_occurrence`/`frame_abundance`, which span all frames.
 pub fn project_time(
     peptides: &[PeptideScalar],
     timeline: &EventTimeline,
@@ -384,7 +417,8 @@ pub fn project_time(
     step_size: f64,
     num_threads: usize,
 ) -> Vec<Vec<(usize, f64)>> {
-    let intervals = timeline.ms1_intervals();
+    // Every event's interval, indexed by global event position.
+    let intervals: Vec<(f64, f64)> = timeline.events.iter().map(|e| e.interval).collect();
     // The EMG is centred on rt_mu (the location parameter), not the GRU apex.
     let rts: Vec<f64> = peptides.iter().map(|p| p.rt_mu as f64).collect();
     let sigmas: Vec<f64> = peptides.iter().map(|p| p.rt_sigma as f64).collect();
@@ -438,6 +472,12 @@ pub fn project_mobility_ion(
             }
             let mean = ion.inv_mobility(env);
             let sigma = ion.inv_mobility_std as f64;
+            // Point mass (zero/invalid spread): assign all signal to the single
+            // nearest scan rather than dividing by sigma=0 (NaN) in the CDF.
+            if !(sigma > 0.0) {
+                let scan = nearest_scan_ascending(&geometry.inv_mobility, mean);
+                return vec![(scan as i32, 1.0)];
+            }
             // `calculate_scan_occurrence_gaussian` returns indices into the
             // REVERSED (descending) grid: occ index i -> inv_mobility[n-1-i].
             let occ = calculate_scan_occurrence_gaussian(
@@ -572,13 +612,13 @@ mod tests {
         let proj = project_time(&[pep], &tl, 0.9999, 0.01, 1);
         assert_eq!(proj.len(), 1);
         let hits = &proj[0];
-        let ms1 = tl.ms1_intervals();
-        // RT-support truncation: touches some but NOT all MS1 events.
-        assert!(!hits.is_empty(), "peptide must touch some MS1 events");
-        assert!(hits.len() < ms1.len(), "RT support must be truncated, not all {} cycles", ms1.len());
-        // Touched events are a contiguous index range with positive abundance.
+        // project_time now spans ALL events (MS1+MS2), returning global indices.
+        // RT-support truncation: touches some but NOT all events.
+        assert!(!hits.is_empty(), "peptide must touch some events");
+        assert!(hits.len() < tl.events.len(), "RT support must be truncated, not all events");
+        // Touched events are a contiguous global-index range with positive abundance.
         for w in hits.windows(2) {
-            assert_eq!(w[1].0, w[0].0 + 1, "touched MS1 events must be contiguous");
+            assert_eq!(w[1].0, w[0].0 + 1, "touched events must be contiguous in global index");
         }
         for (_, abund) in hits {
             assert!(*abund > 0.0);
@@ -708,6 +748,34 @@ mod tests {
         let expected: Vec<(i32, f64)> = occ.into_iter().zip(abund).collect();
         assert_eq!(out, expected, "LegacyCompat mobility must mirror the raw kernels");
         assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn timeline_rejects_explicit_durations_starving_unspecified_events() {
+        // MS1 duration == cycle_time leaves 0 for the two unspecified MS2 events.
+        let mut scheme = scheme_one_ms1_two_ms2();
+        if let AcquisitionEvent::Ms1(ref mut m) = scheme.cycle[0] {
+            m.duration_s = Some(1.2); // == cycle_time_s
+        }
+        assert!(EventTimeline::from_scheme(&scheme).is_err());
+    }
+
+    #[test]
+    fn project_mobility_zero_sigma_is_point_mass_not_nan() {
+        let grid: Vec<f64> = (0..100).map(|i| 1.005 + i as f64 * 0.005).collect();
+        let geom = SamplingGeometry::tims(grid);
+        let env = MobilityEnv::default();
+        let i = ion(450.0, 600.0, 2, 0.0); // zero std
+        let m = project_mobility_ion(&i, &geom, &env, 0.9999, 0.01);
+        assert_eq!(m.len(), 1, "zero-sigma -> single point-mass scan");
+        assert!(m[0].1.is_finite() && (m[0].1 - 1.0).abs() < 1e-12);
+        // Legacy path likewise.
+        let scan_ids: Vec<u32> = (0..100).rev().collect();
+        let scan_mob: Vec<f64> = (0..100).map(|i| 1.005 + i as f64 * 0.005).collect();
+        let mean = i.inv_mobility(&env);
+        let lm = project_mobility_ion_legacy(mean, 0.0, &scan_ids, &scan_mob, 0.005, 0.9999, 0.0001);
+        assert_eq!(lm.len(), 1);
+        assert!(lm[0].1.is_finite());
     }
 
     #[test]
