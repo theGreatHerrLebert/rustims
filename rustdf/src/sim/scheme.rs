@@ -447,12 +447,37 @@ impl AcquisitionScheme {
         if self.instrument != InstrumentKind::TimsTofDia {
             return Err("to_bruker_windows requires a timsTOF (TimsTofDia) scheme".into());
         }
+        use std::collections::HashSet;
+        // Reserve explicit (vendor_group_id) ids first, rejecting duplicates among
+        // them; fallback ids for `None` frames are then drawn from the unused set,
+        // so a preserved id and a positional fallback can never collide.
+        let mut reserved: HashSet<u32> = HashSet::new();
+        for ev in &self.cycle {
+            if let AcquisitionEvent::DiaMs2Frame(f) = ev {
+                if let Some(g) = f.vendor_group_id {
+                    if !reserved.insert(g) {
+                        return Err(format!("duplicate vendor window-group id {g}"));
+                    }
+                }
+            }
+        }
         let mut rows = Vec::new();
-        let mut seq: u32 = 0;
+        let mut assigned: HashSet<u32> = HashSet::new();
+        let mut next_seq: u32 = 1;
         for ev in &self.cycle {
             if let AcquisitionEvent::DiaMs2Frame(frame) = ev {
-                seq += 1;
-                let group = frame.vendor_group_id.unwrap_or(seq);
+                let group = match frame.vendor_group_id {
+                    Some(g) => g,
+                    None => {
+                        while reserved.contains(&next_seq) || assigned.contains(&next_seq) {
+                            next_seq += 1;
+                        }
+                        next_seq
+                    }
+                };
+                if !assigned.insert(group) {
+                    return Err(format!("window-group id {group} collides"));
+                }
                 for w in &frame.windows {
                     let (scan_num_begin, scan_num_end) = match w.geometry {
                         DiaGeometry::TimsMobility {
@@ -1012,6 +1037,60 @@ mod tests {
     }
 
     // Gated: set TIMSIM_SCIEX_WIFF to a real ZenoTOF .wiff (OLE2 method).
+    // Unconditional: to_bruker_windows must preserve explicit vendor_group_ids
+    // (incl. non-canonical), allocate non-colliding ids for None frames, and
+    // reject duplicate explicit ids. (The gated round-trip uses a real .d whose
+    // ids are already 1..N, so it can't prove non-canonical preservation alone.)
+    #[test]
+    fn to_bruker_windows_group_ids() {
+        let frame = |gid: Option<u32>, center: f64| {
+            AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
+                windows: vec![DiaWindow {
+                    isolation: IsolationWindow { center_mz: center, width_mz: 10.0 },
+                    collision_energy: CollisionEnergyPolicy::Value(25.0),
+                    geometry: DiaGeometry::TimsMobility { scan_start: 0, scan_end: 100 },
+                }],
+                analyzer: Analyzer::Tof,
+                data_mode: DataMode::Centroid,
+                duration_s: None,
+                vendor_group_id: gid,
+            })
+        };
+        let mk = |frames: Vec<AcquisitionEvent>| {
+            let mut cycle = vec![AcquisitionEvent::Ms1(Ms1Event {
+                analyzer: Analyzer::Tof,
+                data_mode: DataMode::Centroid,
+                mz_range: None,
+                duration_s: None,
+            })];
+            cycle.extend(frames);
+            AcquisitionScheme {
+                version: SCHEME_VERSION,
+                instrument: InstrumentKind::TimsTofDia,
+                cycle,
+                repeat: RepeatPolicy::FixedCycleTime {
+                    cycle_time_s: 1.0,
+                    gradient_length_s: 600.0,
+                    start_time_s: 0.0,
+                },
+                mz_range: (300.0, 900.0),
+                provenance: Provenance { source: SchemeSource::Programmatic, notes: String::new() },
+            }
+        };
+        let ids = |s: &AcquisitionScheme| {
+            s.to_bruker_windows().map(|r| r.iter().map(|w| w.window_group).collect::<Vec<_>>())
+        };
+
+        // preserved non-canonical ids
+        assert_eq!(ids(&mk(vec![frame(Some(7), 500.0), frame(Some(42), 600.0)])).unwrap(), vec![7, 42]);
+        // all-None -> sequential 1..N
+        assert_eq!(ids(&mk(vec![frame(None, 500.0), frame(None, 600.0)])).unwrap(), vec![1, 2]);
+        // mixed: None allocates a free id (1), avoiding the reserved 7
+        assert_eq!(ids(&mk(vec![frame(Some(7), 500.0), frame(None, 600.0)])).unwrap(), vec![7, 1]);
+        // duplicate explicit ids rejected
+        assert!(ids(&mk(vec![frame(Some(5), 500.0), frame(Some(5), 600.0)])).is_err());
+    }
+
     // Gated: round-trip a real Bruker DIA .d through the scheme and back to the
     // DiaFrameMsMsWindows rows; the regenerated table must match the source.
     #[test]
