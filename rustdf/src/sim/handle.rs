@@ -44,7 +44,7 @@ impl TimsTofSyntheticsDataHandle {
 
     pub fn read_scans(&self) -> rusqlite::Result<Vec<ScansSim>> {
         let mut stmt = self.connection.prepare(
-            "SELECT scan, mobility FROM scans"
+            "SELECT scan, mobility FROM scans ORDER BY scan"
         )?;
         let scans_iter = stmt.query_map([], |row| {
             Ok(ScansSim::new(

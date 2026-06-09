@@ -362,6 +362,51 @@ impl PyThermoRawWriter {
     }
 }
 
+/// LegacyCompat frame (time) projection — the exact Rust path
+/// (`rustdf::sim::projector::project_time_legacy`), exposed so parity tests
+/// drive the real projector rather than the bare kernels. Inputs are the legacy
+/// f64 EMG params + the full frames table; returns one list of
+/// `(frame_id, abundance)` per peptide.
+#[pyfunction]
+#[pyo3(signature = (rt_mus, rt_sigmas, rt_lambdas, frame_ids, frame_times, rt_cycle_length, target_p, step_size, remove_epsilon, n_steps=None))]
+pub fn legacy_frame_projection(
+    rt_mus: Vec<f64>,
+    rt_sigmas: Vec<f64>,
+    rt_lambdas: Vec<f64>,
+    frame_ids: Vec<u32>,
+    frame_times: Vec<f64>,
+    rt_cycle_length: f64,
+    target_p: f64,
+    step_size: f64,
+    remove_epsilon: f64,
+    n_steps: Option<usize>,
+) -> Vec<Vec<(u32, f64)>> {
+    rustdf::sim::projector::project_time_legacy(
+        &rt_mus, &rt_sigmas, &rt_lambdas, &frame_ids, &frame_times, rt_cycle_length, target_p,
+        step_size, n_steps, remove_epsilon,
+    )
+}
+
+/// LegacyCompat scan (mobility) projection for one ion — the exact Rust path
+/// (`rustdf::sim::projector::project_mobility_ion_legacy`). `mean`/`sigma` are
+/// the original 1/K0 mean+std; `scan_mobilities` ascending, `scan_ids` aligned.
+/// Returns `(scan, abundance)`.
+#[pyfunction]
+#[pyo3(signature = (mean, sigma, scan_ids, scan_mobilities, im_cycle_length, target_p, step_size))]
+pub fn legacy_scan_projection(
+    mean: f64,
+    sigma: f64,
+    scan_ids: Vec<u32>,
+    scan_mobilities: Vec<f64>,
+    im_cycle_length: f64,
+    target_p: f64,
+    step_size: f64,
+) -> Vec<(i32, f64)> {
+    rustdf::sim::projector::project_mobility_ion_legacy(
+        mean, sigma, &scan_ids, &scan_mobilities, im_cycle_length, target_p, step_size,
+    )
+}
+
 /// Whether this build includes the Thermo `.raw` extractor.
 #[pyfunction]
 pub fn has_thermo() -> bool {
@@ -379,6 +424,8 @@ pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAcquisitionScheme>()?;
     #[cfg(feature = "thermo")]
     m.add_class::<PyThermoRawWriter>()?;
+    m.add_function(wrap_pyfunction!(legacy_frame_projection, m)?)?;
+    m.add_function(wrap_pyfunction!(legacy_scan_projection, m)?)?;
     m.add_function(wrap_pyfunction!(has_thermo, m)?)?;
     m.add_function(wrap_pyfunction!(has_sciex, m)?)?;
     Ok(())

@@ -286,34 +286,55 @@ pub enum ProjectionMode {
 
 /// LegacyCompat time projection: reproduce `frame_occurrence`/`frame_abundance`
 /// over the **full** frames table, exactly as `simulate_frame_distributions_emg`
-/// did. `frame_ids`/`frame_times` are the whole frames table (ascending by id);
-/// the EMG is centred on each peptide's `rt_mu`. Returns `(frame_id, abundance)`
-/// per peptide. (Mirrors the py flow: occurrence positions are 1-indexed into
-/// the times array and equal the frame id for a contiguous 1..N table; abundance
-/// integrates the fixed `[time - rt_cycle_length, time]` bin.)
+/// did. Inputs are taken at **f64** (the precision the legacy pipeline used) —
+/// NOT the f32 trunk entities — so the result is bit-faithful: `rt_mus`,
+/// `rt_sigmas`, `rt_lambdas` are per-peptide EMG params (`rt_mu`, not the GRU
+/// apex); `frame_ids`/`frame_times` are the whole frames table ascending by id.
+/// Occurrence positions (1-indexed into `frame_times`) are translated to frame
+/// ids via `frame_ids[pos-1]`; the `remove_epsilon` filter drops frames whose
+/// abundance is `<= remove_epsilon` (matching the legacy job). Returns
+/// `(frame_id, abundance)` per peptide.
 pub fn project_time_legacy(
-    peptides: &[PeptideScalar],
+    rt_mus: &[f64],
+    rt_sigmas: &[f64],
+    rt_lambdas: &[f64],
     frame_ids: &[u32],
     frame_times: &[f64],
     rt_cycle_length: f64,
     target_p: f64,
     step_size: f64,
     n_steps: Option<usize>,
+    remove_epsilon: f64,
 ) -> Vec<Vec<(u32, f64)>> {
-    // time_map keyed by frame id (== occurrence position for 1..N tables).
+    assert_eq!(frame_ids.len(), frame_times.len(), "frame_ids/frame_times length mismatch");
+    let n = frame_ids.len();
+    // time_map keyed by frame id (the abundance kernel looks up by the values we
+    // pass as occurrences; we pass frame ids, so key by frame id).
     let time_map: HashMap<i32, f64> =
         frame_ids.iter().zip(frame_times).map(|(&id, &t)| (id as i32, t)).collect();
-    peptides
-        .iter()
-        .map(|p| {
-            let (mu, sigma, lambda) = (p.rt_mu as f64, p.rt_sigma as f64, p.rt_lambda as f64);
-            let occ = calculate_frame_occurrence_emg(
-                frame_times, mu, sigma, lambda, target_p, step_size, n_steps,
-            );
+    (0..rt_mus.len())
+        .map(|k| {
+            let (mu, sigma, lambda) = (rt_mus[k], rt_sigmas[k], rt_lambdas[k]);
+            let positions =
+                calculate_frame_occurrence_emg(frame_times, mu, sigma, lambda, target_p, step_size, n_steps);
+            // Translate 1-indexed positions -> frame ids (robust to non-1..N).
+            let occ_ids: Vec<i32> = positions
+                .iter()
+                .map(|&p| {
+                    assert!(p >= 1 && (p as usize) <= n, "occurrence position {p} out of range");
+                    frame_ids[(p - 1) as usize] as i32
+                })
+                .collect();
             let abund = calculate_frame_abundance_emg(
-                &time_map, &occ, mu, sigma, lambda, rt_cycle_length, n_steps,
+                &time_map, &occ_ids, mu, sigma, lambda, rt_cycle_length, n_steps,
             );
-            occ.into_iter().map(|p| p as u32).zip(abund).collect()
+            // Apply the legacy remove_epsilon occurrence filter.
+            occ_ids
+                .into_iter()
+                .map(|id| id as u32)
+                .zip(abund)
+                .filter(|(_, a)| *a > remove_epsilon)
+                .collect()
         })
         .collect()
 }
@@ -322,21 +343,23 @@ pub fn project_time_legacy(
 /// `scan_occurrence`/`scan_abundance` exactly as
 /// `simulate_scan_distributions_with_variance` did — `calculate_scan_occurrence_
 /// gaussian` with `n_lower/upper = 5`, and `calculate_abundance_gaussian` over
-/// the fixed `im_cycle_length` bin. `scan_mobilities` must be **ascending** with
-/// `scan_ids` aligned (exactly as the legacy job feeds `scans` sorted so
-/// `im_cycle_length > 0`); a descending grid makes the occurrence kernel return
-/// nothing. Returns `(scan, abundance)`.
+/// the fixed `im_cycle_length` bin. `mean`/`sigma` are the **original** stored
+/// 1/K0 mean + std at f64 (NOT a CCS round-trip). `scan_mobilities` must be
+/// **ascending** with `scan_ids` aligned (exactly as the legacy job feeds `scans`
+/// sorted so `im_cycle_length > 0`); a descending grid makes the occurrence
+/// kernel return nothing. The occurrence kernel's indices are the values the
+/// legacy job stored directly, so they are returned as-is. Returns
+/// `(scan, abundance)`.
 pub fn project_mobility_ion_legacy(
-    ion: &IonScalar,
+    mean: f64,
+    sigma: f64,
     scan_ids: &[u32],
     scan_mobilities: &[f64],
-    env: &MobilityEnv,
     im_cycle_length: f64,
     target_p: f64,
     step_size: f64,
 ) -> Vec<(i32, f64)> {
-    let mean = ion.inv_mobility(env);
-    let sigma = ion.inv_mobility_std as f64;
+    assert_eq!(scan_ids.len(), scan_mobilities.len(), "scan_ids/mobilities length mismatch");
     let occ =
         calculate_scan_occurrence_gaussian(scan_mobilities, mean, sigma, target_p, step_size, 5.0, 5.0);
     let time_map: HashMap<i32, f64> =
@@ -645,19 +668,19 @@ mod tests {
         let frame_ids: Vec<u32> = (1..=n as u32).collect();
         let frame_times: Vec<f64> = (1..=n).map(|i| i as f64 * 0.1).collect();
         let rt_cycle = 0.1;
-        let mut pep = peptide(3.0, 0.4, 0.6);
-        pep.rt_mu = 3.0;
-        let out = project_time_legacy(&[pep.clone()], &frame_ids, &frame_times, rt_cycle, 0.9999, 0.01, None);
+        // f64 inputs (LegacyCompat takes legacy-precision params directly).
+        let (mu, sigma, lambda) = (3.0_f64, 0.4_f64, 0.6_f64);
+        let out = project_time_legacy(
+            &[mu], &[sigma], &[lambda], &frame_ids, &frame_times, rt_cycle, 0.9999, 0.01, None, -1.0,
+        );
 
-        // Raw kernel call with identical inputs — use the SAME f32-rounded
-        // values the function reads from the struct (literals would differ at
-        // the f32->f64 rounding level and fail an exact compare).
-        let (mu, sigma, lambda) = (pep.rt_mu as f64, pep.rt_sigma as f64, pep.rt_lambda as f64);
-        let occ = calculate_frame_occurrence_emg(&frame_times, mu, sigma, lambda, 0.9999, 0.01, None);
+        // Raw kernel call with identical inputs + the same position->id mapping.
+        let positions = calculate_frame_occurrence_emg(&frame_times, mu, sigma, lambda, 0.9999, 0.01, None);
+        let occ_ids: Vec<i32> = positions.iter().map(|&p| frame_ids[(p - 1) as usize] as i32).collect();
         let tmap: std::collections::HashMap<i32, f64> =
             frame_ids.iter().zip(&frame_times).map(|(&id, &t)| (id as i32, t)).collect();
-        let abund = calculate_frame_abundance_emg(&tmap, &occ, mu, sigma, lambda, rt_cycle, None);
-        let expected: Vec<(u32, f64)> = occ.iter().map(|&p| p as u32).zip(abund).collect();
+        let abund = calculate_frame_abundance_emg(&tmap, &occ_ids, mu, sigma, lambda, rt_cycle, None);
+        let expected: Vec<(u32, f64)> = occ_ids.iter().map(|&id| id as u32).zip(abund).collect();
         assert_eq!(out[0], expected, "LegacyCompat time must mirror the raw kernels");
     }
 
@@ -674,10 +697,10 @@ mod tests {
         let im_cycle = 0.004;
         let env = MobilityEnv::default();
         let i = ion(450.0, 600.0, 2, 0.02);
-        let out = project_mobility_ion_legacy(&i, &scan_ids, &scan_mob, &env, im_cycle, 0.9999, 0.0001);
-
         let mean = i.inv_mobility(&env);
         let sigma = i.inv_mobility_std as f64;
+        let out = project_mobility_ion_legacy(mean, sigma, &scan_ids, &scan_mob, im_cycle, 0.9999, 0.0001);
+
         let occ = calculate_scan_occurrence_gaussian(&scan_mob, mean, sigma, 0.9999, 0.0001, 5.0, 5.0);
         let tmap: std::collections::HashMap<i32, f64> =
             scan_ids.iter().zip(&scan_mob).map(|(&id, &m)| (id as i32, m)).collect();
