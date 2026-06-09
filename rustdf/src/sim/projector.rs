@@ -278,7 +278,8 @@ pub fn project_time(
     num_threads: usize,
 ) -> Vec<Vec<(usize, f64)>> {
     let intervals = timeline.ms1_intervals();
-    let rts: Vec<f64> = peptides.iter().map(|p| p.retention_time as f64).collect();
+    // The EMG is centred on rt_mu (the location parameter), not the GRU apex.
+    let rts: Vec<f64> = peptides.iter().map(|p| p.rt_mu as f64).collect();
     let sigmas: Vec<f64> = peptides.iter().map(|p| p.rt_sigma as f64).collect();
     let lambdas: Vec<f64> = peptides.iter().map(|p| p.rt_lambda as f64).collect();
     project_emg_over_events_par(
@@ -447,6 +448,7 @@ mod tests {
             missed_cleavages: 0,
             mono_isotopic_mass: 930.0,
             retention_time: rt,
+            rt_mu: rt,
             rt_sigma: sigma,
             rt_lambda: lambda,
             events: 1.0,

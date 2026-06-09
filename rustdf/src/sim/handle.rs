@@ -250,6 +250,7 @@ impl TimsTofSyntheticsDataHandle {
     /// Read peptides as scalar-native trunk entities (no frame-occurrence vectors).
     pub fn read_peptides_scalar(&self) -> rusqlite::Result<Vec<PeptideScalar>> {
         let has_condition = self.table_has_column("peptides", "condition_id")?;
+        let has_rt_mu = self.table_has_column("peptides", "rt_mu")?;
         let mut stmt = self.connection.prepare("SELECT * FROM peptides")?;
         let iter = stmt.query_map([], |row| {
             let peptide_id: u32 = row.get("peptide_id")?;
@@ -258,6 +259,10 @@ impl TimsTofSyntheticsDataHandle {
             } else {
                 None
             };
+            let retention_time: f32 = row.get("retention_time_gru_predictor")?;
+            // The EMG location is rt_mu (derived from the apex); fall back to the
+            // apex itself only when the column is absent (pre-distribution DB).
+            let rt_mu: f32 = if has_rt_mu { row.get("rt_mu")? } else { retention_time };
             Ok(PeptideScalar {
                 protein_id: row.get("protein_id")?,
                 peptide_id,
@@ -266,7 +271,8 @@ impl TimsTofSyntheticsDataHandle {
                 decoy: row.get("decoy")?,
                 missed_cleavages: row.get("missed_cleavages")?,
                 mono_isotopic_mass: row.get("monoisotopic-mass")?,
-                retention_time: row.get("retention_time_gru_predictor")?,
+                retention_time,
+                rt_mu,
                 rt_sigma: row.get("rt_sigma")?,
                 rt_lambda: row.get("rt_lambda")?,
                 events: row.get("events")?,

@@ -283,8 +283,13 @@ pub struct PeptideScalar {
     pub decoy: bool,
     pub missed_cleavages: i8,
     pub mono_isotopic_mass: f32,
-    /// EMG retention-time profile (seconds): apex + shape, not frame indices.
+    /// Predicted RT apex (seconds) from the GRU predictor — provenance.
     pub retention_time: f32,
+    /// EMG location parameter (`mu`, seconds) — the value the time projection
+    /// integrates around. NOT equal to `retention_time`: the legacy pipeline
+    /// derives it via `estimate_mu_from_mode_emg(rt_apex, sigma, lambda)` and
+    /// stores it as `rt_mu`. Falls back to `retention_time` when absent.
+    pub rt_mu: f32,
     pub rt_sigma: f32,
     pub rt_lambda: f32,
     pub events: f32,
