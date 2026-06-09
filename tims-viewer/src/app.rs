@@ -17,6 +17,7 @@ use crate::data::demo::DemoSource;
 use crate::data::loader::{LoadMsg, LoaderHandle, LoaderMode};
 use crate::data::meta::MetaIndex;
 use crate::render::colormap::COLORMAP_NAMES;
+use crate::render::annotation::AnnotationRenderer;
 use crate::render::point_cloud::PointCloudRenderer;
 use crate::render::volume::{VolumeGrid, VolumeRenderer, VOLUME_DIMS};
 use crate::state::{AppState, ViewMode};
@@ -57,6 +58,7 @@ struct Gfx {
     points: PointCloudRenderer,
     volume: VolumeRenderer,
     grid: VolumeGrid,
+    annotations: AnnotationRenderer,
     camera: OrbitCamera,
     state: AppState,
     loader: LoaderHandle,
@@ -204,6 +206,7 @@ impl App {
         );
         let volume = VolumeRenderer::new(&device, &queue, format, DEPTH_FORMAT, VOLUME_DIMS);
         let grid = VolumeGrid::new(VOLUME_DIMS);
+        let annotations = AnnotationRenderer::new(&device, format, DEPTH_FORMAT);
 
         let n_colormaps = COLORMAP_NAMES.len() as u32;
         let mut state = AppState::new(plan.meta.bounds, total, n_colormaps);
@@ -248,6 +251,7 @@ impl App {
             points,
             volume,
             grid,
+            annotations,
             camera: OrbitCamera::default(),
             state,
             loader,
@@ -292,6 +296,9 @@ impl Gfx {
                 Ok(LoadMsg::Stats { i_min, i_max }) => {
                     self.state.i_min = i_min;
                     self.state.i_max = i_max;
+                }
+                Ok(LoadMsg::Annotations { lines }) => {
+                    self.annotations.upload(&self.device, &lines);
                 }
                 Ok(LoadMsg::Done { .. }) => self.state.load_progress = 1.0,
                 Ok(LoadMsg::Error(e)) => {
@@ -375,6 +382,7 @@ impl Gfx {
         );
         self.points.update_camera(&self.queue, &cam);
         self.points.update_params(&self.queue, &self.state.params());
+        self.annotations.update_camera(&self.queue, &cam);
 
         // Volume mode: update the raycaster uniform (incl. the density scale) and
         // (re)upload the grid if it grew.
@@ -447,6 +455,9 @@ impl Gfx {
             match self.state.view_mode {
                 ViewMode::Points => self.points.render(&mut rpass, self.state.point_mode),
                 ViewMode::Volume => self.volume.render(&mut rpass),
+            }
+            if self.state.show_annotations {
+                self.annotations.render(&mut rpass);
             }
         }
 

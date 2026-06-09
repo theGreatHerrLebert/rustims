@@ -12,6 +12,7 @@ use crate::data::demo::DemoSource;
 use crate::data::loader::{LoadMsg, LoaderHandle, LoaderMode};
 use crate::data::point::GpuPoint;
 use crate::render::colormap::COLORMAP_NAMES;
+use crate::render::annotation::AnnotationRenderer;
 use crate::render::point_cloud::PointCloudRenderer;
 use crate::render::volume::{VolumeGrid, VolumeRenderer, VOLUME_DIMS};
 use crate::state::{AppState, ViewMode, VolStyle};
@@ -33,6 +34,7 @@ pub struct Options {
     pub volume: bool,
     pub mip: bool,
     pub ms: MsFilter,
+    pub annotations: bool,
     /// Optional transfer-function overrides (else taken from data percentiles).
     pub i_min: Option<f32>,
     pub i_max: Option<f32>,
@@ -99,6 +101,7 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
         PointCloudRenderer::new(&device, &queue, COLOR_FORMAT, DEPTH_FORMAT, capacity, supports_compaction);
     let volume = VolumeRenderer::new(&device, &queue, COLOR_FORMAT, DEPTH_FORMAT, VOLUME_DIMS);
     let mut grid = VolumeGrid::new(VOLUME_DIMS);
+    let mut annotations = AnnotationRenderer::new(&device, COLOR_FORMAT, DEPTH_FORMAT);
 
     let bounds = plan.meta.bounds;
     let mut state = AppState::new(bounds, total, COLORMAP_NAMES.len() as u32);
@@ -147,6 +150,11 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
                 points.append(&queue, &pts);
             }
             Ok(LoadMsg::Stats { .. }) => {} // recomputed below from retained points
+            Ok(LoadMsg::Annotations { lines }) => {
+                if opts.annotations {
+                    annotations.upload(&device, &lines);
+                }
+            }
             Ok(LoadMsg::Done { .. }) => {
                 done = true;
                 break;
@@ -194,8 +202,10 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
     // Camera + uniforms.
     let camera = OrbitCamera::default();
     let aspect = opts.width as f32 / opts.height as f32;
-    points.update_camera(&queue, &camera.to_uniform(aspect, [opts.width as f32, opts.height as f32]));
+    let cam_uniform = camera.to_uniform(aspect, [opts.width as f32, opts.height as f32]);
+    points.update_camera(&queue, &cam_uniform);
     points.update_params(&queue, &state.params());
+    annotations.update_camera(&queue, &cam_uniform);
     if opts.volume {
         let mut vu = state.volume_uniform(camera.inv_view_proj(aspect));
         vu.density_scale = grid.density_scale();
@@ -281,6 +291,9 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
             volume.render(&mut rpass);
         } else {
             points.render(&mut rpass, state.point_mode);
+        }
+        if opts.annotations {
+            annotations.render(&mut rpass);
         }
     }
     encoder.copy_texture_to_buffer(

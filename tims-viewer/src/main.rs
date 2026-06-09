@@ -47,6 +47,9 @@ struct Args {
     /// MS level to render: all | ms1 | ms2.
     #[arg(long, default_value = "all")]
     ms: String,
+    /// With --render-png: overlay DDA precursor / DIA isolation-window annotations.
+    #[arg(long)]
+    annotations: bool,
     /// Output image width / height for --render-png.
     #[arg(long, default_value_t = 1280)]
     width: u32,
@@ -105,6 +108,7 @@ fn main() -> Result<()> {
             volume: args.volume,
             mip: args.mip,
             ms,
+            annotations: args.annotations,
             i_min: args.i_min,
             i_max: args.i_max,
             exposure: args.exposure,

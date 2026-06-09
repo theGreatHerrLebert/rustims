@@ -63,6 +63,8 @@ pub struct AppState {
     // Filters
     pub show_ms1: bool,
     pub show_ms2: bool,
+    /// Show the DDA-precursor / DIA-window annotation overlay.
+    pub show_annotations: bool,
     pub rt_window: Window,
     pub mz_window: Window,
     pub im_window: Window,
@@ -96,6 +98,7 @@ impl AppState {
             opacity: 0.5,
             show_ms1: true,
             show_ms2: true,
+            show_annotations: true,
             rt_window: Window {
                 min: bounds.rt.min,
                 max: bounds.rt.max,

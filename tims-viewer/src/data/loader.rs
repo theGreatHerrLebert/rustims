@@ -15,8 +15,12 @@ use std::time::Duration;
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 
 use mscore::data::spectrum::MsType;
+use rustdf::data::acquisition::AcquisitionMode;
 use rustdf::data::dataset::TimsDataset;
-use rustdf::data::handle::TimsData;
+use rustdf::data::handle::{IndexConverter, TimsData};
+use rustdf::data::meta::{
+    read_dda_precursor_meta, read_dia_ms_ms_info, read_dia_ms_ms_windows, read_meta_data_sql,
+};
 
 use super::demo::DemoSource;
 use super::point::{AxisBounds, GpuPoint};
@@ -33,6 +37,9 @@ pub enum LoadMsg {
     Progress(f32),
     /// Robust intensity range (p1/p99) for transfer-function defaults.
     Stats { i_min: f32, i_max: f32 },
+    /// Annotation overlay geometry: line-list vertices (pairs = segments) in the
+    /// normalized cube (DDA precursor crosses / DIA isolation-window boxes).
+    Annotations { lines: Vec<[f32; 3]> },
     /// All frames for `generation` have been streamed.
     Done { generation: u64 },
     /// Fatal error; loading stopped.
@@ -316,6 +323,15 @@ fn run_loader(
         flush!();
     }
 
+    // Annotation overlay (real data only — needs the dataset's scan->mobility converter
+    // and the DDA/DIA metadata tables).
+    if let (LoaderMode::Real { path, .. }, Some(ds)) = (&mode, &dataset) {
+        let lines = build_annotations(ds, path, &bounds);
+        if !lines.is_empty() {
+            send_cancellable!(LoadMsg::Annotations { lines });
+        }
+    }
+
     // Robust intensity range from the reservoir.
     if !reservoir.is_empty() {
         reservoir.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -331,6 +347,116 @@ fn run_loader(
     send_cancellable!(LoadMsg::Done {
         generation: GENERATION,
     });
+}
+
+/// Build annotation-overlay line geometry (normalized cube) from the run's DDA/DIA
+/// metadata. DDA precursors -> small 3D crosses; DIA isolation windows -> wireframe
+/// boxes. Returns line-list vertices (consecutive pairs are segments).
+fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<[f32; 3]> {
+    // frame_id -> retention time (ids are contiguous 1..=N, validated at load).
+    let meta = match read_meta_data_sql(path) {
+        Ok(m) => m,
+        Err(_) => return Vec::new(),
+    };
+    let max_id = meta.iter().map(|m| m.id).max().unwrap_or(0).max(0) as usize;
+    let mut rt_by = vec![0f64; max_id + 1];
+    for m in &meta {
+        if m.id >= 0 {
+            rt_by[m.id as usize] = m.time;
+        }
+    }
+    let rt_of = |fid: u32| rt_by.get(fid as usize).copied().unwrap_or(0.0);
+
+    let mut lines: Vec<[f32; 3]> = Vec::new();
+    match ds.get_acquisition_mode() {
+        AcquisitionMode::DDA | AcquisitionMode::PRECURSOR => {
+            if let Ok(precursors) = read_dda_precursor_meta(path) {
+                for p in precursors {
+                    let fid = p.precursor_frame_id.max(0) as u32;
+                    let scan = p.precursor_average_scan_number.round().max(0.0) as u32;
+                    let im = ds
+                        .scan_to_inverse_mobility(fid, &vec![scan])
+                        .first()
+                        .copied()
+                        .unwrap_or(0.0);
+                    let pos = bounds.normalize(p.precursor_mz_highest_intensity, im, rt_of(fid));
+                    push_cross(&mut lines, pos, 0.012);
+                }
+            }
+        }
+        AcquisitionMode::DIA => {
+            if let (Ok(windows), Ok(info)) =
+                (read_dia_ms_ms_windows(path), read_dia_ms_ms_info(path))
+            {
+                // Per window group: RT span and a representative frame for scan->mobility.
+                let mut grp_rt: std::collections::HashMap<u32, (f64, f64)> = Default::default();
+                let mut grp_frame: std::collections::HashMap<u32, u32> = Default::default();
+                for di in &info {
+                    let rt = rt_of(di.frame_id);
+                    let e = grp_rt
+                        .entry(di.window_group)
+                        .or_insert((f64::INFINITY, f64::NEG_INFINITY));
+                    e.0 = e.0.min(rt);
+                    e.1 = e.1.max(rt);
+                    grp_frame.entry(di.window_group).or_insert(di.frame_id);
+                }
+                for w in &windows {
+                    let fid = grp_frame.get(&w.window_group).copied().unwrap_or(1);
+                    let ims = ds.scan_to_inverse_mobility(fid, &vec![w.scan_num_begin, w.scan_num_end]);
+                    let im0 = ims.first().copied().unwrap_or(0.0);
+                    let im1 = ims.get(1).copied().unwrap_or(im0);
+                    let (rt0, rt1) = grp_rt.get(&w.window_group).copied().unwrap_or((0.0, 0.0));
+                    let mz0 = w.isolation_mz - w.isolation_width * 0.5;
+                    let mz1 = w.isolation_mz + w.isolation_width * 0.5;
+                    push_box(&mut lines, bounds, (mz0, mz1), (im0, im1), (rt0, rt1));
+                }
+            }
+        }
+        AcquisitionMode::Unknown => {}
+    }
+    lines
+}
+
+/// Append a 3-segment axis-aligned cross centered at `c` (half-length `h`).
+fn push_cross(lines: &mut Vec<[f32; 3]>, c: [f32; 3], h: f32) {
+    lines.push([c[0] - h, c[1], c[2]]);
+    lines.push([c[0] + h, c[1], c[2]]);
+    lines.push([c[0], c[1] - h, c[2]]);
+    lines.push([c[0], c[1] + h, c[2]]);
+    lines.push([c[0], c[1], c[2] - h]);
+    lines.push([c[0], c[1], c[2] + h]);
+}
+
+/// Append the 12 edges of an axis-aligned box spanning the given real-unit ranges.
+fn push_box(
+    lines: &mut Vec<[f32; 3]>,
+    bounds: &AxisBounds,
+    mz: (f64, f64),
+    im: (f64, f64),
+    rt: (f64, f64),
+) {
+    // 8 corners (normalized).
+    let corner = |a: f64, b: f64, c: f64| bounds.normalize(a, b, c);
+    let c = [
+        corner(mz.0, im.0, rt.0),
+        corner(mz.1, im.0, rt.0),
+        corner(mz.1, im.1, rt.0),
+        corner(mz.0, im.1, rt.0),
+        corner(mz.0, im.0, rt.1),
+        corner(mz.1, im.0, rt.1),
+        corner(mz.1, im.1, rt.1),
+        corner(mz.0, im.1, rt.1),
+    ];
+    // 12 edges as index pairs.
+    const EDGES: [(usize, usize); 12] = [
+        (0, 1), (1, 2), (2, 3), (3, 0), // bottom (rt0)
+        (4, 5), (5, 6), (6, 7), (7, 4), // top (rt1)
+        (0, 4), (1, 5), (2, 6), (3, 7), // verticals
+    ];
+    for (a, b) in EDGES {
+        lines.push(c[a]);
+        lines.push(c[b]);
+    }
 }
 
 #[inline]
@@ -436,7 +562,7 @@ mod tests {
                     break;
                 }
                 Ok(LoadMsg::Error(e)) => panic!("loader error: {e}"),
-                Ok(LoadMsg::Progress(_)) => {}
+                Ok(LoadMsg::Progress(_)) | Ok(LoadMsg::Annotations { .. }) => {}
                 Err(e) => panic!("loader timed out / disconnected: {e}"),
             }
         }

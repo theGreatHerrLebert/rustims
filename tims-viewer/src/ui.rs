@@ -113,6 +113,7 @@ pub fn build(ctx: &egui::Context, state: &mut AppState, camera: &mut OrbitCamera
                 ui.checkbox(&mut state.show_ms1, "MS1");
                 ui.checkbox(&mut state.show_ms2, "MS2");
             });
+            ui.checkbox(&mut state.show_annotations, "Annotations (precursors / DIA windows)");
             ui.separator();
 
             // ---- Axis windows ----
