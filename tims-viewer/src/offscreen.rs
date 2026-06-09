@@ -160,8 +160,14 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
     // silently write a partial/empty image.
     anyhow::ensure!(done, "loader thread ended before completing the load");
 
-    // Default transfer range from the retained intensities (p1/p99).
-    if !reservoir.is_empty() {
+    // Default transfer range. Volume density sums live in a different range than
+    // per-point intensity, so take it from the voxel density distribution; the point
+    // cloud uses the retained-intensity percentiles.
+    if opts.volume {
+        let (lo, hi) = grid.density_percentiles();
+        state.i_min = lo;
+        state.i_max = hi;
+    } else if !reservoir.is_empty() {
         reservoir.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let pct = |q: f32| reservoir[(((reservoir.len() - 1) as f32) * q) as usize];
         state.i_min = pct(0.01).max(1.0);

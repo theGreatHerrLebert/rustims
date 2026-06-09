@@ -16,17 +16,17 @@ use super::uniforms::VolumeUniform;
 /// Anisotropic grid dimensions (m/z, 1/K0, RT). m/z gets the most bins (finest features).
 pub const VOLUME_DIMS: [u32; 3] = [256, 128, 192];
 
-/// Target maximum stored f16 value; the grid is normalized so its peak maps here,
-/// well under the f16 ceiling (65504) so no value is clamped/lost.
+/// Target peak stored f16 value; the grid is normalized so its densest voxel maps
+/// here, well under the f16 ceiling (65504) so nothing is clamped/lost.
 const F16_TARGET_MAX: f32 = 60000.0;
 
-/// CPU-side max-intensity voxel grid.
+/// CPU-side density voxel grid: trilinear cloud-in-cell accumulation of intensity.
 pub struct VolumeGrid {
     dims: [u32; 3],
-    /// Max intensity per voxel, indexed x + nx*(y + ny*z).
+    /// Accumulated density per voxel, indexed x + nx*(y + ny*z).
     data: Vec<f32>,
-    /// Largest intensity deposited so far (drives the normalization scale).
-    max_intensity: f32,
+    /// Largest accumulated voxel density (drives the normalization scale).
+    max_density: f32,
     dirty: bool,
 }
 
@@ -43,7 +43,7 @@ impl VolumeGrid {
         VolumeGrid {
             dims,
             data: vec![0.0; n],
-            max_intensity: 0.0,
+            max_density: 0.0,
             dirty: false,
         }
     }
@@ -56,34 +56,74 @@ impl VolumeGrid {
         self.dirty = false;
     }
 
-    /// Deposit a point (normalized cube position in [-1,1], raw intensity) as a max into
-    /// its containing voxel.
+    /// Deposit a point (normalized cube position in [-1,1], raw intensity) using
+    /// trilinear cloud-in-cell weighting: the intensity is split across the 8 nearest
+    /// voxels by their interpolation weights and ADDED. This is conservative (the 8
+    /// weights sum to 1, so total deposited == intensity) and avoids the blocky
+    /// aliasing of nearest-voxel binning. Edges clamp onto the boundary voxels.
     #[inline]
     pub fn deposit(&mut self, pos: [f32; 3], intensity: f32) {
         let [nx, ny, nz] = self.dims;
-        let vx = voxel_index(pos[0], nx);
-        let vy = voxel_index(pos[1], ny);
-        let vz = voxel_index(pos[2], nz);
-        let idx = vx + nx as usize * (vy + ny as usize * vz);
-        let slot = &mut self.data[idx];
-        if intensity > *slot {
-            *slot = intensity;
-        }
-        if intensity > self.max_intensity {
-            self.max_intensity = intensity;
-        }
+        // Cell-centered continuous coordinate in [-0.5, dim-0.5].
+        let g = |norm: f32, dim: u32| (norm * 0.5 + 0.5).clamp(0.0, 1.0) * dim as f32 - 0.5;
+        let (gx, gy, gz) = (g(pos[0], nx), g(pos[1], ny), g(pos[2], nz));
+        let split = |gc: f32, dim: u32| -> (usize, usize, f32) {
+            let base = gc.floor();
+            let frac = gc - base;
+            let lo = (base as i64).clamp(0, dim as i64 - 1) as usize;
+            let hi = ((base as i64) + 1).clamp(0, dim as i64 - 1) as usize;
+            (lo, hi, frac)
+        };
+        let (x0, x1, fx) = split(gx, nx);
+        let (y0, y1, fy) = split(gy, ny);
+        let (z0, z1, fz) = split(gz, nz);
+        let nxu = nx as usize;
+        let nyu = ny as usize;
+        let mut add = |x: usize, y: usize, z: usize, w: f32| {
+            let idx = x + nxu * (y + nyu * z);
+            let v = self.data[idx] + intensity * w;
+            self.data[idx] = v;
+            if v > self.max_density {
+                self.max_density = v;
+            }
+        };
+        add(x0, y0, z0, (1.0 - fx) * (1.0 - fy) * (1.0 - fz));
+        add(x1, y0, z0, fx * (1.0 - fy) * (1.0 - fz));
+        add(x0, y1, z0, (1.0 - fx) * fy * (1.0 - fz));
+        add(x1, y1, z0, fx * fy * (1.0 - fz));
+        add(x0, y0, z1, (1.0 - fx) * (1.0 - fy) * fz);
+        add(x1, y0, z1, fx * (1.0 - fy) * fz);
+        add(x0, y1, z1, (1.0 - fx) * fy * fz);
+        add(x1, y1, z1, fx * fy * fz);
         self.dirty = true;
     }
 
     /// Factor the shader multiplies the sampled (normalized) value by to recover raw
-    /// intensity. `>= 1`; chosen so the grid peak maps to `F16_TARGET_MAX`.
+    /// density, chosen so the densest voxel maps to `F16_TARGET_MAX`.
     pub fn density_scale(&self) -> f32 {
-        (self.max_intensity / F16_TARGET_MAX).max(1.0)
+        if self.max_density > 0.0 {
+            self.max_density / F16_TARGET_MAX
+        } else {
+            1.0
+        }
     }
 
-    /// Normalize by `density_scale` and convert to f16 — preserves the full intensity
-    /// range (incl. values far above 65504) instead of clamping it away. The shader
-    /// multiplies back by `density_scale` before applying the shared transfer function.
+    /// p1/p99 of the non-empty voxel densities — sensible default transfer range for
+    /// the volume (density sums live in a different range than per-point intensity).
+    pub fn density_percentiles(&self) -> (f32, f32) {
+        let mut nz: Vec<f32> = self.data.iter().copied().filter(|&v| v > 0.0).collect();
+        if nz.is_empty() {
+            return (1.0, 2.0);
+        }
+        nz.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let pct = |q: f32| nz[(((nz.len() - 1) as f32) * q) as usize];
+        let lo = pct(0.50).max(1e-6); // median: voxels below it are sparse fringe
+        let hi = pct(0.999).max(lo * 1.0001);
+        (lo, hi)
+    }
+
+    /// Normalize by `density_scale` and convert to f16. The shader multiplies back by
+    /// `density_scale` before the transfer function.
     pub fn to_f16_scaled(&self) -> Vec<f16> {
         let inv = 1.0 / self.density_scale();
         self.data
@@ -91,13 +131,6 @@ impl VolumeGrid {
             .map(|&v| f16::from_f32((v * inv).min(F16_TARGET_MAX)))
             .collect()
     }
-}
-
-#[inline]
-fn voxel_index(norm: f32, dim: u32) -> usize {
-    // Map [-1, 1] -> [0, dim-1].
-    let t = (norm * 0.5 + 0.5).clamp(0.0, 1.0);
-    ((t * dim as f32) as u32).min(dim - 1) as usize
 }
 
 pub struct VolumeRenderer {
@@ -339,32 +372,44 @@ mod tests {
     use crate::render::uniforms::VolumeUniform;
 
     #[test]
-    fn voxel_index_maps_cube_to_dims() {
-        assert_eq!(voxel_index(-1.0, 8), 0);
-        assert_eq!(voxel_index(1.0, 8), 7); // clamped to dim-1, not 8
-        assert_eq!(voxel_index(0.0, 8), 4);
-        assert_eq!(voxel_index(2.0, 8), 7); // out-of-range clamps
-        assert_eq!(voxel_index(-9.0, 8), 0);
+    fn trilinear_deposit_conserves_total() {
+        // Trilinear deposit splits intensity across the 8 nearest voxels with weights
+        // summing to 1, so the total grid mass equals the deposited intensity.
+        let mut g = VolumeGrid::new([8, 8, 8]);
+        g.deposit([0.13, -0.27, 0.61], 1000.0);
+        assert!(g.dirty());
+        let total: f32 = g.data.iter().sum();
+        assert!((total - 1000.0).abs() < 0.5, "total mass {total} != 1000");
+        // A second point at the same place doubles the local mass (additive density).
+        g.deposit([0.13, -0.27, 0.61], 1000.0);
+        let total2: f32 = g.data.iter().sum();
+        assert!((total2 - 2000.0).abs() < 1.0, "total mass {total2} != 2000");
     }
 
     #[test]
-    fn grid_deposit_keeps_max_and_clamps_f16() {
+    fn density_scale_and_f16_recover_peak() {
         let mut g = VolumeGrid::new([4, 4, 4]);
-        g.deposit([0.0, 0.0, 0.0], 100.0);
-        g.deposit([0.0, 0.0, 0.0], 50.0); // smaller -> ignored (max)
-        g.deposit([0.0, 0.0, 0.0], 1e9); // huge -> normalized, not clamped away
-        assert!(g.dirty());
-        // Scale normalizes the 1e9 peak down under the f16 ceiling.
-        assert!(g.density_scale() > 1.0);
+        // Deposit on an exact voxel center so its full intensity lands in one voxel.
+        g.deposit([0.0, 0.0, 0.0], 1e9);
+        assert!(g.density_scale() > 1.0); // huge peak -> scaled down for f16
         let f = g.to_f16_scaled();
         assert_eq!(f.len(), 64);
-        let center = f[voxel_index(0.0, 4) + 4 * (voxel_index(0.0, 4) + 4 * voxel_index(0.0, 4))];
-        // Stored value is finite and well under the f16 ceiling; recovering raw
-        // intensity (value * density_scale) reconstructs the 1e9 peak.
-        let stored = center.to_f32();
-        assert!(stored > 0.0 && stored <= 65504.0);
-        let recovered = stored * g.density_scale();
-        assert!((recovered - 1e9).abs() / 1e9 < 0.02, "recovered {recovered}");
+        let peak = f.iter().map(|h| h.to_f32()).fold(0.0f32, f32::max);
+        assert!(peak > 0.0 && peak <= 65504.0);
+        // Recovering raw density (stored * density_scale) reconstructs the peak.
+        let recovered = peak * g.density_scale();
+        assert!((recovered - g.max_density).abs() / g.max_density < 0.01);
+    }
+
+    #[test]
+    fn density_percentiles_are_ordered() {
+        let mut g = VolumeGrid::new([16, 16, 16]);
+        for i in 0..200 {
+            let t = (i as f32 / 200.0) * 2.0 - 1.0;
+            g.deposit([t, 0.0, 0.0], 100.0 + i as f32);
+        }
+        let (lo, hi) = g.density_percentiles();
+        assert!(lo > 0.0 && hi > lo, "percentiles lo={lo} hi={hi}");
     }
 
     /// Build the volume pipeline (compiles volume.wgsl), upload a grid, and raycast

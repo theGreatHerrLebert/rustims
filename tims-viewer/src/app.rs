@@ -72,6 +72,8 @@ struct Gfx {
     fps_smooth: f32,
     /// Set when a fatal GPU error (e.g. surface OOM) should end the event loop.
     pending_exit: bool,
+    /// Previous frame's view mode, to auto-range the transfer fn on Points->Volume.
+    last_view_mode: ViewMode,
 }
 
 pub struct App {
@@ -257,6 +259,7 @@ impl App {
             last_frame: Instant::now(),
             fps_smooth: 0.0,
             pending_exit: false,
+            last_view_mode: ViewMode::Points,
         })
     }
 }
@@ -376,6 +379,13 @@ impl Gfx {
         // Volume mode: update the raycaster uniform (incl. the density scale) and
         // (re)upload the grid if it grew.
         if self.state.view_mode == ViewMode::Volume {
+            // On entering volume mode, auto-range the transfer fn to the density
+            // distribution (density sums differ in range from per-point intensity).
+            if self.last_view_mode != ViewMode::Volume {
+                let (lo, hi) = self.grid.density_percentiles();
+                self.state.i_min = lo;
+                self.state.i_max = hi;
+            }
             let inv_vp = self.camera.inv_view_proj(aspect);
             let mut vu = self.state.volume_uniform(inv_vp);
             vu.density_scale = self.grid.density_scale();
@@ -385,6 +395,7 @@ impl Gfx {
                 self.grid.clear_dirty();
             }
         }
+        self.last_view_mode = self.state.view_mode;
 
         let mut encoder = self
             .device
