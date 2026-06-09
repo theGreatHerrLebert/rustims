@@ -177,6 +177,9 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             if verbose:
                 print('Using reference dataset cycle length:', np.round(rt_cycle_length, 4))
             self.rt_cycle_length = rt_cycle_length
+            # Recompute the frame count: the base __init__ computed it from the
+            # passed rt_cycle_length before this reference-derived value replaced it.
+            self.num_frames = calculate_number_frames(self.gradient_length, rt_cycle_length)
 
         self.acquisition_name = acquisition_name
         self.scan_table = None
@@ -214,25 +217,57 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
 
         return pd.DataFrame(table_list)
 
+    def _layout_from_scheme(self, verbose: bool = True):
+        """Derive the DIA window + frame→group tables from the reference `.d` via
+        the vendor-neutral ``AcquisitionScheme`` (imspy_connector.py_acquisition).
+
+        Returns ``(dia_ms_ms_windows, frames_to_window_groups, precursor_every)``
+        or ``None`` if the connector lacks the scheme module (legacy fallback).
+        """
+        try:
+            import imspy_connector
+            acq = imspy_connector.py_acquisition
+        except (ImportError, AttributeError):
+            if verbose:
+                print('py_acquisition unavailable; using legacy reference layout')
+            return None
+
+        scheme = acq.PyAcquisitionScheme.from_bruker_d(self.reference.data_path)
+        precursor_every = scheme.cycle_length()
+        windows = pd.DataFrame(scheme.to_bruker_windows())
+        info = pd.DataFrame(scheme.to_bruker_info(int(self.num_frames)))
+        if verbose:
+            print(f'Using AcquisitionScheme layout: {len(windows)} windows, '
+                  f'{scheme.n_ms2_frames()} groups, precursor_every={precursor_every}')
+        return windows, info, precursor_every
+
     def _setup(self, verbose: bool = True):
         self.frame_table = self.generate_frame_table(verbose=verbose)
         self.scan_table = self.generate_scan_table(verbose=verbose)
 
-        if self.use_reference_ds_layout:
-            self.precursor_every = int(np.diff(self.reference.precursor_frames)[0])
-            self.dia_ms_ms_windows = self.reference.dia_ms_ms_windows.rename(
-                columns={
-                    'WindowGroup': 'window_group',
-                    'ScanNumBegin': 'scan_start',
-                    'ScanNumEnd': 'scan_end',
-                    'IsolationMz': 'isolation_mz',
-                    'IsolationWidth': 'isolation_width',
-                    'CollisionEnergy': 'collision_energy',
-                }
-            )
+        scheme_layout = self._layout_from_scheme(verbose=verbose) if self.use_reference_ds_layout else None
 
-        self.frame_table['ms_type'] = self.calculate_frame_types(verbose=verbose)
-        self.frames_to_window_groups = self.generate_frame_to_window_group_table(verbose=verbose)
+        if scheme_layout is not None:
+            # Vendor-neutral path: windows + frame→group come from the scheme.
+            self.dia_ms_ms_windows, frames_to_window_groups, self.precursor_every = scheme_layout
+            self.frame_table['ms_type'] = self.calculate_frame_types(verbose=verbose)
+            self.frames_to_window_groups = frames_to_window_groups
+        else:
+            # Legacy path: copy the reference .d's window table directly.
+            if self.use_reference_ds_layout:
+                self.precursor_every = int(np.diff(self.reference.precursor_frames)[0])
+                self.dia_ms_ms_windows = self.reference.dia_ms_ms_windows.rename(
+                    columns={
+                        'WindowGroup': 'window_group',
+                        'ScanNumBegin': 'scan_start',
+                        'ScanNumEnd': 'scan_end',
+                        'IsolationMz': 'isolation_mz',
+                        'IsolationWidth': 'isolation_width',
+                        'CollisionEnergy': 'collision_energy',
+                    }
+                )
+            self.frame_table['ms_type'] = self.calculate_frame_types(verbose=verbose)
+            self.frames_to_window_groups = self.generate_frame_to_window_group_table(verbose=verbose)
 
         if self.round_collision_energy:
             self.dia_ms_ms_windows['collision_energy'] = np.round(self.dia_ms_ms_windows['collision_energy'].values,
