@@ -530,6 +530,75 @@ impl AcquisitionScheme {
     }
 }
 
+#[cfg(feature = "sciex")]
+impl AcquisitionScheme {
+    /// Extract the SWATH scheme from a real SCIEX ZenoTOF `.wiff` method.
+    ///
+    /// Each SWATH window becomes a single-window [`DiaMs2Frame`] (no ion
+    /// mobility) preceded by an MS1. SCIEX uses **rolling collision energy**,
+    /// which is not stored in the `.wiff` SWATH method, so CE is
+    /// [`CollisionEnergyPolicy::Unknown`] (a model must be supplied downstream;
+    /// it is never invented). The `.wiff` method also does not carry run timing,
+    /// so `cycle_time_s` and `gradient_length_s` are caller-supplied.
+    pub fn from_sciex_wiff<P: AsRef<std::path::Path>>(
+        path: P,
+        cycle_time_s: f64,
+        gradient_length_s: f64,
+    ) -> io::Result<Self> {
+        let method = sciexwiff::read_method(path)?;
+        if method.swath_windows.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "no SWATH windows in the .wiff method",
+            ));
+        }
+        let mut cycle = vec![AcquisitionEvent::Ms1(Ms1Event {
+            analyzer: Analyzer::Tof,
+            data_mode: DataMode::Centroid,
+            mz_range: None,
+            duration_s: None,
+        })];
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        let n = method.swath_windows.len();
+        for w in &method.swath_windows {
+            let iso = IsolationWindow {
+                center_mz: w.center_mz(),
+                width_mz: w.width_mz(),
+            };
+            lo = lo.min(iso.lower());
+            hi = hi.max(iso.upper());
+            cycle.push(AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
+                windows: vec![DiaWindow {
+                    isolation: iso,
+                    collision_energy: CollisionEnergyPolicy::Unknown,
+                    geometry: DiaGeometry::MzOnly,
+                }],
+                analyzer: Analyzer::Tof,
+                data_mode: DataMode::Centroid,
+                duration_s: None,
+            }));
+        }
+        Ok(AcquisitionScheme {
+            version: SCHEME_VERSION,
+            instrument: InstrumentKind::SciexZenoTof,
+            cycle,
+            repeat: RepeatPolicy::FixedCycleTime {
+                cycle_time_s,
+                gradient_length_s,
+                start_time_s: 0.0,
+            },
+            mz_range: (lo, hi),
+            provenance: Provenance {
+                source: SchemeSource::ExtractedSciex,
+                notes: format!(
+                    "extracted from SCIEX .wiff method ({n} SWATH windows; rolling CE unknown, timing caller-supplied)"
+                ),
+            },
+        })
+    }
+}
+
 #[cfg(feature = "thermo")]
 impl AcquisitionScheme {
     /// Extract the acquisition scheme from a real Thermo `.raw` by walking the
@@ -843,6 +912,35 @@ mod tests {
             "from_bruker_d OK: TimsTofDia, {} frames, {} windows ({}), mz {:.1}..{:.1}",
             n_frames, n_win, if multi { "mobility-partitioned" } else { "single-window" },
             s.mz_range.0, s.mz_range.1
+        );
+    }
+
+    // Gated: set TIMSIM_SCIEX_WIFF to a real ZenoTOF .wiff (OLE2 method).
+    #[cfg(feature = "sciex")]
+    #[test]
+    fn from_sciex_wiff_extracts_windows() {
+        let wiff = match std::env::var("TIMSIM_SCIEX_WIFF") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP from_sciex_wiff_extracts_windows: set TIMSIM_SCIEX_WIFF=<.wiff>");
+                return;
+            }
+        };
+        let s = AcquisitionScheme::from_sciex_wiff(&wiff, 3.5, 1800.0).expect("extract");
+        s.validate().expect("valid scheme");
+        assert_eq!(s.instrument, InstrumentKind::SciexZenoTof);
+        assert_eq!(s.ms1_count(), 1);
+        let n = s.windows().count();
+        assert!(n > 10, "expected many SWATH windows, got {n}");
+        // SCIEX: m/z-only windows, rolling CE not recoverable -> Unknown.
+        for w in s.windows() {
+            assert!(matches!(w.geometry, DiaGeometry::MzOnly));
+            assert!(matches!(w.collision_energy, CollisionEnergyPolicy::Unknown));
+            assert!(w.collision_energy.at(w.isolation.center_mz).is_none());
+        }
+        eprintln!(
+            "from_sciex_wiff OK: SciexZenoTof, {} SWATH windows, mz {:.1}..{:.1}",
+            n, s.mz_range.0, s.mz_range.1
         );
     }
 
