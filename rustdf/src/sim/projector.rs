@@ -23,9 +23,8 @@ use crate::sim::scheme::{
     AcquisitionEvent, AcquisitionScheme, DataMode, IsolationWindow, RepeatPolicy,
 };
 use mscore::algorithm::utility::{
-    calculate_abundance_gaussian, calculate_scan_occurrence_gaussian, project_emg_over_events_par,
+    calculate_scan_occurrence_gaussian, normal_cdf_range, project_emg_over_events_par,
 };
-use std::collections::HashMap;
 
 // --------------------------------------------------------------------------- //
 // Sampling geometry (instrument branch 1)
@@ -42,10 +41,10 @@ pub enum MobilityModality {
 }
 
 /// The instrument's mobility sampling geometry. For `Tims`, `inv_mobility` holds
-/// the per-scan 1/K0 grid in **ascending** order — the order the gaussian
-/// occurrence kernel expects (it reverses internally; see its doctest). The
-/// returned scan indices are positions into this ascending vector; callers that
-/// need native (descending) Bruker scan numbers map at the device boundary.
+/// the per-scan 1/K0 grid in **ascending** order (the order the gaussian
+/// occurrence kernel expects internally). [`project_mobility_ion`] returns scan
+/// indices as positions into this ascending vector; callers that need native
+/// (descending) Bruker scan numbers map at the device boundary.
 #[derive(Debug, Clone)]
 pub struct SamplingGeometry {
     pub modality: MobilityModality,
@@ -65,10 +64,15 @@ impl SamplingGeometry {
 
     /// Build a timsTOF geometry from the reference dataset's `scans` table. The
     /// 1/K0 values are sorted ascending to satisfy the kernel's input contract
-    /// regardless of the table's native scan ordering.
+    /// regardless of the table's native scan ordering. Non-finite mobilities are
+    /// dropped (rather than panicking the sort).
     pub fn from_scans(scans: &[ScansSim]) -> Self {
-        let mut inv: Vec<f64> = scans.iter().map(|s| s.mobility as f64).collect();
-        inv.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let mut inv: Vec<f64> = scans
+            .iter()
+            .map(|s| s.mobility as f64)
+            .filter(|m| m.is_finite())
+            .collect();
+        inv.sort_by(f64::total_cmp);
         SamplingGeometry::tims(inv)
     }
 
@@ -111,10 +115,16 @@ impl EventTimeline {
     /// within a cycle, events are placed back-to-back using their `duration_s`
     /// when present, otherwise the cycle time is split uniformly across events.
     pub fn from_scheme(scheme: &AcquisitionScheme) -> Result<Self, String> {
+        // Rely on the scheme invariants (exactly one MS1, first; >=1 MS2) so the
+        // MS1 ordinal == cycle index downstream (see `project_time`).
+        scheme.validate()?;
         let RepeatPolicy::FixedCycleTime { cycle_time_s, gradient_length_s, start_time_s } =
             scheme.repeat;
         if !(cycle_time_s.is_finite() && cycle_time_s > 0.0) {
             return Err("cycle_time_s must be finite and > 0".into());
+        }
+        if !start_time_s.is_finite() || start_time_s < 0.0 {
+            return Err("start_time_s must be finite and >= 0".into());
         }
         let n_cycles = scheme.num_cycles().ok_or("scheme has no derivable cycle count")?;
         let events_per_cycle = scheme.cycle.len();
@@ -122,10 +132,11 @@ impl EventTimeline {
             return Err("empty cycle".into());
         }
 
-        // Per-event durations within one cycle: explicit duration_s, else an
-        // equal split of the cycle time across all events.
-        let uniform = cycle_time_s / events_per_cycle as f64;
-        let durations: Vec<f64> = scheme
+        // Per-event durations within one cycle: explicit `duration_s` are honored;
+        // the cycle time left over after the explicit ones is split equally among
+        // the unspecified events. Explicit durations summing beyond the cycle time
+        // (which would overrun into the next cycle) is an error.
+        let explicit: Vec<Option<f64>> = scheme
             .cycle
             .iter()
             .map(|e| {
@@ -133,15 +144,31 @@ impl EventTimeline {
                     AcquisitionEvent::Ms1(m) => m.duration_s,
                     AcquisitionEvent::DiaMs2Frame(f) => f.duration_s,
                 };
-                d.filter(|v| v.is_finite() && *v > 0.0).unwrap_or(uniform)
+                d.filter(|v| v.is_finite() && *v > 0.0)
             })
             .collect();
+        let explicit_sum: f64 = explicit.iter().flatten().sum();
+        let n_unspecified = explicit.iter().filter(|d| d.is_none()).count();
+        if explicit_sum > cycle_time_s + 1e-9 {
+            return Err(format!(
+                "explicit event durations ({explicit_sum}) exceed cycle_time_s ({cycle_time_s})"
+            ));
+        }
+        let per_unspecified = if n_unspecified > 0 {
+            ((cycle_time_s - explicit_sum) / n_unspecified as f64).max(0.0)
+        } else {
+            0.0
+        };
+        let durations: Vec<f64> =
+            explicit.iter().map(|d| d.unwrap_or(per_unspecified)).collect();
 
         let mut events = Vec::with_capacity(n_cycles as usize * events_per_cycle);
         let mut global_index = 0usize;
         for k in 0..n_cycles {
             let cycle_start = start_time_s + k as f64 * cycle_time_s;
-            if cycle_start > gradient_length_s {
+            // Half-open run [start, gradient): num_cycles already floors to full
+            // cycles, so this only guards float edge cases.
+            if cycle_start >= gradient_length_s {
                 break;
             }
             let mut t = cycle_start;
@@ -238,10 +265,11 @@ pub enum RenderedEvent {
 // Projections
 // --------------------------------------------------------------------------- //
 
-/// Time projection: for each peptide, the `(ms1_event_index, abundance)` list
-/// over the timeline's MS1 events. `ms1_event_index` indexes into
-/// [`EventTimeline::ms1_intervals`] (i.e. cycle order). Replaces the legacy
-/// `frame_occurrence`/`frame_abundance`.
+/// Time projection: for each peptide, the `(cycle_index, abundance)` list over
+/// the run's MS1 events. The index is the MS1 ordinal, which equals the cycle
+/// index because [`EventTimeline::from_scheme`] validates exactly one MS1 per
+/// cycle — it is NOT a global event index (MS2 events are interleaved). Replaces
+/// the legacy `frame_occurrence`/`frame_abundance`.
 pub fn project_time(
     peptides: &[PeptideScalar],
     timeline: &EventTimeline,
@@ -254,14 +282,31 @@ pub fn project_time(
     let sigmas: Vec<f64> = peptides.iter().map(|p| p.rt_sigma as f64).collect();
     let lambdas: Vec<f64> = peptides.iter().map(|p| p.rt_lambda as f64).collect();
     project_emg_over_events_par(
-        &intervals, rts, sigmas, lambdas, target_p, step_size, num_threads, None,
+        &intervals,
+        rts,
+        sigmas,
+        lambdas,
+        target_p,
+        step_size,
+        num_threads.max(1), // 0 would panic the rayon pool builder
+        None,
     )
 }
 
 /// Mobility projection for a single ion: `(scan_index, abundance)` over the
-/// geometry's scan grid. For `MobilityModality::None` the whole distribution is
-/// marginalised onto scan 0 (total signal conserved). Replaces the legacy
-/// `scan_occurrence`/`scan_abundance`.
+/// geometry's scan grid, scan indices being positions into the **ascending**
+/// `geometry.inv_mobility` (per the [`SamplingGeometry`] contract).
+///
+/// Each occupied scan's abundance is the mobility Gaussian's CDF over that
+/// scan's own bin — the midpoints to its neighbours on the (possibly
+/// non-uniform) calibrated grid — so dense/sparse regions are integrated
+/// correctly (a single mean spacing would overlap/gap them).
+///
+/// Intensity-contract note: for `MobilityModality::None` the result is the full
+/// marginal `[(0, 1.0)]` by definition (no mobility axis, complete integration).
+/// For `Tims` the per-scan abundances sum to the captured mass, which is `<= 1`
+/// (grid clipping + `target_p` truncation) — the two cases are intentionally
+/// different and downstream normalisation must account for it.
 pub fn project_mobility_ion(
     ion: &IonScalar,
     geometry: &SamplingGeometry,
@@ -272,8 +317,21 @@ pub fn project_mobility_ion(
     match geometry.modality {
         MobilityModality::None => vec![(0, 1.0)],
         MobilityModality::Tims => {
+            let n = geometry.inv_mobility.len();
+            if n == 0 {
+                return Vec::new();
+            }
+            if n == 1 {
+                // Single scan: integrate the whole captured Gaussian onto it.
+                let mean = ion.inv_mobility(env);
+                let sigma = ion.inv_mobility_std as f64;
+                let a = normal_cdf_range(mean - 6.0 * sigma, mean + 6.0 * sigma, mean, sigma);
+                return vec![(0, a)];
+            }
             let mean = ion.inv_mobility(env);
             let sigma = ion.inv_mobility_std as f64;
+            // `calculate_scan_occurrence_gaussian` returns indices into the
+            // REVERSED (descending) grid: occ index i -> inv_mobility[n-1-i].
             let occ = calculate_scan_occurrence_gaussian(
                 &geometry.inv_mobility,
                 mean,
@@ -283,35 +341,32 @@ pub fn project_mobility_ion(
                 3.0,
                 3.0,
             );
-            // Per-scan abundance via the existing gaussian bin integration over
-            // [mobility - bin_width, mobility] (bin_width = mean grid spacing).
-            // `calculate_scan_occurrence_gaussian` indexes the *reversed* grid,
-            // so the abundance time_map must use that same index space (index i
-            // -> inv_mobility[n-1-i]) or the integration reads the wrong scan.
-            let n = geometry.inv_mobility.len();
-            let time_map: HashMap<i32, f64> = (0..n)
-                .map(|i| (i as i32, geometry.inv_mobility[n - 1 - i]))
+            let rev: Vec<f64> = geometry.inv_mobility.iter().rev().copied().collect();
+            let mut out: Vec<(i32, f64)> = occ
+                .into_iter()
+                .map(|i| {
+                    let i = i as usize;
+                    let v = rev[i];
+                    // Bin edges = midpoints to neighbours on the descending grid;
+                    // endpoints extrapolate by their adjacent half-spacing.
+                    let hi = if i > 0 {
+                        (rev[i - 1] + v) / 2.0
+                    } else {
+                        v + (v - rev[1]) / 2.0
+                    };
+                    let lo = if i + 1 < n {
+                        (v + rev[i + 1]) / 2.0
+                    } else {
+                        v - (rev[i - 1] - v) / 2.0
+                    };
+                    let abundance = normal_cdf_range(lo, hi, mean, sigma);
+                    // Convert reversed index back to an ascending-grid position.
+                    ((n - 1 - i) as i32, abundance)
+                })
                 .collect();
-            let bin_width = mean_grid_spacing(&geometry.inv_mobility);
-            let abund = calculate_abundance_gaussian(&time_map, &occ, mean, sigma, bin_width);
-            occ.into_iter().zip(abund).collect()
+            out.sort_by_key(|(scan, _)| *scan);
+            out
         }
-    }
-}
-
-/// Mean absolute spacing of a (descending) mobility grid; the per-scan bin width
-/// used for abundance integration. Returns a small positive fallback for grids
-/// with < 2 points.
-fn mean_grid_spacing(grid: &[f64]) -> f64 {
-    if grid.len() < 2 {
-        return 1e-3;
-    }
-    let total: f64 = grid.windows(2).map(|w| (w[0] - w[1]).abs()).sum();
-    let s = total / (grid.len() - 1) as f64;
-    if s.is_finite() && s > 0.0 {
-        s
-    } else {
-        1e-3
     }
 }
 
@@ -433,6 +488,64 @@ mod tests {
             inv_mobility_std: std,
             simulated_spectrum: MzSpectrum::new(vec![mz], vec![1.0]),
             condition_id: None,
+        }
+    }
+
+    #[test]
+    fn timeline_mixed_durations_fill_remaining_cycle_time() {
+        // MS1 explicit 0.8 s; the two MS2 events split the remaining 0.4 s.
+        let mut scheme = scheme_one_ms1_two_ms2();
+        if let AcquisitionEvent::Ms1(ref mut m) = scheme.cycle[0] {
+            m.duration_s = Some(0.8);
+        }
+        let tl = EventTimeline::from_scheme(&scheme).unwrap();
+        let first3 = &tl.events[..3];
+        assert!((first3[0].interval.1 - first3[0].interval.0 - 0.8).abs() < 1e-9);
+        assert!((first3[1].interval.1 - first3[1].interval.0 - 0.2).abs() < 1e-9);
+        // Still tile to exactly one cycle (1.2 s).
+        assert!((first3[2].interval.1 - 1.2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn timeline_rejects_durations_overrunning_cycle() {
+        let mut scheme = scheme_one_ms1_two_ms2();
+        if let AcquisitionEvent::Ms1(ref mut m) = scheme.cycle[0] {
+            m.duration_s = Some(2.0); // > cycle_time 1.2
+        }
+        assert!(EventTimeline::from_scheme(&scheme).is_err());
+    }
+
+    #[test]
+    fn timeline_honours_nonzero_start_time() {
+        let mut scheme = scheme_one_ms1_two_ms2();
+        scheme.repeat = RepeatPolicy::FixedCycleTime {
+            cycle_time_s: 1.2,
+            gradient_length_s: 12.0,
+            start_time_s: 3.0,
+        };
+        let tl = EventTimeline::from_scheme(&scheme).unwrap();
+        assert!((tl.events[0].interval.0 - 3.0).abs() < 1e-9);
+        // (12 - 3)/1.2 = 7 full cycles.
+        assert_eq!(tl.ms1_intervals().len(), 7);
+    }
+
+    #[test]
+    fn project_mobility_nonuniform_grid_uses_local_bins() {
+        // Non-uniform ascending grid: dense low, sparse high.
+        let mut grid = vec![0.60, 0.61, 0.62, 0.63, 0.64];
+        grid.extend([0.9, 1.2, 1.5]);
+        let geom = SamplingGeometry::tims(grid);
+        let env = MobilityEnv::default();
+        let i = ion(450.0, 600.0, 2, 0.05);
+        let m = project_mobility_ion(&i, &geom, &env, 0.9999, 0.01);
+        // Output indices are ascending-grid positions, sorted, and in range.
+        assert!(!m.is_empty());
+        for w in m.windows(2) {
+            assert!(w[0].0 < w[1].0, "scan indices must be sorted ascending");
+        }
+        for (scan, a) in &m {
+            assert!((*scan as usize) < geom.num_scans());
+            assert!(*a >= 0.0);
         }
     }
 
