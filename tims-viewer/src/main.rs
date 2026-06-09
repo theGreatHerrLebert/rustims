@@ -8,6 +8,7 @@
 mod app;
 mod camera;
 mod data;
+mod offscreen;
 mod render;
 mod state;
 mod ui;
@@ -34,6 +35,30 @@ struct Args {
     /// Total synthetic points for DEMO (before downsampling to the budget).
     #[arg(long, default_value_t = 30_000_000)]
     demo_points: u64,
+    /// Headless: render one frame to this PNG path and exit (no window needed).
+    #[arg(long)]
+    render_png: Option<String>,
+    /// With --render-png: render the volume raycaster instead of the point cloud.
+    #[arg(long)]
+    volume: bool,
+    /// With --render-png --volume: use maximum-intensity projection instead of composite.
+    #[arg(long)]
+    mip: bool,
+    /// MS level to render: all | ms1 | ms2.
+    #[arg(long, default_value = "all")]
+    ms: String,
+    /// Output image width / height for --render-png.
+    #[arg(long, default_value_t = 1280)]
+    width: u32,
+    #[arg(long, default_value_t = 800)]
+    height: u32,
+    /// Transfer-function overrides for --render-png (default from data percentiles).
+    #[arg(long)]
+    i_min: Option<f32>,
+    #[arg(long)]
+    i_max: Option<f32>,
+    #[arg(long)]
+    exposure: Option<f32>,
 }
 
 fn main() -> Result<()> {
@@ -65,6 +90,30 @@ fn main() -> Result<()> {
     };
 
     let plan = Plan::new(meta, is_demo, args.budget);
+
+    // Headless one-frame render mode (no window).
+    if let Some(path) = args.render_png {
+        let ms = match args.ms.to_ascii_lowercase().as_str() {
+            "ms1" | "1" => offscreen::MsFilter::Ms1,
+            "ms2" | "2" => offscreen::MsFilter::Ms2,
+            "all" => offscreen::MsFilter::All,
+            other => anyhow::bail!("--ms must be all|ms1|ms2, got '{other}'"),
+        };
+        let opts = offscreen::Options {
+            width: args.width,
+            height: args.height,
+            volume: args.volume,
+            mip: args.mip,
+            ms,
+            i_min: args.i_min,
+            i_max: args.i_max,
+            exposure: args.exposure,
+        };
+        offscreen::render_png(plan, std::path::Path::new(&path), &opts)?;
+        log::info!("wrote {}", path);
+        return Ok(());
+    }
+
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = App::new(plan);

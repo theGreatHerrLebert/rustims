@@ -42,6 +42,8 @@ rayon = "1.10"
 crossbeam-channel = "0.5"
 # f32 -> f16 conversion for the R16Float volume texture
 half = { version = "2", features = ["bytemuck"] }
+# PNG screenshot export
+png = "0.17"
 
 [features]
 default = []
