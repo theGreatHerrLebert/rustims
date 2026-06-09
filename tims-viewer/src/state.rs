@@ -190,6 +190,9 @@ impl AppState {
             style,
             colormap_id: self.colormap_id,
             n_colormaps: self.n_colormaps.max(1),
+            // Overwritten by the app from VolumeGrid::density_scale() each frame.
+            density_scale: 1.0,
+            _pad: [0.0; 3],
         }
     }
 }

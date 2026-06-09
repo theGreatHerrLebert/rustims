@@ -12,6 +12,10 @@ struct Volume {
     style : u32,          // 0 = composite, 1 = MIP
     colormap_id : u32,
     n_colormaps : u32,
+    density_scale : f32,  // recover raw intensity from the normalized texture
+    _pad0 : f32,
+    _pad1 : f32,
+    _pad2 : f32,
 };
 
 @group(0) @binding(0) var<uniform> vol : Volume;
@@ -65,7 +69,15 @@ fn colormap(t: f32) -> vec3<f32> {
 
 // Robust ray/AABB slab test. Returns (t_enter, t_exit); a miss has t_exit < t_enter.
 fn intersect_box(o: vec3<f32>, dir: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> vec2<f32> {
-    let inv = 1.0 / dir;
+    // Nudge near-zero direction components so 1/dir stays finite — avoids 0*inf = NaN
+    // for box-boundary-parallel rays (common in axis/orthographic views).
+    let eps = 1e-7;
+    let safe = vec3<f32>(
+        select(dir.x, eps, abs(dir.x) < eps),
+        select(dir.y, eps, abs(dir.y) < eps),
+        select(dir.z, eps, abs(dir.z) < eps),
+    );
+    let inv = 1.0 / safe;
     let t0 = (bmin - o) * inv;
     let t1 = (bmax - o) * inv;
     let tmin = min(t0, t1);
@@ -101,7 +113,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         for (var i = 0u; i < steps; i = i + 1u) {
             let p = o + dir * (t_enter + dt * (f32(i) + 0.5));
             let uvw = p * 0.5 + vec3<f32>(0.5);
-            let dens = textureSampleLevel(vol_tex, vol_smp, uvw, 0.0).r;
+            let dens = textureSampleLevel(vol_tex, vol_smp, uvw, 0.0).r * vol.density_scale;
             maxt = max(maxt, transfer(dens));
         }
         if (maxt <= 0.0) {
@@ -116,7 +128,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     for (var i = 0u; i < steps; i = i + 1u) {
         let p = o + dir * (t_enter + dt * (f32(i) + 0.5));
         let uvw = p * 0.5 + vec3<f32>(0.5);
-        let dens = textureSampleLevel(vol_tex, vol_smp, uvw, 0.0).r;
+        let dens = textureSampleLevel(vol_tex, vol_smp, uvw, 0.0).r * vol.density_scale;
         let tval = transfer(dens);
         if (tval > 0.0) {
             let col = colormap(tval);
@@ -132,5 +144,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (alpha <= 0.0) {
         discard;
     }
-    return vec4<f32>(acc, 1.0);
+    // Premultiplied (acc) with its coverage alpha, so the clear color shows through
+    // where the ray didn't accumulate full opacity (pipeline uses premultiplied blend).
+    return vec4<f32>(acc, alpha);
 }

@@ -65,6 +65,10 @@ pub struct VolumeUniform {
     pub style: u32,
     pub colormap_id: u32,
     pub n_colormaps: u32,
+    /// Multiplier applied to the sampled (normalized) voxel value to recover raw
+    /// intensity before the transfer function (mirrors VolumeGrid::density_scale).
+    pub density_scale: f32,
+    pub _pad: [f32; 3],
 }
 
 impl Default for VolumeUniform {
@@ -78,6 +82,8 @@ impl Default for VolumeUniform {
             style: 0,
             colormap_id: 0,
             n_colormaps: 1,
+            density_scale: 1.0,
+            _pad: [0.0; 3],
         }
     }
 }

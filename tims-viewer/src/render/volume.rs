@@ -16,20 +16,34 @@ use super::uniforms::VolumeUniform;
 /// Anisotropic grid dimensions (m/z, 1/K0, RT). m/z gets the most bins (finest features).
 pub const VOLUME_DIMS: [u32; 3] = [256, 128, 192];
 
+/// Target maximum stored f16 value; the grid is normalized so its peak maps here,
+/// well under the f16 ceiling (65504) so no value is clamped/lost.
+const F16_TARGET_MAX: f32 = 60000.0;
+
 /// CPU-side max-intensity voxel grid.
 pub struct VolumeGrid {
     dims: [u32; 3],
     /// Max intensity per voxel, indexed x + nx*(y + ny*z).
     data: Vec<f32>,
+    /// Largest intensity deposited so far (drives the normalization scale).
+    max_intensity: f32,
     dirty: bool,
 }
 
 impl VolumeGrid {
     pub fn new(dims: [u32; 3]) -> Self {
-        let n = dims[0] as usize * dims[1] as usize * dims[2] as usize;
+        assert!(
+            dims.iter().all(|&d| d > 0),
+            "volume dims must be non-zero, got {dims:?}"
+        );
+        let n = (dims[0] as usize)
+            .checked_mul(dims[1] as usize)
+            .and_then(|m| m.checked_mul(dims[2] as usize))
+            .expect("volume dimensions overflow usize");
         VolumeGrid {
             dims,
             data: vec![0.0; n],
+            max_intensity: 0.0,
             dirty: false,
         }
     }
@@ -55,15 +69,26 @@ impl VolumeGrid {
         if intensity > *slot {
             *slot = intensity;
         }
+        if intensity > self.max_intensity {
+            self.max_intensity = intensity;
+        }
         self.dirty = true;
     }
 
-    /// Convert to f16 for upload, clamping to the f16 max to avoid overflow/inf.
-    pub fn to_f16(&self) -> Vec<f16> {
-        const F16_MAX: f32 = 65504.0;
+    /// Factor the shader multiplies the sampled (normalized) value by to recover raw
+    /// intensity. `>= 1`; chosen so the grid peak maps to `F16_TARGET_MAX`.
+    pub fn density_scale(&self) -> f32 {
+        (self.max_intensity / F16_TARGET_MAX).max(1.0)
+    }
+
+    /// Normalize by `density_scale` and convert to f16 — preserves the full intensity
+    /// range (incl. values far above 65504) instead of clamping it away. The shader
+    /// multiplies back by `density_scale` before applying the shared transfer function.
+    pub fn to_f16_scaled(&self) -> Vec<f16> {
+        let inv = 1.0 / self.density_scale();
         self.data
             .iter()
-            .map(|&v| f16::from_f32(v.min(F16_MAX)))
+            .map(|&v| f16::from_f32((v * inv).min(F16_TARGET_MAX)))
             .collect()
     }
 }
@@ -226,7 +251,21 @@ impl VolumeRenderer {
                 entry_point: "fs_main",
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,
-                    blend: None,
+                    // Premultiplied alpha: the composite fragment outputs (acc, alpha)
+                    // with acc already premultiplied, so low-opacity rays let the scene
+                    // clear color show through. MIP returns alpha=1 and stays opaque.
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: Default::default(),
@@ -313,12 +352,19 @@ mod tests {
         let mut g = VolumeGrid::new([4, 4, 4]);
         g.deposit([0.0, 0.0, 0.0], 100.0);
         g.deposit([0.0, 0.0, 0.0], 50.0); // smaller -> ignored (max)
-        g.deposit([0.0, 0.0, 0.0], 1e9); // huge -> clamped to f16 max on convert
+        g.deposit([0.0, 0.0, 0.0], 1e9); // huge -> normalized, not clamped away
         assert!(g.dirty());
-        let f = g.to_f16();
+        // Scale normalizes the 1e9 peak down under the f16 ceiling.
+        assert!(g.density_scale() > 1.0);
+        let f = g.to_f16_scaled();
         assert_eq!(f.len(), 64);
         let center = f[voxel_index(0.0, 4) + 4 * (voxel_index(0.0, 4) + 4 * voxel_index(0.0, 4))];
-        assert!(center.to_f32() <= 65504.0 && center.to_f32() > 0.0);
+        // Stored value is finite and well under the f16 ceiling; recovering raw
+        // intensity (value * density_scale) reconstructs the 1e9 peak.
+        let stored = center.to_f32();
+        assert!(stored > 0.0 && stored <= 65504.0);
+        let recovered = stored * g.density_scale();
+        assert!((recovered - 1e9).abs() / 1e9 < 0.02, "recovered {recovered}");
     }
 
     /// Build the volume pipeline (compiles volume.wgsl), upload a grid, and raycast
@@ -360,7 +406,7 @@ mod tests {
             let t = i as f32 / 15.0 * 2.0 - 1.0;
             grid.deposit([t, 0.0, 0.0], 500.0 + i as f32 * 100.0);
         }
-        r.upload(&queue, &grid.to_f16());
+        r.upload(&queue, &grid.to_f16_scaled());
         let cam = crate::camera::OrbitCamera::default();
         let mut u = VolumeUniform {
             inv_view_proj: cam.inv_view_proj(1.0),

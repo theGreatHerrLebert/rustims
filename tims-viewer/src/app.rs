@@ -174,11 +174,16 @@ impl App {
         let bytes_per_point = std::mem::size_of::<crate::data::point::GpuPoint>() as u64;
         let max_by_buffer = (limits.max_buffer_size / bytes_per_point) as usize;
         let total = plan.meta.total_points_estimate;
-        let capacity = plan
-            .budget
-            .min(max_by_buffer)
-            .min((total as usize).max(1))
-            .max(1) as u32;
+        let mut cap = plan.budget.min(max_by_buffer).min((total as usize).max(1));
+        // When compaction is on, the master + compacted buffers are bound as storage,
+        // which is capped by max_storage_buffer_binding_size (often much smaller than
+        // max_buffer_size, e.g. 128 MiB) — exceeding it fails bind-group validation.
+        if supports_compaction {
+            let max_by_storage =
+                (limits.max_storage_buffer_binding_size as u64 / bytes_per_point) as usize;
+            cap = cap.min(max_by_storage);
+        }
+        let capacity = cap.max(1) as u32;
         log::info!(
             "point budget={} capacity={} compaction={} (device max_buffer_size={} MiB)",
             plan.budget,
@@ -322,26 +327,6 @@ impl Gfx {
         };
         self.state.fps = self.fps_smooth;
 
-        // Uniforms.
-        let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
-        let cam = self.camera.to_uniform(
-            aspect,
-            [self.config.width as f32, self.config.height as f32],
-        );
-        self.points.update_camera(&self.queue, &cam);
-        self.points.update_params(&self.queue, &self.state.params());
-
-        // Volume mode: update the raycaster uniform and (re)upload the grid if it grew.
-        if self.state.view_mode == ViewMode::Volume {
-            let inv_vp = self.camera.inv_view_proj(aspect);
-            self.volume
-                .update_uniform(&self.queue, &self.state.volume_uniform(inv_vp));
-            if self.grid.dirty() {
-                self.volume.upload(&self.queue, &self.grid.to_f16());
-                self.grid.clear_dirty();
-            }
-        }
-
         // Acquire the surface BEFORE any egui texture upload, so a surface error
         // returns without leaking uploaded-but-never-freed egui textures (texture
         // `set` and `free` are then always paired within one successful frame).
@@ -375,6 +360,30 @@ impl Gfx {
         for (id, delta) in &full_output.textures_delta.set {
             self.egui_renderer
                 .update_texture(&self.device, &self.queue, *id, delta);
+        }
+
+        // Uniforms — computed AFTER egui so they reflect this frame's UI/camera changes
+        // (otherwise a Points->Volume switch renders one frame with a stale matrix and
+        // an un-uploaded texture).
+        let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
+        let cam = self.camera.to_uniform(
+            aspect,
+            [self.config.width as f32, self.config.height as f32],
+        );
+        self.points.update_camera(&self.queue, &cam);
+        self.points.update_params(&self.queue, &self.state.params());
+
+        // Volume mode: update the raycaster uniform (incl. the density scale) and
+        // (re)upload the grid if it grew.
+        if self.state.view_mode == ViewMode::Volume {
+            let inv_vp = self.camera.inv_view_proj(aspect);
+            let mut vu = self.state.volume_uniform(inv_vp);
+            vu.density_scale = self.grid.density_scale();
+            self.volume.update_uniform(&self.queue, &vu);
+            if self.grid.dirty() {
+                self.volume.upload(&self.queue, &self.grid.to_f16_scaled());
+                self.grid.clear_dirty();
+            }
         }
 
         let mut encoder = self
