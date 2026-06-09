@@ -1,12 +1,18 @@
 //! Point-cloud renderer: a pre-allocated instance buffer plus two pipelines
 //! (additive-density and structural-opaque) sharing one shader and bind group.
+//!
+//! When the device supports compute + indirect execution, a compaction pass culls each
+//! resident point (window + MS mask + frustum) into a compacted buffer and writes the
+//! indirect-draw count, so the draw call processes only the *visible* set instead of
+//! every resident instance. Otherwise it falls back to drawing all resident points and
+//! culling in the vertex shader (the Phase-1 path).
 
 use wgpu::util::DeviceExt;
 
 use crate::data::point::GpuPoint;
 
 use super::colormap;
-use super::uniforms::{CameraUniform, ParamsUniform};
+use super::uniforms::{CameraUniform, CompactionUniform, ParamsUniform};
 
 /// Render mode selector matching `ParamsUniform.render_mode`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -15,21 +21,37 @@ pub enum PointMode {
     StructuralOpaque,
 }
 
+const WORKGROUP_SIZE: u32 = 256;
+
 pub struct PointCloudRenderer {
-    /// Instance buffer sized to the point budget.
-    instances: wgpu::Buffer,
+    /// Master instance buffer (all resident points), sized to the budget.
+    master: wgpu::Buffer,
+    /// Compacted visible points written by the compute pass (compaction path only).
+    compacted: wgpu::Buffer,
+    /// Indirect draw args: [vertex_count, instance_count, first_vertex, first_instance].
+    draw_args: wgpu::Buffer,
+
     capacity: u32,
     resident: u32,
 
     camera_buf: wgpu::Buffer,
     params_buf: wgpu::Buffer,
+    compaction_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
 
     pipeline_additive: wgpu::RenderPipeline,
     pipeline_opaque: wgpu::RenderPipeline,
 
+    /// Present only when compaction is supported.
+    compute: Option<ComputeStage>,
+
     // Keep the LUT alive for the lifetime of the bind group.
     _lut_texture: wgpu::Texture,
+}
+
+struct ComputeStage {
+    pipeline: wgpu::ComputePipeline,
+    bind_group: wgpu::BindGroup,
 }
 
 impl PointCloudRenderer {
@@ -39,12 +61,32 @@ impl PointCloudRenderer {
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat,
         capacity: u32,
+        supports_compaction: bool,
     ) -> Self {
-        let instances = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("point-instances"),
-            size: capacity as u64 * std::mem::size_of::<GpuPoint>() as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        let point_bytes = capacity as u64 * std::mem::size_of::<GpuPoint>() as u64;
+        // Master is read as storage by the compute pass and (in fallback) drawn as a
+        // vertex buffer; mark both usages.
+        let master = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("point-master"),
+            size: point_bytes,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
+        });
+        let compacted = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("point-compacted"),
+            size: point_bytes.max(std::mem::size_of::<GpuPoint>() as u64),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
+            mapped_at_creation: false,
+        });
+        let draw_args = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("point-draw-args"),
+            // vertex_count=4 (quad strip), instance_count=0, first_vertex=0, first_instance=0
+            contents: bytemuck::cast_slice(&[4u32, 0u32, 0u32, 0u32]),
+            usage: wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST,
         });
 
         let camera_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -57,32 +99,19 @@ impl PointCloudRenderer {
             contents: bytemuck::bytes_of(&ParamsUniform::default()),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+        let compaction_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("compaction-uniform"),
+            contents: bytemuck::bytes_of(&CompactionUniform::default()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
 
         let (lut_texture, lut_view, lut_sampler) = colormap::create_lut_texture(device, queue);
 
         let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("point-bind-layout"),
             entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
+                uniform_entry(0),
+                uniform_entry(1),
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -127,9 +156,7 @@ impl PointCloudRenderer {
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("point-cloud-shader"),
-            source: wgpu::ShaderSource::Wgsl(
-                include_str!("../shaders/point_cloud.wgsl").into(),
-            ),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/point_cloud.wgsl").into()),
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -197,18 +224,39 @@ impl PointCloudRenderer {
         let pipeline_additive =
             make_pipeline(Some(additive_blend), false, wgpu::CompareFunction::Always);
         // Opaque: depth-tested and depth-written for true 3D structure.
-        let pipeline_opaque =
-            make_pipeline(Some(wgpu::BlendState::REPLACE), true, wgpu::CompareFunction::Less);
+        let pipeline_opaque = make_pipeline(
+            Some(wgpu::BlendState::REPLACE),
+            true,
+            wgpu::CompareFunction::Less,
+        );
+
+        let compute = if supports_compaction {
+            Some(build_compute_stage(
+                device,
+                &master,
+                &compacted,
+                &draw_args,
+                &camera_buf,
+                &params_buf,
+                &compaction_buf,
+            ))
+        } else {
+            None
+        };
 
         PointCloudRenderer {
-            instances,
+            master,
+            compacted,
+            draw_args,
             capacity,
             resident: 0,
             camera_buf,
             params_buf,
+            compaction_buf,
             bind_group,
             pipeline_additive,
             pipeline_opaque,
+            compute,
             _lut_texture: lut_texture,
         }
     }
@@ -239,7 +287,7 @@ impl PointCloudRenderer {
         let n = points.len().min(room);
         let stride = std::mem::size_of::<GpuPoint>() as u64;
         let offset = self.resident as u64 * stride; // checked-range: resident <= capacity
-        queue.write_buffer(&self.instances, offset, bytemuck::cast_slice(&points[..n]));
+        queue.write_buffer(&self.master, offset, bytemuck::cast_slice(&points[..n]));
         self.resident += n as u32;
         n
     }
@@ -252,6 +300,36 @@ impl PointCloudRenderer {
         queue.write_buffer(&self.params_buf, 0, bytemuck::bytes_of(params));
     }
 
+    /// Run the compaction compute pass (if supported). Must be called on the encoder
+    /// BEFORE the scene render pass; uniforms must already be updated for this frame.
+    pub fn prepare(&self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder) {
+        let Some(compute) = &self.compute else {
+            return;
+        };
+        if self.resident == 0 {
+            return;
+        }
+        // Reset the survivor counter every frame (atomicAdd accumulates otherwise);
+        // keep vertex_count=4 for the quad strip.
+        queue.write_buffer(&self.draw_args, 0, bytemuck::cast_slice(&[4u32, 0u32, 0u32, 0u32]));
+        queue.write_buffer(
+            &self.compaction_buf,
+            0,
+            bytemuck::bytes_of(&CompactionUniform {
+                point_count: self.resident,
+                _pad: [0; 3],
+            }),
+        );
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("point-compaction"),
+            timestamp_writes: None,
+        });
+        cpass.set_pipeline(&compute.pipeline);
+        cpass.set_bind_group(0, &compute.bind_group, &[]);
+        let groups = self.resident.div_ceil(WORKGROUP_SIZE);
+        cpass.dispatch_workgroups(groups, 1, 1);
+    }
+
     pub fn render(&self, rpass: &mut wgpu::RenderPass<'_>, mode: PointMode) {
         if self.resident == 0 {
             return;
@@ -262,9 +340,128 @@ impl PointCloudRenderer {
         };
         rpass.set_pipeline(pipeline);
         rpass.set_bind_group(0, &self.bind_group, &[]);
-        rpass.set_vertex_buffer(0, self.instances.slice(..));
-        // 4 vertices per instance (triangle strip quad), one instance per point.
-        rpass.draw(0..4, 0..self.resident);
+        if self.compute.is_some() {
+            // Draw only the compacted visible set; count comes from the indirect args.
+            rpass.set_vertex_buffer(0, self.compacted.slice(..));
+            rpass.draw_indirect(&self.draw_args, 0);
+        } else {
+            // Fallback: draw all resident points, cull in the vertex shader.
+            rpass.set_vertex_buffer(0, self.master.slice(..));
+            rpass.draw(0..4, 0..self.resident);
+        }
+    }
+}
+
+fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+fn compute_uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_compute_stage(
+    device: &wgpu::Device,
+    master: &wgpu::Buffer,
+    compacted: &wgpu::Buffer,
+    draw_args: &wgpu::Buffer,
+    camera_buf: &wgpu::Buffer,
+    params_buf: &wgpu::Buffer,
+    compaction_buf: &wgpu::Buffer,
+) -> ComputeStage {
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("compaction-bind-layout"),
+        entries: &[
+            storage_entry(0, true),  // src
+            storage_entry(1, false), // dst
+            storage_entry(2, false), // draw_args
+            compute_uniform_entry(3),
+            compute_uniform_entry(4),
+            compute_uniform_entry(5),
+        ],
+    });
+    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("compaction-bind-group"),
+        layout: &layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: master.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: compacted.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: draw_args.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: camera_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: params_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: compaction_buf.as_entire_binding(),
+            },
+        ],
+    });
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("compaction-shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/compact.wgsl").into()),
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("compaction-pipeline-layout"),
+        bind_group_layouts: &[&layout],
+        push_constant_ranges: &[],
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("compaction-pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: "cs_main",
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    ComputeStage {
+        pipeline,
+        bind_group,
     }
 }
 
@@ -274,9 +471,9 @@ mod tests {
     use crate::data::point::GpuPoint;
     use crate::render::uniforms::{CameraUniform, ParamsUniform};
 
-    /// Build both pipelines (forcing naga to compile the WGSL), upload points, and
-    /// render offscreen in both modes. Skips cleanly if no GPU adapter is available
-    /// (e.g. a headless CI box without a software rasterizer).
+    /// Build the pipelines (forcing WGSL compilation for both the draw and, when
+    /// supported, the compaction compute shader), upload points, run prepare() +
+    /// render offscreen in both modes. Skips cleanly if no GPU adapter is available.
     #[test]
     fn offscreen_render_smoke() {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -304,10 +501,20 @@ mod tests {
         ))
         .expect("request_device failed");
 
+        let flags = adapter.get_downlevel_capabilities().flags;
+        let supports_compaction = flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
+            && flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
+
         let color_format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let depth_format = wgpu::TextureFormat::Depth32Float;
-        // Pipeline creation here compiles the WGSL and validates bind/layout.
-        let mut r = PointCloudRenderer::new(&device, &queue, color_format, depth_format, 1024);
+        let mut r = PointCloudRenderer::new(
+            &device,
+            &queue,
+            color_format,
+            depth_format,
+            1024,
+            supports_compaction,
+        );
 
         let pts: Vec<GpuPoint> = (0..200)
             .map(|i| GpuPoint {
@@ -319,7 +526,9 @@ mod tests {
             })
             .collect();
         assert_eq!(r.append(&queue, &pts), 200);
-        r.update_camera(&queue, &CameraUniform::default());
+        // Camera looking at the cube so the frustum cull keeps points.
+        let cam = crate::camera::OrbitCamera::default().to_uniform(1.0, [64.0, 64.0]);
+        r.update_camera(&queue, &cam);
         r.update_params(&queue, &ParamsUniform::default());
 
         let make_tex = |format, usage| {
@@ -346,6 +555,7 @@ mod tests {
         for mode in [PointMode::AdditiveDensity, PointMode::StructuralOpaque] {
             let mut enc =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+            r.prepare(&queue, &mut enc);
             {
                 let mut rpass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,

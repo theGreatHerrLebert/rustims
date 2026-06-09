@@ -131,6 +131,11 @@ impl App {
 
         log::info!("adapter: {:?}", adapter.get_info());
         let limits = adapter.limits();
+        // GPU compaction needs compute + indirect execution; fall back to draw-all
+        // (vertex-shader culling) on backends that lack them (e.g. some GL drivers).
+        let dl_flags = adapter.get_downlevel_capabilities().flags;
+        let supports_compaction = dl_flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
+            && dl_flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("tims-viewer-device"),
@@ -172,13 +177,21 @@ impl App {
             .min((total as usize).max(1))
             .max(1) as u32;
         log::info!(
-            "point budget={} capacity={} (device max_buffer_size={} MiB)",
+            "point budget={} capacity={} compaction={} (device max_buffer_size={} MiB)",
             plan.budget,
             capacity,
+            supports_compaction,
             limits.max_buffer_size / (1024 * 1024)
         );
 
-        let points = PointCloudRenderer::new(&device, &queue, format, DEPTH_FORMAT, capacity);
+        let points = PointCloudRenderer::new(
+            &device,
+            &queue,
+            format,
+            DEPTH_FORMAT,
+            capacity,
+            supports_compaction,
+        );
 
         let n_colormaps = COLORMAP_NAMES.len() as u32;
         let mut state = AppState::new(plan.meta.bounds, total, n_colormaps);
@@ -355,6 +368,9 @@ impl Gfx {
         let user_bufs =
             self.egui_renderer
                 .update_buffers(&self.device, &self.queue, &mut encoder, &tris, &screen_desc);
+
+        // Cull + compact visible points (compute) before the scene pass.
+        self.points.prepare(&self.queue, &mut encoder);
 
         // 3D pass.
         {

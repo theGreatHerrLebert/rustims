@@ -48,6 +48,14 @@ pub struct ParamsUniform {
     pub n_colormaps: u32,
 }
 
+/// Small uniform feeding the compaction compute pass (resident point count).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
+pub struct CompactionUniform {
+    pub point_count: u32,
+    pub _pad: [u32; 3],
+}
+
 impl Default for ParamsUniform {
     fn default() -> Self {
         ParamsUniform {
