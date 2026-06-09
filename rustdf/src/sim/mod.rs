@@ -5,5 +5,6 @@ pub mod dia;
 pub mod handle;
 pub mod lazy_builder;
 pub mod precursor;
+pub mod projector;
 pub mod scheme;
 pub mod utility;
