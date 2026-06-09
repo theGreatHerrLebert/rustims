@@ -398,9 +398,12 @@ impl Gfx {
             aspect,
             [self.config.width as f32, self.config.height as f32],
         );
+        let params = self.state.params();
         self.points.update_camera(&self.queue, &cam);
-        self.points.update_params(&self.queue, &self.state.params());
+        self.points.update_params(&self.queue, &params);
         self.annotations.update_camera(&self.queue, &cam);
+        self.annotations
+            .update_filter(&self.queue, params.filter_min, params.filter_max);
 
         // Volume mode: update the raycaster uniform (incl. the density scale) and
         // (re)upload the grid if it grew.

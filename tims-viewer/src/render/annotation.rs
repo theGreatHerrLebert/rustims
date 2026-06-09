@@ -1,14 +1,33 @@
 //! Annotation overlay renderer: line-list geometry (DDA precursor crosses / DIA
 //! isolation-window boxes) drawn over the scene, always visible (depth-test Always).
 
+use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use super::uniforms::CameraUniform;
+
+/// Normalized-cube window the overlay is clipped to (xyz; w unused).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct FilterUniform {
+    min: [f32; 4],
+    max: [f32; 4],
+}
+
+impl Default for FilterUniform {
+    fn default() -> Self {
+        FilterUniform {
+            min: [-1.0, -1.0, -1.0, 0.0],
+            max: [1.0, 1.0, 1.0, 0.0],
+        }
+    }
+}
 
 pub struct AnnotationRenderer {
     vbuf: Option<wgpu::Buffer>,
     vcount: u32,
     camera_buf: wgpu::Buffer,
+    filter_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     pipeline: wgpu::RenderPipeline,
 }
@@ -24,26 +43,38 @@ impl AnnotationRenderer {
             contents: bytemuck::bytes_of(&CameraUniform::default()),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
+        let filter_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("annotation-filter"),
+            contents: bytemuck::bytes_of(&FilterUniform::default()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let uniform_entry = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
         let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("annotation-bind-layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
+            entries: &[uniform_entry(0), uniform_entry(1)],
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("annotation-bind-group"),
             layout: &bind_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buf.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: filter_buf.as_entire_binding(),
+                },
+            ],
         });
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("annotation-shader"),
@@ -97,6 +128,7 @@ impl AnnotationRenderer {
             vbuf: None,
             vcount: 0,
             camera_buf,
+            filter_buf,
             bind_group,
             pipeline,
         }
@@ -104,6 +136,15 @@ impl AnnotationRenderer {
 
     pub fn update_camera(&self, queue: &wgpu::Queue, cam: &CameraUniform) {
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(cam));
+    }
+
+    /// Set the normalized-cube window the overlay is clipped to.
+    pub fn update_filter(&self, queue: &wgpu::Queue, min: [f32; 4], max: [f32; 4]) {
+        queue.write_buffer(
+            &self.filter_buf,
+            0,
+            bytemuck::bytes_of(&FilterUniform { min, max }),
+        );
     }
 
     /// Upload line-list vertices (pairs = segments). Recreates the buffer.

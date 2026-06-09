@@ -213,9 +213,11 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
     let camera = OrbitCamera::default();
     let aspect = opts.width as f32 / opts.height as f32;
     let cam_uniform = camera.to_uniform(aspect, [opts.width as f32, opts.height as f32]);
+    let params = state.params();
     points.update_camera(&queue, &cam_uniform);
-    points.update_params(&queue, &state.params());
+    points.update_params(&queue, &params);
     annotations.update_camera(&queue, &cam_uniform);
+    annotations.update_filter(&queue, params.filter_min, params.filter_max);
     if opts.volume {
         let mut vu = state.volume_uniform(camera.inv_view_proj(aspect));
         vu.density_scale = grid.density_scale();
