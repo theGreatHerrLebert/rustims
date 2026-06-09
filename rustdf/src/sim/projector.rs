@@ -23,8 +23,10 @@ use crate::sim::scheme::{
     AcquisitionEvent, AcquisitionScheme, DataMode, IsolationWindow, RepeatPolicy,
 };
 use mscore::algorithm::utility::{
-    calculate_abundance_gaussian, calculate_frame_abundance_emg, calculate_frame_occurrence_emg,
-    calculate_scan_occurrence_gaussian, normal_cdf_range, project_emg_over_events_par,
+    calculate_abundance_gaussian, calculate_frame_abundances_emg_par,
+    calculate_frame_occurrences_emg_par, calculate_scan_abundances_gaussian_par,
+    calculate_scan_occurrence_gaussian, calculate_scan_occurrences_gaussian_par, normal_cdf_range,
+    project_emg_over_events_par,
 };
 use std::collections::HashMap;
 
@@ -315,37 +317,101 @@ pub fn project_time_legacy(
     step_size: f64,
     n_steps: Option<usize>,
     remove_epsilon: f64,
+    num_threads: usize,
 ) -> Vec<Vec<(u32, f64)>> {
     assert_eq!(frame_ids.len(), frame_times.len(), "frame_ids/frame_times length mismatch");
     let n = frame_ids.len();
-    // time_map keyed by frame id (the abundance kernel looks up by the values we
-    // pass as occurrences; we pass frame ids, so key by frame id).
-    let time_map: HashMap<i32, f64> =
-        frame_ids.iter().zip(frame_times).map(|(&id, &t)| (id as i32, t)).collect();
-    (0..rt_mus.len())
-        .map(|k| {
-            let (mu, sigma, lambda) = (rt_mus[k], rt_sigmas[k], rt_lambdas[k]);
-            let positions =
-                calculate_frame_occurrence_emg(frame_times, mu, sigma, lambda, target_p, step_size, n_steps);
-            // Translate 1-indexed positions -> frame ids (robust to non-1..N).
-            let occ_ids: Vec<i32> = positions
-                .iter()
+    let nt = num_threads.max(1);
+    // Batched + parallel, exactly the kernels the legacy job used.
+    let positions = calculate_frame_occurrences_emg_par(
+        frame_times,
+        rt_mus.to_vec(),
+        rt_sigmas.to_vec(),
+        rt_lambdas.to_vec(),
+        target_p,
+        step_size,
+        nt,
+        n_steps,
+    );
+    // Translate 1-indexed positions -> frame ids (robust to non-1..N).
+    let occ_ids: Vec<Vec<i32>> = positions
+        .iter()
+        .map(|ps| {
+            ps.iter()
                 .map(|&p| {
                     assert!(p >= 1 && (p as usize) <= n, "occurrence position {p} out of range");
                     frame_ids[(p - 1) as usize] as i32
                 })
-                .collect();
-            let abund = calculate_frame_abundance_emg(
-                &time_map, &occ_ids, mu, sigma, lambda, rt_cycle_length, n_steps,
-            );
-            // Apply the legacy remove_epsilon occurrence filter.
-            occ_ids
-                .into_iter()
+                .collect()
+        })
+        .collect();
+    // Abundance keyed by frame id (we pass ids as occurrences).
+    let time_map: HashMap<i32, f64> =
+        frame_ids.iter().zip(frame_times).map(|(&id, &t)| (id as i32, t)).collect();
+    let abund = calculate_frame_abundances_emg_par(
+        &time_map,
+        occ_ids.clone(),
+        rt_mus.to_vec(),
+        rt_sigmas.to_vec(),
+        rt_lambdas.to_vec(),
+        rt_cycle_length,
+        nt,
+        n_steps,
+    );
+    occ_ids
+        .into_iter()
+        .zip(abund)
+        .map(|(ids, ab)| {
+            ids.into_iter()
                 .map(|id| id as u32)
-                .zip(abund)
+                .zip(ab)
                 .filter(|(_, a)| *a > remove_epsilon)
                 .collect()
         })
+        .collect()
+}
+
+/// Batched + parallel LegacyCompat scan projection over many ions (the kernels
+/// the legacy job used). `means`/`sigmas` are the original per-ion 1/K0
+/// mean+std; `scan_ids`/`scan_mobilities` ascending+aligned (shared by all ions).
+/// Returns one `(scan, abundance)` list per ion. Requires positive sigmas (real
+/// data); use [`project_mobility_ion_legacy`] for the point-mass-guarded single-
+/// ion path.
+pub fn project_mobility_legacy_par(
+    means: &[f64],
+    sigmas: &[f64],
+    scan_ids: &[u32],
+    scan_mobilities: &[f64],
+    im_cycle_length: f64,
+    target_p: f64,
+    step_size: f64,
+    num_threads: usize,
+) -> Vec<Vec<(i32, f64)>> {
+    assert_eq!(scan_ids.len(), scan_mobilities.len(), "scan_ids/mobilities length mismatch");
+    let nt = num_threads.max(1);
+    let occ = calculate_scan_occurrences_gaussian_par(
+        scan_mobilities,
+        means.to_vec(),
+        sigmas.to_vec(),
+        target_p,
+        step_size,
+        5.0,
+        5.0,
+        nt,
+    );
+    let time_map: HashMap<i32, f64> =
+        scan_ids.iter().zip(scan_mobilities).map(|(&id, &m)| (id as i32, m)).collect();
+    let abund = calculate_scan_abundances_gaussian_par(
+        &time_map,
+        occ.clone(),
+        means.to_vec(),
+        sigmas.to_vec(),
+        im_cycle_length,
+        nt,
+    );
+    occ.into_iter()
+        .zip(abund)
+        .map(|(o, a)| o.into_iter().zip(a).collect())
         .collect()
 }
 
@@ -711,7 +777,7 @@ mod tests {
         // f64 inputs (LegacyCompat takes legacy-precision params directly).
         let (mu, sigma, lambda) = (3.0_f64, 0.4_f64, 0.6_f64);
         let out = project_time_legacy(
-            &[mu], &[sigma], &[lambda], &frame_ids, &frame_times, rt_cycle, 0.9999, 0.01, None, -1.0,
+            &[mu], &[sigma], &[lambda], &frame_ids, &frame_times, rt_cycle, 0.9999, 0.01, None, -1.0, 1,
         );
 
         // Raw kernel call with identical inputs + the same position->id mapping.

@@ -368,8 +368,9 @@ impl PyThermoRawWriter {
 /// f64 EMG params + the full frames table; returns one list of
 /// `(frame_id, abundance)` per peptide.
 #[pyfunction]
-#[pyo3(signature = (rt_mus, rt_sigmas, rt_lambdas, frame_ids, frame_times, rt_cycle_length, target_p, step_size, remove_epsilon, n_steps=None))]
+#[pyo3(signature = (rt_mus, rt_sigmas, rt_lambdas, frame_ids, frame_times, rt_cycle_length, target_p, step_size, remove_epsilon, n_steps=None, num_threads=4))]
 pub fn legacy_frame_projection(
+    py: Python<'_>,
     rt_mus: Vec<f64>,
     rt_sigmas: Vec<f64>,
     rt_lambdas: Vec<f64>,
@@ -380,11 +381,14 @@ pub fn legacy_frame_projection(
     step_size: f64,
     remove_epsilon: f64,
     n_steps: Option<usize>,
+    num_threads: usize,
 ) -> Vec<Vec<(u32, f64)>> {
-    rustdf::sim::projector::project_time_legacy(
-        &rt_mus, &rt_sigmas, &rt_lambdas, &frame_ids, &frame_times, rt_cycle_length, target_p,
-        step_size, n_steps, remove_epsilon,
-    )
+    py.allow_threads(|| {
+        rustdf::sim::projector::project_time_legacy(
+            &rt_mus, &rt_sigmas, &rt_lambdas, &frame_ids, &frame_times, rt_cycle_length, target_p,
+            step_size, n_steps, remove_epsilon, num_threads,
+        )
+    })
 }
 
 /// LegacyCompat scan (mobility) projection for one ion — the exact Rust path
@@ -407,6 +411,31 @@ pub fn legacy_scan_projection(
     )
 }
 
+/// Batched + parallel LegacyCompat scan projection over many ions
+/// (`rustdf::sim::projector::project_mobility_legacy_par`) — the kernels the
+/// legacy job used. `means`/`sigmas` per ion; `scan_ids`/`scan_mobilities`
+/// ascending+aligned, shared. Returns one `(scan, abundance)` list per ion.
+#[pyfunction]
+#[pyo3(signature = (means, sigmas, scan_ids, scan_mobilities, im_cycle_length, target_p, step_size, num_threads=4))]
+pub fn legacy_scan_projection_par(
+    py: Python<'_>,
+    means: Vec<f64>,
+    sigmas: Vec<f64>,
+    scan_ids: Vec<u32>,
+    scan_mobilities: Vec<f64>,
+    im_cycle_length: f64,
+    target_p: f64,
+    step_size: f64,
+    num_threads: usize,
+) -> Vec<Vec<(i32, f64)>> {
+    py.allow_threads(|| {
+        rustdf::sim::projector::project_mobility_legacy_par(
+            &means, &sigmas, &scan_ids, &scan_mobilities, im_cycle_length, target_p, step_size,
+            num_threads,
+        )
+    })
+}
+
 /// Whether this build includes the Thermo `.raw` extractor.
 #[pyfunction]
 pub fn has_thermo() -> bool {
@@ -426,6 +455,7 @@ pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyThermoRawWriter>()?;
     m.add_function(wrap_pyfunction!(legacy_frame_projection, m)?)?;
     m.add_function(wrap_pyfunction!(legacy_scan_projection, m)?)?;
+    m.add_function(wrap_pyfunction!(legacy_scan_projection_par, m)?)?;
     m.add_function(wrap_pyfunction!(has_thermo, m)?)?;
     m.add_function(wrap_pyfunction!(has_sciex, m)?)?;
     Ok(())
