@@ -4,11 +4,10 @@
 //! point budget, packs `GpuPoint`s, and sends them to the render thread over a bounded
 //! channel so the event loop never blocks on I/O and the cloud builds progressively.
 //!
-//! Phase 1 uses **per-frame stride sampling** with an exact per-frame quota (so the
-//! total can never exceed the budget) and stores each kept point's weight `1/p` for
-//! brightness-invariant additive rendering. Stratified, peak-preserving sampling is the
-//! Phase 1.5 / Phase 3 upgrade (see the plan); the message/generation plumbing here is
-//! already shaped for it.
+//! Sampling is **stratified**: a global systematic stride provides a count-bounded,
+//! RT-unbiased density base (each kept point weighted `1/p` for brightness-invariant
+//! additive rendering), and a coarse spatial grid additionally keeps the brightest
+//! point in every occupied cell so sparse high-intensity features always survive.
 
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -113,14 +112,27 @@ pub fn stride_for(total_estimate: u64, budget: usize) -> usize {
     }
 }
 
-/// Offset of the first kept index in a frame, given how many source points were already
-/// seen (`phase = points_seen % stride`). Keeping `offset, offset+stride, ...` in every
-/// frame is exactly global systematic sampling over the concatenated point stream, so
-/// the total kept is `ceil(total/stride) <= budget` and each kept point truly stands in
-/// for `stride` source points (weight `1/p`).
+/// Coarse spatial grid for peak preservation (m/z, 1/K0, RT cells).
+const PEAK_DIMS: [u32; 3] = [128, 64, 128];
+/// Placeholder point for the peak-grid HashMap entry API.
+const ZERO_POINT: GpuPoint = GpuPoint {
+    pos: [0.0; 3],
+    intensity: 0.0,
+    weight: 1.0,
+    flags: 0,
+    _pad: [0, 0],
+};
+
+/// Map a normalized-cube position to a coarse peak-grid cell index.
 #[inline]
-fn systematic_offset(phase: usize, stride: usize) -> usize {
-    (stride - phase % stride) % stride
+fn peak_cell(pos: [f32; 3]) -> u32 {
+    let axis = |n: f32, dim: u32| -> u32 {
+        (((n * 0.5 + 0.5).clamp(0.0, 1.0) * dim as f32) as u32).min(dim - 1)
+    };
+    let x = axis(pos[0], PEAK_DIMS[0]);
+    let y = axis(pos[1], PEAK_DIMS[1]);
+    let z = axis(pos[2], PEAK_DIMS[2]);
+    x + PEAK_DIMS[0] * (y + PEAK_DIMS[1] * z)
 }
 
 #[allow(unused_assignments)] // final flush! reassigns `chunk` which is then dropped
@@ -132,8 +144,19 @@ fn run_loader(
     tx: &Sender<LoadMsg>,
     cmd_rx: &Receiver<LoadCmd>,
 ) {
-    let stride = stride_for(total_estimate, budget);
+    // Stratified sampling: spend ~85% of the budget on a systematic density base, and
+    // reserve the rest for per-cell intensity PEAKS so sparse high-intensity features
+    // always survive (pure systematic sampling can statistically miss them).
+    let systematic_budget = ((budget * 85) / 100).max(1);
+    let stride = stride_for(total_estimate, systematic_budget);
     let weight = stride as f32;
+    let mut systematic_count: u64 = 0;
+    // Flat peak grid indexed by cell: (best intensity, best point) over ALL points.
+    // A direct-indexed Vec (no hashing) is far faster than a HashMap across the
+    // hundreds of millions of per-point updates. Sentinel intensity -1 = unoccupied.
+    let n_cells = (PEAK_DIMS[0] * PEAK_DIMS[1] * PEAK_DIMS[2]) as usize;
+    let mut peaks: Vec<(f32, GpuPoint)> = vec![(-1.0, ZERO_POINT); n_cells];
+
     // Subsample intensities into a reservoir for percentile defaults.
     let mut reservoir: Vec<f32> = Vec::with_capacity(RESERVOIR_CAP);
     let mut kept_counter: u64 = 0;
@@ -211,16 +234,41 @@ fn run_loader(
     };
 
     let mut last_progress = -1.0f32;
-    // Phase carried ACROSS frames so sampling is global systematic, not per-frame
-    // (per-frame resets overshoot the budget on short frames and bias the kept tail).
-    let mut phase = 0usize;
+    // Cumulative point index across the whole run; keeping every `stride`-th is global
+    // systematic sampling (count-bounded, RT-unbiased).
+    let mut global_i: u64 = 0;
+    let stride_u64 = stride as u64;
+
+    // Per-point handler shared by both sources: update the peak grid for EVERY point,
+    // and emit every stride-th into the systematic density base.
+    macro_rules! handle_point {
+        ($mz:expr, $im:expr, $rt:expr, $it:expr, $ms2:expr) => {{
+            let intensity = $it;
+            let pos = bounds.normalize($mz, $im, $rt);
+            let flags = if $ms2 { GpuPoint::MS2_FLAG } else { 0 };
+            // Peak: keep the highest-intensity point per coarse cell.
+            let slot = &mut peaks[peak_cell(pos) as usize];
+            if intensity > slot.0 {
+                slot.0 = intensity;
+                slot.1 = GpuPoint { pos, intensity, weight: 1.0, flags, _pad: [0, 0] };
+            }
+            // Systematic density base.
+            if global_i % stride_u64 == 0 {
+                chunk.push(GpuPoint { pos, intensity, weight, flags, _pad: [0, 0] });
+                systematic_count += 1;
+                reservoir_push(&mut reservoir, &mut kept_counter, sample_every, intensity);
+                if chunk.len() >= CHUNK_POINTS {
+                    flush!();
+                }
+            }
+            global_i += 1;
+        }};
+    }
 
     for idx in 0..n_frames {
         if cancelled!() {
             return;
         }
-
-        // Gather this frame's points as (pos_norm, intensity, is_ms2).
         match &mode {
             LoaderMode::Real { frame_ids, .. } => {
                 let ds = dataset.as_ref().unwrap();
@@ -232,55 +280,13 @@ fn run_loader(
                 let it = frame.ims_frame.intensity.as_slice();
                 // Validate parallel arrays — never zip past the shortest.
                 let n = mz.len().min(im.len()).min(it.len());
-                let offset = systematic_offset(phase, stride);
-                phase = (phase + n) % stride;
-                let mut j = offset;
-                while j < n {
-                    push_point(
-                        &mut chunk,
-                        &bounds,
-                        mz[j],
-                        im[j],
-                        rt,
-                        it[j] as f32,
-                        weight,
-                        is_ms2,
-                    );
-                    reservoir_push(&mut reservoir, &mut kept_counter, sample_every, it[j] as f32);
-                    if chunk.len() >= CHUNK_POINTS {
-                        flush!();
-                    }
-                    j += stride;
+                for j in 0..n {
+                    handle_point!(mz[j], im[j], rt, it[j] as f32, is_ms2);
                 }
             }
             LoaderMode::Demo(d) => {
-                let pts = d.frame(idx);
-                let n = pts.len();
-                let offset = systematic_offset(phase, stride);
-                phase = (phase + n) % stride;
-                let mut j = offset;
-                while j < n {
-                    let p = pts[j];
-                    push_point(
-                        &mut chunk,
-                        &bounds,
-                        p.mz,
-                        p.im,
-                        p.rt,
-                        p.intensity as f32,
-                        weight,
-                        p.is_ms2,
-                    );
-                    reservoir_push(
-                        &mut reservoir,
-                        &mut kept_counter,
-                        sample_every,
-                        p.intensity as f32,
-                    );
-                    if chunk.len() >= CHUNK_POINTS {
-                        flush!();
-                    }
-                    j += stride;
+                for p in d.frame(idx) {
+                    handle_point!(p.mz, p.im, p.rt, p.intensity as f32, p.is_ms2);
                 }
             }
         }
@@ -293,6 +299,22 @@ fn run_loader(
     }
 
     flush!();
+
+    // Emit the brightest peaks to fill the reserved budget headroom. Sort by intensity
+    // so the strongest survive if there are more occupied cells than headroom.
+    let peak_room = budget.saturating_sub(systematic_count as usize);
+    if peak_room > 0 {
+        let mut peak_pts: Vec<(f32, GpuPoint)> =
+            peaks.into_iter().filter(|(i, _)| *i >= 0.0).collect();
+        peak_pts.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        for (_, gp) in peak_pts.into_iter().take(peak_room) {
+            chunk.push(gp);
+            if chunk.len() >= CHUNK_POINTS {
+                flush!();
+            }
+        }
+        flush!();
+    }
 
     // Robust intensity range from the reservoir.
     if !reservoir.is_empty() {
@@ -308,27 +330,6 @@ fn run_loader(
 
     send_cancellable!(LoadMsg::Done {
         generation: GENERATION,
-    });
-}
-
-#[inline]
-fn push_point(
-    chunk: &mut Vec<GpuPoint>,
-    bounds: &AxisBounds,
-    mz: f64,
-    im: f64,
-    rt: f64,
-    intensity: f32,
-    weight: f32,
-    is_ms2: bool,
-) {
-    let pos = bounds.normalize(mz, im, rt);
-    chunk.push(GpuPoint {
-        pos,
-        intensity,
-        weight,
-        flags: if is_ms2 { GpuPoint::MS2_FLAG } else { 0 },
-        _pad: [0, 0],
     });
 }
 
@@ -371,26 +372,38 @@ mod tests {
     }
 
     #[test]
-    fn systematic_sampling_bounded_over_uneven_frames() {
-        // Carrying phase across frames keeps exactly ceil(total/stride) points, even
-        // with short/empty frames — per-frame offset resets would overshoot this.
-        for stride in [2usize, 3, 5, 7] {
-            let frame_lens = [1usize, 2, 1, 0, 9, 4, 3, 1, 1, 1];
-            let total: usize = frame_lens.iter().sum();
-            let mut phase = 0usize;
-            let mut kept = 0usize;
+    fn cumulative_systematic_sampling_is_bounded() {
+        // The loader keeps every stride-th point by a cumulative global index, which is
+        // global systematic sampling: kept == ceil(total/stride), independent of how the
+        // points are split into frames.
+        for stride in [2u64, 3, 5, 7] {
+            let frame_lens = [1u64, 2, 1, 0, 9, 4, 3, 1, 1, 1];
+            let total: u64 = frame_lens.iter().sum();
+            let mut global_i = 0u64;
+            let mut kept = 0u64;
             for &n in &frame_lens {
-                let offset = systematic_offset(phase, stride);
-                phase = (phase + n) % stride;
-                let mut j = offset;
-                while j < n {
-                    kept += 1;
-                    j += stride;
+                for _ in 0..n {
+                    if global_i % stride == 0 {
+                        kept += 1;
+                    }
+                    global_i += 1;
                 }
             }
             let bound = total.div_ceil(stride);
             assert_eq!(kept, bound, "stride={stride}: kept {kept} != ceil bound {bound}");
         }
+    }
+
+    #[test]
+    fn peak_cell_in_range_and_distinct() {
+        // Corners map inside the grid; opposite corners differ.
+        let lo = peak_cell([-1.0, -1.0, -1.0]);
+        let hi = peak_cell([1.0, 1.0, 1.0]);
+        let max = PEAK_DIMS[0] * PEAK_DIMS[1] * PEAK_DIMS[2];
+        assert_eq!(lo, 0);
+        assert!(hi < max && hi != lo);
+        // Out-of-range clamps rather than overflowing.
+        assert!(peak_cell([5.0, -5.0, 2.0]) < max);
     }
 
     #[test]
