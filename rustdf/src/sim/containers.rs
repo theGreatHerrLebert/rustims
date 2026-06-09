@@ -245,7 +245,10 @@ impl Default for MobilityEnv {
 
 impl MobilityEnv {
     /// CCS for an ion observed at `one_over_k0` (legacy 1/K0 -> trunk CCS).
+    /// `charge` is clamped to >= 1 (the conversion is only defined for real
+    /// ions; the pipeline never produces charge < 1, asserted in debug).
     pub fn ccs_from_inv_mobility(&self, one_over_k0: f64, mz: f64, charge: i8) -> f64 {
+        debug_assert!(charge >= 1, "ion charge must be >= 1, got {charge}");
         one_over_reduced_mobility_to_ccs(
             one_over_k0,
             mz,
@@ -256,7 +259,9 @@ impl MobilityEnv {
         )
     }
     /// 1/K0 for an ion of `ccs` under this environment (trunk CCS -> device 1/K0).
+    /// `charge` is clamped to >= 1 (see `ccs_from_inv_mobility`).
     pub fn inv_mobility_from_ccs(&self, ccs: f64, mz: f64, charge: i8) -> f64 {
+        debug_assert!(charge >= 1, "ion charge must be >= 1, got {charge}");
         ccs_to_one_over_reduced_mobility(
             ccs,
             mz,
@@ -298,8 +303,10 @@ pub struct IonScalar {
     pub relative_abundance: f32,
     pub mz: f64,
     pub ccs: f64,
-    /// Physical mobility spread (conformer width), in 1/K0 units as stored.
-    pub ccs_std: f32,
+    /// Legacy mobility spread (conformer width) in **1/K0 units** as stored — not
+    /// CCS-space (renamed from a misleading `ccs_std`). Transforming the spread
+    /// into CCS space is deferred; until then read it as a 1/K0 std.
+    pub inv_mobility_std: f32,
     /// Isotope composition (m/z + relative intensity), pre-detector.
     pub simulated_spectrum: MzSpectrum,
     pub condition_id: Option<i64>,
@@ -516,7 +523,7 @@ mod scalar_entity_tests {
             relative_abundance: 1.0,
             mz: 500.0,
             ccs: 350.0,
-            ccs_std: 0.0,
+            inv_mobility_std: 0.0,
             simulated_spectrum: MzSpectrum::new(vec![500.0], vec![1.0]),
             condition_id: None,
         };

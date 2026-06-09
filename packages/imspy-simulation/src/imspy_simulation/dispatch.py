@@ -20,8 +20,9 @@ mobility environment mirrors the timsTOF constants used by
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Optional
 
@@ -107,15 +108,44 @@ def read_schema_version(conn: sqlite3.Connection) -> int:
 # --------------------------------------------------------------------------- #
 # experiment_conditions table + reserved condition_id FK
 # --------------------------------------------------------------------------- #
+# SQLite column types for the ExperimentConditions fields (so the table can be
+# created with a real PRIMARY KEY rather than pandas' typeless `to_sql`).
+_CONDITION_COL_TYPES = {
+    "condition_id": "INTEGER PRIMARY KEY",
+    "lc_method": "TEXT",
+    "source": "TEXT",
+    "gradient_length_s": "REAL",
+    "ccs_model": "TEXT",
+    "rt_model": "TEXT",
+    "drift_gas": "TEXT",
+    "drift_gas_mass": "REAL",
+    "temperature_c": "REAL",
+    "t_diff": "REAL",
+    "run_seed": "INTEGER",
+    "notes": "TEXT",
+}
+
+
 def write_experiment_conditions(
     conn: sqlite3.Connection, conditions: ExperimentConditions
 ) -> int:
     """Write a single experiment-conditions row, returning its ``condition_id``.
 
-    Replaces the table (P1 stores one row per run); the returned id is what a
-    future per-analyte override would reference via ``condition_id``.
+    The table is (re)created with ``condition_id`` as a real PRIMARY KEY — the
+    value a per-analyte override on ``peptides``/``ions`` references via its
+    (soft) ``condition_id`` column. P1 stores one row per run.
     """
-    conditions.to_frame().to_sql(_CONDITIONS_TABLE, conn, if_exists="replace", index=False)
+    fields = list(_CONDITION_COL_TYPES)
+    cols_ddl = ", ".join(f"{f} {_CONDITION_COL_TYPES[f]}" for f in fields)
+    placeholders = ", ".join("?" for _ in fields)
+    data = asdict(conditions)
+    cur = conn.cursor()
+    cur.execute(f"DROP TABLE IF EXISTS {_CONDITIONS_TABLE}")
+    cur.execute(f"CREATE TABLE {_CONDITIONS_TABLE} ({cols_ddl})")
+    cur.execute(
+        f"INSERT INTO {_CONDITIONS_TABLE} ({', '.join(fields)}) VALUES ({placeholders})",
+        [data[f] for f in fields],
+    )
     conn.commit()
     return conditions.condition_id
 
@@ -131,18 +161,32 @@ def read_experiment_conditions(conn: sqlite3.Connection) -> Optional[ExperimentC
     return ExperimentConditions.from_row(df.iloc[0])
 
 
-def ensure_condition_fk(conn: sqlite3.Connection, tables=("peptides", "ions")) -> None:
-    """Reserve a nullable ``condition_id`` column on the given tables.
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
-    Additive: existing rows get NULL (interpreted as "the run's single
-    experiment_conditions row"). Skips tables that don't exist or already have
-    the column, so it is safe to call unconditionally after table creation.
+
+def _safe_ident(name: str) -> str:
+    """Reject anything that isn't a bare SQL identifier (interpolation guard)."""
+    if not _IDENT_RE.match(name):
+        raise ValueError(f"unsafe SQL identifier: {name!r}")
+    return name
+
+
+def ensure_condition_fk(conn: sqlite3.Connection, tables=("peptides", "ions")) -> None:
+    """Reserve a nullable ``condition_id`` *soft reference* column on the tables.
+
+    "Soft" because SQLite cannot ``ALTER TABLE ... ADD`` an enforced foreign key
+    without rebuilding the table; the column references
+    ``experiment_conditions.condition_id`` by convention. Existing rows get NULL
+    (interpreted as "the run's single experiment_conditions row"). Skips tables
+    that don't exist or already have the column, so it is safe to call
+    unconditionally after table creation.
     """
     cur = conn.cursor()
     existing = {r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     for table in tables:
         if table not in existing:
             continue
+        table = _safe_ident(table)
         cols = {r[1] for r in cur.execute(f"PRAGMA table_info({table})")}
         if "condition_id" in cols:
             continue
@@ -153,10 +197,15 @@ def ensure_condition_fk(conn: sqlite3.Connection, tables=("peptides", "ions")) -
 def initialize_dispatch_schema(
     conn: sqlite3.Connection, conditions: Optional[ExperimentConditions] = None
 ) -> ExperimentConditions:
-    """One-call P1 setup: stamp version, write conditions, reserve the FK.
+    """One-call P1 setup: stamp version, write conditions, reserve the soft FK.
 
-    Call after the content tables (peptides/ions) exist. Returns the conditions
-    actually written (defaults if none supplied).
+    Returns the conditions actually written (defaults if none supplied).
+
+    IMPORTANT: call this **after all content tables are finalized**. The legacy
+    pipeline writes ``peptides``/``ions`` with pandas ``to_sql(if_exists=
+    "replace")``; any such write *after* this call drops the reserved
+    ``condition_id`` column. This function is intentionally NOT wired into the
+    legacy write path in P1 — it is opt-in foundation only.
     """
     conditions = conditions or ExperimentConditions()
     write_schema_version(conn)
@@ -168,33 +217,44 @@ def initialize_dispatch_schema(
 # --------------------------------------------------------------------------- #
 # Identity contract — stable ids that survive ordering/batching/migration
 # --------------------------------------------------------------------------- #
+def _canonical(*parts) -> bytes:
+    """Length-prefixed join so distinct field tuples can't alias.
+
+    ``("a|b", "c")`` and ``("a", "b|c")`` collide under naive ``|`` joining;
+    prefixing each part with its byte length makes the encoding injective.
+    """
+    out = bytearray()
+    for p in parts:
+        b = str(p).encode("utf-8")
+        out += len(b).to_bytes(8, "little")
+        out += b
+    return bytes(out)
+
+
 def analyte_key(sequence: str, charge: int, decoy: bool = False) -> str:
-    """Content-addressed analyte id: stable across row reordering and migration.
+    """Content-addressed analyte id (128-bit): stable across reordering/migration.
 
     Keyed on chemistry (sequence+charge+decoy), never on row index, so the same
     analyte seeds identically regardless of how the DB was built or batched.
     """
-    h = hashlib.sha1(f"{sequence}|{int(charge)}|{int(decoy)}".encode()).hexdigest()
-    return h[:16]
+    return hashlib.sha256(_canonical(sequence, int(charge), int(decoy))).hexdigest()[:32]
 
 
 def profile_key(instrument: str, scheme_provenance: str) -> str:
-    """Stable id for an InstrumentProfile (instrument kind + scheme provenance)."""
-    h = hashlib.sha1(f"{instrument}|{scheme_provenance}".encode()).hexdigest()
-    return h[:16]
+    """Stable 128-bit id for an Instrument (instrument kind + scheme provenance)."""
+    return hashlib.sha256(_canonical(instrument, scheme_provenance)).hexdigest()[:32]
 
 
 def event_key(cycle_index: int, event_in_cycle: int, controller_counter: int = 0) -> str:
-    """Deterministic event id.
+    """Deterministic 128-bit event id.
 
     Derived from (cycle, position-in-cycle) plus a controller-decision counter,
     NOT emission order — so DDA's dynamically created events (P4) stay
     reproducible. For DIA the controller counter is 0.
     """
-    h = hashlib.sha1(
-        f"{int(cycle_index)}|{int(event_in_cycle)}|{int(controller_counter)}".encode()
-    ).hexdigest()
-    return h[:16]
+    return hashlib.sha256(
+        _canonical(int(cycle_index), int(event_in_cycle), int(controller_counter))
+    ).hexdigest()[:32]
 
 
 def derive_seed(
@@ -203,16 +263,20 @@ def derive_seed(
     analyte_id: str,
     event_id: str,
     noise_component: str,
+    draw: int = 0,
 ) -> int:
-    """Counter-based per-(analyte, event, component) seed.
+    """Counter-based per-(analyte, event, component, draw) seed.
 
-    ``hash(run_seed, profile_id, analyte_id, event_id, noise_component)`` — no
-    thread-local / traversal-order RNG, so noise is reproducible independent of
-    thread scheduling and the same DB yields stable output per instrument.
-    Returns a 64-bit unsigned seed.
+    ``hash(run_seed, profile_id, analyte_id, event_id, noise_component, draw)``
+    over a length-prefixed payload — no thread-local / traversal-order RNG, so
+    noise is reproducible independent of thread scheduling and the same DB
+    yields stable output per instrument. A single seed fixes ONE draw; when a
+    component needs multiple independent draws, increment ``draw`` (do not rely
+    on a stateful RNG's local draw order). Returns a 64-bit unsigned seed.
     """
-    payload = f"{int(run_seed)}|{profile_id}|{analyte_id}|{event_id}|{noise_component}"
-    digest = hashlib.sha256(payload.encode()).digest()
+    digest = hashlib.sha256(
+        _canonical(int(run_seed), profile_id, analyte_id, event_id, noise_component, int(draw))
+    ).digest()
     return int.from_bytes(digest[:8], "little", signed=False)
 
 

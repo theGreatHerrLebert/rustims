@@ -13,6 +13,7 @@ from imspy_simulation.dispatch import (
     SCHEMA_VERSION,
     ExperimentConditions,
     IntensityStage,
+    _safe_ident,
     analyte_key,
     derive_seed,
     ensure_condition_fk,
@@ -90,6 +91,35 @@ def test_seed_is_deterministic_and_component_separated():
     assert a == b
     assert a != c
     assert 0 <= a < 2**64
+
+
+def test_condition_id_is_primary_key(db):
+    initialize_dispatch_schema(db)
+    info = list(db.execute("PRAGMA table_info(experiment_conditions)"))
+    pk_cols = [r[1] for r in info if r[5]]  # r[5] = pk flag
+    assert pk_cols == ["condition_id"]
+
+
+def test_keys_are_128_bit_and_collision_resistant():
+    # 128-bit -> 32 hex chars.
+    assert len(analyte_key("PEPTIDEK", 2)) == 32
+    assert len(profile_key("a", "b")) == 32
+    assert len(event_key(0, 1)) == 32
+    # Length-prefixed payload: the delimiter ambiguity must not collide.
+    assert profile_key("a|b", "c") != profile_key("a", "b|c")
+
+
+def test_derive_seed_draw_index_separates_draws():
+    base = dict(run_seed=1, profile_id="p", analyte_id="a", event_id="e", noise_component="mz")
+    assert derive_seed(**base, draw=0) == derive_seed(**base, draw=0)
+    assert derive_seed(**base, draw=0) != derive_seed(**base, draw=1)
+
+
+def test_safe_ident_rejects_injection():
+    assert _safe_ident("peptides") == "peptides"
+    for bad in ("peptides; DROP TABLE x", "a b", "1abc", ""):
+        with pytest.raises(ValueError):
+            _safe_ident(bad)
 
 
 def test_intensity_stage_chain_is_ordered():

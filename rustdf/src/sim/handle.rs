@@ -187,9 +187,26 @@ impl TimsTofSyntheticsDataHandle {
     // CCS is derived under the supplied `MobilityEnv`.
     // ----------------------------------------------------------------------- //
 
+    /// Reject anything that isn't a bare SQL identifier (PRAGMA can't be
+    /// parameterised, so the table name is interpolated — guard it even though
+    /// all internal callers pass literals).
+    fn assert_ident(name: &str) -> rusqlite::Result<()> {
+        let ok = !name.is_empty()
+            && name.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if ok {
+            Ok(())
+        } else {
+            Err(rusqlite::Error::InvalidParameterName(format!(
+                "unsafe SQL identifier: {name:?}"
+            )))
+        }
+    }
+
     /// True if `table` exists and has `column` (used to stay forward/backward
     /// compatible across schema versions without per-row failures).
     fn table_has_column(&self, table: &str, column: &str) -> rusqlite::Result<bool> {
+        Self::assert_ident(table)?;
         let mut stmt = self
             .connection
             .prepare(&format!("PRAGMA table_info({})", table))?;
@@ -205,8 +222,13 @@ impl TimsTofSyntheticsDataHandle {
 
     /// Read the run's mobility environment from `experiment_conditions`, falling
     /// back to timsTOF defaults when the table/columns are absent (pre-P1 DB).
+    /// Requires all three env columns; a partially-migrated table falls back to
+    /// defaults rather than erroring on a missing column.
     pub fn read_mobility_env(&self) -> rusqlite::Result<MobilityEnv> {
-        if !self.table_has_column("experiment_conditions", "drift_gas_mass")? {
+        let complete = self.table_has_column("experiment_conditions", "drift_gas_mass")?
+            && self.table_has_column("experiment_conditions", "temperature_c")?
+            && self.table_has_column("experiment_conditions", "t_diff")?;
+        if !complete {
             return Ok(MobilityEnv::default());
         }
         let mut stmt = self.connection.prepare(
@@ -264,6 +286,7 @@ impl TimsTofSyntheticsDataHandle {
     pub fn read_ions_scalar(&self, env: &MobilityEnv) -> rusqlite::Result<Vec<IonScalar>> {
         let has_ccs = self.table_has_column("ions", "ccs")?;
         let has_condition = self.table_has_column("ions", "condition_id")?;
+        let has_inv_std = self.table_has_column("ions", "inv_mobility_gru_predictor_std")?;
         let mut stmt = self.connection.prepare("SELECT * FROM ions")?;
         let env = *env;
         let iter = stmt.query_map([], move |row| {
@@ -284,9 +307,13 @@ impl TimsTofSyntheticsDataHandle {
                 let one_over_k0: f64 = row.get("inv_mobility_gru_predictor")?;
                 env.ccs_from_inv_mobility(one_over_k0, mz, charge)
             };
-            let ccs_std: f32 = row
-                .get::<_, f32>("inv_mobility_gru_predictor_std")
-                .unwrap_or(0.0);
+            // Probe presence explicitly; propagate real conversion errors
+            // (only a genuinely absent column defaults to 0.0).
+            let inv_mobility_std: f32 = if has_inv_std {
+                row.get("inv_mobility_gru_predictor_std")?
+            } else {
+                0.0
+            };
             let condition_id = if has_condition {
                 row.get::<_, Option<i64>>("condition_id")?
             } else {
@@ -300,7 +327,7 @@ impl TimsTofSyntheticsDataHandle {
                 relative_abundance: row.get("relative_abundance")?,
                 mz,
                 ccs,
-                ccs_std,
+                inv_mobility_std,
                 simulated_spectrum,
                 condition_id,
             })
