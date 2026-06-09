@@ -39,8 +39,9 @@ _acq = imspy_connector.py_acquisition
 
 
 def projector_available() -> bool:
-    """Whether the installed connector exposes the LegacyCompat projector."""
-    return hasattr(_acq, "legacy_frame_projection") and hasattr(_acq, "legacy_scan_projection")
+    """Whether the installed connector exposes the projector bindings this
+    writer actually calls (the batched frame + parallel-scan ones)."""
+    return hasattr(_acq, "legacy_frame_projection") and hasattr(_acq, "legacy_scan_projection_par")
 
 
 def accurate_available() -> bool:
@@ -205,9 +206,15 @@ def _write_frame_distributions_accurate(
     frame_times = [float(r[1]) for r in frames]
     if len(frame_times) < 2:
         raise ValueError("frames table needs >= 2 rows")
-    # Accurate event intervals: each frame's TRUE exposure window = the gap from
-    # the previous frame's time to its own (the first frame extrapolates the
-    # leading gap). Reduces to the legacy fixed bin for uniform spacing.
+    # Accurate event intervals from the frames table: each frame's exposure
+    # window = [previous timestamp, this timestamp] (first frame extrapolates the
+    # leading gap). This assumes CONTIGUOUS frames with no inter-frame dead time
+    # — which holds for synthetic timsTOF (frame time = frame_id * rt_cycle) and
+    # reduces to the legacy fixed bin for uniform spacing. The frames table
+    # carries no duration/dead-time information, so dead-time-aware exposure
+    # intervals (instruments with idle gaps) must come from an AcquisitionScheme
+    # via rustdf EventTimeline::from_scheme (the proper scheme-driven path), not
+    # from this DB-only writer.
     starts, ends = [], []
     for i, t in enumerate(frame_times):
         prev = frame_times[i - 1] if i > 0 else t - (frame_times[1] - frame_times[0])
