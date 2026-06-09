@@ -1,0 +1,50 @@
+[package]
+name = "tims-viewer"
+version = "0.1.0"
+edition = "2021"
+authors = ["David Teschner <davidteschner@googlemail.com>"]
+description = "Native GPU viewer for Bruker timsTOF raw data (point cloud + volume rendering)."
+license = "MIT"
+repository = "https://github.com/theGreatHerrLebert/rustims"
+rust-version = "1.84"
+
+[[bin]]
+name = "tims-viewer"
+path = "src/main.rs"
+
+[dependencies]
+# Local data layer (zero-copy access to raw timsTOF frames)
+rustdf = { path = "../rustdf", version = "0.4.1" }
+mscore = { path = "../mscore", version = "0.4.1" }
+
+# GPU + windowing + UI. Pin the triple exactly: this is a known-compatible set
+# (egui-wgpu 0.29 -> wgpu 22, egui-winit 0.29 -> winit 0.30). Broad ranges risk a
+# resolution that mixes incompatible majors.
+wgpu = "=22.1.0"
+winit = "=0.30.5"
+egui = "=0.29.1"
+egui-wgpu = "=0.29.1"
+egui-winit = { version = "=0.29.1", default-features = false, features = ["links", "wayland", "x11"] }
+
+# Math / GPU data
+bytemuck = { version = "1.21", features = ["derive"] }
+glam = { version = "0.29", features = ["bytemuck"] }
+
+# Async bridge for wgpu adapter/device requests
+pollster = "0.3"
+
+# Misc
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"
+clap = { version = "4.5", features = ["derive"] }
+rayon = "1.10"
+crossbeam-channel = "0.5"
+
+[features]
+default = []
+# Pack positions/intensity as f16 to roughly double on-GPU point capacity.
+compact = []
+
+# This crate is a leaf binary; keep its own release profile knobs consistent with the
+# workspace (panic=abort etc. are inherited from the workspace [profile.release]).
