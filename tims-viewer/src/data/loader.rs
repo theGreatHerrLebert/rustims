@@ -31,8 +31,12 @@ use super::point::{AxisBounds, GpuPoint};
 /// (Phase 1.5); the single Phase-1 load uses generation 0.
 #[allow(dead_code)]
 pub enum LoadMsg {
-    /// A batch of packed points belonging to `generation`.
+    /// A batch of systematic (density-base) points belonging to `generation`.
     Chunk { generation: u64, points: Vec<GpuPoint> },
+    /// A batch of peak points (per-cell brightest) — display-only enrichment for the
+    /// point cloud; consumers must NOT add these to the volume density (they would
+    /// double-count) and they are not part of the systematic density base.
+    PeakChunk { points: Vec<GpuPoint> },
     /// Fractional load progress in `[0, 1]`.
     Progress(f32),
     /// Robust intensity range (p1/p99) for transfer-function defaults.
@@ -158,11 +162,12 @@ fn run_loader(
     let stride = stride_for(total_estimate, systematic_budget);
     let weight = stride as f32;
     let mut systematic_count: u64 = 0;
-    // Flat peak grid indexed by cell: (best intensity, best point) over ALL points.
-    // A direct-indexed Vec (no hashing) is far faster than a HashMap across the
-    // hundreds of millions of per-point updates. Sentinel intensity -1 = unoccupied.
+    // Flat peak grid indexed by cell: (best intensity, source index, best point) over
+    // ALL points. A direct-indexed Vec (no hashing) is far faster than a HashMap across
+    // the hundreds of millions of per-point updates. Sentinel intensity -1 = unoccupied;
+    // the source index lets us drop peaks the systematic sampler already emitted.
     let n_cells = (PEAK_DIMS[0] * PEAK_DIMS[1] * PEAK_DIMS[2]) as usize;
-    let mut peaks: Vec<(f32, GpuPoint)> = vec![(-1.0, ZERO_POINT); n_cells];
+    let mut peaks: Vec<(f32, u64, GpuPoint)> = vec![(-1.0, 0, ZERO_POINT); n_cells];
 
     // Subsample intensities into a reservoir for percentile defaults.
     let mut reservoir: Vec<f32> = Vec::with_capacity(RESERVOIR_CAP);
@@ -257,7 +262,8 @@ fn run_loader(
             let slot = &mut peaks[peak_cell(pos) as usize];
             if intensity > slot.0 {
                 slot.0 = intensity;
-                slot.1 = GpuPoint { pos, intensity, weight: 1.0, flags, _pad: [0, 0] };
+                slot.1 = global_i;
+                slot.2 = GpuPoint { pos, intensity, weight: 1.0, flags, _pad: [0, 0] };
             }
             // Systematic density base.
             if global_i % stride_u64 == 0 {
@@ -307,20 +313,29 @@ fn run_loader(
 
     flush!();
 
-    // Emit the brightest peaks to fill the reserved budget headroom. Sort by intensity
-    // so the strongest survive if there are more occupied cells than headroom.
+    // Emit the brightest peaks to fill the reserved budget headroom, but only peaks the
+    // systematic sampler did NOT already emit (source index not a multiple of stride) so
+    // they add genuinely-new sparse points rather than duplicates. Sort by intensity so
+    // the strongest survive if occupied cells exceed the headroom.
     let peak_room = budget.saturating_sub(systematic_count as usize);
-    if peak_room > 0 {
-        let mut peak_pts: Vec<(f32, GpuPoint)> =
-            peaks.into_iter().filter(|(i, _)| *i >= 0.0).collect();
-        peak_pts.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        for (_, gp) in peak_pts.into_iter().take(peak_room) {
-            chunk.push(gp);
-            if chunk.len() >= CHUNK_POINTS {
-                flush!();
-            }
+    if peak_room > 0 && stride_u64 > 1 {
+        let mut peak_pts: Vec<GpuPoint> = peaks
+            .into_iter()
+            .filter(|(i, gi, _)| *i >= 0.0 && gi % stride_u64 != 0)
+            .map(|(_, _, gp)| gp)
+            .collect();
+        // Strongest first.
+        peak_pts.sort_by(|a, b| {
+            b.intensity
+                .partial_cmp(&a.intensity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        peak_pts.truncate(peak_room);
+        for batch in peak_pts.chunks(CHUNK_POINTS) {
+            send_cancellable!(LoadMsg::PeakChunk {
+                points: batch.to_vec(),
+            });
         }
-        flush!();
     }
 
     // Annotation overlay (real data only — needs the dataset's scan->mobility converter
@@ -560,6 +575,9 @@ mod tests {
                 Ok(LoadMsg::Done { .. }) => {
                     saw_done = true;
                     break;
+                }
+                Ok(LoadMsg::PeakChunk { points: p }) => {
+                    points += p.len();
                 }
                 Ok(LoadMsg::Error(e)) => panic!("loader error: {e}"),
                 Ok(LoadMsg::Progress(_)) | Ok(LoadMsg::Annotations { .. }) => {}

@@ -141,12 +141,22 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
                     pts.into_iter().filter(&keep).collect()
                 };
                 for p in &pts {
-                    grid.deposit(p.pos, p.intensity);
+                    // Deposit intensity*weight so density is downsample-invariant.
+                    grid.deposit(p.pos, p.intensity * p.weight);
                     if seen % sample_every == 0 && reservoir.len() < 200_000 {
                         reservoir.push(p.intensity);
                     }
                     seen += 1;
                 }
+                points.append(&queue, &pts);
+            }
+            Ok(LoadMsg::PeakChunk { points: pts }) => {
+                // Display-only peaks: append to the cloud, never to the volume density.
+                let pts: Vec<GpuPoint> = if opts.ms == MsFilter::All {
+                    pts
+                } else {
+                    pts.into_iter().filter(&keep).collect()
+                };
                 points.append(&queue, &pts);
             }
             Ok(LoadMsg::Stats { .. }) => {} // recomputed below from retained points

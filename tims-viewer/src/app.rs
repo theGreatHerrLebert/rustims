@@ -286,21 +286,39 @@ impl Gfx {
         for _ in 0..MAX_CHUNKS_PER_FRAME {
             match self.loader.rx.try_recv() {
                 Ok(LoadMsg::Chunk { points, .. }) => {
-                    // Voxelize into the CPU max-grid (for volume mode) and upload to GPU.
+                    // Volume density: deposit intensity*weight so the density is
+                    // independent of the downsample ratio (weight = 1/p = stride).
                     for p in &points {
-                        self.grid.deposit(p.pos, p.intensity);
+                        self.grid.deposit(p.pos, p.intensity * p.weight);
                     }
+                    self.points.append(&self.queue, &points);
+                }
+                Ok(LoadMsg::PeakChunk { points }) => {
+                    // Peaks are display-only enrichment; append to the cloud but do NOT
+                    // add to the volume density (would double-count dense cells).
                     self.points.append(&self.queue, &points);
                 }
                 Ok(LoadMsg::Progress(p)) => self.state.load_progress = p,
                 Ok(LoadMsg::Stats { i_min, i_max }) => {
-                    self.state.i_min = i_min;
-                    self.state.i_max = i_max;
+                    // Point-intensity range; only relevant to point mode (volume uses a
+                    // density range derived from the grid).
+                    if self.state.view_mode == ViewMode::Points {
+                        self.state.i_min = i_min;
+                        self.state.i_max = i_max;
+                    }
                 }
                 Ok(LoadMsg::Annotations { lines }) => {
                     self.annotations.upload(&self.device, &lines);
                 }
-                Ok(LoadMsg::Done { .. }) => self.state.load_progress = 1.0,
+                Ok(LoadMsg::Done { .. }) => {
+                    self.state.load_progress = 1.0;
+                    // Recompute the volume range against the now-complete grid.
+                    if self.state.view_mode == ViewMode::Volume {
+                        let (lo, hi) = self.grid.density_percentiles();
+                        self.state.i_min = lo;
+                        self.state.i_max = hi;
+                    }
+                }
                 Ok(LoadMsg::Error(e)) => {
                     log::error!("loader error: {e}");
                     self.state.load_failed = true;
