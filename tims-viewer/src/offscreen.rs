@@ -64,6 +64,22 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
         None,
     ))?;
 
+    // Validate output dimensions: nonzero (else invalid texture / infinite aspect) and
+    // within the device's max texture size (also bounds the row/size arithmetic below).
+    anyhow::ensure!(
+        opts.width > 0 && opts.height > 0,
+        "render dimensions must be > 0 (got {}x{})",
+        opts.width,
+        opts.height
+    );
+    let max_dim = limits.max_texture_dimension_2d;
+    anyhow::ensure!(
+        opts.width <= max_dim && opts.height <= max_dim,
+        "render dimensions {}x{} exceed the device max texture size {max_dim}",
+        opts.width,
+        opts.height
+    );
+
     let flags = adapter.get_downlevel_capabilities().flags;
     let supports_compaction = flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
         && flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
@@ -105,6 +121,12 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
         MsFilter::Ms1 => p.flags & GpuPoint::MS2_FLAG == 0,
         MsFilter::Ms2 => p.flags & GpuPoint::MS2_FLAG != 0,
     };
+    // Reservoir of RETAINED intensities so the auto transfer range matches what is
+    // actually rendered (the loader's Stats span both MS levels).
+    let mut reservoir: Vec<f32> = Vec::new();
+    let sample_every = (capacity as usize / 200_000).max(1) as u64;
+    let mut seen: u64 = 0;
+    let mut done = false;
     loop {
         match loader.rx.recv() {
             Ok(LoadMsg::Chunk { points: pts, .. }) => {
@@ -117,18 +139,33 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
                 };
                 for p in &pts {
                     grid.deposit(p.pos, p.intensity);
+                    if seen % sample_every == 0 && reservoir.len() < 200_000 {
+                        reservoir.push(p.intensity);
+                    }
+                    seen += 1;
                 }
                 points.append(&queue, &pts);
             }
-            Ok(LoadMsg::Stats { i_min, i_max }) => {
-                state.i_min = i_min;
-                state.i_max = i_max;
+            Ok(LoadMsg::Stats { .. }) => {} // recomputed below from retained points
+            Ok(LoadMsg::Done { .. }) => {
+                done = true;
+                break;
             }
-            Ok(LoadMsg::Done { .. }) => break,
             Ok(LoadMsg::Error(e)) => anyhow::bail!("loader error: {e}"),
             Ok(LoadMsg::Progress(_)) => {}
             Err(_) => break,
         }
+    }
+    // A disconnect before Done means the loader thread died (e.g. panicked) — don't
+    // silently write a partial/empty image.
+    anyhow::ensure!(done, "loader thread ended before completing the load");
+
+    // Default transfer range from the retained intensities (p1/p99).
+    if !reservoir.is_empty() {
+        reservoir.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let pct = |q: f32| reservoir[(((reservoir.len() - 1) as f32) * q) as usize];
+        state.i_min = pct(0.01).max(1.0);
+        state.i_max = pct(0.99).max(state.i_min * 1.0001);
     }
     // Apply transfer-function overrides (e.g. raise i_min to threshold out noise).
     if let Some(v) = opts.i_min {
