@@ -1,3 +1,23 @@
+Reading additional input from stdin...
+OpenAI Codex v0.136.0
+--------
+workdir: /scratch/timsim-demo/SUBMISSION/rustims
+model: gpt-5.5
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: medium
+reasoning summaries: none
+session id: 019eab49-6901-7170-b02b-4b220a0e8c61
+--------
+user
+Review ONLY the newly added code (rest already reviewed): the private bruker_group_layout(), to_bruker_info(num_frames), to_bruker_tables(num_frames), and the refactor of to_bruker_windows onto bruker_group_layout. Plus their tests to_bruker_info_tiling (unconditional) and bruker_info_round_trip (gated).
+
+Trusted context: this is the Bruker backward-compat adapter for a DIA mass-spec simulator. The scheme's cycle is an ordered Vec<AcquisitionEvent> = Ms1 | DiaMs2Frame(windows, vendor_group_id:Option<u32>). For real Bruker DIA-PASEF the cycle is [Ms1, then N DiaMs2Frames], frames_per_cycle = cycle.len(). bruker_group_layout returns Vec<Option<u32>> indexed by cycle position (None=MS1, Some=MS2 group id), reserving explicit vendor_group_ids (rejecting duplicates) and drawing collision-free positional fallbacks for None frames. to_bruker_info tiles: for frame_id in 1..=num_frames, pos=(frame_id-1)%cycle_len, emit (frame_id, group) when layout[pos] is Some. Verified on a real .d: regenerates DiaFrameMsMsWindows (36 rows) and DiaFrameMsMsInfo (16543 rows over 17646 frames, incl a partial last cycle) bit-exact.
+
+Focus: 1) to_bruker_info tiling correctness — the (frame_id-1)%cycle_len mapping vs how Bruker actually numbers frames (is frame 1 always the first MS1 of cycle 0? what if the scheme cycle doesn't start with MS1, or has interleaved/multiple MS1 — does pos mapping still hold? note validate() requires exactly one MS1 first). 2) the assumption that cycle order == real acquisition frame order (the doc flags ascending-WindowGroup ordering; does to_bruker_info inherit/compound that, and could it silently produce a wrong frame→group map that the bit-exact test only validates because this particular .d's acquisition order matches ascending group?). 3) num_frames edge cases: 0, not a multiple of cycle_len (partial cycle — verified ok), huge values (perf/overflow of frame_id:u32 and (frame_id-1)). 4) consistency guarantee between to_bruker_windows and to_bruker_info via the shared layout — any path where they diverge. 5) the gated round-trip test: does matching THIS .d actually prove generality, and what's NOT covered (e.g. non-ascending groups, multi-window timsTOF frames in the info tiling). 6) any panic/overflow/correctness bug. Concrete, ranked, ~550 words.
+
+<stdin>
 //! Vendor-neutral DIA acquisition **scheme** (input/design side).
 //!
 //! An [`AcquisitionScheme`] describes one DIA cycle as an *ordered sequence of
@@ -531,25 +551,15 @@ impl AcquisitionScheme {
     }
 
     /// Generate the Bruker `DiaFrameMsMsInfo` (frame → window group) rows for a run
-    /// of `num_frames` total frames, tiling the scheme's cycle. Cycle position
-    /// `(frame_id - 1) % cycle_len` selects the event (1-based frame ids), MS1
+    /// of `num_frames` total frames, tiling the scheme's cycle. Frame ids are
+    /// 1-based; cycle position `(frame_id - 1) % cycle_len` selects the event, MS1
     /// frames produce no row, and each MS2 frame maps to its window-group id (the
-    /// same ids `to_bruker_windows` emits, so the two tables reference the same
-    /// groups). The final cycle may be partial.
-    ///
-    /// Precondition: this models a **clean generated run** — frame 1 is the
-    /// cycle's leading MS1 and frame ids are contiguous (as TimSim produces). It
-    /// is not a reproducer for arbitrary real files with prefix/calibration
-    /// frames, gaps, or acquisition starting mid-cycle.
+    /// same ids `to_bruker_windows` emits, so the two tables are consistent). The
+    /// final cycle may be partial.
     pub fn to_bruker_info(
         &self,
         num_frames: u32,
     ) -> Result<Vec<crate::data::meta::DiaMsMisInfo>, String> {
-        // Bound the work so an absurd frame count errors cleanly instead of OOM.
-        const MAX_FRAMES: u32 = 100_000_000;
-        if num_frames > MAX_FRAMES {
-            return Err(format!("num_frames {num_frames} exceeds the {MAX_FRAMES} limit"));
-        }
         let layout = self.bruker_group_layout()?;
         let fpc = layout.len() as u32;
         if fpc == 0 {
@@ -592,13 +602,12 @@ impl AcquisitionScheme {
     /// preceded by a single MS1 event. Cycle timing comes from the spacing of
     /// the precursor (MS1) frames. The returned scheme is validated.
     ///
-    /// Window groups (frames) are ordered by their **first occurrence in
-    /// `DiaFrameMsMsInfo`** (ascending frame id), i.e. the real acquisition order
-    /// within a cycle — not merely ascending `WindowGroup` id — so the cycle
-    /// faithfully represents permuted/reused group numbering. (If the info table
-    /// is absent, falls back to ascending group id.)
+    /// Note: window groups are ordered by ascending `WindowGroup` id, which is
+    /// the DIA-PASEF acquisition order in practice; a file that reuses or
+    /// permutes group numbering would need ordering by first MS2-frame
+    /// occurrence (via `DiaFrameMsMsInfo`) instead.
     pub fn from_bruker_d<P: AsRef<std::path::Path>>(path: P) -> io::Result<Self> {
-        use crate::data::meta::{read_dia_ms_ms_info, read_dia_ms_ms_windows, read_meta_data_sql};
+        use crate::data::meta::{read_dia_ms_ms_windows, read_meta_data_sql};
         use std::collections::BTreeMap;
 
         let folder = path.as_ref().to_string_lossy().into_owned();
@@ -634,34 +643,14 @@ impl AcquisitionScheme {
             by_group.entry(w.window_group).or_default().push(dw);
         }
 
-        // Order groups by first occurrence (ascending frame id) in DiaFrameMsMsInfo
-        // = real intra-cycle acquisition order. Missing info -> ascending group id.
-        let info = read_dia_ms_ms_info(&folder).unwrap_or_default();
-        let mut first_frame: BTreeMap<u32, u32> = BTreeMap::new();
-        for r in &info {
-            first_frame
-                .entry(r.window_group)
-                .and_modify(|f| {
-                    if r.frame_id < *f {
-                        *f = r.frame_id
-                    }
-                })
-                .or_insert(r.frame_id);
-        }
-        let mut ordered_groups: Vec<u32> = by_group.keys().copied().collect();
-        // Stable sort by first-occurrence frame; groups absent from the info table
-        // (key u32::MAX) keep their ascending-id relative order.
-        ordered_groups.sort_by_key(|g| first_frame.get(g).copied().unwrap_or(u32::MAX));
-
         let mut cycle = vec![AcquisitionEvent::Ms1(Ms1Event {
             analyzer: Analyzer::Tof,
             data_mode: DataMode::Centroid,
             mz_range: None,
             duration_s: None,
         })];
-        let n_groups = ordered_groups.len();
-        for group in ordered_groups {
-            let ws = by_group.remove(&group).expect("group present");
+        let n_groups = by_group.len();
+        for (group, ws) in by_group {
             cycle.push(AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
                 windows: ws,
                 analyzer: Analyzer::Tof,
@@ -1288,56 +1277,6 @@ mod tests {
         let wg: std::collections::BTreeSet<u32> = windows.iter().map(|w| w.window_group).collect();
         let ig: std::collections::BTreeSet<u32> = info2.iter().map(|r| r.window_group).collect();
         assert_eq!(wg, ig, "windows/info group ids disagree");
-
-        // Non-ascending explicit ids + a multi-window (mobility-partitioned) frame:
-        // info must follow CYCLE order (not sorted id) and emit ONE row per frame.
-        let win = |center: f64, s0: u32, s1: u32| DiaWindow {
-            isolation: IsolationWindow { center_mz: center, width_mz: 10.0 },
-            collision_energy: CollisionEnergyPolicy::Value(20.0),
-            geometry: DiaGeometry::TimsMobility { scan_start: s0, scan_end: s1 },
-        };
-        let dia = |gid: u32, ws: Vec<DiaWindow>| {
-            AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
-                windows: ws,
-                analyzer: Analyzer::Tof,
-                data_mode: DataMode::Centroid,
-                duration_s: None,
-                vendor_group_id: Some(gid),
-            })
-        };
-        let s2 = AcquisitionScheme {
-            version: SCHEME_VERSION,
-            instrument: InstrumentKind::TimsTofDia,
-            cycle: vec![
-                AcquisitionEvent::Ms1(Ms1Event {
-                    analyzer: Analyzer::Tof,
-                    data_mode: DataMode::Centroid,
-                    mz_range: None,
-                    duration_s: None,
-                }),
-                dia(7, vec![win(500.0, 0, 50), win(500.0, 51, 100)]), // 2 mobility windows
-                dia(2, vec![win(600.0, 0, 100)]),
-            ],
-            repeat: RepeatPolicy::FixedCycleTime {
-                cycle_time_s: 1.0,
-                gradient_length_s: 600.0,
-                start_time_s: 0.0,
-            },
-            mz_range: (300.0, 900.0),
-            provenance: Provenance { source: SchemeSource::Programmatic, notes: String::new() },
-        };
-        // cycle len 3; frame2->g7 (first), frame3->g2 — acquisition order, NOT sorted.
-        let info3: Vec<(u32, u32)> = s2
-            .to_bruker_info(3)
-            .unwrap()
-            .iter()
-            .map(|r| (r.frame_id, r.window_group))
-            .collect();
-        assert_eq!(info3, vec![(2, 7), (3, 2)], "info must follow cycle order, one row/frame");
-        // windows: the 2-window frame emits 2 rows (group 7), the other 1 (group 2).
-        let w3 = s2.to_bruker_windows().unwrap();
-        assert_eq!(w3.iter().filter(|w| w.window_group == 7).count(), 2);
-        assert_eq!(w3.iter().filter(|w| w.window_group == 2).count(), 1);
     }
 
     // Gated: regenerate DiaFrameMsMsInfo for the .d's full frame count and match.
@@ -1433,3 +1372,39 @@ mod tests {
         );
     }
 }
+</stdin>
+codex
+1. **High: `to_bruker_info` assumes frame 1 is exactly the cycle’s leading MS1.**  
+   `(frame_id - 1) % cycle_len` is correct only when the run starts at cycle position zero and frame IDs are contiguous physical acquisition events. `validate()` proves the modeled cycle begins with exactly one MS1, but it cannot prove that an existing Bruker run’s frame 1 corresponds to that event. Prefix/calibration frames, missing IDs, or acquisition beginning mid-cycle would silently shift every mapping. The API needs either an explicitly documented/generated-run precondition or a starting frame/cycle offset derived from actual frame metadata.
+
+2. **High: extraction order can silently corrupt the frame-to-group schedule.**  
+   `to_bruker_info` correctly treats `cycle` order as authoritative, but `from_bruker_d` constructs that order by ascending `WindowGroup`, not first occurrence in `DiaFrameMsMsInfo`. Consequently, a valid file acquired in order `[7, 2, 9]` becomes `[2, 7, 9]`, and `to_bruker_info` emits a plausible but wrong schedule. The new round-trip passes precisely when acquisition order happens to equal ascending group order, so it does not establish general correctness. This should ideally be prevented at extraction by ordering groups from the info table; otherwise the adapter should reject extracted schemes whose ordering provenance is uncertain.
+
+3. **Medium: `num_frames` permits impractically large work and possible process abort.**  
+   `u32::MAX` causes roughly four billion loop iterations and potentially billions of rows. Rust arithmetic in `frame_id - 1` is safe because iteration starts at 1, and a standard inclusive range handles its terminal value, but memory exhaustion can abort rather than return `Err`. Consider checked conversion/allocation and an application-level maximum, or an iterator/streaming API. `num_frames == 0` is handled correctly and returns an empty vector; partial cycles are also correct.
+
+4. **Low: the shared-layout consistency guarantee is narrower than the documentation suggests.**  
+   Group-ID assignment cannot diverge: both methods deterministically call the same validated layout, and `to_bruker_tables` returns nothing if window materialization fails. However, standalone `to_bruker_info` can succeed for schemes whose windows later fail `to_bruker_windows` because of `MzOnly` geometry or unknown CE. Thus “always agree” means assigned IDs agree, not that every successful info table has a materializable windows table. `to_bruker_tables` also computes and validates the layout twice; not incorrect, but passing one layout to both renderers would make the guarantee structural and avoid duplicate work.
+
+5. **Low: tests cover one canonical schedule only.**  
+   `to_bruker_info_tiling` verifies the basic `[MS1, g1, g2]` mapping and a complete two-cycle run, but not `0`, partial cycles, explicit/non-ascending IDs, mixed explicit/fallback IDs, or a multi-window MS2 frame producing exactly one info row. The gated test proves exact compatibility with this particular `.d`, including its partial final cycle, but not permuted group IDs, unusual frame prefixes/gaps, or other timsTOF schedules.
+
+No immediate arithmetic panic exists in `to_bruker_info`. `next_seq += 1` is theoretically overflowable, but reaching it requires essentially exhausting the `u32` ID space and is not a practical input size.
+tokens used
+22,140
+1. **High: `to_bruker_info` assumes frame 1 is exactly the cycle’s leading MS1.**  
+   `(frame_id - 1) % cycle_len` is correct only when the run starts at cycle position zero and frame IDs are contiguous physical acquisition events. `validate()` proves the modeled cycle begins with exactly one MS1, but it cannot prove that an existing Bruker run’s frame 1 corresponds to that event. Prefix/calibration frames, missing IDs, or acquisition beginning mid-cycle would silently shift every mapping. The API needs either an explicitly documented/generated-run precondition or a starting frame/cycle offset derived from actual frame metadata.
+
+2. **High: extraction order can silently corrupt the frame-to-group schedule.**  
+   `to_bruker_info` correctly treats `cycle` order as authoritative, but `from_bruker_d` constructs that order by ascending `WindowGroup`, not first occurrence in `DiaFrameMsMsInfo`. Consequently, a valid file acquired in order `[7, 2, 9]` becomes `[2, 7, 9]`, and `to_bruker_info` emits a plausible but wrong schedule. The new round-trip passes precisely when acquisition order happens to equal ascending group order, so it does not establish general correctness. This should ideally be prevented at extraction by ordering groups from the info table; otherwise the adapter should reject extracted schemes whose ordering provenance is uncertain.
+
+3. **Medium: `num_frames` permits impractically large work and possible process abort.**  
+   `u32::MAX` causes roughly four billion loop iterations and potentially billions of rows. Rust arithmetic in `frame_id - 1` is safe because iteration starts at 1, and a standard inclusive range handles its terminal value, but memory exhaustion can abort rather than return `Err`. Consider checked conversion/allocation and an application-level maximum, or an iterator/streaming API. `num_frames == 0` is handled correctly and returns an empty vector; partial cycles are also correct.
+
+4. **Low: the shared-layout consistency guarantee is narrower than the documentation suggests.**  
+   Group-ID assignment cannot diverge: both methods deterministically call the same validated layout, and `to_bruker_tables` returns nothing if window materialization fails. However, standalone `to_bruker_info` can succeed for schemes whose windows later fail `to_bruker_windows` because of `MzOnly` geometry or unknown CE. Thus “always agree” means assigned IDs agree, not that every successful info table has a materializable windows table. `to_bruker_tables` also computes and validates the layout twice; not incorrect, but passing one layout to both renderers would make the guarantee structural and avoid duplicate work.
+
+5. **Low: tests cover one canonical schedule only.**  
+   `to_bruker_info_tiling` verifies the basic `[MS1, g1, g2]` mapping and a complete two-cycle run, but not `0`, partial cycles, explicit/non-ascending IDs, mixed explicit/fallback IDs, or a multi-window MS2 frame producing exactly one info row. The gated test proves exact compatibility with this particular `.d`, including its partial final cycle, but not permuted group IDs, unusual frame prefixes/gaps, or other timsTOF schedules.
+
+No immediate arithmetic panic exists in `to_bruker_info`. `next_seq += 1` is theoretically overflowable, but reaching it requires essentially exhausting the `u32` ID space and is not a practical input size.
