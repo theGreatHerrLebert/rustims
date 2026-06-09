@@ -162,6 +162,16 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             }
         }
 
+        // A precursor frame can have peptides assigned (passed the
+        // frame_to_abundances guard above) yet produce NO spectra once every ion
+        // is filtered out. `TimsFrame::from_tims_spectra([])` would then fall back
+        // to frame_id=1 / MsType::Unknown / rt=0.0, emitting a ghost frame that
+        // collides with the real frame 1 (the writer's Frames.Id uniqueness guard
+        // rejects it). Preserve this frame's own id + ms_type for the empty case,
+        // mirroring build_fragment_frame.
+        if tims_spectra.is_empty() {
+            return TimsFrame::new(frame_id as i32, ms_type, rt, vec![], vec![], vec![], vec![], vec![]);
+        }
         let tims_frame = TimsFrame::from_tims_spectra(tims_spectra);
         tims_frame.filter_ranged(0.0, 10000.0, 0, 2000, 0.0, 10.0, 1.0, 1e9, 0, i32::MAX)
     }
@@ -296,6 +306,14 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             }
         }
 
+        // Same empty-frame guard as build_precursor_frame: preserve this frame's
+        // id + ms_type rather than letting from_tims_spectra_annotated([]) emit a
+        // frame_id=1 / Unknown ghost.
+        if tims_spectra.is_empty() {
+            return TimsFrameAnnotated::new(
+                frame_id as i32, rt, ms_type, vec![], vec![], vec![], vec![], vec![], vec![],
+            );
+        }
         let tims_frame = TimsFrameAnnotated::from_tims_spectra_annotated(tims_spectra);
         let filtered_frame = tims_frame.filter_ranged(0.0, 2000.0, 0.0, 2.0, 0, 1000, 1.0, 1e9);
 
