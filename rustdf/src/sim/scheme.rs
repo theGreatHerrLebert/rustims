@@ -12,7 +12,6 @@
 //! Astral/SCIEX MS2 scan (one window) are both represented without overloading a
 //! `window_group` id to imply simultaneity.
 
-#[cfg(feature = "thermo")]
 use std::io;
 
 /// Current scheme schema version.
@@ -421,6 +420,116 @@ impl AcquisitionScheme {
     }
 }
 
+impl AcquisitionScheme {
+    /// Extract the acquisition scheme from a real Bruker timsTOF DIA `.d`.
+    ///
+    /// Reads `DiaFrameMsMsWindows` and the frame table. Each **window group**
+    /// becomes one [`DiaMs2Frame`] holding its mobility-partitioned windows
+    /// (`TimsMobility` geometry — the scan ranges are Bruker-grid coordinates),
+    /// preceded by a single MS1 event. Cycle timing comes from the spacing of
+    /// the precursor (MS1) frames.
+    pub fn from_bruker_d<P: AsRef<std::path::Path>>(path: P) -> io::Result<Self> {
+        use crate::data::meta::{read_dia_ms_ms_windows, read_meta_data_sql};
+        use std::collections::BTreeMap;
+
+        let folder = path.as_ref().to_string_lossy().into_owned();
+        let to_io =
+            |e: Box<dyn std::error::Error>| io::Error::new(io::ErrorKind::InvalidData, e.to_string());
+        let windows = read_dia_ms_ms_windows(&folder).map_err(to_io)?;
+        let frames = read_meta_data_sql(&folder).map_err(to_io)?;
+        if windows.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "no DiaFrameMsMsWindows rows (not a DIA .d?)",
+            ));
+        }
+
+        // Group windows by window group (ascending); each group is a frame.
+        let mut by_group: BTreeMap<u32, Vec<DiaWindow>> = BTreeMap::new();
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for w in &windows {
+            let dw = DiaWindow {
+                isolation: IsolationWindow {
+                    center_mz: w.isolation_mz,
+                    width_mz: w.isolation_width,
+                },
+                collision_energy: CollisionEnergyPolicy::Value(w.collision_energy),
+                geometry: DiaGeometry::TimsMobility {
+                    scan_start: w.scan_num_begin,
+                    scan_end: w.scan_num_end,
+                },
+            };
+            lo = lo.min(dw.isolation.lower());
+            hi = hi.max(dw.isolation.upper());
+            by_group.entry(w.window_group).or_default().push(dw);
+        }
+
+        let mut cycle = vec![AcquisitionEvent::Ms1(Ms1Event {
+            analyzer: Analyzer::Tof,
+            data_mode: DataMode::Centroid,
+            mz_range: None,
+            duration_s: None,
+        })];
+        let n_groups = by_group.len();
+        for (_group, ws) in by_group {
+            cycle.push(AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
+                windows: ws,
+                analyzer: Analyzer::Tof,
+                data_mode: DataMode::Centroid,
+                duration_s: None,
+            }));
+        }
+
+        // Cycle timing from the precursor (MS1, MsMsType == 0) frame spacing.
+        let mut prec_times: Vec<f64> = frames
+            .iter()
+            .filter(|f| f.ms_ms_type == 0)
+            .map(|f| f.time)
+            .collect();
+        prec_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let cycle_time_s = if prec_times.len() >= 2 {
+            (prec_times[1] - prec_times[0]).max(0.0)
+        } else {
+            0.0
+        };
+        if !(cycle_time_s.is_finite() && cycle_time_s > 0.0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "could not determine cycle time (need >= 2 precursor frames)",
+            ));
+        }
+        let start_time_s = frames
+            .iter()
+            .map(|f| f.time)
+            .fold(f64::INFINITY, f64::min);
+        let gradient_length_s = frames
+            .iter()
+            .map(|f| f.time)
+            .fold(f64::NEG_INFINITY, f64::max);
+
+        Ok(AcquisitionScheme {
+            version: SCHEME_VERSION,
+            instrument: InstrumentKind::TimsTofDia,
+            cycle,
+            repeat: RepeatPolicy::FixedCycleTime {
+                cycle_time_s,
+                gradient_length_s,
+                start_time_s: if start_time_s.is_finite() {
+                    start_time_s
+                } else {
+                    0.0
+                },
+            },
+            mz_range: (lo, hi),
+            provenance: Provenance {
+                source: SchemeSource::ExtractedBruker,
+                notes: format!("extracted from Bruker .d ({n_groups} window groups)"),
+            },
+        })
+    }
+}
+
 #[cfg(feature = "thermo")]
 impl AcquisitionScheme {
     /// Extract the acquisition scheme from a real Thermo `.raw` by walking the
@@ -704,6 +813,37 @@ mod tests {
             duration_s: Some(-1.0),
         });
         assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), bad_dur]).validate().is_err());
+    }
+
+    // Gated: set TIMSIM_BRUKER_DIA_D to a real Bruker DIA-PASEF .d folder.
+    #[test]
+    fn from_bruker_d_extracts_cycle() {
+        let d = match std::env::var("TIMSIM_BRUKER_DIA_D") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP from_bruker_d_extracts_cycle: set TIMSIM_BRUKER_DIA_D=<dia .d>");
+                return;
+            }
+        };
+        let s = AcquisitionScheme::from_bruker_d(&d).expect("extract");
+        s.validate().expect("valid scheme");
+        assert_eq!(s.instrument, InstrumentKind::TimsTofDia);
+        assert_eq!(s.ms1_count(), 1);
+        let n_win = s.windows().count();
+        assert!(n_win > 1, "expected several windows, got {n_win}");
+        // timsTOF windows carry mobility geometry with a known CE.
+        for w in s.windows() {
+            assert!(matches!(w.geometry, DiaGeometry::TimsMobility { .. }));
+            assert!(w.collision_energy.at(w.isolation.center_mz).is_some());
+        }
+        // At least one frame should be mobility-partitioned (>1 window).
+        let multi = s.cycle.iter().any(|e| matches!(e, AcquisitionEvent::DiaMs2Frame(f) if f.windows.len() > 1));
+        let n_frames = s.cycle.iter().filter(|e| matches!(e, AcquisitionEvent::DiaMs2Frame(_))).count();
+        eprintln!(
+            "from_bruker_d OK: TimsTofDia, {} frames, {} windows ({}), mz {:.1}..{:.1}",
+            n_frames, n_win, if multi { "mobility-partitioned" } else { "single-window" },
+            s.mz_range.0, s.mz_range.1
+        );
     }
 
     #[cfg(feature = "thermo")]
