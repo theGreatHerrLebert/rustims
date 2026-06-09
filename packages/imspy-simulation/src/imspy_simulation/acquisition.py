@@ -1,3 +1,4 @@
+import warnings
 from pathlib import Path
 from typing import Dict
 
@@ -228,14 +229,31 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             import imspy_connector
             acq = imspy_connector.py_acquisition
         except (ImportError, AttributeError):
-            if verbose:
-                print('py_acquisition unavailable; using legacy reference layout')
+            warnings.warn(
+                'imspy_connector.py_acquisition is unavailable; falling back to the '
+                'legacy reference-.d layout read. Update/rebuild the connector to use '
+                'the vendor-neutral AcquisitionScheme path.',
+                RuntimeWarning,
+                stacklevel=2,
+            )
             return None
 
         scheme = acq.PyAcquisitionScheme.from_bruker_d(self.reference.data_path)
         precursor_every = scheme.cycle_length()
         windows = pd.DataFrame(scheme.to_bruker_windows())
         info = pd.DataFrame(scheme.to_bruker_info(int(self.num_frames)))
+        # Scheme columns come back as numpy uint32; cast integer columns to int64
+        # so the in-memory tables match the legacy dtypes (SQLite stores INTEGER
+        # either way) and avoid uint32-wrap surprises for downstream consumers.
+        for col in ("window_group", "scan_start", "scan_end"):
+            windows[col] = windows[col].astype("int64")
+        for col in ("frame", "window_group"):
+            info[col] = info[col].astype("int64")
+        # Note: window-group ids are the reference's real WindowGroup values
+        # (preserved by the scheme), so this matches the reference .d exactly. For a
+        # non-canonical/permuted reference this differs from the legacy position
+        # formula (wg = index % precursor_every) — by being correct, since the
+        # legacy info was inconsistent with its own copied window table.
         if verbose:
             print(f'Using AcquisitionScheme layout: {len(windows)} windows, '
                   f'{scheme.n_ms2_frames()} groups, precursor_every={precursor_every}')

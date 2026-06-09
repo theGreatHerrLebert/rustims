@@ -41,28 +41,21 @@ def test_scheme_windows_match_reference():
     pd.testing.assert_frame_equal(_norm(windows, cols), _norm(ref, cols))
 
 
-def test_scheme_info_matches_reference_and_legacy_formula():
+def test_scheme_info_matches_reference():
+    # The true contract: the scheme's DiaFrameMsMsInfo must reproduce the
+    # reference .d's table exactly. (We intentionally do NOT assert equality with
+    # the legacy `window_group = index % precursor_every` position formula: that
+    # only holds for canonical 1..N references, and where it differs the scheme is
+    # the correct one — it preserves the real WindowGroup ids.)
     scheme = acq.PyAcquisitionScheme.from_bruker_d(DIA_D)
     con = sqlite3.connect(DIA_D + "/analysis.tdf")
     num_frames = int(con.execute("SELECT MAX(Id) FROM Frames").fetchone()[0])
 
     info = pd.DataFrame(scheme.to_bruker_info(num_frames))
-
-    # (a) matches the .d's own DiaFrameMsMsInfo exactly
     ref = pd.read_sql("SELECT Frame frame, WindowGroup window_group FROM DiaFrameMsMsInfo", con)
+    assert len(info) == len(ref)
     pd.testing.assert_frame_equal(
         _norm(info, ["frame", "window_group"]), _norm(ref, ["frame", "window_group"])
     )
-
-    # (b) matches the legacy position formula (index % precursor_every, ms2 only)
-    pe = scheme.cycle_length()
-    legacy = pd.DataFrame(
-        [
-            {"frame": f, "window_group": (f - 1) % pe}
-            for f in range(1, num_frames + 1)
-            if (f - 1) % pe != 0
-        ]
-    )
-    pd.testing.assert_frame_equal(
-        _norm(info, ["frame", "window_group"]), _norm(legacy, ["frame", "window_group"])
-    )
+    # info is emitted frame-ascending.
+    assert info["frame"].is_monotonic_increasing
