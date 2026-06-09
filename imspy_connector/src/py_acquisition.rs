@@ -1,5 +1,5 @@
 use numpy::IntoPyArray;
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rustdf::sim::scheme::AcquisitionScheme;
@@ -184,14 +184,64 @@ impl PyAcquisitionScheme {
 #[pyclass]
 pub struct PyThermoRawWriter {
     inner: rustdf::sim::acquisition::ThermoRawWriter,
+    /// Set after a successful `finalize`. Guards against write-after-finalize
+    /// (which would leave the on-disk `.raw` stale) and double-finalize.
+    finalized: bool,
+}
+
+/// Caller-fault writer errors (`InvalidInput`/`InvalidData` — e.g. malformed
+/// peaks, exhausted template capacity) map to `ValueError`; genuine filesystem
+/// failures fall through to PyO3's default `io::Error` -> `OSError`.
+#[cfg(feature = "thermo")]
+fn writer_err(e: std::io::Error) -> PyErr {
+    use std::io::ErrorKind::{InvalidData, InvalidInput};
+    match e.kind() {
+        InvalidInput | InvalidData => PyValueError::new_err(e.to_string()),
+        _ => PyErr::from(e),
+    }
+}
+
+/// Validate and pack `(mz, intensity)` peak arrays into the writer's tuple form,
+/// rejecting the casts that would silently corrupt the output (NaN/inf m/z or
+/// intensity, non-positive m/z, negative intensity, overflow past `f32::MAX`).
+#[cfg(feature = "thermo")]
+fn pack_peaks(mz: &[f64], intensity: &[f64]) -> PyResult<Vec<(f64, f32)>> {
+    if mz.len() != intensity.len() {
+        return Err(PyValueError::new_err("mz and intensity must have equal length"));
+    }
+    if mz.is_empty() {
+        // A blank Replace scan silently erases the template slot — refuse it
+        // rather than make accidental data loss a one-liner.
+        return Err(PyValueError::new_err("peak arrays must be non-empty"));
+    }
+    let mut peaks = Vec::with_capacity(mz.len());
+    for (i, (&m, &inten)) in mz.iter().zip(intensity).enumerate() {
+        if !m.is_finite() || m <= 0.0 {
+            return Err(PyValueError::new_err(format!(
+                "mz[{i}] must be finite and > 0 (got {m})"
+            )));
+        }
+        if !inten.is_finite() || inten < 0.0 {
+            return Err(PyValueError::new_err(format!(
+                "intensity[{i}] must be finite and >= 0 (got {inten})"
+            )));
+        }
+        if inten > f32::MAX as f64 {
+            return Err(PyValueError::new_err(format!(
+                "intensity[{i}] overflows f32 (got {inten})"
+            )));
+        }
+        peaks.push((m, inten as f32));
+    }
+    Ok(peaks)
 }
 
 #[cfg(feature = "thermo")]
 #[pymethods]
 impl PyThermoRawWriter {
     /// Open `template` and prepare to author into `out`. Pass
-    /// `overlay_merge_tol_ppm` to overlay onto the real template signal instead
-    /// of replacing it.
+    /// `overlay_merge_tol_ppm` (finite, > 0) to overlay onto the real template
+    /// signal instead of replacing it.
     #[staticmethod]
     #[pyo3(signature = (template, out, overlay_merge_tol_ppm=None))]
     pub fn from_template(
@@ -201,13 +251,20 @@ impl PyThermoRawWriter {
         overlay_merge_tol_ppm: Option<f64>,
     ) -> PyResult<Self> {
         use rustdf::sim::acquisition::{ThermoRawWriter, WriteMode};
+        if let Some(tol) = overlay_merge_tol_ppm {
+            if !tol.is_finite() || tol <= 0.0 {
+                return Err(PyValueError::new_err(
+                    "overlay_merge_tol_ppm must be finite and > 0",
+                ));
+            }
+        }
         let mut w = py
             .allow_threads(|| ThermoRawWriter::from_template(template, out))
             .map_err(PyErr::from)?;
         if let Some(tol) = overlay_merge_tol_ppm {
             w = w.with_mode(WriteMode::Overlay { merge_tol_ppm: tol });
         }
-        Ok(Self { inner: w })
+        Ok(Self { inner: w, finalized: false })
     }
 
     /// Template (MS1, MS2) scan capacity, so a run can be checked to fit.
@@ -216,6 +273,10 @@ impl PyThermoRawWriter {
     }
 
     /// Author an MS1 scan from peak arrays (intensity cast to f32).
+    ///
+    /// `retention_time` is ordering/provenance metadata only — the template's
+    /// own scan retention times are preserved, so this value is not written to
+    /// the `.raw`. It is accepted to keep MS1/MS2 call sites symmetric.
     pub fn write_ms1(
         &mut self,
         retention_time: f64,
@@ -223,20 +284,22 @@ impl PyThermoRawWriter {
         intensity: Vec<f64>,
     ) -> PyResult<()> {
         use rustdf::sim::acquisition::{AcquisitionWriter, ScanDescriptor};
-        if mz.len() != intensity.len() {
-            return Err(PyValueError::new_err("mz and intensity must have equal length"));
-        }
-        let peaks = mz.iter().zip(&intensity).map(|(&m, &i)| (m, i as f32)).collect();
+        self.ensure_open()?;
+        let peaks = pack_peaks(&mz, &intensity)?;
         let d = ScanDescriptor {
             ms_level: 1,
             retention_time,
             isolation: None,
             peaks,
         };
-        self.inner.write_scan(&d).map_err(PyErr::from)
+        self.inner.write_scan(&d).map_err(writer_err)
     }
 
     /// Author an MS2 scan with its isolation window + collision energy.
+    ///
+    /// `retention_time` is ordering/provenance metadata only (see `write_ms1`).
+    /// In `Overlay` mode the isolation/CE are left as the template's; the
+    /// supplied values only take effect in `Replace` mode.
     pub fn write_ms2(
         &mut self,
         retention_time: f64,
@@ -247,10 +310,17 @@ impl PyThermoRawWriter {
         intensity: Vec<f64>,
     ) -> PyResult<()> {
         use rustdf::sim::acquisition::{AcquisitionWriter, IsolationWindow, ScanDescriptor};
-        if mz.len() != intensity.len() {
-            return Err(PyValueError::new_err("mz and intensity must have equal length"));
+        self.ensure_open()?;
+        if !isolation_center.is_finite() || isolation_center <= 0.0 {
+            return Err(PyValueError::new_err("isolation_center must be finite and > 0"));
         }
-        let peaks = mz.iter().zip(&intensity).map(|(&m, &i)| (m, i as f32)).collect();
+        if !isolation_width.is_finite() || isolation_width <= 0.0 {
+            return Err(PyValueError::new_err("isolation_width must be finite and > 0"));
+        }
+        if !collision_energy.is_finite() || collision_energy < 0.0 {
+            return Err(PyValueError::new_err("collision_energy must be finite and >= 0"));
+        }
+        let peaks = pack_peaks(&mz, &intensity)?;
         let d = ScanDescriptor {
             ms_level: 2,
             retention_time,
@@ -261,13 +331,34 @@ impl PyThermoRawWriter {
             }),
             peaks,
         };
-        self.inner.write_scan(&d).map_err(PyErr::from)
+        self.inner.write_scan(&d).map_err(writer_err)
     }
 
-    /// Recompute the checksum and write the `.raw` to disk.
+    /// Recompute the checksum and write the `.raw` to disk. May be called once;
+    /// subsequent writes or finalizes raise `RuntimeError`.
     pub fn finalize(&mut self, py: Python<'_>) -> PyResult<()> {
         use rustdf::sim::acquisition::AcquisitionWriter;
-        py.allow_threads(|| self.inner.finalize()).map_err(PyErr::from)
+        if self.finalized {
+            return Err(PyRuntimeError::new_err("writer already finalized"));
+        }
+        py.allow_threads(|| self.inner.finalize())
+            .map_err(writer_err)?;
+        self.finalized = true;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "thermo")]
+impl PyThermoRawWriter {
+    /// Reject writes after a successful `finalize` (the on-disk `.raw` would go
+    /// stale otherwise).
+    fn ensure_open(&self) -> PyResult<()> {
+        if self.finalized {
+            return Err(PyRuntimeError::new_err(
+                "writer already finalized; no further scans can be written",
+            ));
+        }
+        Ok(())
     }
 }
 

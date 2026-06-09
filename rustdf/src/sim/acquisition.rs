@@ -152,13 +152,16 @@ mod thermo {
                         "template exhausted of MS1 (profile) scans",
                     )
                 })?;
-                self.prof_cur += 1;
+                // Only advance the cursor once authoring fully succeeds, so a
+                // failed write doesn't permanently consume the template slot.
                 match self.mode {
                     WriteMode::Replace => self.raw.author_profile(t, &scan.peaks, &self.calib),
                     WriteMode::Overlay { .. } => {
                         self.raw.overlay_profile(t, &scan.peaks, &self.calib)
                     }
-                }
+                }?;
+                self.prof_cur += 1;
+                Ok(())
             } else {
                 let t = *self.centroid_scans.get(self.cent_cur).ok_or_else(|| {
                     io::Error::new(
@@ -166,7 +169,6 @@ mod thermo {
                         "template exhausted of MS2 (centroid) scans",
                     )
                 })?;
-                self.cent_cur += 1;
                 match self.mode {
                     WriteMode::Replace => {
                         self.raw.author_centroids(t, &scan.peaks)?;
@@ -181,15 +183,17 @@ mod thermo {
                                 iso.collision_energy,
                             )?;
                         }
-                        Ok(())
                     }
                     // Overlay keeps the template's real signal + acquisition
                     // metadata (the scheme is derived from this template), so the
                     // isolation/CE are left as the template's.
                     WriteMode::Overlay { merge_tol_ppm } => {
-                        self.raw.overlay_centroids(t, &scan.peaks, merge_tol_ppm)
+                        self.raw.overlay_centroids(t, &scan.peaks, merge_tol_ppm)?
                     }
                 }
+                // Slot consumed only after the centroid+isolation write succeeded.
+                self.cent_cur += 1;
+                Ok(())
             }
         }
 
