@@ -520,6 +520,31 @@ class SimulationConfig:
         if not (0.0 < p_charge < 1.0):
             raise ValueError(f"p_charge must be between 0 and 1, got {p_charge}")
 
+        # Validate instrument-dispatch projector mode (fail fast on bad TOML,
+        # before any expensive simulation runs).
+        projection_mode = str(self._config.get('projection_mode', 'off')).lower()
+        if projection_mode not in ('off', 'legacy_compat', 'accurate'):
+            raise ValueError(
+                f"projection_mode must be off|legacy_compat|accurate, got {projection_mode!r}"
+            )
+        if projection_mode != 'off':
+            # The projector is deterministic, so it would silently overwrite any
+            # configured abundance noise. Reject the combination explicitly.
+            if self._config.get('noise_frame_abundance') or self._config.get('noise_scan_abundance'):
+                raise ValueError(
+                    "projection_mode is incompatible with noise_frame_abundance/"
+                    "noise_scan_abundance (the projector is deterministic and would "
+                    "drop the noise); disable the noise or projection_mode"
+                )
+            # The 'ions' checkpoint persists in-memory distributions; resuming would
+            # restore the legacy (pre-projection) columns and diverge from a projected
+            # run. Not yet supported together.
+            if self._config.get('enable_checkpoints'):
+                raise ValueError(
+                    "projection_mode is not yet supported with enable_checkpoints "
+                    "(checkpoint resume would restore pre-projection distributions)"
+                )
+
     def __getattr__(self, name: str):
         """Allow attribute-style access to configuration values."""
         if name.startswith('_'):
@@ -1285,6 +1310,34 @@ def main():
         # Save ions
         acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
 
+        # JOB 8.5 (opt-in): regenerate the frame/scan distribution columns via the
+        # instrument-dispatch projector, BEFORE DDA selection + fragment intensity +
+        # assembly so every downstream step reads one consistent set of
+        # distributions. Default 'off' is a hard no-op (the legacy columns written
+        # above are the fallback). The config validator rejects projection combined
+        # with abundance noise or checkpoints (see SimulationConfig._validate).
+        projection_mode = str(getattr(config, 'projection_mode', 'off')).lower()
+        if projection_mode != 'off':
+            from imspy_simulation.timsim.jobs.project_distributions import (
+                write_projected_distributions,
+            )
+            logger.info(section_header(f"Projecting Distributions ({projection_mode})", use_unicode))
+            db_path = str(Path(acquisition_builder.path) / 'synthetic_data.db')
+            summary = write_projected_distributions(
+                db_path,
+                mode=projection_mode,
+                target_p=config.target_p,
+                frame_step_size=config.sampling_step_size,
+                scan_step_size=0.0001,  # the scan distribution job's fixed step
+                n_steps=config.n_steps,
+                remove_epsilon=config.remove_epsilon,
+                num_threads=num_threads if num_threads and num_threads > 0 else 4,
+            )
+            logger.info(
+                f"  projector ({projection_mode}): {summary['peptides']} peptides, "
+                f"{summary['ions']} ions"
+            )
+
         if config.acquisition_type == 'DDA':
             logger.info(section_header("Simulating DDA-PASEF Selection", use_unicode))
             pasef_meta, precursors = simulate_dda_pasef_selection_scheme(
@@ -1342,39 +1395,6 @@ def main():
         frame_batch_size=config.frame_batch_size,
         phospho_mode=config.phospho_mode,
     )
-
-    # JOB 9.5 (opt-in): regenerate the frame/scan distribution columns via the
-    # instrument-dispatch projector. Default 'off' -> the legacy columns written
-    # by the distribution jobs above are used unchanged (the DB-read fallback);
-    # nothing here runs. 'legacy_compat' reproduces them via the Rust projector;
-    # 'accurate' uses the improved projection. Runs after peptides+ions are in
-    # the DB (both fresh and checkpoint-restore paths) and before assembly reads
-    # the columns.
-    projection_mode = str(getattr(config, 'projection_mode', 'off')).lower()
-    if projection_mode not in ('off', 'legacy_compat', 'accurate'):
-        raise ValueError(
-            f"projection_mode must be off|legacy_compat|accurate, got {projection_mode!r}"
-        )
-    if projection_mode != 'off':
-        from imspy_simulation.timsim.jobs.project_distributions import (
-            write_projected_distributions,
-        )
-        logger.info(section_header(f"Projecting Distributions ({projection_mode})", use_unicode))
-        db_path = str(Path(acquisition_builder.path) / 'synthetic_data.db')
-        summary = write_projected_distributions(
-            db_path,
-            mode=projection_mode,
-            target_p=config.target_p,
-            frame_step_size=config.sampling_step_size,
-            scan_step_size=0.0001,  # the scan distribution job's fixed step
-            n_steps=config.n_steps,
-            remove_epsilon=config.remove_epsilon,
-            num_threads=num_threads if num_threads and num_threads > 0 else 4,
-        )
-        logger.info(
-            f"  projector ({projection_mode}): {summary['peptides']} peptides, "
-            f"{summary['ions']} ions"
-        )
 
     # JOB 10: Assemble frames
     logger.info(section_header("Assembling Frames", use_unicode))
