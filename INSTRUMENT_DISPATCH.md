@@ -1,31 +1,69 @@
 # Instrument Dispatch — separating physical appearance from device recording
 
-> **v3** — revised after a second Codex pass on v2. v2 folded in the first
-> review's 8 structural catches; v3 fixes the contradictions that rewrite
-> *introduced* and pins two load-bearing contracts P1 would otherwise freeze:
-> mobility ownership (§1/§2.3 resolved — DB stores CCS, profile owns the gas/temp
-> conversion), the **identity** and **intensity-conservation** contracts (§3.5),
-> the `RenderedEvent` coordinate/intensity stage (§3.2), the geometry/calibration
-> de-duplication (§3.1), the stepped projector loop for DDA (§3.4), and a P1 that
-> adds *parallel* scalar entities rather than removing the legacy ones (§6).
+> **v4** — reframed to a **trunk + two nested branches** (the natural reuse
+> boundary): the reusable artifact is the *ionized sample* (everything up to &
+> including ionization), and below it we branch **instrument**, then **acquisition**
+> nested under instrument. `InstrumentProfile` is split into `Instrument`
+> (carries) → `Acquisition` to mirror the tree (§3). Source conditions
+> (charge/yield) are baked into the trunk: varying the source = a new trunk DB.
+> v3's contracts (mobility ownership, identity/intensity, `RenderedEvent` stage,
+> geometry/calibration split, stepped projector loop, additive P1) are unchanged.
 
-## 1. Principle — three layers, not two
+## 1. Principle — one trunk, two nested branches
 
-Three independent layers (v1 fused the middle into the first; too broad):
+The reuse boundary is **ionization**. Everything up to and including it is a
+single reusable artifact (the DB); below it, device behavior branches twice.
 
-1. **Analyte chemistry** (intrinsic): sequence, modifications, elemental
-   composition, exact isotope m/z, **CCS** (with conformer/model provenance and a
-   physical spread).
-2. **Appearance under declared conditions** (experiment/source/chromatography):
-   retention-time profile, charge-state distribution + ion yield, the
-   fragmentation response. **Note: ion mobility is *not* stored here** — see §2.3.
-3. **Instrument recording**: acquisition schedule, sampling geometry, m/z
-   encoding, detector/peak-shape model, file format.
+```
+              IONIZED SAMPLE  ── the reusable trunk (one synthetic_data.db)
+   gas-phase ions: identity, charge, m/z, abundance/YIELD (source-baked),
+   CCS (intrinsic), RT elution profile, fragmentation propensity/response
+        │
+   ┌────┼─────────┐
+ timsTOF Astral ZenoTOF        ── BRANCH 1: instrument (device physics)
+        │                          mass analyzer, mobility cell, detector,
+        │                          calibration / m/z encoding
+    ┌───┼────┐
+   DIA DDA  PRM                 ── BRANCH 2: acquisition (NESTED under instrument)
+                                   schedule, isolation windows, cycle timing
+```
 
-The DB stores layers 1–2 plus an `experiment_conditions` record. That record is
-**provenance for the generated RT/yield/fragmentation only** — it is *not* the
-authoritative mobility environment at render time (that belongs to the profile,
-§2.3). A DB is reusable across instruments within its declared layer-2 conditions.
+- **Trunk = analyte chemistry + appearance under declared conditions, fused.**
+  sequence/mods/exact-isotope-m/z and **CCS** (intrinsic, with conformer/model
+  provenance + physical spread); RT elution profile; charge-state distribution +
+  **ion yield** (set at the ESI source — see §1.1); fragmentation propensity.
+  Mobility (`1/K0`) is **not** in the trunk — it's instrument-branch (§2.3).
+- **Branch 1 — instrument:** `SamplingGeometry` + `Calibration` + `DetectorModel`.
+  Derives `1/K0` from CCS under *its* gas/temp, encodes m/z to native coords,
+  applies the detector/peak-shape model.
+- **Branch 2 — acquisition (nested):** `AcquisitionSchedule` (+ `Acquisition
+  Controller` for DDA). Nested because schemes are instrument-constrained (a
+  DIA-PASEF scheme needs *mobility* windows; an Astral DIA scheme can't have them).
+
+A DB ships with an `experiment_conditions` record: **provenance for the generated
+RT/yield/fragmentation** and the mobility environment 1/K0 was historically
+materialised under — *not* the authoritative render-time mobility env (§2.3).
+
+### 1.1 Trunk boundary — source variation is a new trunk
+
+ESI charge envelope and ion yield are set at ionization, so they are **baked into
+the trunk**: changing the source means regenerating the DB, not flipping an
+instrument-branch knob. This keeps "up to & including ionization" literally fixed
+per DB — one ionized sample → many `instrument × acquisition` renders.
+
+### 1.2 Two things a real template does (the reuse seam)
+
+A real `.raw`/`.d`/`.wiff` template serves two unrelated roles, and the "different
+device" use exposes the seam:
+- its **acquisition scheme** (windows, timing) feeds branch 2 — instrument-neutral
+  in m/z space (the `AcquisitionScheme` we built), bound to a geometry only at
+  branch 1;
+- its **real signal** (overlay substrate) is a branch-1 concern (real⊕sim only
+  makes sense within one device's encoding).
+
+So the original use (*template → different acquisition*) swaps branch 2; the new
+use (*template → different device*) swaps branch 1. Both sit below the trunk, so
+the **same ionized-sample DB drives both** — that is the payoff of the split.
 
 ## 2. Current state
 
@@ -79,21 +117,63 @@ acquisition-window transmission. **Until P5, existing fragments stay
 Bruker-transmission-conditioned and must carry a `provenance`/legacy marker** —
 they must not be mislabeled as the target response model.
 
-## 3. Target architecture
+### 2.4 Spectral library as a trunk input (post-P1, ≥P2)
+
+The trunk is essentially a spectral library + abundance/elution profile, so a
+predicted/empirical library (DiaNN, AlphaDIA, Spectronaut, MSP) can **populate
+the trunk directly**, bypassing the FASTA-digest + RT/CCS/charge/fragment
+prediction jobs. This closes a benchmarking loop: take a search library →
+simulate raw data → search the simulated data with the same library.
+
+Define a single **trunk ingestion interface** that both populate:
+- *predictor pipeline* (today's path), or
+- *library importer*: map library columns → trunk schema, **convert any library
+  `1/K0` → CCS** under the library's declared mobility environment (recorded in
+  `experiment_conditions`; if the library carries CCS, use it directly), and
+  **fill what libraries lack** — absolute ion **yield** and **elution width**
+  (σ/λ) — from defaults/models, flagged in provenance.
+
+Scope: **not P1.** P1 only fixes the trunk *schema* (CCS, conditions, scalar
+entities); the importer lands once that schema is stable (own phase, after P2).
+P1 should merely avoid baking in assumptions that would block a library source
+(e.g. don't require a FASTA/protein origin on the scalar entities).
+
+## 3. Target architecture — trunk → Instrument → Acquisition
+
+The Rust types mirror the §1 tree: an `Instrument` (branch 1) **carries** an
+`Acquisition` (branch 2). This makes both reuse modes first-class — "reuse the
+instrument, vary the acquisition" is swapping the inner value; "reuse the sample,
+vary the instrument" is swapping the whole `Instrument` against the same trunk.
 
 ```
-  layer 1–2 store (DB)               InstrumentProfile (Rust)              output
+  TRUNK: ionized sample (DB)        Instrument (branch 1)              output
  ┌──────────────────────────┐   ┌────────────────────────────────┐   ┌────────────┐
- │ chemistry: seq, mods, CCS │   │ AcquisitionSchedule  [HAVE+ext] │   │ Bruker .d  │
- │ RT μ/σ/λ, charge, m/z     │──►│ AcquisitionController (DDA only)│──►│ Thermo .raw│
- │ isotope composition       │   │ SamplingGeometry (modality+grid)│   │ SCIEX .wiff│
- │ fragmentation response*   │   │ Calibration (mobility + m/z)    │   │ mzML       │
- │ experiment_conditions     │   │ DetectorModel (peak/quantize)   │   └────────────┘
- └──────────────────────────┘   │ Writer (format)                 │
-   (*legacy-marked pre-P5)      └────────────────────────────────┘
+ │ chemistry: seq, mods, CCS │   │ SamplingGeometry (modality+grid)│   │ Bruker .d  │
+ │ RT μ/σ/λ, charge, YIELD   │──►│ Calibration (mobility + m/z)    │──►│ Thermo .raw│
+ │ isotope composition       │   │ DetectorModel (peak/quantize)   │   │ SCIEX .wiff│
+ │ fragmentation response*   │   │ Writer (format)                 │   │ mzML       │
+ │ experiment_conditions     │   │  └─ Acquisition (branch 2):     │   └────────────┘
+ └──────────────────────────┘   │       AcquisitionSchedule [HAVE] │
+   trunk populated by either     │       AcquisitionController(DDA) │
+   the predictor pipeline OR a   └────────────────────────────────┘
+   spectral library (§2.4)
 ```
 
-Projector: **store + profile → ordered `RenderedEvent`s → writer.**
+```rust
+pub struct Instrument {
+    geometry: SamplingGeometry,
+    calibration: Calibration,
+    detector: DetectorModel,
+    writer: Box<dyn AcquisitionWriter>,
+    acquisition: Acquisition,        // branch 2 nested under the instrument
+}
+pub struct Acquisition {
+    schedule: AcquisitionSchedule,   // DIA static | DDA controller-driven
+    controller: Option<AcquisitionController>,  // None for DIA
+}
+```
+
+Projector: **trunk + Instrument → ordered `RenderedEvent`s → writer.**
 
 ### 3.1 `SamplingGeometry` — modality + physical grid (no coordinate conversion)
 
@@ -250,6 +330,9 @@ scan/RT/m/z noise + fragment assembly — the projection itself is deterministic
   DB fallback. Generation **keeps writing** the legacy vectors through P4.
 - **P3 — DIA parity:** numerical parity (gate 1) then deterministic writer parity
   (gate 2) for Bruker `.d`.
+- **PL — spectral-library trunk input (after P2, parallel to P3+):** the §2.4
+  importer (DiaNN/AlphaDIA/Spectronaut/MSP → trunk; 1/K0→CCS; fill yield/elution).
+  Depends only on a stable trunk schema (P1/P2), independent of the writer phases.
 - **P4 — DDA controller + removal:** migrate DDA to `AcquisitionController` on the
   §3.4 loop; DDA parity; **then stop writing** the JSON-vector columns and remove
   them (compatibility reader needs a profile + schedule to synthesize).
