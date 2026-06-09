@@ -524,64 +524,87 @@ pub fn project_mobility_ion(
 ) -> Vec<(i32, f64)> {
     match geometry.modality {
         MobilityModality::None => vec![(0, 1.0)],
-        MobilityModality::Tims => {
-            let n = geometry.inv_mobility.len();
-            if n == 0 {
-                return Vec::new();
-            }
-            if n == 1 {
-                // Single scan: integrate the whole captured Gaussian onto it.
-                let mean = ion.inv_mobility(env);
-                let sigma = ion.inv_mobility_std as f64;
-                let a = normal_cdf_range(mean - 6.0 * sigma, mean + 6.0 * sigma, mean, sigma);
-                return vec![(0, a)];
-            }
-            let mean = ion.inv_mobility(env);
-            let sigma = ion.inv_mobility_std as f64;
-            // Point mass (zero/invalid spread): assign all signal to the single
-            // nearest scan rather than dividing by sigma=0 (NaN) in the CDF.
-            if !(sigma > 0.0) {
-                let scan = nearest_scan_ascending(&geometry.inv_mobility, mean);
-                return vec![(scan as i32, 1.0)];
-            }
-            // `calculate_scan_occurrence_gaussian` returns indices into the
-            // REVERSED (descending) grid: occ index i -> inv_mobility[n-1-i].
-            let occ = calculate_scan_occurrence_gaussian(
-                &geometry.inv_mobility,
-                mean,
-                sigma,
-                target_p,
-                step_size,
-                3.0,
-                3.0,
-            );
-            let rev: Vec<f64> = geometry.inv_mobility.iter().rev().copied().collect();
-            let mut out: Vec<(i32, f64)> = occ
-                .into_iter()
-                .map(|i| {
-                    let i = i as usize;
-                    let v = rev[i];
-                    // Bin edges = midpoints to neighbours on the descending grid;
-                    // endpoints extrapolate by their adjacent half-spacing.
-                    let hi = if i > 0 {
-                        (rev[i - 1] + v) / 2.0
-                    } else {
-                        v + (v - rev[1]) / 2.0
-                    };
-                    let lo = if i + 1 < n {
-                        (v + rev[i + 1]) / 2.0
-                    } else {
-                        v - (rev[i - 1] - v) / 2.0
-                    };
-                    let abundance = normal_cdf_range(lo, hi, mean, sigma);
-                    // Convert reversed index back to an ascending-grid position.
-                    ((n - 1 - i) as i32, abundance)
-                })
-                .collect();
-            out.sort_by_key(|(scan, _)| *scan);
-            out
-        }
+        MobilityModality::Tims => project_mobility_gaussian(
+            &geometry.inv_mobility,
+            ion.inv_mobility(env),
+            ion.inv_mobility_std as f64,
+            target_p,
+            step_size,
+        ),
     }
+}
+
+/// Accurate mobility projection core: a Gaussian (`mean`, `sigma`) in 1/K0 onto
+/// an **ascending** mobility grid, returning `(ascending_scan_index, abundance)`
+/// where each occupied scan's abundance is the CDF over that scan's own
+/// midpoint-bounded bin (correct on non-uniform grids). σ ≤ 0 is a point mass at
+/// the nearest scan; empty/singleton grids are handled.
+pub fn project_mobility_gaussian(
+    grid_ascending: &[f64],
+    mean: f64,
+    sigma: f64,
+    target_p: f64,
+    step_size: f64,
+) -> Vec<(i32, f64)> {
+    let n = grid_ascending.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        if !(sigma > 0.0) {
+            return vec![(0, 1.0)];
+        }
+        let a = normal_cdf_range(mean - 6.0 * sigma, mean + 6.0 * sigma, mean, sigma);
+        return vec![(0, a)];
+    }
+    // Point mass (zero/invalid spread): single nearest scan, no CDF div-by-zero.
+    if !(sigma > 0.0) {
+        let scan = nearest_scan_ascending(grid_ascending, mean);
+        return vec![(scan as i32, 1.0)];
+    }
+    // `calculate_scan_occurrence_gaussian` returns indices into the REVERSED
+    // (descending) grid: occ index i -> grid_ascending[n-1-i].
+    let occ =
+        calculate_scan_occurrence_gaussian(grid_ascending, mean, sigma, target_p, step_size, 3.0, 3.0);
+    let rev: Vec<f64> = grid_ascending.iter().rev().copied().collect();
+    let mut out: Vec<(i32, f64)> = occ
+        .into_iter()
+        .map(|i| {
+            let i = i as usize;
+            let v = rev[i];
+            // Bin edges = midpoints to neighbours on the descending grid;
+            // endpoints extrapolate by their adjacent half-spacing.
+            let hi = if i > 0 { (rev[i - 1] + v) / 2.0 } else { v + (v - rev[1]) / 2.0 };
+            let lo = if i + 1 < n { (v + rev[i + 1]) / 2.0 } else { v - (rev[i - 1] - v) / 2.0 };
+            let abundance = normal_cdf_range(lo, hi, mean, sigma);
+            ((n - 1 - i) as i32, abundance) // reversed index -> ascending position
+        })
+        .collect();
+    out.sort_by_key(|(scan, _)| *scan);
+    out
+}
+
+/// Batched + parallel Accurate mobility projection over many ions sharing one
+/// ascending mobility grid. `means`/`sigmas` are per-ion 1/K0 mean+std. Returns
+/// one `(ascending_scan_index, abundance)` list per ion.
+pub fn project_mobility_accurate_par(
+    means: &[f64],
+    sigmas: &[f64],
+    grid_ascending: &[f64],
+    target_p: f64,
+    step_size: f64,
+    num_threads: usize,
+) -> Vec<Vec<(i32, f64)>> {
+    use rayon::prelude::*;
+    use rayon::ThreadPoolBuilder;
+    let pool = ThreadPoolBuilder::new().num_threads(num_threads.max(1)).build().unwrap();
+    pool.install(|| {
+        means
+            .par_iter()
+            .zip(sigmas.par_iter())
+            .map(|(&m, &s)| project_mobility_gaussian(grid_ascending, m, s, target_p, step_size))
+            .collect()
+    })
 }
 
 #[cfg(test)]

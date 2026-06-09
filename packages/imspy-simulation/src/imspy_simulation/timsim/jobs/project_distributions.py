@@ -15,9 +15,10 @@ that lets the projector drive distributions without disturbing the hard-won
 legacy path until explicitly chosen.
 
 `mode="legacy_compat"` reproduces the legacy kernels exactly (the validated
-default-when-opted-in). `mode="accurate"` (event-interval time projection +
-per-scan mobility bins) is reserved until the Accurate projector is exposed
-through the connector and independently validated.
+default-when-opted-in). `mode="accurate"` uses the improved projection
+(event-interval time integration + per-scan midpoint mobility bins); it is the
+intended path for new instruments but still requires independent validation
+against a real search before being trusted for Bruker production.
 """
 
 from __future__ import annotations
@@ -42,6 +43,11 @@ def projector_available() -> bool:
     return hasattr(_acq, "legacy_frame_projection") and hasattr(_acq, "legacy_scan_projection")
 
 
+def accurate_available() -> bool:
+    """Whether the installed connector exposes the Accurate projector."""
+    return hasattr(_acq, "accurate_frame_projection") and hasattr(_acq, "accurate_scan_projection")
+
+
 def write_projected_distributions(
     db_path: str,
     *,
@@ -62,22 +68,32 @@ def write_projected_distributions(
     Returns a summary dict. Raises if the connector lacks the projector or the
     DB is missing the required columns (``rt_mu`` etc.).
     """
-    if mode != "legacy_compat":
-        raise NotImplementedError(
-            f"projection mode {mode!r} not available yet; only 'legacy_compat' is exposed"
-        )
+    if mode not in ("legacy_compat", "accurate"):
+        raise ValueError(f"unknown projection mode {mode!r} (expected 'legacy_compat'|'accurate')")
     if not projector_available():
         raise RuntimeError(
-            "imspy_connector lacks the LegacyCompat projector (legacy_frame_projection / "
-            "legacy_scan_projection); rebuild the connector."
+            "imspy_connector lacks the projector bindings; rebuild the connector."
+        )
+    if mode == "accurate" and not accurate_available():
+        raise RuntimeError(
+            "imspy_connector lacks the Accurate projector (accurate_frame_projection / "
+            "accurate_scan_projection); rebuild the connector."
         )
 
     con = sqlite3.connect(db_path)
     try:
-        n_pep = _write_frame_distributions(
-            con, target_p, frame_step_size, n_steps, remove_epsilon, num_decimals, num_threads
-        )
-        n_ion = _write_scan_distributions(con, target_p, scan_step_size, num_decimals, num_threads)
+        if mode == "legacy_compat":
+            n_pep = _write_frame_distributions(
+                con, target_p, frame_step_size, n_steps, remove_epsilon, num_decimals, num_threads
+            )
+            n_ion = _write_scan_distributions(con, target_p, scan_step_size, num_decimals, num_threads)
+        else:
+            n_pep = _write_frame_distributions_accurate(
+                con, target_p, frame_step_size, n_steps, remove_epsilon, num_decimals, num_threads
+            )
+            n_ion = _write_scan_distributions_accurate(
+                con, target_p, scan_step_size, num_decimals, num_threads
+            )
         con.commit()
     finally:
         con.close()
@@ -166,6 +182,103 @@ def _write_scan_distributions(con, target_p, step_size, num_decimals, num_thread
     cur = con.cursor()
     for ion_id, pairs in zip(ion_ids, out):
         occ = [int(s) for s, _ in pairs]
+        ab = [float(a) for _, a in pairs]
+        cur.execute(
+            "UPDATE ions SET scan_occurrence = ?, scan_abundance = ? WHERE ion_id = ?",
+            (
+                python_list_to_json_string(occ, as_float=False),
+                python_list_to_json_string(ab, as_float=True, num_decimals=num_decimals),
+                ion_id,
+            ),
+        )
+    return len(ion_ids)
+
+
+# --------------------------------------------------------------------------- #
+# Accurate mode: event-interval time projection + per-scan mobility bins
+# --------------------------------------------------------------------------- #
+def _write_frame_distributions_accurate(
+    con, target_p, step_size, n_steps, remove_epsilon, num_decimals, num_threads
+) -> int:
+    frames = con.execute("SELECT frame_id, time FROM frames ORDER BY frame_id").fetchall()
+    frame_ids = [int(r[0]) for r in frames]
+    frame_times = [float(r[1]) for r in frames]
+    if len(frame_times) < 2:
+        raise ValueError("frames table needs >= 2 rows")
+    # Accurate event intervals: each frame's TRUE exposure window = the gap from
+    # the previous frame's time to its own (the first frame extrapolates the
+    # leading gap). Reduces to the legacy fixed bin for uniform spacing.
+    starts, ends = [], []
+    for i, t in enumerate(frame_times):
+        prev = frame_times[i - 1] if i > 0 else t - (frame_times[1] - frame_times[0])
+        starts.append(prev)
+        ends.append(t)
+
+    peps = con.execute(
+        "SELECT peptide_id, rt_mu, rt_sigma, rt_lambda FROM peptides ORDER BY peptide_id"
+    ).fetchall()
+    if not peps:
+        return 0
+    pep_ids = [int(r[0]) for r in peps]
+    out = _acq.accurate_frame_projection(
+        [float(r[1]) for r in peps],
+        [float(r[2]) for r in peps],
+        [float(r[3]) for r in peps],
+        starts,
+        ends,
+        target_p,
+        step_size,
+        num_threads,
+        n_steps,
+    )
+    cur = con.cursor()
+    for pid, pairs in zip(pep_ids, out):
+        # event_index -> frame_id, then apply the remove_epsilon filter.
+        kept = [(frame_ids[i], a) for i, a in pairs if a > remove_epsilon]
+        occ = [int(f) for f, _ in kept]
+        ab = [float(a) for _, a in kept]
+        start = occ[0] if occ else -1
+        end = occ[-1] if occ else -1
+        cur.execute(
+            "UPDATE peptides SET frame_occurrence = ?, frame_abundance = ?, "
+            "frame_occurrence_start = ?, frame_occurrence_end = ? WHERE peptide_id = ?",
+            (
+                python_list_to_json_string(occ, as_float=False),
+                python_list_to_json_string(ab, as_float=True, num_decimals=num_decimals),
+                start,
+                end,
+                pid,
+            ),
+        )
+    return len(pep_ids)
+
+
+def _write_scan_distributions_accurate(con, target_p, step_size, num_decimals, num_threads) -> int:
+    scans = sorted(con.execute("SELECT scan, mobility FROM scans").fetchall(), key=lambda r: r[1])
+    if len(scans) < 2:
+        raise ValueError("scans table needs >= 2 rows")
+    scan_ids = [int(r[0]) for r in scans]   # aligned with ascending mobility
+    scan_mob = [float(r[1]) for r in scans]
+
+    ions = con.execute(
+        "SELECT ion_id, inv_mobility_gru_predictor, inv_mobility_gru_predictor_std "
+        "FROM ions ORDER BY ion_id"
+    ).fetchall()
+    if not ions:
+        return 0
+    ion_ids = [int(r[0]) for r in ions]
+    out = _acq.accurate_scan_projection(
+        [float(r[1]) for r in ions],
+        [float(r[2]) for r in ions],
+        scan_mob,
+        target_p,
+        step_size,
+        num_threads,
+    )
+    cur = con.cursor()
+    for ion_id, pairs in zip(ion_ids, out):
+        # ascending grid index -> native scan id.
+        occ = [int(scan_ids[i]) for i, _ in pairs]
         ab = [float(a) for _, a in pairs]
         cur.execute(
             "UPDATE ions SET scan_occurrence = ?, scan_abundance = ? WHERE ion_id = ?",

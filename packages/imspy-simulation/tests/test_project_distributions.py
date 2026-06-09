@@ -84,6 +84,29 @@ def test_writer_is_idempotent(db_copy):
     assert snap == snap2, "writing twice must be idempotent"
 
 
-def test_accurate_mode_not_yet_available(db_copy):
-    with pytest.raises(NotImplementedError):
-        write_projected_distributions(db_copy, mode="accurate")
+def test_accurate_mode_writes_valid_distributions(db_copy):
+    from imspy_simulation.timsim.jobs.project_distributions import accurate_available
+
+    if not accurate_available():
+        pytest.skip("connector lacks the Accurate projector")
+    summary = write_projected_distributions(db_copy, mode="accurate", target_p=TARGET_P)
+    assert summary["peptides"] > 0 and summary["ions"] > 0
+    con = sqlite3.connect(db_copy)
+    # Spot-check a few rows parse and are finite/non-degenerate-where-expected.
+    for occ_col, ab_col, tbl in [
+        ("frame_occurrence", "frame_abundance", "peptides"),
+        ("scan_occurrence", "scan_abundance", "ions"),
+    ]:
+        rows = con.execute(f"SELECT {occ_col}, {ab_col} FROM {tbl} LIMIT 50").fetchall()
+        for occ_s, ab_s in rows:
+            occ = json.loads(occ_s)
+            ab = json.loads(ab_s)
+            assert len(occ) == len(ab)
+            assert all(np.isfinite(a) for a in ab), f"{tbl} abundance must be finite (no NaN)"
+            assert all(a >= 0.0 for a in ab)
+    con.close()
+
+
+def test_unknown_mode_rejected(db_copy):
+    with pytest.raises(ValueError):
+        write_projected_distributions(db_copy, mode="bogus")

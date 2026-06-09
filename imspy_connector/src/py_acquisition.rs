@@ -436,6 +436,61 @@ pub fn legacy_scan_projection_par(
     })
 }
 
+/// Accurate frame (time) projection — the EMG integrated over each event's
+/// explicit `[start, end]` interval (`mscore::project_emg_over_events_par`),
+/// with RT-support truncation. `event_starts`/`event_ends` define the event
+/// timeline; returns one `(event_index, abundance)` list per peptide (index =
+/// position in the timeline, which the caller maps to a frame id).
+#[pyfunction]
+#[pyo3(signature = (rt_mus, rt_sigmas, rt_lambdas, event_starts, event_ends, target_p, step_size, num_threads=4, n_steps=None))]
+pub fn accurate_frame_projection(
+    py: Python<'_>,
+    rt_mus: Vec<f64>,
+    rt_sigmas: Vec<f64>,
+    rt_lambdas: Vec<f64>,
+    event_starts: Vec<f64>,
+    event_ends: Vec<f64>,
+    target_p: f64,
+    step_size: f64,
+    num_threads: usize,
+    n_steps: Option<usize>,
+) -> PyResult<Vec<Vec<(usize, f64)>>> {
+    if event_starts.len() != event_ends.len() {
+        return Err(PyValueError::new_err("event_starts/event_ends length mismatch"));
+    }
+    let intervals: Vec<(f64, f64)> =
+        event_starts.into_iter().zip(event_ends).collect();
+    Ok(py.allow_threads(|| {
+        mscore::algorithm::utility::project_emg_over_events_par(
+            &intervals, rt_mus, rt_sigmas, rt_lambdas, target_p, step_size,
+            num_threads.max(1), n_steps,
+        )
+    }))
+}
+
+/// Accurate scan (mobility) projection over many ions
+/// (`rustdf::sim::projector::project_mobility_accurate_par`): a Gaussian per ion
+/// onto the ascending `mobility_grid`, with per-scan midpoint bins (correct on
+/// non-uniform grids). Returns one `(ascending_scan_index, abundance)` list per
+/// ion; the caller maps the ascending index to a native scan id.
+#[pyfunction]
+#[pyo3(signature = (means, sigmas, mobility_grid, target_p, step_size, num_threads=4))]
+pub fn accurate_scan_projection(
+    py: Python<'_>,
+    means: Vec<f64>,
+    sigmas: Vec<f64>,
+    mobility_grid: Vec<f64>,
+    target_p: f64,
+    step_size: f64,
+    num_threads: usize,
+) -> Vec<Vec<(i32, f64)>> {
+    py.allow_threads(|| {
+        rustdf::sim::projector::project_mobility_accurate_par(
+            &means, &sigmas, &mobility_grid, target_p, step_size, num_threads,
+        )
+    })
+}
+
 /// Whether this build includes the Thermo `.raw` extractor.
 #[pyfunction]
 pub fn has_thermo() -> bool {
@@ -456,6 +511,8 @@ pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(legacy_frame_projection, m)?)?;
     m.add_function(wrap_pyfunction!(legacy_scan_projection, m)?)?;
     m.add_function(wrap_pyfunction!(legacy_scan_projection_par, m)?)?;
+    m.add_function(wrap_pyfunction!(accurate_frame_projection, m)?)?;
+    m.add_function(wrap_pyfunction!(accurate_scan_projection, m)?)?;
     m.add_function(wrap_pyfunction!(has_thermo, m)?)?;
     m.add_function(wrap_pyfunction!(has_sciex, m)?)?;
     Ok(())
