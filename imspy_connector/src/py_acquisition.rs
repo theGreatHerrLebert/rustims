@@ -112,6 +112,17 @@ impl PyAcquisitionScheme {
         self.inner.num_cycles()
     }
 
+    /// Number of events in one cycle (1 MS1 + N MS2 frames) — the Bruker
+    /// `precursor_every` (frames per cycle).
+    pub fn cycle_length(&self) -> usize {
+        self.inner.cycle.len()
+    }
+
+    /// Number of MS2 frames (window groups) per cycle.
+    pub fn n_ms2_frames(&self) -> usize {
+        self.inner.cycle.len() - self.inner.ms1_count()
+    }
+
     pub fn validate(&self) -> PyResult<()> {
         self.inner.validate().map_err(val_err)
     }
@@ -163,6 +174,103 @@ impl PyAcquisitionScheme {
     }
 }
 
+/// Thermo `.raw` writer (template-mutation), exposed to the Python simulator.
+///
+/// Open a real Astral/Orbitrap `.raw` template, push MS1/MS2 scans in acquisition
+/// order, and `finalize`. `Replace` rewrites template scans; `Overlay`
+/// (`overlay_merge_tol_ppm`) adds simulated peaks onto the real template signal
+/// (real⊕sim). Requires the `thermo` feature.
+#[cfg(feature = "thermo")]
+#[pyclass]
+pub struct PyThermoRawWriter {
+    inner: rustdf::sim::acquisition::ThermoRawWriter,
+}
+
+#[cfg(feature = "thermo")]
+#[pymethods]
+impl PyThermoRawWriter {
+    /// Open `template` and prepare to author into `out`. Pass
+    /// `overlay_merge_tol_ppm` to overlay onto the real template signal instead
+    /// of replacing it.
+    #[staticmethod]
+    #[pyo3(signature = (template, out, overlay_merge_tol_ppm=None))]
+    pub fn from_template(
+        py: Python<'_>,
+        template: &str,
+        out: &str,
+        overlay_merge_tol_ppm: Option<f64>,
+    ) -> PyResult<Self> {
+        use rustdf::sim::acquisition::{ThermoRawWriter, WriteMode};
+        let mut w = py
+            .allow_threads(|| ThermoRawWriter::from_template(template, out))
+            .map_err(PyErr::from)?;
+        if let Some(tol) = overlay_merge_tol_ppm {
+            w = w.with_mode(WriteMode::Overlay { merge_tol_ppm: tol });
+        }
+        Ok(Self { inner: w })
+    }
+
+    /// Template (MS1, MS2) scan capacity, so a run can be checked to fit.
+    pub fn capacity(&self) -> (usize, usize) {
+        self.inner.capacity()
+    }
+
+    /// Author an MS1 scan from peak arrays (intensity cast to f32).
+    pub fn write_ms1(
+        &mut self,
+        retention_time: f64,
+        mz: Vec<f64>,
+        intensity: Vec<f64>,
+    ) -> PyResult<()> {
+        use rustdf::sim::acquisition::{AcquisitionWriter, ScanDescriptor};
+        if mz.len() != intensity.len() {
+            return Err(PyValueError::new_err("mz and intensity must have equal length"));
+        }
+        let peaks = mz.iter().zip(&intensity).map(|(&m, &i)| (m, i as f32)).collect();
+        let d = ScanDescriptor {
+            ms_level: 1,
+            retention_time,
+            isolation: None,
+            peaks,
+        };
+        self.inner.write_scan(&d).map_err(PyErr::from)
+    }
+
+    /// Author an MS2 scan with its isolation window + collision energy.
+    pub fn write_ms2(
+        &mut self,
+        retention_time: f64,
+        isolation_center: f64,
+        isolation_width: f64,
+        collision_energy: f64,
+        mz: Vec<f64>,
+        intensity: Vec<f64>,
+    ) -> PyResult<()> {
+        use rustdf::sim::acquisition::{AcquisitionWriter, IsolationWindow, ScanDescriptor};
+        if mz.len() != intensity.len() {
+            return Err(PyValueError::new_err("mz and intensity must have equal length"));
+        }
+        let peaks = mz.iter().zip(&intensity).map(|(&m, &i)| (m, i as f32)).collect();
+        let d = ScanDescriptor {
+            ms_level: 2,
+            retention_time,
+            isolation: Some(IsolationWindow {
+                center_mz: isolation_center,
+                width_mz: isolation_width,
+                collision_energy,
+            }),
+            peaks,
+        };
+        self.inner.write_scan(&d).map_err(PyErr::from)
+    }
+
+    /// Recompute the checksum and write the `.raw` to disk.
+    pub fn finalize(&mut self, py: Python<'_>) -> PyResult<()> {
+        use rustdf::sim::acquisition::AcquisitionWriter;
+        py.allow_threads(|| self.inner.finalize()).map_err(PyErr::from)
+    }
+}
+
 /// Whether this build includes the Thermo `.raw` extractor.
 #[pyfunction]
 pub fn has_thermo() -> bool {
@@ -178,6 +286,8 @@ pub fn has_sciex() -> bool {
 #[pymodule]
 pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAcquisitionScheme>()?;
+    #[cfg(feature = "thermo")]
+    m.add_class::<PyThermoRawWriter>()?;
     m.add_function(wrap_pyfunction!(has_thermo, m)?)?;
     m.add_function(wrap_pyfunction!(has_sciex, m)?)?;
     Ok(())
