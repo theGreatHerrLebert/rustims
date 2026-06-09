@@ -427,7 +427,12 @@ impl AcquisitionScheme {
     /// becomes one [`DiaMs2Frame`] holding its mobility-partitioned windows
     /// (`TimsMobility` geometry — the scan ranges are Bruker-grid coordinates),
     /// preceded by a single MS1 event. Cycle timing comes from the spacing of
-    /// the precursor (MS1) frames.
+    /// the precursor (MS1) frames. The returned scheme is validated.
+    ///
+    /// Note: window groups are ordered by ascending `WindowGroup` id, which is
+    /// the DIA-PASEF acquisition order in practice; a file that reuses or
+    /// permutes group numbering would need ordering by first MS2-frame
+    /// occurrence (via `DiaFrameMsMsInfo`) instead.
     pub fn from_bruker_d<P: AsRef<std::path::Path>>(path: P) -> io::Result<Self> {
         use crate::data::meta::{read_dia_ms_ms_windows, read_meta_data_sql};
         use std::collections::BTreeMap;
@@ -482,33 +487,34 @@ impl AcquisitionScheme {
         }
 
         // Cycle timing from the precursor (MS1, MsMsType == 0) frame spacing.
+        // Use the MEDIAN of the positive gaps between distinct, finite precursor
+        // times, so one anomalous interval doesn't set the whole cycle.
         let mut prec_times: Vec<f64> = frames
             .iter()
-            .filter(|f| f.ms_ms_type == 0)
+            .filter(|f| f.ms_ms_type == 0 && f.time.is_finite())
             .map(|f| f.time)
             .collect();
-        prec_times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let cycle_time_s = if prec_times.len() >= 2 {
-            (prec_times[1] - prec_times[0]).max(0.0)
-        } else {
-            0.0
-        };
-        if !(cycle_time_s.is_finite() && cycle_time_s > 0.0) {
+        prec_times.sort_by(f64::total_cmp);
+        prec_times.dedup();
+        let mut gaps: Vec<f64> = prec_times
+            .windows(2)
+            .map(|w| w[1] - w[0])
+            .filter(|g| *g > 0.0)
+            .collect();
+        if gaps.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "could not determine cycle time (need >= 2 precursor frames)",
+                "could not determine cycle time (need >= 2 distinct precursor frames)",
             ));
         }
-        let start_time_s = frames
-            .iter()
-            .map(|f| f.time)
-            .fold(f64::INFINITY, f64::min);
-        let gradient_length_s = frames
-            .iter()
-            .map(|f| f.time)
-            .fold(f64::NEG_INFINITY, f64::max);
+        gaps.sort_by(f64::total_cmp);
+        let cycle_time_s = gaps[gaps.len() / 2];
 
-        Ok(AcquisitionScheme {
+        let times: Vec<f64> = frames.iter().map(|f| f.time).filter(|t| t.is_finite()).collect();
+        let start_time_s = times.iter().copied().fold(f64::INFINITY, f64::min);
+        let gradient_length_s = times.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+
+        let scheme = AcquisitionScheme {
             version: SCHEME_VERSION,
             instrument: InstrumentKind::TimsTofDia,
             cycle,
@@ -526,7 +532,11 @@ impl AcquisitionScheme {
                 source: SchemeSource::ExtractedBruker,
                 notes: format!("extracted from Bruker .d ({n_groups} window groups)"),
             },
-        })
+        };
+        scheme
+            .validate()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        Ok(scheme)
     }
 }
 
@@ -535,15 +545,21 @@ impl AcquisitionScheme {
     /// Extract the SWATH scheme from a real SCIEX ZenoTOF `.wiff` method.
     ///
     /// Each SWATH window becomes a single-window [`DiaMs2Frame`] (no ion
-    /// mobility) preceded by an MS1. SCIEX uses **rolling collision energy**,
-    /// which is not stored in the `.wiff` SWATH method, so CE is
-    /// [`CollisionEnergyPolicy::Unknown`] (a model must be supplied downstream;
-    /// it is never invented). The `.wiff` method also does not carry run timing,
-    /// so `cycle_time_s` and `gradient_length_s` are caller-supplied.
+    /// mobility) preceded by an MS1.
+    ///
+    /// **Collision energy** is caller-supplied (`collision_energy`), because
+    /// SCIEX SWATH uses *rolling* CE computed by the instrument from an m/z
+    /// formula at acquisition time — it is **not** stored per-window in the
+    /// `.wiff` method (verified: the per-window MS2 parameter streams are
+    /// byte-identical across windows). Pass [`CollisionEnergyPolicy::Unknown`]
+    /// to leave it unset, or a [`CollisionEnergyPolicy::Linear`] rolling model.
+    /// The `.wiff` method also lacks run timing, so `cycle_time_s` /
+    /// `gradient_length_s` are caller-supplied. The returned scheme is validated.
     pub fn from_sciex_wiff<P: AsRef<std::path::Path>>(
         path: P,
         cycle_time_s: f64,
         gradient_length_s: f64,
+        collision_energy: CollisionEnergyPolicy,
     ) -> io::Result<Self> {
         let method = sciexwiff::read_method(path)?;
         if method.swath_windows.is_empty() {
@@ -571,7 +587,7 @@ impl AcquisitionScheme {
             cycle.push(AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
                 windows: vec![DiaWindow {
                     isolation: iso,
-                    collision_energy: CollisionEnergyPolicy::Unknown,
+                    collision_energy,
                     geometry: DiaGeometry::MzOnly,
                 }],
                 analyzer: Analyzer::Tof,
@@ -579,7 +595,7 @@ impl AcquisitionScheme {
                 duration_s: None,
             }));
         }
-        Ok(AcquisitionScheme {
+        let scheme = AcquisitionScheme {
             version: SCHEME_VERSION,
             instrument: InstrumentKind::SciexZenoTof,
             cycle,
@@ -592,10 +608,14 @@ impl AcquisitionScheme {
             provenance: Provenance {
                 source: SchemeSource::ExtractedSciex,
                 notes: format!(
-                    "extracted from SCIEX .wiff method ({n} SWATH windows; rolling CE unknown, timing caller-supplied)"
+                    "extracted from SCIEX .wiff method ({n} SWATH windows; CE caller-supplied, timing caller-supplied)"
                 ),
             },
-        })
+        };
+        scheme
+            .validate()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        Ok(scheme)
     }
 }
 
@@ -720,7 +740,7 @@ impl AcquisitionScheme {
             matches!(e, AcquisitionEvent::DiaMs2Frame(f) if f.analyzer == Analyzer::Astms)
         });
 
-        Ok(AcquisitionScheme {
+        let scheme = AcquisitionScheme {
             version: SCHEME_VERSION,
             instrument: if any_astms {
                 InstrumentKind::OrbitrapAstral
@@ -738,7 +758,11 @@ impl AcquisitionScheme {
                 source: SchemeSource::ExtractedThermo,
                 notes: format!("extracted from Thermo .raw (first cycle: 1 MS1 + {n_ms2} MS2)"),
             },
-        })
+        };
+        scheme
+            .validate()
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        Ok(scheme)
     }
 }
 
@@ -926,17 +950,26 @@ mod tests {
                 return;
             }
         };
-        let s = AcquisitionScheme::from_sciex_wiff(&wiff, 3.5, 1800.0).expect("extract");
+        // Default: CE unknown (rolling CE isn't in the .wiff method).
+        let s = AcquisitionScheme::from_sciex_wiff(&wiff, 3.5, 1800.0, CollisionEnergyPolicy::Unknown)
+            .expect("extract");
         s.validate().expect("valid scheme");
         assert_eq!(s.instrument, InstrumentKind::SciexZenoTof);
         assert_eq!(s.ms1_count(), 1);
         let n = s.windows().count();
         assert!(n > 10, "expected many SWATH windows, got {n}");
-        // SCIEX: m/z-only windows, rolling CE not recoverable -> Unknown.
         for w in s.windows() {
             assert!(matches!(w.geometry, DiaGeometry::MzOnly));
             assert!(matches!(w.collision_energy, CollisionEnergyPolicy::Unknown));
             assert!(w.collision_energy.at(w.isolation.center_mz).is_none());
+        }
+        // Supplying a rolling-CE Linear model gives a resolvable, finite CE.
+        let rolling = CollisionEnergyPolicy::Linear { intercept: 5.0, slope_per_mz: 0.045 };
+        let s2 = AcquisitionScheme::from_sciex_wiff(&wiff, 3.5, 1800.0, rolling).expect("extract");
+        s2.validate().expect("valid with rolling CE");
+        for w in s2.windows() {
+            let ce = w.collision_energy.at(w.isolation.center_mz).expect("resolvable CE");
+            assert!(ce.is_finite() && ce > 0.0);
         }
         eprintln!(
             "from_sciex_wiff OK: SciexZenoTof, {} SWATH windows, mz {:.1}..{:.1}",
