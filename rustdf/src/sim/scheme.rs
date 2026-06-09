@@ -443,41 +443,10 @@ impl AcquisitionScheme {
     /// frame→group table `DiaFrameMsMsInfo` needs the run frame schedule and is a
     /// separate step.
     pub fn to_bruker_windows(&self) -> Result<Vec<crate::data::meta::DiaMsMsWindow>, String> {
-        self.validate()?;
-        if self.instrument != InstrumentKind::TimsTofDia {
-            return Err("to_bruker_windows requires a timsTOF (TimsTofDia) scheme".into());
-        }
-        use std::collections::HashSet;
-        // Reserve explicit (vendor_group_id) ids first, rejecting duplicates among
-        // them; fallback ids for `None` frames are then drawn from the unused set,
-        // so a preserved id and a positional fallback can never collide.
-        let mut reserved: HashSet<u32> = HashSet::new();
-        for ev in &self.cycle {
-            if let AcquisitionEvent::DiaMs2Frame(f) = ev {
-                if let Some(g) = f.vendor_group_id {
-                    if !reserved.insert(g) {
-                        return Err(format!("duplicate vendor window-group id {g}"));
-                    }
-                }
-            }
-        }
+        let layout = self.bruker_group_layout()?;
         let mut rows = Vec::new();
-        let mut assigned: HashSet<u32> = HashSet::new();
-        let mut next_seq: u32 = 1;
-        for ev in &self.cycle {
-            if let AcquisitionEvent::DiaMs2Frame(frame) = ev {
-                let group = match frame.vendor_group_id {
-                    Some(g) => g,
-                    None => {
-                        while reserved.contains(&next_seq) || assigned.contains(&next_seq) {
-                            next_seq += 1;
-                        }
-                        next_seq
-                    }
-                };
-                if !assigned.insert(group) {
-                    return Err(format!("window-group id {group} collides"));
-                }
+        for (ev, slot) in self.cycle.iter().zip(&layout) {
+            if let (AcquisitionEvent::DiaMs2Frame(frame), Some(group)) = (ev, slot) {
                 for w in &frame.windows {
                     let (scan_num_begin, scan_num_end) = match w.geometry {
                         DiaGeometry::TimsMobility {
@@ -499,7 +468,7 @@ impl AcquisitionScheme {
                         }
                     };
                     rows.push(crate::data::meta::DiaMsMsWindow {
-                        window_group: group,
+                        window_group: *group,
                         scan_num_begin,
                         scan_num_end,
                         isolation_mz: w.isolation.center_mz,
@@ -510,6 +479,99 @@ impl AcquisitionScheme {
             }
         }
         Ok(rows)
+    }
+
+    /// Per-cycle-position window-group id: `None` for an MS1 event, `Some(group)`
+    /// for an MS2 frame. The group id is the frame's preserved `vendor_group_id`
+    /// (Bruker `WindowGroup`) when set, else a collision-safe positional id drawn
+    /// from the unused set (so preserved and fallback ids never collide).
+    /// Duplicate explicit ids are rejected. Validates first; requires a timsTOF
+    /// scheme. This is the single source of truth shared by `to_bruker_windows`
+    /// and `to_bruker_info`, so the two tables always agree.
+    fn bruker_group_layout(&self) -> Result<Vec<Option<u32>>, String> {
+        self.validate()?;
+        if self.instrument != InstrumentKind::TimsTofDia {
+            return Err("Bruker tables require a timsTOF (TimsTofDia) scheme".into());
+        }
+        use std::collections::HashSet;
+        let mut reserved: HashSet<u32> = HashSet::new();
+        for ev in &self.cycle {
+            if let AcquisitionEvent::DiaMs2Frame(f) = ev {
+                if let Some(g) = f.vendor_group_id {
+                    if !reserved.insert(g) {
+                        return Err(format!("duplicate vendor window-group id {g}"));
+                    }
+                }
+            }
+        }
+        let mut layout = Vec::with_capacity(self.cycle.len());
+        let mut assigned: HashSet<u32> = HashSet::new();
+        let mut next_seq: u32 = 1;
+        for ev in &self.cycle {
+            match ev {
+                AcquisitionEvent::Ms1(_) => layout.push(None),
+                AcquisitionEvent::DiaMs2Frame(frame) => {
+                    let group = match frame.vendor_group_id {
+                        Some(g) => g,
+                        None => {
+                            while reserved.contains(&next_seq) || assigned.contains(&next_seq) {
+                                next_seq += 1;
+                            }
+                            next_seq
+                        }
+                    };
+                    if !assigned.insert(group) {
+                        return Err(format!("window-group id {group} collides"));
+                    }
+                    layout.push(Some(group));
+                }
+            }
+        }
+        Ok(layout)
+    }
+
+    /// Generate the Bruker `DiaFrameMsMsInfo` (frame → window group) rows for a run
+    /// of `num_frames` total frames, tiling the scheme's cycle. Frame ids are
+    /// 1-based; cycle position `(frame_id - 1) % cycle_len` selects the event, MS1
+    /// frames produce no row, and each MS2 frame maps to its window-group id (the
+    /// same ids `to_bruker_windows` emits, so the two tables are consistent). The
+    /// final cycle may be partial.
+    pub fn to_bruker_info(
+        &self,
+        num_frames: u32,
+    ) -> Result<Vec<crate::data::meta::DiaMsMisInfo>, String> {
+        let layout = self.bruker_group_layout()?;
+        let fpc = layout.len() as u32;
+        if fpc == 0 {
+            return Err("empty cycle".into());
+        }
+        let mut rows = Vec::new();
+        for frame_id in 1..=num_frames {
+            let pos = ((frame_id - 1) % fpc) as usize;
+            if let Some(group) = layout[pos] {
+                rows.push(crate::data::meta::DiaMsMisInfo {
+                    frame_id,
+                    window_group: group,
+                });
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Both Bruker DIA tables for a `num_frames`-frame run: the
+    /// `DiaFrameMsMsWindows` rows and the `DiaFrameMsMsInfo` (frame→group) rows,
+    /// with consistent window-group ids.
+    pub fn to_bruker_tables(
+        &self,
+        num_frames: u32,
+    ) -> Result<
+        (
+            Vec<crate::data::meta::DiaMsMsWindow>,
+            Vec<crate::data::meta::DiaMsMisInfo>,
+        ),
+        String,
+    > {
+        Ok((self.to_bruker_windows()?, self.to_bruker_info(num_frames)?))
     }
 
     /// Extract the acquisition scheme from a real Bruker timsTOF DIA `.d`.
@@ -1143,6 +1205,82 @@ mod tests {
                 .filter(|e| matches!(e, AcquisitionEvent::DiaMs2Frame(_)))
                 .count()
         );
+    }
+
+    // Unconditional: DiaFrameMsMsInfo tiling + windows/info group-id consistency.
+    #[test]
+    fn to_bruker_info_tiling() {
+        let frame = |c: f64| {
+            AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
+                windows: vec![DiaWindow {
+                    isolation: IsolationWindow { center_mz: c, width_mz: 10.0 },
+                    collision_energy: CollisionEnergyPolicy::Value(25.0),
+                    geometry: DiaGeometry::TimsMobility { scan_start: 0, scan_end: 100 },
+                }],
+                analyzer: Analyzer::Tof,
+                data_mode: DataMode::Centroid,
+                duration_s: None,
+                vendor_group_id: None,
+            })
+        };
+        let s = AcquisitionScheme {
+            version: SCHEME_VERSION,
+            instrument: InstrumentKind::TimsTofDia,
+            cycle: vec![
+                AcquisitionEvent::Ms1(Ms1Event {
+                    analyzer: Analyzer::Tof,
+                    data_mode: DataMode::Centroid,
+                    mz_range: None,
+                    duration_s: None,
+                }),
+                frame(500.0),
+                frame(600.0),
+            ],
+            repeat: RepeatPolicy::FixedCycleTime {
+                cycle_time_s: 1.0,
+                gradient_length_s: 600.0,
+                start_time_s: 0.0,
+            },
+            mz_range: (300.0, 900.0),
+            provenance: Provenance { source: SchemeSource::Programmatic, notes: String::new() },
+        };
+        // cycle = [MS1, g1, g2]; num_frames=6: 1->skip, 2->g1, 3->g2, 4->skip, 5->g1, 6->g2
+        let info: Vec<(u32, u32)> = s
+            .to_bruker_info(6)
+            .unwrap()
+            .iter()
+            .map(|r| (r.frame_id, r.window_group))
+            .collect();
+        assert_eq!(info, vec![(2, 1), (3, 2), (5, 1), (6, 2)]);
+        // The two tables must reference the same set of window-group ids.
+        let (windows, info2) = s.to_bruker_tables(6).unwrap();
+        let wg: std::collections::BTreeSet<u32> = windows.iter().map(|w| w.window_group).collect();
+        let ig: std::collections::BTreeSet<u32> = info2.iter().map(|r| r.window_group).collect();
+        assert_eq!(wg, ig, "windows/info group ids disagree");
+    }
+
+    // Gated: regenerate DiaFrameMsMsInfo for the .d's full frame count and match.
+    #[test]
+    fn bruker_info_round_trip() {
+        let d = match std::env::var("TIMSIM_BRUKER_DIA_D") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP bruker_info_round_trip: set TIMSIM_BRUKER_DIA_D");
+                return;
+            }
+        };
+        let scheme = AcquisitionScheme::from_bruker_d(&d).expect("extract");
+        let frames = crate::data::meta::read_meta_data_sql(&d).expect("frames");
+        let num_frames = frames.iter().map(|f| f.id).max().unwrap_or(0) as u32;
+        let regenerated = scheme.to_bruker_info(num_frames).expect("to_bruker_info");
+        let original = crate::data::meta::read_dia_ms_ms_info(&d).expect("read source");
+        let key = |r: &crate::data::meta::DiaMsMisInfo| (r.frame_id, r.window_group);
+        let mut a: Vec<_> = regenerated.iter().map(key).collect();
+        let mut b: Vec<_> = original.iter().map(key).collect();
+        a.sort_unstable();
+        b.sort_unstable();
+        assert_eq!(a, b, "DiaFrameMsMsInfo round-trip differs from source");
+        eprintln!("bruker_info_round_trip OK: {} (frame, group) rows over {num_frames} frames", a.len());
     }
 
     #[cfg(feature = "sciex")]
