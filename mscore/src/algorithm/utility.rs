@@ -234,6 +234,78 @@ pub fn calculate_frame_abundances_emg_par(time_map: &HashMap<i32, f64>, occurren
     result
 }
 
+/// Project an EMG retention-time profile onto an explicit event timeline
+/// (instrument-dispatch P2).
+///
+/// Each event carries its own `[start, end]` exposure interval (seconds), so
+/// unlike [`calculate_frame_abundance_emg`] — which integrates a *fixed*
+/// `[time - rt_cycle_length, time]` and is therefore wrong for unequal event
+/// durations / dead time — this integrates the EMG over each event's true
+/// interval. Only events overlapping the analyte's RT support (computed once via
+/// [`calculate_bounds_emg`] at `target_p`) are integrated, implementing the
+/// RT-support truncation policy. Returns `(event_index, abundance)` for events
+/// with positive abundance, in ascending event order.
+///
+/// # Arguments
+///
+/// * `event_intervals` - per-event `[start, end]` exposure intervals (seconds),
+///   indexed by event position in the run timeline.
+/// * `mu`, `sigma`, `lambda` - EMG parameters of the analyte's RT profile.
+/// * `target_p` - probability mass defining the RT support (e.g. 0.9999).
+/// * `step_size` - search step for the bounds binary search.
+/// * `n_steps` - integration steps for each interval CDF (defaults to 1000).
+pub fn project_emg_over_events(
+    event_intervals: &[(f64, f64)],
+    mu: f64,
+    sigma: f64,
+    lambda: f64,
+    target_p: f64,
+    step_size: f64,
+    n_steps: Option<usize>,
+) -> Vec<(usize, f64)> {
+    // RT support: the [lower, upper] window capturing `target_p` of the mass.
+    // Events outside it are skipped (their CDF mass is negligible).
+    let (lower, upper) = calculate_bounds_emg(mu, sigma, lambda, step_size, target_p, 20.0, 60.0, n_steps);
+    event_intervals
+        .iter()
+        .enumerate()
+        .filter(|(_, &(start, end))| end >= lower && start <= upper)
+        .filter_map(|(idx, &(start, end))| {
+            let abundance = emg_cdf_range(start, end, mu, sigma, lambda, n_steps);
+            if abundance > 0.0 {
+                Some((idx, abundance))
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Parallel [`project_emg_over_events`] over many analytes sharing one event
+/// timeline. `rts`/`sigmas`/`lambdas` are aligned per analyte; returns one
+/// `(event_index, abundance)` list per analyte.
+pub fn project_emg_over_events_par(
+    event_intervals: &[(f64, f64)],
+    rts: Vec<f64>,
+    sigmas: Vec<f64>,
+    lambdas: Vec<f64>,
+    target_p: f64,
+    step_size: f64,
+    num_threads: usize,
+    n_steps: Option<usize>,
+) -> Vec<Vec<(usize, f64)>> {
+    let thread_pool = ThreadPoolBuilder::new().num_threads(num_threads).build().unwrap();
+    thread_pool.install(|| {
+        rts.into_par_iter()
+            .zip(sigmas.into_par_iter())
+            .zip(lambdas.into_par_iter())
+            .map(|((rt, sigma), lambda)| {
+                project_emg_over_events(event_intervals, rt, sigma, lambda, target_p, step_size, n_steps)
+            })
+            .collect()
+    })
+}
+
 /// Returns the CDF in the range [sample_start, sample_end] for a Normal(mean, std_dev).
 pub fn normal_cdf_range(lower_limit: f64, upper_limit: f64, mean: f64, std_dev: f64) -> f64 {
     let cdf_start = custom_cdf_normal(lower_limit, mean, std_dev);
@@ -474,6 +546,61 @@ mod tests {
 
     fn approx_eq(a: f64, b: f64, epsilon: f64) -> bool {
         (a - b).abs() < epsilon
+    }
+
+    #[test]
+    fn test_project_emg_reduces_to_legacy_under_uniform_intervals() {
+        // A uniform frame timeline: frames at t = 1..=N seconds, each frame's
+        // exposure interval being [t - cycle, t] (the legacy assumption).
+        let (mu, sigma, lambda) = (25.0, 1.5, 0.3);
+        let cycle = 1.0_f64;
+        let times: Vec<f64> = (1..=60).map(|i| i as f64).collect();
+        let intervals: Vec<(f64, f64)> = times.iter().map(|&t| (t - cycle, t)).collect();
+
+        // Legacy path: occurrence frames + per-frame abundance over [t-cycle, t].
+        let occ = calculate_frame_occurrence_emg(&times, mu, sigma, lambda, 0.9999, 0.01, None);
+        let mut time_map = std::collections::HashMap::new();
+        for (i, &t) in times.iter().enumerate() {
+            time_map.insert((i + 1) as i32, t); // 1-indexed frame ids
+        }
+        let legacy_abund =
+            calculate_frame_abundance_emg(&time_map, &occ, mu, sigma, lambda, cycle, None);
+
+        // New event-interval path.
+        let projected = project_emg_over_events(&intervals, mu, sigma, lambda, 0.9999, 0.01, None);
+
+        // The non-negligible projected events must reproduce the legacy
+        // per-frame abundances (frame id == event_index + 1).
+        for (&frame_id, &abund) in occ.iter().zip(legacy_abund.iter()) {
+            if abund <= 0.0 {
+                continue;
+            }
+            let event_idx = (frame_id - 1) as usize;
+            let found = projected.iter().find(|(idx, _)| *idx == event_idx);
+            assert!(found.is_some(), "event {event_idx} (frame {frame_id}) missing from projection");
+            let (_, p_abund) = found.unwrap();
+            assert!(
+                (p_abund - abund).abs() < 1e-9,
+                "abundance mismatch at frame {frame_id}: legacy {abund} vs projected {p_abund}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_project_emg_respects_unequal_event_durations() {
+        // Two events covering the SAME [start, end] as one wide event must split
+        // its mass (area-preserving) — the legacy fixed-cycle kernel can't do this.
+        let (mu, sigma, lambda) = (10.0, 1.0, 0.2);
+        let wide = vec![(8.0, 12.0)];
+        let split = vec![(8.0, 10.0), (10.0, 12.0)];
+        let wide_p = project_emg_over_events(&wide, mu, sigma, lambda, 0.9999, 0.01, None);
+        let split_p = project_emg_over_events(&split, mu, sigma, lambda, 0.9999, 0.01, None);
+        let wide_sum: f64 = wide_p.iter().map(|(_, a)| a).sum();
+        let split_sum: f64 = split_p.iter().map(|(_, a)| a).sum();
+        // Mass is conserved up to trapezoidal-quadrature discretization (each
+        // interval is integrated with n_steps; the split is in fact finer).
+        assert!((wide_sum - split_sum).abs() < 1e-3, "split must conserve mass: {wide_sum} vs {split_sum}");
+        assert_eq!(split_p.len(), 2, "both sub-intervals should carry mass");
     }
 
     #[test]
