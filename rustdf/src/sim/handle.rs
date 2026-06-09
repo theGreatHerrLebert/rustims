@@ -1,6 +1,6 @@
 use crate::sim::containers::{
-    FragmentIonSim, FrameToWindowGroupSim, FramesSim, IonSim, PeptidesSim, ScansSim,
-    SignalDistribution, WindowGroupSettingsSim,
+    FragmentIonSim, FrameToWindowGroupSim, FramesSim, IonScalar, IonSim, MobilityEnv,
+    PeptideScalar, PeptidesSim, ScansSim, SignalDistribution, WindowGroupSettingsSim,
 };
 use mscore::data::peptide::{FragmentType, PeptideProductIonSeriesCollection, PeptideSequence};
 use mscore::data::spectrum::{MsType, MzSpectrum};
@@ -176,6 +176,140 @@ impl TimsTofSyntheticsDataHandle {
             ions.push(ion?);
         }
         Ok(ions)
+    }
+
+    // ----------------------------------------------------------------------- //
+    // Instrument-dispatch P1: parallel scalar-native readers.
+    //
+    // These read ONLY the trunk scalar physics — no JSON occurrence/abundance
+    // vectors — and are additive (the legacy read_peptides/read_ions above are
+    // untouched). For a legacy DB that persisted 1/K0 (and no `ccs` column),
+    // CCS is derived under the supplied `MobilityEnv`.
+    // ----------------------------------------------------------------------- //
+
+    /// True if `table` exists and has `column` (used to stay forward/backward
+    /// compatible across schema versions without per-row failures).
+    fn table_has_column(&self, table: &str, column: &str) -> rusqlite::Result<bool> {
+        let mut stmt = self
+            .connection
+            .prepare(&format!("PRAGMA table_info({})", table))?;
+        let mut found = false;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+        for name in rows {
+            if name? == column {
+                found = true;
+            }
+        }
+        Ok(found)
+    }
+
+    /// Read the run's mobility environment from `experiment_conditions`, falling
+    /// back to timsTOF defaults when the table/columns are absent (pre-P1 DB).
+    pub fn read_mobility_env(&self) -> rusqlite::Result<MobilityEnv> {
+        if !self.table_has_column("experiment_conditions", "drift_gas_mass")? {
+            return Ok(MobilityEnv::default());
+        }
+        let mut stmt = self.connection.prepare(
+            "SELECT drift_gas_mass, temperature_c, t_diff FROM experiment_conditions LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map([], |row| {
+            Ok(MobilityEnv {
+                gas_mass: row.get(0)?,
+                temp_c: row.get(1)?,
+                t_diff: row.get(2)?,
+            })
+        })?;
+        match rows.next() {
+            Some(env) => env,
+            None => Ok(MobilityEnv::default()),
+        }
+    }
+
+    /// Read peptides as scalar-native trunk entities (no frame-occurrence vectors).
+    pub fn read_peptides_scalar(&self) -> rusqlite::Result<Vec<PeptideScalar>> {
+        let has_condition = self.table_has_column("peptides", "condition_id")?;
+        let mut stmt = self.connection.prepare("SELECT * FROM peptides")?;
+        let iter = stmt.query_map([], |row| {
+            let peptide_id: u32 = row.get("peptide_id")?;
+            let condition_id = if has_condition {
+                row.get::<_, Option<i64>>("condition_id")?
+            } else {
+                None
+            };
+            Ok(PeptideScalar {
+                protein_id: row.get("protein_id")?,
+                peptide_id,
+                sequence: PeptideSequence::new(row.get("sequence")?, Some(peptide_id as i32)),
+                proteins: row.get("protein")?,
+                decoy: row.get("decoy")?,
+                missed_cleavages: row.get("missed_cleavages")?,
+                mono_isotopic_mass: row.get("monoisotopic-mass")?,
+                retention_time: row.get("retention_time_gru_predictor")?,
+                rt_sigma: row.get("rt_sigma")?,
+                rt_lambda: row.get("rt_lambda")?,
+                events: row.get("events")?,
+                condition_id,
+            })
+        })?;
+        let mut out = Vec::new();
+        for p in iter {
+            out.push(p?);
+        }
+        Ok(out)
+    }
+
+    /// Read ions as scalar-native trunk entities (no scan-occurrence vectors).
+    /// CCS is read directly if a `ccs` column exists, otherwise derived from the
+    /// legacy `inv_mobility_gru_predictor` (1/K0) under `env`.
+    pub fn read_ions_scalar(&self, env: &MobilityEnv) -> rusqlite::Result<Vec<IonScalar>> {
+        let has_ccs = self.table_has_column("ions", "ccs")?;
+        let has_condition = self.table_has_column("ions", "condition_id")?;
+        let mut stmt = self.connection.prepare("SELECT * FROM ions")?;
+        let env = *env;
+        let iter = stmt.query_map([], move |row| {
+            let simulated_spectrum_str: String = row.get("simulated_spectrum")?;
+            let simulated_spectrum: MzSpectrum = serde_json::from_str(&simulated_spectrum_str)
+                .map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
+            let charge: i8 = row.get("charge")?;
+            let mz: f64 = row.get("mz")?;
+            let ccs: f64 = if has_ccs {
+                row.get("ccs")?
+            } else {
+                let one_over_k0: f64 = row.get("inv_mobility_gru_predictor")?;
+                env.ccs_from_inv_mobility(one_over_k0, mz, charge)
+            };
+            let ccs_std: f32 = row
+                .get::<_, f32>("inv_mobility_gru_predictor_std")
+                .unwrap_or(0.0);
+            let condition_id = if has_condition {
+                row.get::<_, Option<i64>>("condition_id")?
+            } else {
+                None
+            };
+            Ok(IonScalar {
+                ion_id: row.get("ion_id")?,
+                peptide_id: row.get("peptide_id")?,
+                sequence: row.get("sequence")?,
+                charge,
+                relative_abundance: row.get("relative_abundance")?,
+                mz,
+                ccs,
+                ccs_std,
+                simulated_spectrum,
+                condition_id,
+            })
+        })?;
+        let mut out = Vec::new();
+        for i in iter {
+            out.push(i?);
+        }
+        Ok(out)
     }
 
     pub fn read_window_group_settings(&self) -> rusqlite::Result<Vec<WindowGroupSettingsSim>> {
@@ -1061,4 +1195,71 @@ pub struct FragmentIonsWithComplementary {
     /// Per-fragment transmission data for per-fragment mode
     /// Outer Vec: one per ion_series, Inner Vec: one per fragment ion in that series
     pub per_fragment_data: Vec<Vec<FragmentIonTransmissionData>>,
+}
+
+#[cfg(test)]
+mod scalar_reader_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    /// Build a minimal legacy-shaped synthetic_data.db (1/K0 only, no `ccs`,
+    /// no `condition_id`) and prove the scalar readers work + the legacy
+    /// 1/K0 -> CCS -> 1/K0 adapter round-trips under the read mobility env.
+    #[test]
+    fn scalar_readers_on_legacy_db() {
+        let path = std::env::temp_dir().join(format!(
+            "rustdf_scalar_test_{}.db",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let one_over_k0 = 0.85_f64;
+        let (mz, charge) = (500.25_f64, 2_i8);
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE peptides (
+                    protein_id INTEGER, peptide_id INTEGER, sequence TEXT, protein TEXT,
+                    decoy INTEGER, missed_cleavages INTEGER, \"monoisotopic-mass\" REAL,
+                    retention_time_gru_predictor REAL, rt_sigma REAL, rt_lambda REAL, events REAL
+                 );
+                 CREATE TABLE ions (
+                    ion_id INTEGER, peptide_id INTEGER, sequence TEXT, charge INTEGER,
+                    relative_abundance REAL, mz REAL, inv_mobility_gru_predictor REAL,
+                    inv_mobility_gru_predictor_std REAL, simulated_spectrum TEXT
+                 );",
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO peptides VALUES (1,1,'PEPTIDEK','P',0,0,930.5,123.4,1.2,0.3,5.0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO ions VALUES (1,1,'PEPTIDEK',?1,1.0,?2,?3,0.02,'{\"mz\":[500.25],\"intensity\":[1.0]}')",
+                rusqlite::params![charge, mz, one_over_k0],
+            )
+            .unwrap();
+        }
+
+        let handle = TimsTofSyntheticsDataHandle::new(&path).unwrap();
+
+        // No experiment_conditions table -> default timsTOF env.
+        let env = handle.read_mobility_env().unwrap();
+        assert_eq!(env, MobilityEnv::default());
+
+        let peptides = handle.read_peptides_scalar().unwrap();
+        assert_eq!(peptides.len(), 1);
+        assert_eq!(peptides[0].rt_sigma, 1.2);
+        assert_eq!(peptides[0].condition_id, None);
+
+        let ions = handle.read_ions_scalar(&env).unwrap();
+        assert_eq!(ions.len(), 1);
+        // CCS was derived from the legacy 1/K0; re-deriving 1/K0 from that CCS
+        // under the same env must return the original (lossless migration).
+        let back = ions[0].inv_mobility(&env);
+        assert!((back - one_over_k0).abs() < 1e-9, "1/K0 round-trip: {back}");
+        assert_eq!(ions[0].condition_id, None);
+
+        let _ = std::fs::remove_file(&path);
+    }
 }

@@ -1,3 +1,6 @@
+use mscore::chemistry::formulas::{
+    ccs_to_one_over_reduced_mobility, one_over_reduced_mobility_to_ccs,
+};
 use mscore::data::peptide::PeptideSequence;
 use mscore::data::spectrum::{MsType, MzSpectrum};
 use rand::distributions::{Distribution, Uniform};
@@ -210,6 +213,105 @@ impl IonSim {
     }
 }
 
+// --------------------------------------------------------------------------- //
+// Instrument-dispatch P1: parallel scalar-native entities.
+//
+// These mirror PeptidesSim / IonSim but hold ONLY the vendor-neutral scalar
+// physics (the trunk / "ionized sample" of INSTRUMENT_DISPATCH.md) — no
+// device-sampled occurrence/abundance vectors. They are additive: the legacy
+// SignalDistribution-bearing entities and their readers are untouched.
+//
+// Mobility ownership (plan §2.3): the trunk stores CCS (intrinsic); 1/K0 is
+// derived per instrument under that instrument's mobility environment. For
+// legacy DBs that persisted only 1/K0, the scalar reader converts 1/K0 -> CCS
+// under a declared reference `MobilityEnv` (see handle.rs).
+// --------------------------------------------------------------------------- //
+
+/// Drift-gas mobility environment for the CCS <-> 1/K0 conversion. Defaults
+/// match the timsTOF constants used by `mscore::chemistry::formulas` (N2,
+/// 31.85 °C, 273.15 K offset).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MobilityEnv {
+    pub gas_mass: f64,
+    pub temp_c: f64,
+    pub t_diff: f64,
+}
+
+impl Default for MobilityEnv {
+    fn default() -> Self {
+        MobilityEnv { gas_mass: 28.013, temp_c: 31.85, t_diff: 273.15 }
+    }
+}
+
+impl MobilityEnv {
+    /// CCS for an ion observed at `one_over_k0` (legacy 1/K0 -> trunk CCS).
+    pub fn ccs_from_inv_mobility(&self, one_over_k0: f64, mz: f64, charge: i8) -> f64 {
+        one_over_reduced_mobility_to_ccs(
+            one_over_k0,
+            mz,
+            charge.max(1) as u32,
+            self.gas_mass,
+            self.temp_c,
+            self.t_diff,
+        )
+    }
+    /// 1/K0 for an ion of `ccs` under this environment (trunk CCS -> device 1/K0).
+    pub fn inv_mobility_from_ccs(&self, ccs: f64, mz: f64, charge: i8) -> f64 {
+        ccs_to_one_over_reduced_mobility(
+            ccs,
+            mz,
+            charge.max(1) as u32,
+            self.gas_mass,
+            self.temp_c,
+            self.t_diff,
+        )
+    }
+}
+
+/// Scalar-native peptide: trunk physics with no frame-occurrence vectors.
+#[derive(Debug, Clone)]
+pub struct PeptideScalar {
+    pub protein_id: u32,
+    pub peptide_id: u32,
+    pub sequence: PeptideSequence,
+    pub proteins: String,
+    pub decoy: bool,
+    pub missed_cleavages: i8,
+    pub mono_isotopic_mass: f32,
+    /// EMG retention-time profile (seconds): apex + shape, not frame indices.
+    pub retention_time: f32,
+    pub rt_sigma: f32,
+    pub rt_lambda: f32,
+    pub events: f32,
+    /// Reserved per-analyte condition override (NULL -> the run's single row).
+    pub condition_id: Option<i64>,
+}
+
+/// Scalar-native ion: trunk physics with no scan-occurrence vectors. Stores CCS
+/// as canonical; 1/K0 is derived per instrument via `inv_mobility`.
+#[derive(Debug, Clone)]
+pub struct IonScalar {
+    pub ion_id: u32,
+    pub peptide_id: u32,
+    pub sequence: String,
+    pub charge: i8,
+    pub relative_abundance: f32,
+    pub mz: f64,
+    pub ccs: f64,
+    /// Physical mobility spread (conformer width), in 1/K0 units as stored.
+    pub ccs_std: f32,
+    /// Isotope composition (m/z + relative intensity), pre-detector.
+    pub simulated_spectrum: MzSpectrum,
+    pub condition_id: Option<i64>,
+}
+
+impl IonScalar {
+    /// Derive this ion's 1/K0 under the given instrument mobility environment.
+    pub fn inv_mobility(&self, env: &MobilityEnv) -> f64 {
+        env.inv_mobility_from_ccs(self.ccs, self.mz, self.charge)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ScansSim {
     pub scan: u32,
@@ -384,5 +486,42 @@ impl IsotopeTransmissionConfig {
     /// Check if any transmission mode is enabled
     pub fn is_enabled(&self) -> bool {
         self.mode != IsotopeTransmissionMode::None
+    }
+}
+
+#[cfg(test)]
+mod scalar_entity_tests {
+    use super::*;
+
+    #[test]
+    fn mobility_env_ccs_inv_mobility_round_trips() {
+        // 1/K0 -> CCS -> 1/K0 must be identity under the same environment
+        // (the legacy-1/K0 -> trunk-CCS migration must lose nothing).
+        let env = MobilityEnv::default();
+        let (mz, charge, one_over_k0) = (1000.0_f64, 2_i8, 0.85_f64);
+        let ccs = env.ccs_from_inv_mobility(one_over_k0, mz, charge);
+        let back = env.inv_mobility_from_ccs(ccs, mz, charge);
+        assert!((back - one_over_k0).abs() < 1e-9, "round-trip drift: {back} vs {one_over_k0}");
+    }
+
+    #[test]
+    fn ion_scalar_derives_inv_mobility_per_env() {
+        let warm = MobilityEnv { gas_mass: 28.013, temp_c: 40.0, t_diff: 273.15 };
+        let cold = MobilityEnv { gas_mass: 28.013, temp_c: 20.0, t_diff: 273.15 };
+        let ion = IonScalar {
+            ion_id: 1,
+            peptide_id: 1,
+            sequence: "PEPTIDEK".to_string(),
+            charge: 2,
+            relative_abundance: 1.0,
+            mz: 500.0,
+            ccs: 350.0,
+            ccs_std: 0.0,
+            simulated_spectrum: MzSpectrum::new(vec![500.0], vec![1.0]),
+            condition_id: None,
+        };
+        // Same CCS yields different 1/K0 in different drift environments — the
+        // whole point of storing CCS in the trunk, not 1/K0.
+        assert!(ion.inv_mobility(&warm) != ion.inv_mobility(&cold));
     }
 }
