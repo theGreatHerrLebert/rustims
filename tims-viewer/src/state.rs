@@ -2,7 +2,21 @@
 
 use crate::data::point::AxisBounds;
 use crate::render::point_cloud::PointMode;
-use crate::render::uniforms::ParamsUniform;
+use crate::render::uniforms::{ParamsUniform, VolumeUniform};
+
+/// Top-level visualization mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewMode {
+    Points,
+    Volume,
+}
+
+/// Volume raycast style.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VolStyle {
+    Composite,
+    Mip,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransferMode {
@@ -31,7 +45,10 @@ pub struct Window {
 pub struct AppState {
     pub bounds: AxisBounds,
 
-    pub render_mode: PointMode,
+    pub view_mode: ViewMode,
+    pub point_mode: PointMode,
+    pub vol_style: VolStyle,
+    pub vol_steps: u32,
 
     // Transfer function / appearance
     pub transfer: TransferMode,
@@ -65,7 +82,10 @@ impl AppState {
     pub fn new(bounds: AxisBounds, total_estimate: u64, n_colormaps: u32) -> Self {
         AppState {
             bounds,
-            render_mode: PointMode::AdditiveDensity,
+            view_mode: ViewMode::Points,
+            point_mode: PointMode::AdditiveDensity,
+            vol_style: VolStyle::Composite,
+            vol_steps: 256,
             transfer: TransferMode::Log,
             i_min: 1.0,
             i_max: 1e5,
@@ -126,7 +146,7 @@ impl AppState {
             self.rt_window.max,
         );
         let ms_mask = (self.show_ms1 as u32) | ((self.show_ms2 as u32) << 1);
-        let render_mode = match self.render_mode {
+        let render_mode = match self.point_mode {
             PointMode::AdditiveDensity => 0,
             PointMode::StructuralOpaque => 1,
         };
@@ -141,6 +161,34 @@ impl AppState {
             ms_mask,
             colormap_id: self.colormap_id,
             render_mode,
+            n_colormaps: self.n_colormaps.max(1),
+        }
+    }
+
+    /// Build the volume raycaster uniform; `inv_view_proj` comes from the camera.
+    pub fn volume_uniform(&self, inv_view_proj: [[f32; 4]; 4]) -> VolumeUniform {
+        let bmin = self.bounds.normalize(
+            self.mz_window.min,
+            self.im_window.min,
+            self.rt_window.min,
+        );
+        let bmax = self.bounds.normalize(
+            self.mz_window.max,
+            self.im_window.max,
+            self.rt_window.max,
+        );
+        let style = match self.vol_style {
+            VolStyle::Composite => 0,
+            VolStyle::Mip => 1,
+        };
+        VolumeUniform {
+            inv_view_proj,
+            box_min: [bmin[0], bmin[1], bmin[2], 0.0],
+            box_max: [bmax[0], bmax[1], bmax[2], 0.0],
+            transfer: [self.transfer.as_f32(), self.i_min, self.i_max, self.exposure],
+            steps: self.vol_steps.max(1),
+            style,
+            colormap_id: self.colormap_id,
             n_colormaps: self.n_colormaps.max(1),
         }
     }

@@ -18,7 +18,8 @@ use crate::data::loader::{LoadMsg, LoaderHandle, LoaderMode};
 use crate::data::meta::MetaIndex;
 use crate::render::colormap::COLORMAP_NAMES;
 use crate::render::point_cloud::PointCloudRenderer;
-use crate::state::AppState;
+use crate::render::volume::{VolumeGrid, VolumeRenderer, VOLUME_DIMS};
+use crate::state::{AppState, ViewMode};
 use crate::ui;
 
 const DEFAULT_BUDGET: usize = 12_000_000;
@@ -54,6 +55,8 @@ struct Gfx {
     egui_renderer: egui_wgpu::Renderer,
 
     points: PointCloudRenderer,
+    volume: VolumeRenderer,
+    grid: VolumeGrid,
     camera: OrbitCamera,
     state: AppState,
     loader: LoaderHandle,
@@ -192,6 +195,8 @@ impl App {
             capacity,
             supports_compaction,
         );
+        let volume = VolumeRenderer::new(&device, &queue, format, DEPTH_FORMAT, VOLUME_DIMS);
+        let grid = VolumeGrid::new(VOLUME_DIMS);
 
         let n_colormaps = COLORMAP_NAMES.len() as u32;
         let mut state = AppState::new(plan.meta.bounds, total, n_colormaps);
@@ -234,6 +239,8 @@ impl App {
             egui_state,
             egui_renderer,
             points,
+            volume,
+            grid,
             camera: OrbitCamera::default(),
             state,
             loader,
@@ -267,6 +274,10 @@ impl Gfx {
         for _ in 0..MAX_CHUNKS_PER_FRAME {
             match self.loader.rx.try_recv() {
                 Ok(LoadMsg::Chunk { points, .. }) => {
+                    // Voxelize into the CPU max-grid (for volume mode) and upload to GPU.
+                    for p in &points {
+                        self.grid.deposit(p.pos, p.intensity);
+                    }
                     self.points.append(&self.queue, &points);
                 }
                 Ok(LoadMsg::Progress(p)) => self.state.load_progress = p,
@@ -320,6 +331,17 @@ impl Gfx {
         self.points.update_camera(&self.queue, &cam);
         self.points.update_params(&self.queue, &self.state.params());
 
+        // Volume mode: update the raycaster uniform and (re)upload the grid if it grew.
+        if self.state.view_mode == ViewMode::Volume {
+            let inv_vp = self.camera.inv_view_proj(aspect);
+            self.volume
+                .update_uniform(&self.queue, &self.state.volume_uniform(inv_vp));
+            if self.grid.dirty() {
+                self.volume.upload(&self.queue, &self.grid.to_f16());
+                self.grid.clear_dirty();
+            }
+        }
+
         // Acquire the surface BEFORE any egui texture upload, so a surface error
         // returns without leaking uploaded-but-never-freed egui textures (texture
         // `set` and `free` are then always paired within one successful frame).
@@ -369,8 +391,10 @@ impl Gfx {
             self.egui_renderer
                 .update_buffers(&self.device, &self.queue, &mut encoder, &tris, &screen_desc);
 
-        // Cull + compact visible points (compute) before the scene pass.
-        self.points.prepare(&self.queue, &mut encoder);
+        // Cull + compact visible points (compute) before the scene pass (points mode only).
+        if self.state.view_mode == ViewMode::Points {
+            self.points.prepare(&self.queue, &mut encoder);
+        }
 
         // 3D pass.
         {
@@ -400,7 +424,10 @@ impl Gfx {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            self.points.render(&mut rpass, self.state.render_mode);
+            match self.state.view_mode {
+                ViewMode::Points => self.points.render(&mut rpass, self.state.point_mode),
+                ViewMode::Volume => self.volume.render(&mut rpass),
+            }
         }
 
         // egui pass (load existing color, no depth).

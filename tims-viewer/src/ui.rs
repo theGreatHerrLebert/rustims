@@ -3,7 +3,7 @@
 use crate::camera::{AxisView, OrbitCamera, Projection};
 use crate::render::colormap::COLORMAP_NAMES;
 use crate::render::point_cloud::PointMode;
-use crate::state::{AppState, TransferMode};
+use crate::state::{AppState, TransferMode, ViewMode, VolStyle};
 
 /// Build the left control panel; mutates state and camera in place.
 pub fn build(ctx: &egui::Context, state: &mut AppState, camera: &mut OrbitCamera) {
@@ -38,17 +38,34 @@ pub fn build(ctx: &egui::Context, state: &mut AppState, camera: &mut OrbitCamera
             // ---- Render mode ----
             ui.label("Render mode");
             ui.horizontal(|ui| {
-                ui.radio_value(
-                    &mut state.render_mode,
-                    PointMode::AdditiveDensity,
-                    "Additive",
-                );
-                ui.radio_value(
-                    &mut state.render_mode,
-                    PointMode::StructuralOpaque,
-                    "Opaque",
-                );
+                ui.radio_value(&mut state.view_mode, ViewMode::Points, "Points");
+                ui.radio_value(&mut state.view_mode, ViewMode::Volume, "Volume");
             });
+            match state.view_mode {
+                ViewMode::Points => {
+                    ui.horizontal(|ui| {
+                        ui.radio_value(
+                            &mut state.point_mode,
+                            PointMode::AdditiveDensity,
+                            "Additive",
+                        );
+                        ui.radio_value(
+                            &mut state.point_mode,
+                            PointMode::StructuralOpaque,
+                            "Opaque",
+                        );
+                    });
+                }
+                ViewMode::Volume => {
+                    ui.horizontal(|ui| {
+                        ui.radio_value(&mut state.vol_style, VolStyle::Composite, "Composite");
+                        ui.radio_value(&mut state.vol_style, VolStyle::Mip, "MIP");
+                    });
+                    ui.add(
+                        egui::Slider::new(&mut state.vol_steps, 32..=1024).text("ray steps"),
+                    );
+                }
+            }
             ui.separator();
 
             // ---- Intensity transfer function ----

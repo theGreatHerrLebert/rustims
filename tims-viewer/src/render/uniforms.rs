@@ -48,6 +48,40 @@ pub struct ParamsUniform {
     pub n_colormaps: u32,
 }
 
+/// Uniform for the volume raycaster. 16-byte aligned throughout (128 bytes).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct VolumeUniform {
+    pub inv_view_proj: [[f32; 4]; 4],
+    /// Window box minimum in the normalized cube (xyz) + unused w.
+    pub box_min: [f32; 4],
+    /// Window box maximum (xyz) + unused w.
+    pub box_max: [f32; 4],
+    /// Transfer: x=mode (0 lin/1 sqrt/2 log), y=i_min, z=i_max, w=exposure.
+    pub transfer: [f32; 4],
+    /// Samples marched along the ray.
+    pub steps: u32,
+    /// 0 = front-to-back composite, 1 = maximum-intensity projection.
+    pub style: u32,
+    pub colormap_id: u32,
+    pub n_colormaps: u32,
+}
+
+impl Default for VolumeUniform {
+    fn default() -> Self {
+        VolumeUniform {
+            inv_view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
+            box_min: [-1.0, -1.0, -1.0, 0.0],
+            box_max: [1.0, 1.0, 1.0, 0.0],
+            transfer: [2.0, 1.0, 1e5, 1.0],
+            steps: 256,
+            style: 0,
+            colormap_id: 0,
+            n_colormaps: 1,
+        }
+    }
+}
+
 /// Small uniform feeding the compaction compute pass (resident point count).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]

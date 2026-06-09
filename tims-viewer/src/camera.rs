@@ -123,6 +123,12 @@ impl OrbitCamera {
         proj * view
     }
 
+    /// Inverse view-projection (column-major arrays), for reconstructing world-space
+    /// rays in the volume raycaster.
+    pub fn inv_view_proj(&self, aspect: f32) -> [[f32; 4]; 4] {
+        self.view_proj(aspect).inverse().to_cols_array_2d()
+    }
+
     pub fn to_uniform(&self, aspect: f32, viewport: [f32; 2]) -> CameraUniform {
         let (right, up, _) = self.basis();
         CameraUniform {
