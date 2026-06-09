@@ -343,6 +343,12 @@ def get_default_settings() -> dict:
         'sampling_step_size': 0.001,
         'n_steps': 1000,
         'remove_epsilon': 1e-4,
+        # Instrument-dispatch projector (opt-in). 'off' (default) keeps the
+        # legacy frame/scan distribution columns untouched; 'legacy_compat'
+        # regenerates them via the Rust projector reproducing the legacy kernels;
+        # 'accurate' uses the improved projection (event-interval time + per-scan
+        # mobility bins). See jobs/project_distributions.py.
+        'projection_mode': 'off',
         'use_inverse_mobility_std_mean': True,
         'inverse_mobility_std_mean': 0.009,
 
@@ -728,6 +734,14 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
         action="store_true",
         help="Resume from the latest checkpoint (requires a previous run with enable_checkpoints=true)"
     )
+    parser.add_argument(
+        "--projection-mode",
+        choices=["off", "legacy_compat", "accurate"],
+        default=None,
+        help="Instrument-dispatch projector for frame/scan distributions: 'off' (default) "
+             "keeps the legacy columns; 'legacy_compat' reproduces them via the Rust projector; "
+             "'accurate' uses the improved projection."
+    )
     return parser
 
 
@@ -760,6 +774,8 @@ def main():
         overrides['intensity_multiplier'] = cli_args.intensity_multiplier
     if cli_args.resume:
         overrides['enable_checkpoints'] = True
+    if cli_args.projection_mode is not None:
+        overrides['projection_mode'] = cli_args.projection_mode
 
     # Load configuration from TOML file
     try:
@@ -1326,6 +1342,39 @@ def main():
         frame_batch_size=config.frame_batch_size,
         phospho_mode=config.phospho_mode,
     )
+
+    # JOB 9.5 (opt-in): regenerate the frame/scan distribution columns via the
+    # instrument-dispatch projector. Default 'off' -> the legacy columns written
+    # by the distribution jobs above are used unchanged (the DB-read fallback);
+    # nothing here runs. 'legacy_compat' reproduces them via the Rust projector;
+    # 'accurate' uses the improved projection. Runs after peptides+ions are in
+    # the DB (both fresh and checkpoint-restore paths) and before assembly reads
+    # the columns.
+    projection_mode = str(getattr(config, 'projection_mode', 'off')).lower()
+    if projection_mode not in ('off', 'legacy_compat', 'accurate'):
+        raise ValueError(
+            f"projection_mode must be off|legacy_compat|accurate, got {projection_mode!r}"
+        )
+    if projection_mode != 'off':
+        from imspy_simulation.timsim.jobs.project_distributions import (
+            write_projected_distributions,
+        )
+        logger.info(section_header(f"Projecting Distributions ({projection_mode})", use_unicode))
+        db_path = str(Path(acquisition_builder.path) / 'synthetic_data.db')
+        summary = write_projected_distributions(
+            db_path,
+            mode=projection_mode,
+            target_p=config.target_p,
+            frame_step_size=config.sampling_step_size,
+            scan_step_size=0.0001,  # the scan distribution job's fixed step
+            n_steps=config.n_steps,
+            remove_epsilon=config.remove_epsilon,
+            num_threads=num_threads if num_threads and num_threads > 0 else 4,
+        )
+        logger.info(
+            f"  projector ({projection_mode}): {summary['peptides']} peptides, "
+            f"{summary['ions']} ions"
+        )
 
     # JOB 10: Assemble frames
     logger.info(section_header("Assembling Frames", use_unicode))
