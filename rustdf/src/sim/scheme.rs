@@ -421,6 +421,59 @@ impl AcquisitionScheme {
 }
 
 impl AcquisitionScheme {
+    /// Render the scheme's MS2 windows as Bruker `DiaFrameMsMsWindows` rows — the
+    /// backward-compatibility adapter for the existing timsTOF write path.
+    ///
+    /// Each MS2 frame is one window group; its windows must carry `TimsMobility`
+    /// geometry (the Bruker-grid scan ranges). Window groups are numbered 1..N in
+    /// cycle order (the DIA-PASEF convention); a `Linear` CE policy is resolved at
+    /// the window center, and `Unknown` CE is rejected. Errors if the scheme is
+    /// not a timsTOF layout. (The companion frame→group table,
+    /// `DiaFrameMsMsInfo`, depends on the full run's frame schedule and is a
+    /// separate step.)
+    pub fn to_bruker_windows(&self) -> Result<Vec<crate::data::meta::DiaMsMsWindow>, String> {
+        if self.instrument != InstrumentKind::TimsTofDia {
+            return Err("to_bruker_windows requires a timsTOF (TimsTofDia) scheme".into());
+        }
+        let mut rows = Vec::new();
+        let mut group: u32 = 0;
+        for ev in &self.cycle {
+            if let AcquisitionEvent::DiaMs2Frame(frame) = ev {
+                group += 1;
+                for w in &frame.windows {
+                    let (scan_num_begin, scan_num_end) = match w.geometry {
+                        DiaGeometry::TimsMobility {
+                            scan_start,
+                            scan_end,
+                        } => (scan_start, scan_end),
+                        DiaGeometry::MzOnly => {
+                            return Err("timsTOF window lacks mobility geometry".into())
+                        }
+                    };
+                    let collision_energy = match w.collision_energy {
+                        CollisionEnergyPolicy::Value(v) => v,
+                        CollisionEnergyPolicy::Linear { .. } => w
+                            .collision_energy
+                            .at(w.isolation.center_mz)
+                            .ok_or("could not resolve linear CE")?,
+                        CollisionEnergyPolicy::Unknown => {
+                            return Err("window has unknown collision energy".into())
+                        }
+                    };
+                    rows.push(crate::data::meta::DiaMsMsWindow {
+                        window_group: group,
+                        scan_num_begin,
+                        scan_num_end,
+                        isolation_mz: w.isolation.center_mz,
+                        isolation_width: w.isolation.width_mz,
+                        collision_energy,
+                    });
+                }
+            }
+        }
+        Ok(rows)
+    }
+
     /// Extract the acquisition scheme from a real Bruker timsTOF DIA `.d`.
     ///
     /// Reads `DiaFrameMsMsWindows` and the frame table. Each **window group**
@@ -940,6 +993,63 @@ mod tests {
     }
 
     // Gated: set TIMSIM_SCIEX_WIFF to a real ZenoTOF .wiff (OLE2 method).
+    // Gated: round-trip a real Bruker DIA .d through the scheme and back to the
+    // DiaFrameMsMsWindows rows; the regenerated table must match the source.
+    #[test]
+    fn bruker_windows_round_trip() {
+        let d = match std::env::var("TIMSIM_BRUKER_DIA_D") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP bruker_windows_round_trip: set TIMSIM_BRUKER_DIA_D");
+                return;
+            }
+        };
+        let scheme = AcquisitionScheme::from_bruker_d(&d).expect("extract");
+        let regenerated = scheme.to_bruker_windows().expect("to_bruker_windows");
+        let original = crate::data::meta::read_dia_ms_ms_windows(&d).expect("read source");
+        assert_eq!(regenerated.len(), original.len(), "row count differs");
+
+        // Normalize window-group ids to canonical 1..N (ascending) on both sides,
+        // then compare as a sorted multiset of exact-bit field tuples.
+        fn canonical(
+            rows: &[crate::data::meta::DiaMsMsWindow],
+        ) -> Vec<(u32, u32, u32, u64, u64, u64)> {
+            let mut groups: Vec<u32> = rows.iter().map(|r| r.window_group).collect();
+            groups.sort_unstable();
+            groups.dedup();
+            let mut out: Vec<_> = rows
+                .iter()
+                .map(|r| {
+                    let g = groups.iter().position(|&x| x == r.window_group).unwrap() as u32 + 1;
+                    (
+                        g,
+                        r.scan_num_begin,
+                        r.scan_num_end,
+                        r.isolation_mz.to_bits(),
+                        r.isolation_width.to_bits(),
+                        r.collision_energy.to_bits(),
+                    )
+                })
+                .collect();
+            out.sort_unstable();
+            out
+        }
+        assert_eq!(
+            canonical(&regenerated),
+            canonical(&original),
+            "round-trip windows differ from source"
+        );
+        eprintln!(
+            "bruker_windows_round_trip OK: {} rows match across {} groups",
+            original.len(),
+            scheme
+                .cycle
+                .iter()
+                .filter(|e| matches!(e, AcquisitionEvent::DiaMs2Frame(_)))
+                .count()
+        );
+    }
+
     #[cfg(feature = "sciex")]
     #[test]
     fn from_sciex_wiff_extracts_windows() {
