@@ -1,3 +1,23 @@
+Reading additional input from stdin...
+OpenAI Codex v0.136.0
+--------
+workdir: /scratch/timsim-demo/SUBMISSION/rustims
+model: gpt-5.5
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR]
+reasoning effort: medium
+reasoning summaries: none
+session id: 019eab2a-3eaf-7ff3-b7c8-3b38424d0466
+--------
+user
+Review ONLY the newly added code in this Rust file (the rest was already reviewed): the method AcquisitionScheme::to_bruker_windows (a backward-compat adapter that renders a vendor-neutral DIA scheme back to Bruker DiaFrameMsMsWindows rows) and its gated unit test bruker_windows_round_trip. Skim the rest only for interaction.
+
+Trusted context: crate::data::meta::DiaMsMsWindow { window_group:u32, scan_num_begin:u32, scan_num_end:u32, isolation_mz:f64, isolation_width:f64, collision_energy:f64 } and read_dia_ms_ms_windows(folder)->Vec<DiaMsMsWindow> read the Bruker SQLite DiaFrameMsMsWindows table (no ORDER BY). from_bruker_d builds the scheme by grouping those rows by window_group (BTreeMap ascending) into one DiaMs2Frame per group with TimsMobility geometry. The scheme model: cycle is an ordered Vec<AcquisitionEvent> = Ms1 | DiaMs2Frame(windows:Vec<DiaWindow{isolation:{center_mz,width_mz}, collision_energy:CollisionEnergyPolicy{Value|Linear|Unknown}, geometry:DiaGeometry{MzOnly|TimsMobility{scan_start,scan_end}}}>). to_bruker_windows numbers window groups 1..N in cycle (frame) order; the round-trip test normalizes window-group ids to canonical 1..N on both sides and compares sorted exact-bit field tuples.
+
+Focus: 1) is to_bruker_windows a FAITHFUL inverse of from_bruker_d for real DIA-PASEF data — specifically the window-group renumbering (1..N by frame order vs original ids): when does the normalized round-trip hide a real id mismatch that would break the actual .d the Python builder writes (which uses reference WindowGroup ids)? Is losing the original WindowGroup id in the scheme model a real data-loss bug for backward compat? 2) CE handling — Value passthrough, Linear resolved at center (is center the right point vs Bruker's stored per-window CE?), Unknown rejected; any lossy/incorrect cases. 3) within-frame and cross-frame window ORDER preservation (SQL has no ORDER BY; from_bruker_d preserves insertion order in the Vec; does to_bruker_windows + the test correctly handle when source rows are interleaved across groups vs grouped?). 4) the test's canonical() normalization — does it actually prove faithfulness, or could it pass while masking a real regression? 5) any correctness bug, panic, or float-equality fragility. Concrete, ranked by severity, ~600 words.
+
+<stdin>
 //! Vendor-neutral DIA acquisition **scheme** (input/design side).
 //!
 //! An [`AcquisitionScheme`] describes one DIA cycle as an *ordered sequence of
@@ -122,12 +142,6 @@ pub struct DiaMs2Frame {
     pub analyzer: Analyzer,
     pub data_mode: DataMode,
     pub duration_s: Option<f64>,
-    /// The vendor's native group id for this frame, preserved for round-trip
-    /// fidelity (Bruker `WindowGroup`). `None` for vendors without one. The cycle
-    /// order is authoritative for *simultaneity/ordering*; this is *identity* only
-    /// — needed so a Bruker adapter regenerates the original `WindowGroup` values
-    /// that companion tables (`DiaFrameMsMsInfo`) reference.
-    pub vendor_group_id: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -231,7 +245,6 @@ impl AcquisitionScheme {
                 analyzer: ms1.analyzer,
                 data_mode: DataMode::Centroid,
                 duration_s: None,
-                vendor_group_id: None,
             }));
         }
         AcquisitionScheme {
@@ -432,27 +445,21 @@ impl AcquisitionScheme {
     /// backward-compatibility adapter for the existing timsTOF write path.
     ///
     /// Each MS2 frame is one window group; its windows must carry `TimsMobility`
-    /// geometry (the Bruker-grid scan ranges). The `WindowGroup` id is the frame's
-    /// preserved [`DiaMs2Frame::vendor_group_id`] when present (so a Bruker
-    /// round-trip keeps the ids that `DiaFrameMsMsInfo` references), else a 1..N
-    /// fallback in cycle order. A `Linear` CE policy is resolved at the window
-    /// center (a lossy materialization, not an inverse); `Unknown` CE and
-    /// non-timsTOF schemes are rejected. The scheme is validated first.
-    ///
-    /// Row order is not meaningful (the SQLite table has none); the companion
-    /// frame→group table `DiaFrameMsMsInfo` needs the run frame schedule and is a
-    /// separate step.
+    /// geometry (the Bruker-grid scan ranges). Window groups are numbered 1..N in
+    /// cycle order (the DIA-PASEF convention); a `Linear` CE policy is resolved at
+    /// the window center, and `Unknown` CE is rejected. Errors if the scheme is
+    /// not a timsTOF layout. (The companion frame→group table,
+    /// `DiaFrameMsMsInfo`, depends on the full run's frame schedule and is a
+    /// separate step.)
     pub fn to_bruker_windows(&self) -> Result<Vec<crate::data::meta::DiaMsMsWindow>, String> {
-        self.validate()?;
         if self.instrument != InstrumentKind::TimsTofDia {
             return Err("to_bruker_windows requires a timsTOF (TimsTofDia) scheme".into());
         }
         let mut rows = Vec::new();
-        let mut seq: u32 = 0;
+        let mut group: u32 = 0;
         for ev in &self.cycle {
             if let AcquisitionEvent::DiaMs2Frame(frame) = ev {
-                seq += 1;
-                let group = frame.vendor_group_id.unwrap_or(seq);
+                group += 1;
                 for w in &frame.windows {
                     let (scan_num_begin, scan_num_end) = match w.geometry {
                         DiaGeometry::TimsMobility {
@@ -543,13 +550,12 @@ impl AcquisitionScheme {
             duration_s: None,
         })];
         let n_groups = by_group.len();
-        for (group, ws) in by_group {
+        for (_group, ws) in by_group {
             cycle.push(AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
                 windows: ws,
                 analyzer: Analyzer::Tof,
                 data_mode: DataMode::Centroid,
                 duration_s: None,
-                vendor_group_id: Some(group), // preserve Bruker WindowGroup identity
             }));
         }
 
@@ -660,7 +666,6 @@ impl AcquisitionScheme {
                 analyzer: Analyzer::Tof,
                 data_mode: DataMode::Centroid,
                 duration_s: None,
-                vendor_group_id: None,
             }));
         }
         let scheme = AcquisitionScheme {
@@ -773,7 +778,6 @@ impl AcquisitionScheme {
                     analyzer: analyzer_of(ev.analyzer),
                     data_mode: data_mode_of(scan),
                     duration_s: None,
-                    vendor_group_id: None,
                 }));
             }
         }
@@ -883,7 +887,6 @@ mod tests {
             analyzer: Analyzer::Tof,
             data_mode: DataMode::Centroid,
             duration_s: None,
-            vendor_group_id: None,
         };
         let s = AcquisitionScheme {
             version: SCHEME_VERSION,
@@ -938,7 +941,6 @@ mod tests {
                 analyzer: Analyzer::Astms,
                 data_mode: DataMode::Centroid,
                 duration_s: None,
-                vendor_group_id: None,
             })
         };
         let mk = |cycle: Vec<AcquisitionEvent>| AcquisitionScheme {
@@ -975,7 +977,6 @@ mod tests {
             analyzer: Analyzer::Astms,
             data_mode: DataMode::Centroid,
             duration_s: Some(-1.0),
-            vendor_group_id: None,
         });
         assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), bad_dur]).validate().is_err());
     }
@@ -1028,17 +1029,20 @@ mod tests {
         let original = crate::data::meta::read_dia_ms_ms_windows(&d).expect("read source");
         assert_eq!(regenerated.len(), original.len(), "row count differs");
 
-        // Compare as a sorted multiset of EXACT field tuples, including the
-        // WindowGroup id (preserved via vendor_group_id) — no normalization, so a
-        // real id mismatch would fail. Row order in the table is not guaranteed.
-        fn tuples(
+        // Normalize window-group ids to canonical 1..N (ascending) on both sides,
+        // then compare as a sorted multiset of exact-bit field tuples.
+        fn canonical(
             rows: &[crate::data::meta::DiaMsMsWindow],
         ) -> Vec<(u32, u32, u32, u64, u64, u64)> {
+            let mut groups: Vec<u32> = rows.iter().map(|r| r.window_group).collect();
+            groups.sort_unstable();
+            groups.dedup();
             let mut out: Vec<_> = rows
                 .iter()
                 .map(|r| {
+                    let g = groups.iter().position(|&x| x == r.window_group).unwrap() as u32 + 1;
                     (
-                        r.window_group,
+                        g,
                         r.scan_num_begin,
                         r.scan_num_end,
                         r.isolation_mz.to_bits(),
@@ -1051,9 +1055,9 @@ mod tests {
             out
         }
         assert_eq!(
-            tuples(&regenerated),
-            tuples(&original),
-            "round-trip windows differ from source (incl. WindowGroup id)"
+            canonical(&regenerated),
+            canonical(&original),
+            "round-trip windows differ from source"
         );
         eprintln!(
             "bruker_windows_round_trip OK: {} rows match across {} groups",
@@ -1135,3 +1139,59 @@ mod tests {
         );
     }
 }
+</stdin>
+codex
+**Findings**
+
+1. **High: WindowGroup identity is lost, which can make the generated `.d` internally inconsistent.**  
+`from_bruker_d` discards the original `WindowGroup` value when converting each `BTreeMap` entry into a `DiaMs2Frame`. `to_bruker_windows` then invents IDs `1..N`.
+
+That is only faithful when the source IDs are already contiguous `1..N`, ordered exactly like the scheme frames, or when every referencing table is regenerated using the same new IDs. If the Python builder retains `DiaFrameMsMsInfo.WindowGroup` values from the reference `.d`, source groups such as `{2, 4, 7}` become `{1, 2, 3}` in `DiaFrameMsMsWindows` while frame rows still reference `{2, 4, 7}`. Some references then select the wrong group and others select none.
+
+This is real backward-compatibility data loss, not merely cosmetic renumbering. The model or extraction provenance needs to preserve the original group ID, or the writer must return an explicit old-to-new mapping and rewrite every reference consistently.
+
+2. **High: The round-trip test explicitly masks that identity-loss bug.**  
+`canonical()` rank-normalizes every distinct source group to `1..N`. Consequently, an input with groups `{10, 20}` passes after regeneration as `{1, 2}`, despite not being usable with unchanged reference `DiaFrameMsMsInfo` rows.
+
+The test proves only that window payloads and ascending group partitions survive. It does not prove table-level fidelity or compatibility with the produced `.d`. At minimum, real backward-compatible extraction should compare original IDs exactly. If renumbering is intentional, a second integration assertion must verify that all frame-to-group references are rewritten using the same mapping.
+
+3. **Medium: Physical frame order is not established and the test cannot detect an ordering regression.**  
+SQL row order is unspecified. `from_bruker_d` orders frames by ascending group ID and preserves database-return order only within each group. `to_bruker_windows` emits rows grouped by frame, so an interleaved source sequence such as `G1-A, G2-A, G1-B` becomes `G1-A, G1-B, G2-A`.
+
+The sorted-multiset comparison hides both within-frame and cross-frame row ordering. Row order may be semantically irrelevant to SQLite consumers, but then it should not be described as preserved. More importantly, if actual acquisition order differs from ascending `WindowGroup`, only `DiaFrameMsMsInfo` can recover it; this test will still pass while the scheme cycle is wrong.
+
+4. **Medium: `to_bruker_windows` accepts structurally invalid schemes without validation.**  
+It does not call `validate()`. An empty cycle returns `Ok(vec![])`; an empty MS2 frame consumes a group number but emits no row; non-finite or negative `Value` CE is passed through; invalid isolation widths and scan ranges are also emitted. This can produce malformed tables or group numbering inconsistent with companion metadata. Either call `validate()` first or enforce all adapter-specific invariants locally.
+
+5. **Low: CE behavior is faithful only for extracted Bruker `Value` policies.**  
+`Value` is exact-bit passthrough and therefore a proper inverse. `Unknown` rejection is correct. Resolving `Linear` at `isolation.center_mz` is reasonable given this policy’s documented definition, but it is a lossy materialization, not an inverse: Bruker stores one scalar per row, and any vendor rounding or CE determined from another coordinate cannot be recovered. The test never exercises `Linear`, so it validates none of this behavior.
+
+Exact-bit float comparison is appropriate for the extracted `Value` path and avoids tolerance ambiguity. There is no meaningful panic risk in `canonical()`; its `unwrap()` searches a group collected from the same rows.
+tokens used
+13,740
+**Findings**
+
+1. **High: WindowGroup identity is lost, which can make the generated `.d` internally inconsistent.**  
+`from_bruker_d` discards the original `WindowGroup` value when converting each `BTreeMap` entry into a `DiaMs2Frame`. `to_bruker_windows` then invents IDs `1..N`.
+
+That is only faithful when the source IDs are already contiguous `1..N`, ordered exactly like the scheme frames, or when every referencing table is regenerated using the same new IDs. If the Python builder retains `DiaFrameMsMsInfo.WindowGroup` values from the reference `.d`, source groups such as `{2, 4, 7}` become `{1, 2, 3}` in `DiaFrameMsMsWindows` while frame rows still reference `{2, 4, 7}`. Some references then select the wrong group and others select none.
+
+This is real backward-compatibility data loss, not merely cosmetic renumbering. The model or extraction provenance needs to preserve the original group ID, or the writer must return an explicit old-to-new mapping and rewrite every reference consistently.
+
+2. **High: The round-trip test explicitly masks that identity-loss bug.**  
+`canonical()` rank-normalizes every distinct source group to `1..N`. Consequently, an input with groups `{10, 20}` passes after regeneration as `{1, 2}`, despite not being usable with unchanged reference `DiaFrameMsMsInfo` rows.
+
+The test proves only that window payloads and ascending group partitions survive. It does not prove table-level fidelity or compatibility with the produced `.d`. At minimum, real backward-compatible extraction should compare original IDs exactly. If renumbering is intentional, a second integration assertion must verify that all frame-to-group references are rewritten using the same mapping.
+
+3. **Medium: Physical frame order is not established and the test cannot detect an ordering regression.**  
+SQL row order is unspecified. `from_bruker_d` orders frames by ascending group ID and preserves database-return order only within each group. `to_bruker_windows` emits rows grouped by frame, so an interleaved source sequence such as `G1-A, G2-A, G1-B` becomes `G1-A, G1-B, G2-A`.
+
+The sorted-multiset comparison hides both within-frame and cross-frame row ordering. Row order may be semantically irrelevant to SQLite consumers, but then it should not be described as preserved. More importantly, if actual acquisition order differs from ascending `WindowGroup`, only `DiaFrameMsMsInfo` can recover it; this test will still pass while the scheme cycle is wrong.
+
+4. **Medium: `to_bruker_windows` accepts structurally invalid schemes without validation.**  
+It does not call `validate()`. An empty cycle returns `Ok(vec![])`; an empty MS2 frame consumes a group number but emits no row; non-finite or negative `Value` CE is passed through; invalid isolation widths and scan ranges are also emitted. This can produce malformed tables or group numbering inconsistent with companion metadata. Either call `validate()` first or enforce all adapter-specific invariants locally.
+
+5. **Low: CE behavior is faithful only for extracted Bruker `Value` policies.**  
+`Value` is exact-bit passthrough and therefore a proper inverse. `Unknown` rejection is correct. Resolving `Linear` at `isolation.center_mz` is reasonable given this policy’s documented definition, but it is a lossy materialization, not an inverse: Bruker stores one scalar per row, and any vendor rounding or CE determined from another coordinate cannot be recovered. The test never exercises `Linear`, so it validates none of this behavior.
+
+Exact-bit float comparison is appropriate for the extracted `Value` path and avoids tolerance ambiguity. There is no meaningful panic risk in `canonical()`; its `unwrap()` searches a group collected from the same rows.
