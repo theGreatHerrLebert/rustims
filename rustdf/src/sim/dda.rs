@@ -105,6 +105,51 @@ impl TimsTofSyntheticsFrameBuilderDDA {
             }
         }
     }
+    /// Construct an eager DDA frame builder from already-loaded, in-memory
+    /// entities instead of reading the whole database.
+    ///
+    /// Used by the lazy DDA builder so it can delegate per-batch frame
+    /// construction to the *same* (correct) eager algorithm instead of keeping a
+    /// second, divergent copy. Only the non-annotated path is built (lazy loading
+    /// does not support annotations). `fragment_ions_raw` is the per-batch slice
+    /// of fragment ions for the supplied peptides, so memory stays bounded to the
+    /// batch.
+    pub fn from_entities(
+        precursor_frame_builder: TimsTofSyntheticsPrecursorFrameBuilder,
+        transmission_settings: TimsTransmissionDDA,
+        fragment_ions_raw: Vec<crate::sim::containers::FragmentIonSim>,
+        isotope_config: Option<IsotopeTransmissionConfig>,
+        num_threads: usize,
+    ) -> Self {
+        let config = isotope_config.unwrap_or_default();
+
+        let fragment_ions_with_complementary = if config.is_enabled() {
+            Some(TimsTofSyntheticsDataHandle::build_fragment_ions_with_transmission_data(
+                &precursor_frame_builder.peptides,
+                &fragment_ions_raw,
+                num_threads,
+            ))
+        } else {
+            None
+        };
+
+        let fragment_ions = Some(TimsTofSyntheticsDataHandle::build_fragment_ions(
+            &precursor_frame_builder.peptides,
+            &fragment_ions_raw,
+            num_threads,
+        ));
+
+        Self {
+            path: String::new(),
+            precursor_frame_builder,
+            transmission_settings,
+            fragment_ions,
+            fragment_ions_annotated: None,
+            isotope_transmission_config: config,
+            fragment_ions_with_complementary,
+        }
+    }
+
     /// Build a frame for DDA synthetic experiment
     ///
     /// # Arguments

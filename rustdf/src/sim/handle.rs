@@ -561,7 +561,7 @@ impl TimsTofSyntheticsDataHandle {
         frame_max: u32,
     ) -> rusqlite::Result<Vec<PeptidesSim>> {
         let mut stmt = self.connection.prepare(
-            "SELECT * FROM peptides WHERE frame_occurrence_start <= ?1 AND frame_occurrence_end >= ?2"
+            "SELECT * FROM peptides WHERE frame_occurrence_start <= ?1 AND frame_occurrence_end >= ?2 ORDER BY peptide_id"
         )?;
 
         let peptides_iter = stmt.query_map([frame_max, frame_min], |row| {
@@ -593,8 +593,14 @@ impl TimsTofSyntheticsDataHandle {
                 .collect::<Vec<_>>()
                 .join(",");
 
+            // ORDER BY peptide_id, ion_id matches the eager full-table read
+            // (`read_ions`). Ion order within a peptide is load-bearing: the DDA
+            // fragment builder selects an ion via `charges.position(charge)`, so a
+            // different order can fragment a different ion. Chunking is by
+            // peptide_id, so each peptide's ions live in one chunk and are fully
+            // ordered here.
             let sql = format!(
-                "SELECT * FROM ions WHERE peptide_id IN ({})",
+                "SELECT * FROM ions WHERE peptide_id IN ({}) ORDER BY peptide_id, ion_id",
                 placeholders
             );
 
@@ -632,7 +638,7 @@ impl TimsTofSyntheticsDataHandle {
                 .join(",");
 
             let sql = format!(
-                "SELECT * FROM fragment_ions WHERE peptide_id IN ({})",
+                "SELECT * FROM fragment_ions WHERE peptide_id IN ({}) ORDER BY peptide_id",
                 placeholders
             );
 

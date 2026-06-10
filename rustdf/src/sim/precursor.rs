@@ -66,13 +66,28 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         let scans = handle.read_scans()?;
         let frames = handle.read_frames()?;
 
+        Ok(Self::from_entities(ions, peptides, scans, frames))
+    }
+
+    /// Construct the builder from already-loaded, in-memory entities instead of
+    /// reading the database. Used by the lazy builders, which load only a
+    /// per-batch slice of peptides/ions (the `scans`/`frames` metadata is full).
+    /// All lookup maps are derived identically to `from_source`, so a builder
+    /// constructed here behaves exactly like an eager one restricted to the
+    /// supplied entities.
+    pub fn from_entities(
+        ions: Vec<IonSim>,
+        peptides: Vec<PeptidesSim>,
+        scans: Vec<ScansSim>,
+        frames: Vec<FramesSim>,
+    ) -> Self {
         // Build ion_id to (peptide_id, charge) mapping for DDA precursor lookup
         let mut ion_id_to_peptide_charge: BTreeMap<u32, (u32, i8)> = BTreeMap::new();
         for ion in &ions {
             ion_id_to_peptide_charge.insert(ion.ion_id, (ion.peptide_id, ion.charge));
         }
 
-        Ok(Self {
+        Self {
             ions: TimsTofSyntheticsDataHandle::build_peptide_to_ion_map(&ions),
             peptides: TimsTofSyntheticsDataHandle::build_peptide_map(&peptides),
             scans: scans.clone(),
@@ -86,7 +101,7 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             scan_to_mobility: TimsTofSyntheticsDataHandle::build_scan_to_mobility(&scans),
             peptide_to_events: TimsTofSyntheticsDataHandle::build_peptide_to_events(&peptides),
             ion_id_to_peptide_charge,
-        })
+        }
     }
 
     /// Build a precursor frame

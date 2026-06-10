@@ -17,7 +17,9 @@ use std::sync::Arc;
 use rayon::prelude::*;
 
 use crate::sim::containers::{FragmentIonSim, FramesSim, IonSim, PeptidesSim, ScansSim};
+use crate::sim::dda::TimsTofSyntheticsFrameBuilderDDA;
 use crate::sim::handle::TimsTofSyntheticsDataHandle;
+use crate::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
 
 /// A lazy frame builder for DIA experiments that only loads data as needed.
 ///
@@ -658,358 +660,37 @@ impl TimsTofLazyFrameBuilderDDA {
             Err(_) => return Vec::new(),
         };
 
-        // Build lookup maps
-        let peptide_map = TimsTofSyntheticsDataHandle::build_peptide_map(&peptides);
-        let peptide_to_ions = TimsTofSyntheticsDataHandle::build_peptide_to_ions(&ions);
-        let frame_to_abundances = TimsTofSyntheticsDataHandle::build_frame_to_abundances(&peptides);
-        let peptide_to_events = TimsTofSyntheticsDataHandle::build_peptide_to_events(&peptides);
-
-        // Build fragment ions map if fragmentation is enabled
-        let fragment_ions_map = if fragmentation {
-            Some(TimsTofSyntheticsDataHandle::build_fragment_ions(
-                &peptide_map,
-                &fragment_ions,
-                self.num_threads,
-            ))
-        } else {
-            None
-        };
-
-        // Build frames in parallel using indexed iteration to maintain order
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.num_threads)
-            .build()
-            .unwrap();
-
-        pool.install(|| {
-            let mut tims_frames: Vec<TimsFrame> = Vec::with_capacity(frame_ids.len());
-            unsafe { tims_frames.set_len(frame_ids.len()); }
-
-            frame_ids.par_iter().enumerate().for_each(|(idx, frame_id)| {
-                let frame = self.build_single_frame(
-                    *frame_id,
-                    fragmentation,
-                    mz_noise_precursor,
-                    uniform,
-                    precursor_noise_ppm,
-                    mz_noise_fragment,
-                    fragment_noise_ppm,
-                    right_drag,
-                    &peptide_to_ions,
-                    &frame_to_abundances,
-                    &peptide_to_events,
-                    &fragment_ions_map,
-                );
-                unsafe {
-                    let ptr = tims_frames.as_ptr() as *mut TimsFrame;
-                    std::ptr::write(ptr.add(idx), frame);
-                }
-            });
-
-            tims_frames
-        })
-    }
-
-    /// Build a single frame with provided data maps.
-    #[allow(clippy::too_many_arguments)]
-    fn build_single_frame(
-        &self,
-        frame_id: u32,
-        fragmentation: bool,
-        mz_noise_precursor: bool,
-        uniform: bool,
-        precursor_noise_ppm: f64,
-        mz_noise_fragment: bool,
-        fragment_noise_ppm: f64,
-        right_drag: bool,
-        peptide_to_ions: &BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<i8>, Vec<MzSpectrum>)>,
-        frame_to_abundances: &BTreeMap<u32, (Vec<u32>, Vec<f32>)>,
-        peptide_to_events: &BTreeMap<u32, f32>,
-        fragment_ions_map: &Option<BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>>,
-    ) -> TimsFrame {
-        // Determine if this is a precursor or fragment frame
-        let is_precursor = self.precursor_frame_id_set.contains(&frame_id);
-
-        if is_precursor {
-            self.build_precursor_frame(
-                frame_id,
-                mz_noise_precursor,
-                uniform,
-                precursor_noise_ppm,
-                right_drag,
-                peptide_to_ions,
-                frame_to_abundances,
-                peptide_to_events,
-            )
-        } else {
-            self.build_fragment_frame(
-                frame_id,
-                fragmentation,
-                mz_noise_fragment,
-                uniform,
-                fragment_noise_ppm,
-                right_drag,
-                peptide_to_ions,
-                frame_to_abundances,
-                peptide_to_events,
-                fragment_ions_map,
-            )
-        }
-    }
-
-    /// Build a precursor (MS1) frame.
-    #[allow(clippy::too_many_arguments)]
-    fn build_precursor_frame(
-        &self,
-        frame_id: u32,
-        mz_noise_precursor: bool,
-        uniform: bool,
-        precursor_noise_ppm: f64,
-        right_drag: bool,
-        peptide_to_ions: &BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<i8>, Vec<MzSpectrum>)>,
-        frame_to_abundances: &BTreeMap<u32, (Vec<u32>, Vec<f32>)>,
-        peptide_to_events: &BTreeMap<u32, f32>,
-    ) -> TimsFrame {
-        let ms_type = MsType::Precursor;
-        let rt = *self.frame_to_rt.get(&frame_id).unwrap_or(&0.0) as f64;
-
-        // Single lookup instead of contains_key + get
-        let Some((peptide_ids, abundances)) = frame_to_abundances.get(&frame_id) else {
-            return TimsFrame::new(frame_id as i32, ms_type, rt, vec![], vec![], vec![], vec![], vec![]);
-        };
-
-        // Preallocate with estimated capacity
-        let estimated_capacity = peptide_ids.len() * 4;
-        let mut tims_spectra: Vec<TimsSpectrum> = Vec::with_capacity(estimated_capacity);
-
-        for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
-            let Some((ion_abundances, scan_occurrences, scan_abundances, _, spectra)) =
-                peptide_to_ions.get(peptide_id)
-            else {
-                continue;
-            };
-
-            // Cache peptide-level lookup
-            let total_events = *peptide_to_events.get(peptide_id).unwrap_or(&1.0);
-
-            for (index, ion_abundance) in ion_abundances.iter().enumerate() {
-                let scan_occurrence = &scan_occurrences[index];
-                let scan_abundance = &scan_abundances[index];
-                let spectrum = &spectra[index];
-
-                for (scan, scan_abu) in scan_occurrence.iter().zip(scan_abundance.iter()) {
-                    let abundance_factor = abundance * ion_abundance * scan_abu * total_events;
-                    let scaled_spec: MzSpectrum = spectrum.clone() * abundance_factor as f64;
-
-                    let mz_spectrum = if mz_noise_precursor {
-                        if uniform {
-                            scaled_spec.add_mz_noise_uniform(precursor_noise_ppm, right_drag)
-                        } else {
-                            scaled_spec.add_mz_noise_normal(precursor_noise_ppm)
-                        }
-                    } else {
-                        scaled_spec
-                    };
-
-                    let scan_mobility = *self.scan_to_mobility.get(scan).unwrap_or(&0.0) as f64;
-                    let spectrum_len = mz_spectrum.mz.len();
-
-                    tims_spectra.push(TimsSpectrum::new(
-                        frame_id as i32,
-                        *scan as i32,
-                        rt,
-                        scan_mobility,
-                        ms_type.clone(),
-                        IndexedMzSpectrum::from_mz_spectrum(
-                            vec![0; spectrum_len],
-                            mz_spectrum,
-                        ),
-                    ));
-                }
-            }
-        }
-
-        let mut filtered = TimsFrame::from_tims_spectra_filtered(
-            tims_spectra, 0.0, 10000.0, 0, 2000, 0.0, 10.0, 1.0, 1e9,
+        // Delegate to the EAGER DDA builder over this per-batch slice. This is the
+        // single source of truth for DDA frame construction — the lazy builder
+        // does NOT keep a second copy of the precursor/fragment algorithm (an
+        // earlier copy diverged: it fragmented every transmitted peptide instead
+        // of only the PASEF-selected precursor). Memory stays bounded to the batch
+        // because we feed only the slice's peptides/ions/fragment_ions.
+        let precursor_builder = TimsTofSyntheticsPrecursorFrameBuilder::from_entities(
+            ions,
+            peptides,
+            self.scans.clone(),
+            self.frames.clone(),
+        );
+        let dda_builder = TimsTofSyntheticsFrameBuilderDDA::from_entities(
+            precursor_builder,
+            self.transmission_settings.clone(),
+            fragment_ions,
+            None,
+            self.num_threads,
         );
 
-        // Round intensities
-        let intensities_rounded: Vec<f64> = filtered
-            .ims_frame
-            .intensity
-            .iter()
-            .map(|x| x.round())
-            .collect();
-        filtered.ims_frame.intensity = Arc::new(intensities_rounded);
-
-        filtered
-    }
-
-    /// Build a fragment (MS2) frame for DDA.
-    #[allow(clippy::too_many_arguments)]
-    fn build_fragment_frame(
-        &self,
-        frame_id: u32,
-        fragmentation: bool,
-        mz_noise_fragment: bool,
-        uniform: bool,
-        fragment_noise_ppm: f64,
-        right_drag: bool,
-        peptide_to_ions: &BTreeMap<u32, (Vec<f32>, Vec<Vec<u32>>, Vec<Vec<f32>>, Vec<i8>, Vec<MzSpectrum>)>,
-        frame_to_abundances: &BTreeMap<u32, (Vec<u32>, Vec<f32>)>,
-        peptide_to_events: &BTreeMap<u32, f32>,
-        fragment_ions_map: &Option<BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>>,
-    ) -> TimsFrame {
-        let ms_type = MsType::FragmentDda;
-        let rt = *self.frame_to_rt.get(&frame_id).unwrap_or(&0.0) as f64;
-
-        // Cache PASEF meta lookup for this frame
-        let pasef_meta = self.transmission_settings.pasef_meta.get(&(frame_id as i32));
-
-        // If no PASEF meta for this frame, return empty or filtered precursor
-        if pasef_meta.is_none() {
-            if !fragmentation || fragment_ions_map.is_none() {
-                // Build quadrupole-filtered precursor frame
-                let precursor_frame = self.build_precursor_frame(
-                    frame_id,
-                    mz_noise_fragment,
-                    uniform,
-                    fragment_noise_ppm,
-                    right_drag,
-                    peptide_to_ions,
-                    frame_to_abundances,
-                    peptide_to_events,
-                );
-                let mut frame = self.transmission_settings.transmit_tims_frame(&precursor_frame, None);
-                frame.ms_type = MsType::FragmentDda;
-                return frame;
-            }
-            return TimsFrame::new(frame_id as i32, ms_type, rt, vec![], vec![], vec![], vec![], vec![]);
-        }
-        let pasef_meta = pasef_meta.unwrap();
-
-        if !fragmentation || fragment_ions_map.is_none() {
-            // Build quadrupole-filtered precursor frame
-            let precursor_frame = self.build_precursor_frame(
-                frame_id,
-                mz_noise_fragment,
-                uniform,
-                fragment_noise_ppm,
-                right_drag,
-                peptide_to_ions,
-                frame_to_abundances,
-                peptide_to_events,
-            );
-            let mut frame = self.transmission_settings.transmit_tims_frame(&precursor_frame, None);
-            frame.ms_type = MsType::FragmentDda;
-            return frame;
-        }
-
-        let fragment_ions = fragment_ions_map.as_ref().unwrap();
-
-        // Single lookup for frame abundances
-        let Some((peptide_ids, frame_abundances)) = frame_to_abundances.get(&frame_id) else {
-            return TimsFrame::new(frame_id as i32, ms_type, rt, vec![], vec![], vec![], vec![], vec![]);
-        };
-
-        // Preallocate with estimated capacity
-        let estimated_capacity = peptide_ids.len() * 4;
-        let mut tims_spectra: Vec<TimsSpectrum> = Vec::with_capacity(estimated_capacity);
-
-        for (peptide_id, frame_abundance) in peptide_ids.iter().zip(frame_abundances.iter()) {
-            let Some((ion_abundances, scan_occurrences, scan_abundances, charges, spectra)) =
-                peptide_to_ions.get(peptide_id)
-            else {
-                continue;
-            };
-
-            // Cache peptide-level lookup
-            let total_events = *peptide_to_events.get(peptide_id).unwrap_or(&1.0);
-
-            for (index, ion_abundance) in ion_abundances.iter().enumerate() {
-                let all_scan_occurrence = &scan_occurrences[index];
-                let all_scan_abundance = &scan_abundances[index];
-                let spectrum = &spectra[index];
-                let charge_state = charges[index];
-
-                for (scan, scan_abundance) in all_scan_occurrence.iter().zip(all_scan_abundance.iter()) {
-                    // Check if precursor is transmitted
-                    if !self.transmission_settings.any_transmitted(
-                        frame_id as i32,
-                        *scan as i32,
-                        &spectrum.mz,
-                        None,
-                    ) {
-                        continue;
-                    }
-
-                    // Calculate abundance factor
-                    let fraction_events = frame_abundance * scan_abundance * ion_abundance * total_events;
-
-                    // Get collision energy from PASEF meta
-                    let collision_energy: f64 = pasef_meta
-                        .iter()
-                        .find(|scan_meta| scan_meta.scan_start <= *scan as i32 && scan_meta.scan_end >= *scan as i32)
-                        .map(|s| s.collision_energy)
-                        .unwrap_or(0.0);
-                    let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
-
-                    // Get fragment ions for this peptide/charge/energy combination
-                    let Some((_, fragment_series_vec)) = fragment_ions.get(&(*peptide_id, charge_state, collision_energy_quantized)) else {
-                        continue;
-                    };
-
-                    // Cache scan mobility
-                    let scan_mobility = *self.scan_to_mobility.get(scan).unwrap_or(&0.0) as f64;
-
-                    for fragment_ion_series in fragment_series_vec.iter() {
-                        let scaled_spec = fragment_ion_series.clone() * fraction_events as f64;
-
-                        let mz_spectrum = if mz_noise_fragment {
-                            if uniform {
-                                scaled_spec.add_mz_noise_uniform(fragment_noise_ppm, right_drag)
-                            } else {
-                                scaled_spec.add_mz_noise_normal(fragment_noise_ppm)
-                            }
-                        } else {
-                            scaled_spec
-                        };
-
-                        let spectrum_len = mz_spectrum.mz.len();
-                        tims_spectra.push(TimsSpectrum::new(
-                            frame_id as i32,
-                            *scan as i32,
-                            rt,
-                            scan_mobility,
-                            ms_type.clone(),
-                            IndexedMzSpectrum::from_mz_spectrum(
-                                vec![0; spectrum_len],
-                                mz_spectrum,
-                            ).filter_ranged(100.0, 1700.0, 1.0, 1e9),
-                        ));
-                    }
-                }
-            }
-        }
-
-        if tims_spectra.is_empty() {
-            return TimsFrame::new(frame_id as i32, ms_type, rt, vec![], vec![], vec![], vec![], vec![]);
-        }
-
-        let mut filtered = TimsFrame::from_tims_spectra_filtered(
-            tims_spectra, 100.0, 1700.0, 0, 1000, 0.0, 10.0, 1.0, 1e9,
-        );
-
-        // Round intensities
-        let intensities_rounded: Vec<f64> = filtered
-            .ims_frame
-            .intensity
-            .iter()
-            .map(|x| x.round())
-            .collect();
-        filtered.ims_frame.intensity = Arc::new(intensities_rounded);
-
-        filtered
+        dda_builder.build_frames(
+            frame_ids,
+            fragmentation,
+            mz_noise_precursor,
+            uniform,
+            precursor_noise_ppm,
+            mz_noise_fragment,
+            fragment_noise_ppm,
+            right_drag,
+            self.num_threads,
+        )
     }
 
     /// Get collision energy for a frame/scan combination from PASEF metadata.
