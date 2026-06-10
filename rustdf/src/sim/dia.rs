@@ -587,12 +587,17 @@ impl TimsTofSyntheticsFrameBuilderDIA {
 
                     // Get collision energy for the ion
                     let collision_energy = self.fragmentation_settings.get_collision_energy(frame_id as i32, *scan as i32);
-                    let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
-
-                    // Single lookup with let-else
-                    let Some((_, fragment_series_vec)) = fragment_ions.get(&(*peptide_id, charge_state, collision_energy_quantized)) else {
+                    // Resolve the fragment CE key, tolerant to ~0.1 eV quantization
+                    // noise (no-op for DIA's pre-rounded window CE; shared with DDA).
+                    let Some(collision_energy_quantized) = crate::sim::handle::resolve_fragment_ce_key(
+                        fragment_ions, *peptide_id, charge_state, collision_energy,
+                    ) else {
+                        // No fragments predicted near this CE for this ion — skip.
                         continue;
                     };
+                    let (_, fragment_series_vec) = fragment_ions
+                        .get(&(*peptide_id, charge_state, collision_energy_quantized))
+                        .expect("resolve_fragment_ce_key returned a present key");
 
                     // Cache scan mobility lookup
                     let scan_mobility = *self.precursor_frame_builder.scan_to_mobility.get(scan).unwrap() as f64;
@@ -843,11 +848,15 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     let fraction_events = frame_abundance * scan_abundance * ion_abundance * total_events;
 
                     let collision_energy = self.fragmentation_settings.get_collision_energy(frame_id as i32, *scan as i32);
-                    let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
-
-                    let Some((_, fragment_series_vec)) = fragment_ions.get(&(*peptide_id, charge_state, collision_energy_quantized)) else {
+                    // Resolve the fragment CE key, tolerant to ~0.1 eV quantization noise.
+                    let Some(collision_energy_quantized) = crate::sim::handle::resolve_fragment_ce_key(
+                        fragment_ions, *peptide_id, charge_state, collision_energy,
+                    ) else {
                         continue;
                     };
+                    let (_, fragment_series_vec) = fragment_ions
+                        .get(&(*peptide_id, charge_state, collision_energy_quantized))
+                        .expect("resolve_fragment_ce_key returned a present key");
 
                     // Cache scan mobility
                     let scan_mobility = *self.precursor_frame_builder.scan_to_mobility.get(scan).unwrap() as f64;

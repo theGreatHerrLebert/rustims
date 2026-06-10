@@ -618,12 +618,17 @@ impl TimsTofSyntheticsFrameBuilderDDA {
 
             // Collision energy from the PASEF meta
             let collision_energy = meta.collision_energy;
-            let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
-
-            // Look up fragment ions for this (peptide_id, charge, CE)
-            let Some((_, fragment_series_vec)) = fragment_ions.get(&(peptide_id, charge_state, collision_energy_quantized)) else {
+            // Resolve the fragment CE key, tolerant to ~0.1 eV quantization noise
+            // (DDA pasef CE is full-precision; the stored key is f32-quantized).
+            let Some(collision_energy_quantized) = crate::sim::handle::resolve_fragment_ce_key(
+                fragment_ions, peptide_id, charge_state, collision_energy,
+            ) else {
+                // No fragments predicted near this CE for this precursor — skip.
                 continue;
             };
+            let (_, fragment_series_vec) = fragment_ions
+                .get(&(peptide_id, charge_state, collision_energy_quantized))
+                .expect("resolve_fragment_ce_key returned a present key");
 
             // Process scans within the PASEF selection window
             for (scan, scan_abundance) in all_scan_occurrence.iter().zip(all_scan_abundance.iter()) {
@@ -906,12 +911,17 @@ impl TimsTofSyntheticsFrameBuilderDDA {
 
             // Collision energy from the PASEF meta
             let collision_energy = meta.collision_energy;
-            let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
-
-            // Look up fragment ions for this (peptide_id, charge, CE)
-            let Some((_, fragment_series_vec)) = fragment_ions.get(&(peptide_id, charge_state, collision_energy_quantized)) else {
+            // Resolve the fragment CE key, tolerant to ~0.1 eV quantization noise
+            // (DDA pasef CE is full-precision; the stored key is f32-quantized).
+            let Some(collision_energy_quantized) = crate::sim::handle::resolve_fragment_ce_key(
+                fragment_ions, peptide_id, charge_state, collision_energy,
+            ) else {
+                // No fragments predicted near this CE for this precursor — skip.
                 continue;
             };
+            let (_, fragment_series_vec) = fragment_ions
+                .get(&(peptide_id, charge_state, collision_energy_quantized))
+                .expect("resolve_fragment_ce_key returned a present key");
 
             // Create ion for annotation and precursor spectrum calculation
             let ion = PeptideIon::new(

@@ -13,6 +13,35 @@ use rusqlite::Connection;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
+/// Resolve the fragment-map collision-energy key for an applied CE (eV),
+/// tolerant to ~0.1 eV quantization noise.
+///
+/// The map is keyed `round(stored_ce * 1e3)`, where `stored_ce` is the CE the
+/// predictor saw — quantized to 2 decimals (`ion_map_fn_*`: `round(ce*100)`) and
+/// persisted normalized as **f32**. The renderer only has the *applied* CE
+/// (DDA: full-precision `ce_bias + ce_slope*mobility`; DIA: the window CE). At
+/// ~0.1 eV key boundaries the stored f32 lands on the opposite side of the
+/// rounding boundary from any value reconstructed from the applied CE, so an
+/// exact key cannot be reproduced — the renderer used to silently drop those
+/// fragment series (DDA; DIA window CE is pre-rounded so it was unaffected).
+///
+/// Probe the natural key and its ±1 neighbours (±0.1 eV = the quantization-noise
+/// magnitude) and return the first present. A genuinely different CE (≫0.1 eV
+/// away — e.g. a prediction set built for another instrument) still resolves to
+/// `None`, which callers treat as a real miss. Returns `None` when no fragments
+/// exist near this CE for `(peptide, charge)`.
+pub fn resolve_fragment_ce_key<V>(
+    map: &BTreeMap<(u32, i8, i32), V>,
+    peptide_id: u32,
+    charge: i8,
+    applied_ce_ev: f64,
+) -> Option<i32> {
+    let base = (applied_ce_ev * 1e1).round() as i32;
+    [base, base - 1, base + 1]
+        .into_iter()
+        .find(|&k| map.contains_key(&(peptide_id, charge, k)))
+}
+
 /// Mean of consecutive differences of `xs` (the frame `rt_cycle_length` /
 /// `im_cycle_length` the legacy jobs derive via `np.mean(np.diff(...))`).
 fn mean_consecutive_diff(xs: &[f64]) -> f64 {
@@ -1596,6 +1625,24 @@ pub struct FragmentIonsWithComplementary {
 mod scalar_reader_tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn resolve_fragment_ce_key_tolerates_quantization_noise() {
+        // Map keyed at the stored 0.1-eV resolution (round(stored*1e3) ~ raw*10).
+        let mut map: BTreeMap<(u32, i8, i32), ()> = BTreeMap::new();
+        map.insert((1, 2, 330), ()); // stored key for ~33.0 eV
+
+        // Exact natural key (raw 33.0 -> 330) resolves.
+        assert_eq!(resolve_fragment_ce_key(&map, 1, 2, 33.00), Some(330));
+        // Raw 33.0499 -> natural key 331, but stored is 330: the ±1 probe finds it.
+        assert_eq!(resolve_fragment_ce_key(&map, 1, 2, 33.0499), Some(330));
+        // Raw 32.95 -> natural key 330 (rounds up) — direct hit.
+        assert_eq!(resolve_fragment_ce_key(&map, 1, 2, 32.95), Some(330));
+        // A genuinely different CE (~35 eV, key ~350) is >1 away -> real miss.
+        assert_eq!(resolve_fragment_ce_key(&map, 1, 2, 35.0), None);
+        // Different (peptide, charge) -> miss.
+        assert_eq!(resolve_fragment_ce_key(&map, 9, 2, 33.0), None);
+    }
 
     /// Build a minimal legacy-shaped synthetic_data.db (1/K0 only, no `ccs`,
     /// no `condition_id`) and prove the scalar readers work + the legacy
