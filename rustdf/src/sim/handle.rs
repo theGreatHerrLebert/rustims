@@ -464,6 +464,23 @@ impl TimsTofSyntheticsDataHandle {
         self.project_peptide_scalars(scalars, mode, params)
     }
 
+    /// Convert a projected abundance to the stored `f32`, applying LegacyCompat's
+    /// bit-compatibility rounding. The legacy column writer stores abundances as
+    /// `float(np.round(x, 4))` (utility.python_list_to_json_string, num_decimals=4),
+    /// AFTER the remove_epsilon threshold. LegacyCompat must reproduce that exact
+    /// stored value so projector-fed rendering byte-matches column-fed rendering;
+    /// Accurate keeps full precision. (np.round is round-half-to-even, but exact
+    /// 4-decimal half-way abundances effectively never occur in f64 EMG output, so
+    /// round-half-away matches in practice.)
+    fn abundance_for_mode(a: f64, mode: crate::sim::projector::ProjectionMode) -> f32 {
+        match mode {
+            crate::sim::projector::ProjectionMode::LegacyCompat => {
+                ((a * 1e4).round() / 1e4) as f32
+            }
+            crate::sim::projector::ProjectionMode::Accurate => a as f32,
+        }
+    }
+
     /// Project a (possibly filtered) set of scalar peptides into `PeptidesSim`
     /// with projector-filled frame distributions. Shared by the eager
     /// (full-table) reader and the lazy per-batch reader so there is one
@@ -526,7 +543,7 @@ impl TimsTofSyntheticsDataHandle {
             .zip(projected)
             .map(|(p, pairs)| {
                 let occ: Vec<u32> = pairs.iter().map(|(f, _)| *f).collect();
-                let ab: Vec<f32> = pairs.iter().map(|(_, a)| *a as f32).collect();
+                let ab: Vec<f32> = pairs.iter().map(|(_, a)| Self::abundance_for_mode(*a, mode)).collect();
                 let frame_start = occ.first().copied().unwrap_or(0);
                 let frame_end = occ.last().copied().unwrap_or(0);
                 PeptidesSim::new(
@@ -598,7 +615,7 @@ impl TimsTofSyntheticsDataHandle {
             .zip(projected)
             .map(|(ion, pairs)| {
                 let occ: Vec<u32> = pairs.iter().map(|(s, _)| *s as u32).collect();
-                let ab: Vec<f32> = pairs.iter().map(|(_, a)| *a as f32).collect();
+                let ab: Vec<f32> = pairs.iter().map(|(_, a)| Self::abundance_for_mode(*a, mode)).collect();
                 let mobility = ion.inv_mobility(&env) as f32;
                 IonSim::new(
                     ion.ion_id, ion.peptide_id, ion.sequence, ion.charge, ion.relative_abundance,
