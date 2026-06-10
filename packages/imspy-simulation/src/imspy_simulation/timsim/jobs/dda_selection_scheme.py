@@ -9,6 +9,9 @@ from imspy_core.data.spectrum import MzSpectrum
 from imspy_simulation.acquisition import TimsTofAcquisitionBuilder
 from tqdm import tqdm
 
+import imspy_connector
+ims_acquisition = imspy_connector.py_acquisition
+
 Logger = logging.getLogger(__name__)
 
 # Downstream code expects these names:
@@ -199,6 +202,13 @@ def schedule_precursors(
     frame_id_precursor = ions.frame_id.values[0]
     current_frame = frame_id_precursor  # current MS1 frame id
 
+    # P5c: collision energy comes from a vendor-neutral activation policy instead
+    # of the inline `ce_bias + ce_slope*scan` formula. The Bruker timsTOF
+    # DDA-PASEF policy reproduces that formula exactly (CE driven by the IMS scan);
+    # a Thermo policy (no IMS -> CE driven by cycle+m/z, NCE units) plugs in here
+    # at P6 without changing the selection logic.
+    activation_policy = ims_acquisition.PyActivationPolicy.bruker_pasef(ce_bias, ce_slope)
+
     known_selection_modes = ["topN", "random"]
 
     if selection_mode.lower() == "topn":
@@ -272,7 +282,7 @@ def schedule_precursors(
                     "ScanNumEnd": new_end,
                     "IsolationMz": mz_max_contrib,
                     "IsolationWidth": isolation_width,
-                    "CollisionEnergy": ce_bias + ce_slope * ion.scan_apex,
+                    "CollisionEnergy": activation_policy.collision_energy_for_scan(int(ion.scan_apex)),
                     "Precursor": precursor_id
                 })
 

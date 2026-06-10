@@ -167,6 +167,79 @@ impl Default for InstrumentCapabilities {
     }
 }
 
+/// How an acquisition's collision energy is produced, as a vendor-neutral model.
+/// Composes the existing per-window [`CollisionEnergyPolicy`] (DIA / fixed CE,
+/// already DATA on each window) and adds the Bruker DDA-PASEF mobility-dependent
+/// form, so the DDA CE formula is an *instrument* decision instead of being
+/// hardcoded in the selection job. A Thermo NCE model becomes another variant
+/// (P6) without touching the selection code.
+#[derive(Clone, Copy, Debug)]
+pub enum CollisionEnergyModel {
+    /// CE from a per-window policy (DIA / fixed); evaluated at a window m/z.
+    PerWindow(CollisionEnergyPolicy),
+    /// Bruker DDA-PASEF: `ce_bias + ce_slope * scan` (scan = Bruker mobility
+    /// coordinate). Reproduces the legacy `dda_selection_scheme` formula exactly.
+    BrukerPasef { ce_bias: f64, ce_slope: f64 },
+}
+
+/// Vendor-neutral activation policy: the typed [`ActivationCondition`] producer
+/// for an acquisition. Pairs a dissociation method + energy unit with a
+/// [`CollisionEnergyModel`]. The Bruker timsTOF default reproduces the legacy CE
+/// numbers byte-for-byte; P6 supplies a Thermo policy with the same interface.
+#[derive(Clone, Copy, Debug)]
+pub struct ActivationPolicy {
+    pub method: ActivationMethod,
+    pub unit: EnergyUnit,
+    pub model: CollisionEnergyModel,
+}
+
+impl ActivationPolicy {
+    /// Bruker timsTOF DDA-PASEF: collisional activation (HCD), eV, CE linear in
+    /// scan. `ce_bias`/`ce_slope` default (in `dda_selection_scheme`) to
+    /// 54.1984 / -0.0345 — pass those to reproduce the legacy output exactly.
+    pub fn bruker_pasef(ce_bias: f64, ce_slope: f64) -> Self {
+        ActivationPolicy {
+            method: ActivationMethod::Hcd,
+            unit: EnergyUnit::ElectronVolt,
+            model: CollisionEnergyModel::BrukerPasef { ce_bias, ce_slope },
+        }
+    }
+
+    /// Collision energy (eV) the instrument applies at a Bruker mobility scan.
+    /// Only meaningful for scan-parameterised models (Bruker DDA-PASEF); a
+    /// per-window model has no scan dependence and returns its window value via
+    /// [`Self::condition_for_window`] instead.
+    pub fn collision_energy_for_scan(&self, scan: u32) -> f64 {
+        match self.model {
+            CollisionEnergyModel::BrukerPasef { ce_bias, ce_slope } => {
+                ce_bias + ce_slope * scan as f64
+            }
+            CollisionEnergyModel::PerWindow(p) => p.at(scan as f64).unwrap_or(0.0),
+        }
+    }
+
+    /// Typed activation condition at a Bruker mobility scan.
+    pub fn condition_for_scan(&self, scan: u32) -> ActivationCondition {
+        ActivationCondition {
+            method: self.method,
+            value: self.collision_energy_for_scan(scan),
+            unit: self.unit,
+        }
+    }
+
+    /// Typed activation condition for a per-window model at `center_mz`.
+    pub fn condition_for_window(&self, center_mz: f64) -> Option<ActivationCondition> {
+        match self.model {
+            CollisionEnergyModel::PerWindow(p) => p.at(center_mz).map(|value| ActivationCondition {
+                method: self.method,
+                value,
+                unit: self.unit,
+            }),
+            CollisionEnergyModel::BrukerPasef { .. } => None,
+        }
+    }
+}
+
 /// Window geometry: m/z only, or (timsTOF) an additional ion-mobility partition.
 /// Mobility is kept off [`IsolationWindow`] so "mobility on a non-IMS instrument"
 /// is unrepresentable. Scan numbers are Bruker-grid coordinates (they require the
@@ -1054,6 +1127,31 @@ mod tests {
         // An NCE value is a distinct unit and must not compare equal to eV.
         let nce = ActivationCondition { method: ActivationMethod::Hcd, value: 30.0, unit: EnergyUnit::NormalizedCe };
         assert_ne!(nce.unit, c.unit);
+    }
+
+    #[test]
+    fn bruker_pasef_activation_policy_reproduces_legacy_ce() {
+        // Legacy dda_selection_scheme: collision_energy = ce_bias + ce_slope*scan.
+        let (ce_bias, ce_slope) = (54.1984, -0.0345);
+        let p = ActivationPolicy::bruker_pasef(ce_bias, ce_slope);
+        assert_eq!(p.method, ActivationMethod::Hcd);
+        assert_eq!(p.unit, EnergyUnit::ElectronVolt);
+        for scan in [0u32, 1, 250, 451, 917] {
+            assert_eq!(
+                p.collision_energy_for_scan(scan),
+                ce_bias + ce_slope * scan as f64,
+                "CE must match the legacy formula at scan {scan}"
+            );
+            assert_eq!(p.condition_for_scan(scan).value, ce_bias + ce_slope * scan as f64);
+        }
+        // A per-window (DIA) model has no scan dependence.
+        let w = ActivationPolicy {
+            method: ActivationMethod::Hcd,
+            unit: EnergyUnit::ElectronVolt,
+            model: CollisionEnergyModel::PerWindow(CollisionEnergyPolicy::Value(25.0)),
+        };
+        assert_eq!(w.condition_for_window(700.0).unwrap().value, 25.0);
+        assert!(w.condition_for_scan(100).value == 25.0); // Value is constant
     }
 
     #[test]

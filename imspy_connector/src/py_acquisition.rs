@@ -503,9 +503,55 @@ pub fn has_sciex() -> bool {
     cfg!(feature = "sciex")
 }
 
+/// Vendor-neutral activation/collision-energy policy (P5c). The Bruker timsTOF
+/// DDA-PASEF policy reproduces the legacy `ce_bias + ce_slope*scan` exactly; the
+/// DDA selection job uses this instead of the inline formula, so the CE model is
+/// an instrument decision (a Thermo policy plugs in at P6 without touching the
+/// selection code).
+#[pyclass(unsendable)]
+pub struct PyActivationPolicy {
+    pub inner: rustdf::sim::scheme::ActivationPolicy,
+}
+
+#[pymethods]
+impl PyActivationPolicy {
+    /// Bruker timsTOF DDA-PASEF policy (collisional/HCD, eV, CE linear in scan).
+    #[staticmethod]
+    pub fn bruker_pasef(ce_bias: f64, ce_slope: f64) -> Self {
+        PyActivationPolicy {
+            inner: rustdf::sim::scheme::ActivationPolicy::bruker_pasef(ce_bias, ce_slope),
+        }
+    }
+
+    /// Collision energy (eV) applied at a Bruker mobility scan.
+    pub fn collision_energy_for_scan(&self, scan: u32) -> f64 {
+        self.inner.collision_energy_for_scan(scan)
+    }
+
+    /// Vectorised: collision energies for a list of mobility scans.
+    pub fn collision_energies_for_scans(&self, scans: Vec<u32>) -> Vec<f64> {
+        scans.iter().map(|&s| self.inner.collision_energy_for_scan(s)).collect()
+    }
+
+    #[getter]
+    pub fn activation_method(&self) -> String {
+        format!("{:?}", self.inner.method).to_lowercase()
+    }
+
+    #[getter]
+    pub fn energy_unit(&self) -> String {
+        match self.inner.unit {
+            rustdf::sim::scheme::EnergyUnit::ElectronVolt => "ev".to_string(),
+            rustdf::sim::scheme::EnergyUnit::NormalizedCe => "nce".to_string(),
+            rustdf::sim::scheme::EnergyUnit::Unknown => "unknown".to_string(),
+        }
+    }
+}
+
 #[pymodule]
 pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAcquisitionScheme>()?;
+    m.add_class::<PyActivationPolicy>()?;
     #[cfg(feature = "thermo")]
     m.add_class::<PyThermoRawWriter>()?;
     m.add_function(wrap_pyfunction!(legacy_frame_projection, m)?)?;
