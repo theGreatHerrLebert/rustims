@@ -132,12 +132,17 @@ impl InstrumentConfig {
     /// Orbitrap Astral: no mobility axis (events collapse to a single `Scan`),
     /// Astral capabilities (both false — isotope transmission forced to `None`),
     /// and a Thermo NCE activation policy carrying the per-window normalized CE.
-    pub fn astral(activation: ActivationPolicy) -> Self {
+    ///
+    /// Takes the per-window collision-energy *policy* (not a full
+    /// [`ActivationPolicy`]) and constructs the NCE activation internally, so an
+    /// Astral config can never be built with a contradictory eV / scan-dependent
+    /// (e.g. Bruker-PASEF) activation model. `ce` is in NCE units by construction.
+    pub fn astral(ce: crate::sim::scheme::CollisionEnergyPolicy) -> Self {
         InstrumentConfig {
             kind: InstrumentKind::OrbitrapAstral,
             capabilities: InstrumentCapabilities::astral(),
             mobility: MobilityModality::None,
-            activation,
+            activation: ActivationPolicy::thermo_nce(ce),
         }
     }
 
@@ -717,7 +722,7 @@ pub fn project_mobility_accurate_par(
 mod tests {
     use super::*;
     use crate::sim::scheme::{
-        ActivationPolicy, Analyzer, CollisionEnergyPolicy, DiaGeometry, DiaMs2Frame, DiaWindow,
+        Analyzer, CollisionEnergyPolicy, DiaGeometry, DiaMs2Frame, DiaWindow,
         EnergyUnit, InstrumentKind, Ms1Event, Provenance, SchemeSource,
     };
     use mscore::data::spectrum::MzSpectrum;
@@ -735,9 +740,9 @@ mod tests {
         assert_eq!(bruker.activation.collision_energy_for_scan(250), Some(54.1984 - 0.0345 * 250.0));
 
         // Astral config = no mobility (scan-based), both capabilities off, NCE.
-        let astral = InstrumentConfig::astral(ActivationPolicy::thermo_nce(
-            CollisionEnergyPolicy::Value(27.0),
-        ));
+        // The constructor builds the NCE activation internally from the CE policy,
+        // so a contradictory eV/scan-dependent activation is unrepresentable.
+        let astral = InstrumentConfig::astral(CollisionEnergyPolicy::Value(27.0));
         assert_eq!(astral.kind, InstrumentKind::OrbitrapAstral);
         assert_eq!(astral.mobility, MobilityModality::None);
         assert!(!astral.capabilities.has_tims_mobility);
