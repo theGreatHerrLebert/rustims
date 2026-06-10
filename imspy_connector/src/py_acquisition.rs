@@ -523,14 +523,29 @@ impl PyActivationPolicy {
         }
     }
 
-    /// Collision energy (eV) applied at a Bruker mobility scan.
-    pub fn collision_energy_for_scan(&self, scan: u32) -> f64 {
-        self.inner.collision_energy_for_scan(scan)
+    /// Collision energy (eV) applied at a Bruker mobility scan. Errors if the
+    /// policy is not scan-parameterised (e.g. a per-window/Thermo model).
+    pub fn collision_energy_for_scan(&self, scan: u32) -> PyResult<f64> {
+        self.inner.collision_energy_for_scan(scan).ok_or_else(|| {
+            PyValueError::new_err(
+                "this activation policy is not scan-parameterised (no IMS); \
+                 collision energy is driven by m/z, not scan",
+            )
+        })
     }
 
     /// Vectorised: collision energies for a list of mobility scans.
-    pub fn collision_energies_for_scans(&self, scans: Vec<u32>) -> Vec<f64> {
-        scans.iter().map(|&s| self.inner.collision_energy_for_scan(s)).collect()
+    pub fn collision_energies_for_scans(&self, scans: Vec<u32>) -> PyResult<Vec<f64>> {
+        scans
+            .iter()
+            .map(|&s| {
+                self.inner.collision_energy_for_scan(s).ok_or_else(|| {
+                    PyValueError::new_err(
+                        "this activation policy is not scan-parameterised (no IMS)",
+                    )
+                })
+            })
+            .collect()
     }
 
     #[getter]

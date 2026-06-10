@@ -206,25 +206,27 @@ impl ActivationPolicy {
     }
 
     /// Collision energy (eV) the instrument applies at a Bruker mobility scan.
-    /// Only meaningful for scan-parameterised models (Bruker DDA-PASEF); a
-    /// per-window model has no scan dependence and returns its window value via
-    /// [`Self::condition_for_window`] instead.
-    pub fn collision_energy_for_scan(&self, scan: u32) -> f64 {
+    /// Only meaningful for scan-parameterised models (Bruker DDA-PASEF). A
+    /// per-window model has NO scan dependence — it returns `None` (use
+    /// [`Self::condition_for_window`]) rather than silently misreading the scan
+    /// number as an m/z.
+    pub fn collision_energy_for_scan(&self, scan: u32) -> Option<f64> {
         match self.model {
             CollisionEnergyModel::BrukerPasef { ce_bias, ce_slope } => {
-                ce_bias + ce_slope * scan as f64
+                Some(ce_bias + ce_slope * scan as f64)
             }
-            CollisionEnergyModel::PerWindow(p) => p.at(scan as f64).unwrap_or(0.0),
+            CollisionEnergyModel::PerWindow(_) => None,
         }
     }
 
-    /// Typed activation condition at a Bruker mobility scan.
-    pub fn condition_for_scan(&self, scan: u32) -> ActivationCondition {
-        ActivationCondition {
+    /// Typed activation condition at a Bruker mobility scan (scan-parameterised
+    /// models only; `None` for per-window models).
+    pub fn condition_for_scan(&self, scan: u32) -> Option<ActivationCondition> {
+        self.collision_energy_for_scan(scan).map(|value| ActivationCondition {
             method: self.method,
-            value: self.collision_energy_for_scan(scan),
+            value,
             unit: self.unit,
-        }
+        })
     }
 
     /// Typed activation condition for a per-window model at `center_mz`.
@@ -1139,19 +1141,21 @@ mod tests {
         for scan in [0u32, 1, 250, 451, 917] {
             assert_eq!(
                 p.collision_energy_for_scan(scan),
-                ce_bias + ce_slope * scan as f64,
+                Some(ce_bias + ce_slope * scan as f64),
                 "CE must match the legacy formula at scan {scan}"
             );
-            assert_eq!(p.condition_for_scan(scan).value, ce_bias + ce_slope * scan as f64);
+            assert_eq!(p.condition_for_scan(scan).unwrap().value, ce_bias + ce_slope * scan as f64);
         }
-        // A per-window (DIA) model has no scan dependence.
+        // A per-window (DIA) model has no scan dependence: scan evaluation is
+        // None (not a silently-wrong value), and CE comes from the window m/z.
         let w = ActivationPolicy {
             method: ActivationMethod::Hcd,
             unit: EnergyUnit::ElectronVolt,
             model: CollisionEnergyModel::PerWindow(CollisionEnergyPolicy::Value(25.0)),
         };
         assert_eq!(w.condition_for_window(700.0).unwrap().value, 25.0);
-        assert!(w.condition_for_scan(100).value == 25.0); // Value is constant
+        assert_eq!(w.collision_energy_for_scan(100), None);
+        assert!(w.condition_for_scan(100).is_none());
     }
 
     #[test]
