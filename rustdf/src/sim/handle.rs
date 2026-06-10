@@ -13,6 +13,16 @@ use rusqlite::Connection;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
+/// Mean of consecutive differences of `xs` (the frame `rt_cycle_length` /
+/// `im_cycle_length` the legacy jobs derive via `np.mean(np.diff(...))`).
+fn mean_consecutive_diff(xs: &[f64]) -> f64 {
+    if xs.len() < 2 {
+        return 0.0;
+    }
+    let total: f64 = xs.windows(2).map(|w| w[1] - w[0]).sum();
+    total / (xs.len() - 1) as f64
+}
+
 #[derive(Debug)]
 pub struct TimsTofSyntheticsDataHandle {
     pub connection: Connection,
@@ -60,7 +70,7 @@ impl TimsTofSyntheticsDataHandle {
     }
 
     pub fn read_peptides(&self) -> rusqlite::Result<Vec<PeptidesSim>> {
-        let mut stmt = self.connection.prepare("SELECT * FROM peptides")?;
+        let mut stmt = self.connection.prepare("SELECT * FROM peptides ORDER BY peptide_id")?;
         let peptides_iter = stmt.query_map([], |row| {
             Self::peptide_from_row(row)
         })?;
@@ -169,7 +179,7 @@ impl TimsTofSyntheticsDataHandle {
     }
 
     pub fn read_ions(&self) -> rusqlite::Result<Vec<IonSim>> {
-        let mut stmt = self.connection.prepare("SELECT * FROM ions")?;
+        let mut stmt = self.connection.prepare("SELECT * FROM ions ORDER BY ion_id")?;
         let ions_iter = stmt.query_map([], |row| Self::ion_from_row(row))?;
         let mut ions = Vec::new();
         for ion in ions_iter {
@@ -251,7 +261,7 @@ impl TimsTofSyntheticsDataHandle {
     pub fn read_peptides_scalar(&self) -> rusqlite::Result<Vec<PeptideScalar>> {
         let has_condition = self.table_has_column("peptides", "condition_id")?;
         let has_rt_mu = self.table_has_column("peptides", "rt_mu")?;
-        let mut stmt = self.connection.prepare("SELECT * FROM peptides")?;
+        let mut stmt = self.connection.prepare("SELECT * FROM peptides ORDER BY peptide_id")?;
         let iter = stmt.query_map([], |row| {
             let peptide_id: u32 = row.get("peptide_id")?;
             let condition_id = if has_condition {
@@ -270,6 +280,8 @@ impl TimsTofSyntheticsDataHandle {
                 proteins: row.get("protein")?,
                 decoy: row.get("decoy")?,
                 missed_cleavages: row.get("missed_cleavages")?,
+                n_term: row.get("n_term")?,
+                c_term: row.get("c_term")?,
                 mono_isotopic_mass: row.get("monoisotopic-mass")?,
                 retention_time,
                 rt_mu,
@@ -293,7 +305,7 @@ impl TimsTofSyntheticsDataHandle {
         let has_ccs = self.table_has_column("ions", "ccs")?;
         let has_condition = self.table_has_column("ions", "condition_id")?;
         let has_inv_std = self.table_has_column("ions", "inv_mobility_gru_predictor_std")?;
-        let mut stmt = self.connection.prepare("SELECT * FROM ions")?;
+        let mut stmt = self.connection.prepare("SELECT * FROM ions ORDER BY ion_id")?;
         let env = *env;
         let iter = stmt.query_map([], move |row| {
             let simulated_spectrum_str: String = row.get("simulated_spectrum")?;
@@ -343,6 +355,141 @@ impl TimsTofSyntheticsDataHandle {
             out.push(i?);
         }
         Ok(out)
+    }
+
+    // ----------------------------------------------------------------------- //
+    // Instrument-dispatch P4 (canonical builder state): source-aware entity
+    // reads. Produce the SAME PeptidesSim/IonSim the column path produces, but
+    // with the occurrence/abundance distributions taken from either the legacy
+    // JSON columns (`Columns`) or the render-time projector (`Projector`). Every
+    // downstream consumer reads the same entity fields, so nothing else changes.
+    // ----------------------------------------------------------------------- //
+
+    /// Read peptides with their frame distribution from `source`.
+    pub fn read_peptides_with_source(
+        &self,
+        source: &crate::sim::projector::DistributionSource,
+    ) -> rusqlite::Result<Vec<PeptidesSim>> {
+        use crate::sim::projector::{DistributionSource, ProjectionMode};
+        let (mode, params) = match source {
+            DistributionSource::Columns => return self.read_peptides(),
+            DistributionSource::Projector { mode, params, .. } => (*mode, *params),
+        };
+        let scalars = self.read_peptides_scalar()?;
+        // Frames table, ascending by id, as the projector expects.
+        let mut frames = self.read_frames()?;
+        frames.sort_by_key(|f| f.frame_id);
+        let frame_ids: Vec<u32> = frames.iter().map(|f| f.frame_id).collect();
+        let frame_times: Vec<f64> = frames.iter().map(|f| f.time as f64).collect();
+        if frame_times.len() < 2 {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let rt_cycle = mean_consecutive_diff(&frame_times);
+        let mus: Vec<f64> = scalars.iter().map(|p| p.rt_mu as f64).collect();
+        let sigmas: Vec<f64> = scalars.iter().map(|p| p.rt_sigma as f64).collect();
+        let lambdas: Vec<f64> = scalars.iter().map(|p| p.rt_lambda as f64).collect();
+
+        let projected: Vec<Vec<(u32, f64)>> = match mode {
+            ProjectionMode::LegacyCompat => crate::sim::projector::project_time_legacy(
+                &mus, &sigmas, &lambdas, &frame_ids, &frame_times, rt_cycle, params.target_p,
+                params.frame_step_size, params.n_steps, params.remove_epsilon, params.num_threads,
+            ),
+            ProjectionMode::Accurate => {
+                // Accurate: integrate each frame's true [prev, this] exposure
+                // interval; map event index -> frame id; apply remove_epsilon.
+                let mut starts = Vec::with_capacity(frame_times.len());
+                let mut ends = Vec::with_capacity(frame_times.len());
+                for (i, &t) in frame_times.iter().enumerate() {
+                    let prev = if i > 0 { frame_times[i - 1] } else { t - (frame_times[1] - frame_times[0]) };
+                    starts.push(prev);
+                    ends.push(t);
+                }
+                let intervals: Vec<(f64, f64)> = starts.into_iter().zip(ends).collect();
+                let proj = mscore::algorithm::utility::project_emg_over_events_par(
+                    &intervals, mus.clone(), sigmas.clone(), lambdas.clone(), params.target_p,
+                    params.frame_step_size, params.num_threads.max(1), params.n_steps,
+                );
+                proj.into_iter()
+                    .map(|pairs| {
+                        pairs.into_iter()
+                            .filter(|(_, a)| *a > params.remove_epsilon)
+                            .map(|(i, a)| (frame_ids[i], a))
+                            .collect()
+                    })
+                    .collect()
+            }
+        };
+
+        Ok(scalars
+            .into_iter()
+            .zip(projected)
+            .map(|(p, pairs)| {
+                let occ: Vec<u32> = pairs.iter().map(|(f, _)| *f).collect();
+                let ab: Vec<f32> = pairs.iter().map(|(_, a)| *a as f32).collect();
+                let frame_start = occ.first().copied().unwrap_or(0);
+                let frame_end = occ.last().copied().unwrap_or(0);
+                PeptidesSim::new(
+                    p.protein_id, p.peptide_id, p.sequence.sequence.clone(), p.proteins, p.decoy,
+                    p.missed_cleavages, p.n_term, p.c_term, p.mono_isotopic_mass, p.retention_time,
+                    p.events, frame_start, frame_end, occ, ab,
+                )
+            })
+            .collect())
+    }
+
+    /// Read ions with their scan distribution from `source`.
+    pub fn read_ions_with_source(
+        &self,
+        source: &crate::sim::projector::DistributionSource,
+    ) -> rusqlite::Result<Vec<IonSim>> {
+        use crate::sim::projector::{DistributionSource, ProjectionMode};
+        let (mode, env, params) = match source {
+            DistributionSource::Columns => return self.read_ions(),
+            DistributionSource::Projector { mode, env, params } => (*mode, *env, *params),
+        };
+        let scalars = self.read_ions_scalar(&env)?;
+        // Scans ascending by mobility (im_cycle_length > 0), as the projector expects.
+        let mut scans = self.read_scans()?;
+        scans.sort_by(|a, b| a.mobility.partial_cmp(&b.mobility).unwrap_or(std::cmp::Ordering::Equal));
+        let scan_ids: Vec<u32> = scans.iter().map(|s| s.scan).collect();
+        let scan_mob: Vec<f64> = scans.iter().map(|s| s.mobility as f64).collect();
+        if scan_mob.len() < 2 {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+        let im_cycle = mean_consecutive_diff(&scan_mob);
+        let means: Vec<f64> = scalars.iter().map(|i| i.inv_mobility(&env)).collect();
+        let sigmas: Vec<f64> = scalars.iter().map(|i| i.inv_mobility_std as f64).collect();
+
+        let projected: Vec<Vec<(i32, f64)>> = match mode {
+            ProjectionMode::LegacyCompat => crate::sim::projector::project_mobility_legacy_par(
+                &means, &sigmas, &scan_ids, &scan_mob, im_cycle, params.target_p,
+                params.scan_step_size, params.num_threads,
+            ),
+            ProjectionMode::Accurate => {
+                // Accurate per-scan midpoint bins; ascending-grid index -> scan id.
+                let acc = crate::sim::projector::project_mobility_accurate_par(
+                    &means, &sigmas, &scan_mob, params.target_p, params.scan_step_size,
+                    params.num_threads,
+                );
+                acc.into_iter()
+                    .map(|pairs| pairs.into_iter().map(|(idx, a)| (scan_ids[idx as usize] as i32, a)).collect())
+                    .collect()
+            }
+        };
+
+        Ok(scalars
+            .into_iter()
+            .zip(projected)
+            .map(|(ion, pairs)| {
+                let occ: Vec<u32> = pairs.iter().map(|(s, _)| *s as u32).collect();
+                let ab: Vec<f32> = pairs.iter().map(|(_, a)| *a as f32).collect();
+                let mobility = ion.inv_mobility(&env) as f32;
+                IonSim::new(
+                    ion.ion_id, ion.peptide_id, ion.sequence, ion.charge, ion.relative_abundance,
+                    mobility, ion.simulated_spectrum, occ, ab,
+                )
+            })
+            .collect())
     }
 
     pub fn read_window_group_settings(&self) -> rusqlite::Result<Vec<WindowGroupSettingsSim>> {
@@ -1252,7 +1399,8 @@ mod scalar_reader_tests {
             conn.execute_batch(
                 "CREATE TABLE peptides (
                     protein_id INTEGER, peptide_id INTEGER, sequence TEXT, protein TEXT,
-                    decoy INTEGER, missed_cleavages INTEGER, \"monoisotopic-mass\" REAL,
+                    decoy INTEGER, missed_cleavages INTEGER, n_term, c_term,
+                    \"monoisotopic-mass\" REAL,
                     retention_time_gru_predictor REAL, rt_sigma REAL, rt_lambda REAL, events REAL
                  );
                  CREATE TABLE ions (
@@ -1263,7 +1411,7 @@ mod scalar_reader_tests {
             )
             .unwrap();
             conn.execute(
-                "INSERT INTO peptides VALUES (1,1,'PEPTIDEK','P',0,0,930.5,123.4,1.2,0.3,5.0)",
+                "INSERT INTO peptides VALUES (1,1,'PEPTIDEK','P',0,0,NULL,NULL,930.5,123.4,1.2,0.3,5.0)",
                 [],
             )
             .unwrap();
@@ -1292,6 +1440,93 @@ mod scalar_reader_tests {
         let back = ions[0].inv_mobility(&env);
         assert!((back - one_over_k0).abs() < 1e-9, "1/K0 round-trip: {back}");
         assert_eq!(ions[0].condition_id, None);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// P4a0: the source-aware reads produce same-shape PeptidesSim/IonSim from
+    /// both `Columns` and `Projector`, and the projector path fills a non-empty
+    /// distribution for a mid-gradient analyte.
+    #[test]
+    fn source_aware_reads_both_paths() {
+        use crate::sim::containers::MobilityEnv;
+        use crate::sim::projector::{DistributionSource, ProjectionMode, ProjectionParams};
+        let path = std::env::temp_dir().join(format!("rustdf_p4a0_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE frames (frame_id INTEGER, time REAL, ms_type INTEGER);
+                 CREATE TABLE scans (scan INTEGER, mobility REAL);
+                 CREATE TABLE peptides (
+                    protein_id INTEGER, peptide_id INTEGER, sequence TEXT, protein TEXT,
+                    decoy INTEGER, missed_cleavages INTEGER, n_term, c_term,
+                    \"monoisotopic-mass\" REAL, retention_time_gru_predictor REAL, rt_mu REAL,
+                    rt_sigma REAL, rt_lambda REAL, events REAL, frame_occurrence TEXT,
+                    frame_abundance TEXT, frame_occurrence_start INTEGER, frame_occurrence_end INTEGER);
+                 CREATE TABLE ions (
+                    ion_id INTEGER, peptide_id INTEGER, sequence TEXT, charge INTEGER,
+                    relative_abundance REAL, mz REAL, inv_mobility_gru_predictor REAL,
+                    inv_mobility_gru_predictor_std REAL, simulated_spectrum TEXT,
+                    scan_occurrence TEXT, scan_abundance TEXT);",
+            )
+            .unwrap();
+            // 40 uniform frames over ~4 s; the peptide elutes mid-gradient (rt_mu=2).
+            for fid in 1..=40 {
+                conn.execute(
+                    "INSERT INTO frames VALUES (?1, ?2, 0)",
+                    rusqlite::params![fid, fid as f64 * 0.1],
+                )
+                .unwrap();
+            }
+            for s in 0..20 {
+                conn.execute(
+                    "INSERT INTO scans VALUES (?1, ?2)",
+                    rusqlite::params![s, 1.3 - s as f64 * 0.01],
+                )
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO peptides VALUES (0,1,'PEPTIDEK','P',0,0,NULL,NULL,930.5,2.0,2.0,0.3,0.6,5.0,'[1]','[0.0]',1,1)",
+                [],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO ions VALUES (1,1,'PEPTIDEK',2,1.0,500.0,1.1,0.02,'{\"mz\":[500.0],\"intensity\":[1.0]}','[5]','[1.0]')",
+                [],
+            ).unwrap();
+        }
+        let handle = TimsTofSyntheticsDataHandle::new(&path).unwrap();
+
+        // Columns path == read_peptides/read_ions (stored values).
+        let pc = handle.read_peptides_with_source(&DistributionSource::Columns).unwrap();
+        let ic = handle.read_ions_with_source(&DistributionSource::Columns).unwrap();
+        assert_eq!(pc.len(), 1);
+        assert_eq!(ic.len(), 1);
+        assert_eq!(pc[0].frame_distribution.occurrence, vec![1]); // the stored value
+
+        // Projector path produces a real distribution for the mid-gradient peptide.
+        let src = DistributionSource::Projector {
+            mode: ProjectionMode::LegacyCompat,
+            env: MobilityEnv::default(),
+            params: ProjectionParams::default(),
+        };
+        let pp = handle.read_peptides_with_source(&src).unwrap();
+        let ip = handle.read_ions_with_source(&src).unwrap();
+        assert_eq!(pp.len(), 1);
+        assert_eq!(ip.len(), 1);
+        assert!(
+            pp[0].frame_distribution.occurrence.len() > 1,
+            "projector should populate multiple frames for a mid-gradient peptide"
+        );
+        assert!(!ip[0].scan_distribution.occurrence.is_empty(), "projector should populate scans");
+        // Accurate mode also runs.
+        let src_acc = DistributionSource::Projector {
+            mode: ProjectionMode::Accurate,
+            env: MobilityEnv::default(),
+            params: ProjectionParams::default(),
+        };
+        assert_eq!(handle.read_peptides_with_source(&src_acc).unwrap().len(), 1);
+        assert_eq!(handle.read_ions_with_source(&src_acc).unwrap().len(), 1);
 
         let _ = std::fs::remove_file(&path);
     }

@@ -282,6 +282,8 @@ pub struct PeptideScalar {
     pub proteins: String,
     pub decoy: bool,
     pub missed_cleavages: i8,
+    pub n_term: Option<bool>,
+    pub c_term: Option<bool>,
     pub mono_isotopic_mass: f32,
     /// Predicted RT apex (seconds) from the GRU predictor — provenance.
     pub retention_time: f32,

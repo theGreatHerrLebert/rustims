@@ -292,6 +292,47 @@ pub enum ProjectionMode {
     Accurate,
 }
 
+/// Parameters the projector needs to reproduce / improve the legacy distribution
+/// jobs. Defaults mirror the simulator's config defaults (`target_p=0.999`,
+/// `sampling_step_size=0.001`, scan step `0.0001`, `n_steps=1000`,
+/// `remove_epsilon=1e-4`).
+#[derive(Debug, Clone, Copy)]
+pub struct ProjectionParams {
+    pub target_p: f64,
+    pub frame_step_size: f64,
+    pub scan_step_size: f64,
+    pub n_steps: Option<usize>,
+    pub remove_epsilon: f64,
+    pub num_threads: usize,
+}
+
+impl Default for ProjectionParams {
+    fn default() -> Self {
+        ProjectionParams {
+            target_p: 0.999,
+            frame_step_size: 0.001,
+            scan_step_size: 0.0001,
+            n_steps: Some(1000),
+            remove_epsilon: 1e-4,
+            num_threads: 4,
+        }
+    }
+}
+
+/// Where the per-analyte occurrence/abundance distributions come from when
+/// constructing the builder entities (P4 canonical-state contract).
+///
+/// `Columns` parses them from the legacy JSON columns (the default — byte
+/// behaviour unchanged). `Projector` computes them at load time from the scalar
+/// trunk entities, so the columns become unnecessary (the P4 goal). Both paths
+/// produce identical-shape `PeptidesSim`/`IonSim`, so every downstream consumer
+/// (maps, transmission, DDA, fragment-intensity) is untouched.
+#[derive(Debug, Clone, Copy)]
+pub enum DistributionSource {
+    Columns,
+    Projector { mode: ProjectionMode, env: MobilityEnv, params: ProjectionParams },
+}
+
 // --------------------------------------------------------------------------- //
 // LegacyCompat projections (parity target — mirror the legacy kernels exactly)
 // --------------------------------------------------------------------------- //
@@ -682,6 +723,8 @@ mod tests {
             proteins: "P".into(),
             decoy: false,
             missed_cleavages: 0,
+            n_term: None,
+            c_term: None,
             mono_isotopic_mass: 930.0,
             retention_time: rt,
             rt_mu: rt,
