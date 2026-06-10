@@ -20,6 +20,7 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
 use crate::sim::containers::{IsotopeTransmissionConfig, IsotopeTransmissionMode};
+use crate::sim::scheme::InstrumentCapabilities;
 use crate::sim::handle::{FragmentIonsWithComplementary, TimsTofSyntheticsDataHandle};
 use crate::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
 
@@ -33,11 +34,14 @@ pub struct TimsTofSyntheticsFrameBuilderDIA {
     pub fragment_ions_annotated: Option<
         BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>,
     >,
-    /// Configuration for quad-selection dependent isotope transmission
+    /// Configuration for quad-selection dependent isotope transmission (already
+    /// gated by the instrument capabilities at construction — P5e).
     pub isotope_config: IsotopeTransmissionConfig,
     /// Fragment ions with complementary data for transmission-dependent calculations
     pub fragment_ions_with_transmission:
         Option<BTreeMap<(u32, i8, i32), FragmentIonsWithComplementary>>,
+    /// Physical instrument capabilities (P5e). Default = Bruker timsTOF.
+    pub capabilities: InstrumentCapabilities,
 }
 
 impl TimsTofSyntheticsFrameBuilderDIA {
@@ -81,6 +85,11 @@ impl TimsTofSyntheticsFrameBuilderDIA {
 
         let fragment_ions = handle.read_fragment_ions()?;
 
+        // P5e: gate the isotope-transmission config by instrument capabilities.
+        // Default = Bruker timsTOF (no-op); P6 threads real Astral capabilities.
+        let capabilities = InstrumentCapabilities::default();
+        let isotope_config = isotope_config.gated_by(capabilities);
+
         // get collision energy settings per window group
         let fragmentation_settings = handle.get_collision_energy_dia();
         // get ion transmission settings per window group
@@ -114,6 +123,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     fragment_ions_annotated,
                     isotope_config,
                     fragment_ions_with_transmission,
+                    capabilities,
                 })
             }
 
@@ -132,6 +142,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     fragment_ions_annotated: None,
                     isotope_config,
                     fragment_ions_with_transmission,
+                    capabilities,
                 })
             }
         }

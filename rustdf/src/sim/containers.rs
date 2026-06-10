@@ -509,11 +509,52 @@ impl IsotopeTransmissionConfig {
     pub fn is_enabled(&self) -> bool {
         self.mode != IsotopeTransmissionMode::None
     }
+
+    /// Apply instrument-capability gating (P5e). Mobility-dependent quadrupole
+    /// isotope transmission (PrecursorScaling / PerFragment) is a Bruker timsTOF
+    /// behaviour; an instrument that lacks it (e.g. a no-IMS Astral —
+    /// `has_quad_isotope_transmission = false`) must NOT apply that scaling, so
+    /// force the mode to `None`. Bruker (flag true) is returned unchanged, so the
+    /// rendered output is byte-identical. (The m/z-isolation vs scan/mobility
+    /// transmission split is gated by `has_tims_mobility` and lands in P6 with the
+    /// Thermo acquisition windows — see the instrument-dispatch plan.)
+    pub fn gated_by(&self, capabilities: crate::sim::scheme::InstrumentCapabilities) -> Self {
+        if capabilities.has_quad_isotope_transmission {
+            self.clone()
+        } else {
+            let mut gated = self.clone();
+            gated.mode = IsotopeTransmissionMode::None;
+            gated
+        }
+    }
 }
 
 #[cfg(test)]
 mod scalar_entity_tests {
     use super::*;
+    use crate::sim::scheme::InstrumentCapabilities;
+
+    #[test]
+    fn isotope_config_gated_by_capabilities() {
+        let cfg = IsotopeTransmissionConfig {
+            mode: IsotopeTransmissionMode::PerFragment,
+            min_probability: 0.5,
+            max_isotopes: 10,
+            precursor_survival_min: 0.0,
+            precursor_survival_max: 0.0,
+        };
+        // Bruker (default): quad isotope transmission present -> unchanged.
+        let bruker = cfg.gated_by(InstrumentCapabilities::default());
+        assert_eq!(bruker.mode, IsotopeTransmissionMode::PerFragment);
+        assert!(bruker.is_enabled());
+        // No-quad-isotope instrument (e.g. Astral): mode forced to None.
+        let astral = cfg.gated_by(InstrumentCapabilities {
+            has_tims_mobility: false,
+            has_quad_isotope_transmission: false,
+        });
+        assert_eq!(astral.mode, IsotopeTransmissionMode::None);
+        assert!(!astral.is_enabled());
+    }
 
     #[test]
     fn mobility_env_ccs_inv_mobility_round_trips() {

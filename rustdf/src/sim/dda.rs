@@ -18,6 +18,7 @@ use std::sync::Arc;
 use rand::Rng;
 use rayon::prelude::*;
 use crate::sim::containers::IsotopeTransmissionConfig;
+use crate::sim::scheme::InstrumentCapabilities;
 use crate::sim::handle::{FragmentIonsWithComplementary, TimsTofSyntheticsDataHandle};
 use crate::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
 
@@ -30,10 +31,13 @@ pub struct TimsTofSyntheticsFrameBuilderDDA {
     pub fragment_ions_annotated: Option<
         BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>,
     >,
-    /// Configuration for quad-selection dependent isotope transmission
+    /// Configuration for quad-selection dependent isotope transmission (already
+    /// gated by the instrument capabilities at construction — P5e).
     pub isotope_transmission_config: IsotopeTransmissionConfig,
     /// Fragment ions with complementary distribution data (only populated when isotope_transmission_config.enabled)
     pub fragment_ions_with_complementary: Option<BTreeMap<(u32, i8, i32), FragmentIonsWithComplementary>>,
+    /// Physical instrument capabilities (P5e). Default = Bruker timsTOF.
+    pub capabilities: InstrumentCapabilities,
 }
 
 impl TimsTofSyntheticsFrameBuilderDDA {
@@ -51,6 +55,26 @@ impl TimsTofSyntheticsFrameBuilderDDA {
         num_threads: usize,
         isotope_config: Option<IsotopeTransmissionConfig>,
     ) -> Self {
+        Self::new_with_capabilities(
+            path,
+            with_annotations,
+            num_threads,
+            isotope_config,
+            InstrumentCapabilities::default(),
+        )
+    }
+
+    /// Like [`Self::new`], but with explicit instrument capabilities (P5e). The
+    /// isotope-transmission config is gated by them (an instrument without
+    /// mobility-dependent quad isotope transmission forces the mode to None).
+    /// Default capabilities = Bruker timsTOF, so [`Self::new`] is unchanged.
+    pub fn new_with_capabilities(
+        path: &Path,
+        with_annotations: bool,
+        num_threads: usize,
+        isotope_config: Option<IsotopeTransmissionConfig>,
+        capabilities: InstrumentCapabilities,
+    ) -> Self {
         let handle = TimsTofSyntheticsDataHandle::new(path).unwrap();
         // P5b: refuse to render fragments stored under an incompatible prediction
         // set (e.g. a future Thermo set whose CE encoding the render keying can't
@@ -64,7 +88,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
         let transmission_settings = handle.get_transmission_dda();
 
         let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::new(path).unwrap();
-        let config = isotope_config.unwrap_or_default();
+        let config = isotope_config.unwrap_or_default().gated_by(capabilities);
 
         // Build fragment ions with complementary data if any transmission mode is enabled
         let fragment_ions_with_complementary = if config.is_enabled() {
@@ -93,6 +117,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     fragment_ions_annotated: fragment_ions,
                     isotope_transmission_config: config,
                     fragment_ions_with_complementary,
+                    capabilities,
                 }
             }
             false => {
@@ -109,6 +134,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     fragment_ions_annotated: None,
                     isotope_transmission_config: config,
                     fragment_ions_with_complementary,
+                    capabilities,
                 }
             }
         }
@@ -130,7 +156,11 @@ impl TimsTofSyntheticsFrameBuilderDDA {
         fragmentation: bool,
         num_threads: usize,
     ) -> Self {
-        let config = isotope_config.unwrap_or_default();
+        // Lazy DDA (delegates here) is Bruker timsTOF; gate is a no-op. P6 will
+        // thread real capabilities through the lazy path.
+        let config = isotope_config
+            .unwrap_or_default()
+            .gated_by(InstrumentCapabilities::default());
 
         // The fragment isotope map is only consumed when fragmentation is on
         // (build_ms2_frame's `true` branch). Expanding all predicted fragment
@@ -164,6 +194,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
             fragment_ions_annotated: None,
             isotope_transmission_config: config,
             fragment_ions_with_complementary,
+            capabilities: InstrumentCapabilities::default(),
         }
     }
 
