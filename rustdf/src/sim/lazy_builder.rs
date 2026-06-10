@@ -677,6 +677,7 @@ impl TimsTofLazyFrameBuilderDDA {
             self.transmission_settings.clone(),
             fragment_ions,
             None,
+            fragmentation,
             self.num_threads,
         );
 

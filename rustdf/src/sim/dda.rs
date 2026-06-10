@@ -119,25 +119,34 @@ impl TimsTofSyntheticsFrameBuilderDDA {
         transmission_settings: TimsTransmissionDDA,
         fragment_ions_raw: Vec<crate::sim::containers::FragmentIonSim>,
         isotope_config: Option<IsotopeTransmissionConfig>,
+        fragmentation: bool,
         num_threads: usize,
     ) -> Self {
         let config = isotope_config.unwrap_or_default();
 
-        let fragment_ions_with_complementary = if config.is_enabled() {
-            Some(TimsTofSyntheticsDataHandle::build_fragment_ions_with_transmission_data(
+        // The fragment isotope map is only consumed when fragmentation is on
+        // (build_ms2_frame's `true` branch). Expanding all predicted fragment
+        // intensities into isotope spectra is expensive, so skip it entirely in
+        // no-fragmentation mode (the `false` branch never touches these maps).
+        let (fragment_ions, fragment_ions_with_complementary) = if fragmentation {
+            let with_complementary = if config.is_enabled() {
+                Some(TimsTofSyntheticsDataHandle::build_fragment_ions_with_transmission_data(
+                    &precursor_frame_builder.peptides,
+                    &fragment_ions_raw,
+                    num_threads,
+                ))
+            } else {
+                None
+            };
+            let fragment_ions = Some(TimsTofSyntheticsDataHandle::build_fragment_ions(
                 &precursor_frame_builder.peptides,
                 &fragment_ions_raw,
                 num_threads,
-            ))
+            ));
+            (fragment_ions, with_complementary)
         } else {
-            None
+            (None, None)
         };
-
-        let fragment_ions = Some(TimsTofSyntheticsDataHandle::build_fragment_ions(
-            &precursor_frame_builder.peptides,
-            &fragment_ions_raw,
-            num_threads,
-        ));
 
         Self {
             path: String::new(),
@@ -417,7 +426,12 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     .map(|x| x.round())
                     .collect::<Vec<_>>();
                 frame.ims_frame.intensity = Arc::new(intensities_rounded);
-                frame.ms_type = MsType::FragmentDia;
+                // DDA MS2 frames are PASEF fragment frames (MsMsType 8). The
+                // no-fragmentation mode still produces a DDA fragment frame
+                // (quad-filtered precursor), so it must keep the DDA type, not
+                // FragmentDia (9). The fragmentation=true branch already uses
+                // FragmentDda; this matches it.
+                frame.ms_type = MsType::FragmentDda;
                 frame
             }
             true => {
@@ -471,7 +485,8 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     .map(|x| x.round())
                     .collect::<Vec<_>>();
                 frame.intensity = intensities_rounded;
-                frame.ms_type = MsType::FragmentDia;
+                // See build_ms2_frame: DDA no-frag MS2 stays FragmentDda (8).
+                frame.ms_type = MsType::FragmentDda;
                 frame
             }
             true => {
