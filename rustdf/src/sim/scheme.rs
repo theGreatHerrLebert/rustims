@@ -84,6 +84,89 @@ impl CollisionEnergyPolicy {
     }
 }
 
+/// Dissociation method used to activate precursors. Today the simulator only
+/// models collisional activation (CID/HCD are treated identically by the
+/// timsTOF-trained intensity models); the enum exists so activation type is
+/// **persisted and load-bearing** rather than implicit, and so future
+/// electron-based methods are representable. `Unknown` = not recorded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActivationMethod {
+    Cid,
+    Hcd,
+    Etd,
+    Ecd,
+    Unknown,
+}
+
+/// Unit a collision/activation energy is expressed in. A bare number is
+/// meaningless across vendors: Bruker/SCIEX report an absolute lab-frame energy
+/// (eV), Thermo reports a charge/m-z-normalized collision energy (NCE). Carrying
+/// the unit makes conversions explicit and lets a [`crate::sim`] fragment
+/// predictor reject inputs it was not calibrated for instead of silently
+/// mis-encoding them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EnergyUnit {
+    /// Absolute lab-frame collision energy in electron-volts.
+    ElectronVolt,
+    /// Thermo normalized collision energy (instrument-normalized; requires a
+    /// predictor-specific calibration to become a model input).
+    NormalizedCe,
+    /// Unit not recorded (legacy / unspecified).
+    Unknown,
+}
+
+/// A fully-typed activation condition: *what* dissociation, at *what* energy, in
+/// *what* unit. Produced by the acquisition's activation policy from an event +
+/// precursor context; consumed by a fragment predictor, which maps it into its
+/// own feature encoding. This is deliberately NOT a bare `f64` — see [`EnergyUnit`].
+#[derive(Clone, Copy, Debug)]
+pub struct ActivationCondition {
+    pub method: ActivationMethod,
+    pub value: f64,
+    pub unit: EnergyUnit,
+}
+
+impl ActivationCondition {
+    /// Collisional activation at an absolute eV energy (the Bruker/SCIEX case).
+    pub fn collisional_ev(value: f64) -> Self {
+        ActivationCondition {
+            method: ActivationMethod::Hcd,
+            value,
+            unit: EnergyUnit::ElectronVolt,
+        }
+    }
+
+    /// The legacy provenance: timsTOF collisional activation in eV, the implicit
+    /// assumption for every DB written before activation type was recorded.
+    pub fn legacy_bruker() -> Self {
+        Self::collisional_ev(0.0)
+    }
+}
+
+/// What an instrument is physically capable of, used to gate vendor-specific
+/// behaviour WITHOUT using sampling geometry as a proxy. An Astral, for example,
+/// has quadrupole isolation (so isolation-window transmission still applies) but
+/// no TIMS mobility separation and no mobility-dependent quad isotope
+/// transmission — so only the latter two are gated off for it. Defaults are the
+/// Bruker timsTOF case (everything present) so existing behaviour is unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InstrumentCapabilities {
+    /// TIMS ion-mobility separation (per-scan mobility filtering of fragments).
+    pub has_tims_mobility: bool,
+    /// Mobility-dependent quadrupole isotope transmission scaling of fragments.
+    pub has_quad_isotope_transmission: bool,
+}
+
+impl Default for InstrumentCapabilities {
+    fn default() -> Self {
+        // Bruker timsTOF: both present — preserves current behaviour.
+        InstrumentCapabilities {
+            has_tims_mobility: true,
+            has_quad_isotope_transmission: true,
+        }
+    }
+}
+
 /// Window geometry: m/z only, or (timsTOF) an additional ion-mobility partition.
 /// Mobility is kept off [`IsolationWindow`] so "mobility on a non-IMS instrument"
 /// is unrepresentable. Scan numbers are Bruker-grid coordinates (they require the
@@ -956,6 +1039,38 @@ impl AcquisitionScheme {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn activation_condition_carries_typed_unit() {
+        let c = ActivationCondition::collisional_ev(30.8);
+        assert_eq!(c.method, ActivationMethod::Hcd);
+        assert_eq!(c.unit, EnergyUnit::ElectronVolt);
+        assert_eq!(c.value, 30.8);
+
+        // The legacy provenance is collisional eV (timsTOF assumption).
+        let legacy = ActivationCondition::legacy_bruker();
+        assert_eq!(legacy.unit, EnergyUnit::ElectronVolt);
+
+        // An NCE value is a distinct unit and must not compare equal to eV.
+        let nce = ActivationCondition { method: ActivationMethod::Hcd, value: 30.0, unit: EnergyUnit::NormalizedCe };
+        assert_ne!(nce.unit, c.unit);
+    }
+
+    #[test]
+    fn instrument_capabilities_default_is_bruker() {
+        // Default = full timsTOF capability so existing behaviour is unchanged;
+        // an Astral-like instrument keeps quad isolation but drops mobility +
+        // mobility-dependent isotope transmission.
+        let bruker = InstrumentCapabilities::default();
+        assert!(bruker.has_tims_mobility);
+        assert!(bruker.has_quad_isotope_transmission);
+
+        let astral = InstrumentCapabilities {
+            has_tims_mobility: false,
+            has_quad_isotope_transmission: false,
+        };
+        assert_ne!(bruker, astral);
+    }
 
     fn linear_windows(n: usize) -> Vec<DiaWindow> {
         (0..n)
