@@ -26,6 +26,34 @@ PREDICTION_SET_SCHEMA_VERSION = 1
 # trunk for several instruments — are a later extension; the id space is ready.)
 DEFAULT_PREDICTION_SET_ID = 0
 
+# P6d: the activation regime each supported instrument records. The collision
+# energy a run STORES (and the renderer APPLIES) is in this unit; the selected
+# fragment-intensity model's capability must accept it (see
+# fragment_predictor_capability.assert_predictor_supports). Bruker timsTOF is the
+# absolute-eV collisional case (unchanged default); Orbitrap Astral is HCD with a
+# normalized collision energy (NCE). The CE-encoding stays 'normalized_div100' for
+# both — the stored value is CE/100 regardless of unit (verified), so the
+# unit-agnostic render keying is unchanged; only the unit label differs.
+INSTRUMENT_ACTIVATION = {
+    "bruker_timstof": {"activation_method": "hcd", "energy_unit": "ev"},
+    "orbitrap_astral": {"activation_method": "hcd", "energy_unit": "nce"},
+}
+
+
+def resolve_instrument_activation(instrument: str) -> tuple[str, str]:
+    """Return ``(activation_method, energy_unit)`` for a supported instrument.
+
+    Raises on an unknown instrument rather than silently assuming the Bruker
+    eV contract (which would mis-label an instrument's collision energy)."""
+    spec = INSTRUMENT_ACTIVATION.get((instrument or "bruker_timstof").lower())
+    if spec is None:
+        raise ValueError(
+            f"unknown instrument '{instrument}'. Supported: "
+            f"{sorted(INSTRUMENT_ACTIVATION)}. Each declares the activation "
+            f"method and collision-energy unit its run stores."
+        )
+    return spec["activation_method"], spec["energy_unit"]
+
 
 def register_prediction_set(
     db_path: str,

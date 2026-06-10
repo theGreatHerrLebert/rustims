@@ -87,6 +87,79 @@ def test_koina_input_df_is_model_aware():
         _koina_input_df(_FakeModel(["peptide_sequences", "mystery_field"]), data, enc)
 
 
+def test_instrument_activation_resolves_unit_and_rejects_unknown():
+    from imspy_simulation.timsim.jobs.register_prediction_set import (
+        resolve_instrument_activation,
+    )
+
+    assert resolve_instrument_activation("bruker_timstof") == ("hcd", "ev")
+    assert resolve_instrument_activation("orbitrap_astral") == ("hcd", "nce")
+    assert resolve_instrument_activation(None) == ("hcd", "ev")  # default
+    with pytest.raises(ValueError):
+        resolve_instrument_activation("orbitrap_zoom")
+
+
+def test_run_unit_gates_model_selection_both_ways():
+    # The RUN's instrument fixes the CE unit; the selected model must accept it.
+    am_a, eu_a = ("hcd", "nce")   # orbitrap_astral
+    am_b, eu_b = ("hcd", "ev")    # bruker_timstof
+    # Astral run accepts the NCE model, rejects the eV timsTOF models.
+    assert_predictor_supports("prosit_hcd", am_a, eu_a)
+    for m in ("prosit", "local", "alphapeptdeep"):
+        with pytest.raises(ValueError):
+            assert_predictor_supports(m, am_a, eu_a)
+    # Bruker run accepts the eV models, rejects the NCE model.
+    assert_predictor_supports("local", am_b, eu_b)
+    with pytest.raises(ValueError):
+        assert_predictor_supports("prosit_hcd", am_b, eu_b)
+
+
+def test_astral_prediction_set_records_nce_provenance(tmp_path):
+    import sqlite3
+
+    from imspy_simulation.timsim.jobs.register_prediction_set import (
+        register_prediction_set,
+    )
+
+    db = str(tmp_path / "synthetic_data.db")
+    con = sqlite3.connect(db)
+    # Minimal fragment_ions table; CE stored normalized (NCE/100) as for a real run.
+    con.execute("CREATE TABLE fragment_ions (peptide_id INTEGER, collision_energy REAL)")
+    con.execute("INSERT INTO fragment_ions VALUES (1, 0.28), (2, 0.30)")
+    con.commit()
+    con.close()
+
+    register_prediction_set(
+        db,
+        predictor_model="prosit_hcd",
+        acquisition_type="DIA",
+        instrument="orbitrap_astral",
+        activation_method="hcd",
+        energy_unit="nce",
+    )
+
+    con = sqlite3.connect(db)
+    row = con.execute(
+        "SELECT instrument, activation_method, energy_unit, collision_energy_encoding, "
+        "predictor_model FROM prediction_sets"
+    ).fetchone()
+    # The fragment rows are stamped with the set id.
+    n_stamped = con.execute(
+        "SELECT COUNT(*) FROM fragment_ions WHERE prediction_set_id = 0"
+    ).fetchone()[0]
+    con.close()
+
+    instrument, activation, unit, encoding, model = row
+    assert instrument == "orbitrap_astral"
+    assert activation == "hcd"
+    assert unit == "nce"
+    # Encoding is shared (stored CE = CE/100 regardless of unit); the render keying
+    # is unit-agnostic, so this stays normalized_div100 for the Astral set too.
+    assert encoding == "normalized_div100"
+    assert model == "prosit_hcd"
+    assert n_stamped == 2
+
+
 @pytest.mark.skipif(
     os.environ.get("TIMSIM_KOINA_LIVE") != "1",
     reason="set TIMSIM_KOINA_LIVE=1 to run the live Koina Prosit HCD contract test",

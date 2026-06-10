@@ -1751,12 +1751,23 @@ mod scalar_reader_tests {
     fn prediction_set_compatibility() {
         // Legacy / Bruker set: render-compatible.
         assert!(PredictionSet::legacy_bruker().assert_render_compatible().is_ok());
-        // A set with a different CE encoding (e.g. a future Thermo NCE set) is
-        // rejected by the renderer rather than silently mis-keyed.
-        let mut s = PredictionSet::legacy_bruker();
-        s.instrument = "orbitrap_astral".to_string();
-        s.collision_energy_encoding = "nce_raw".to_string();
-        assert!(s.assert_render_compatible().is_err());
+
+        // P6d: an Orbitrap Astral NCE set is ALSO render-compatible — the stored CE
+        // is CE/100 regardless of unit, so the encoding stays normalized_div100 and
+        // the render keying (round(applied*10) == round(stored*1000)) is
+        // unit-agnostic. Only the unit LABEL differs (provenance), not the keying.
+        let mut astral = PredictionSet::legacy_bruker();
+        astral.instrument = "orbitrap_astral".to_string();
+        astral.energy_unit = "nce".to_string();
+        astral.predictor_model = Some("prosit_hcd".to_string());
+        // encoding intentionally left as normalized_div100
+        assert!(astral.assert_render_compatible().is_ok());
+
+        // A set whose CE ENCODING the keying cannot resolve (not the unit — the
+        // encoding) is rejected rather than silently mis-keyed.
+        let mut bad_encoding = PredictionSet::legacy_bruker();
+        bad_encoding.collision_energy_encoding = "nce_raw".to_string();
+        assert!(bad_encoding.assert_render_compatible().is_err());
     }
 
     #[test]

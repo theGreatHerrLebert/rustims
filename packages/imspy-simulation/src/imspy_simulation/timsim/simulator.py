@@ -331,6 +331,12 @@ def get_default_settings() -> dict:
         # Intensity models: "local"/"prosit", "alphapeptdeep", "ms2pip", or full Koina name
         'intensity_model': None,
 
+        # P6d: instrument the run records fragments for. Drives the collision-energy
+        # UNIT (Bruker timsTOF = absolute eV; Orbitrap Astral = normalized CE / NCE),
+        # the fragment-model compatibility guard, and the prediction-set provenance.
+        # Default 'bruker_timstof' preserves current behaviour exactly.
+        'instrument': 'bruker_timstof',
+
         'sigma_lower_rt': None,
         'sigma_upper_rt': None,
         'sigma_alpha_rt': 4,
@@ -1381,6 +1387,29 @@ def main():
         logger.info(f"  Using intensity model: {intensity_model}")
     if config.lazy_frame_assembly:
         logger.info("  Using lazy loading for fragment intensity simulation")
+
+    # P6d: the instrument fixes the collision-energy UNIT the run stores/applies.
+    # The fragment job validates the selected model's capability accepts it (an
+    # eV timsTOF model for an NCE Astral run, or vice-versa, fails loudly).
+    from .jobs.register_prediction_set import (
+        register_prediction_set,
+        resolve_instrument_activation,
+    )
+    instrument = str(getattr(config, 'instrument', 'bruker_timstof'))
+    activation_method, energy_unit = resolve_instrument_activation(instrument)
+    # Astral DDA-PASEF is not modelled (PASEF CE is Bruker scan-driven); the Astral
+    # acquisition is DIA. Refuse the contradiction rather than emit eV-formula CE
+    # under an NCE label.
+    if instrument.lower() == 'orbitrap_astral' and config.acquisition_type == 'DDA':
+        raise ValueError(
+            "instrument 'orbitrap_astral' does not support DDA acquisition "
+            "(DDA-PASEF collision energy is Bruker scan-driven). Use DIA."
+        )
+    if instrument.lower() != 'bruker_timstof':
+        logger.info(
+            f"  Instrument: {instrument} (activation={activation_method}, CE unit={energy_unit})"
+        )
+
     effective_intensity_model = simulate_fragment_intensities(
         path=save_path,
         name=name,
@@ -1394,6 +1423,8 @@ def main():
         lazy_loading=config.lazy_frame_assembly,
         frame_batch_size=config.frame_batch_size,
         phospho_mode=config.phospho_mode,
+        activation_method=activation_method,
+        energy_unit=energy_unit,
     )
 
     # JOB 9.6 (P5a): register the fragment prediction set — record HOW the
@@ -1401,11 +1432,13 @@ def main():
     # activation / CE encoding) and stamp fragment_ions.prediction_set_id.
     # Additive + idempotent: does not change fragment rows or values. A renderer
     # (P5b) uses this to verify stored fragments match the instrument it renders.
-    from .jobs.register_prediction_set import register_prediction_set
     register_prediction_set(
         str(Path(acquisition_builder.path) / 'synthetic_data.db'),
         predictor_model=effective_intensity_model,
         acquisition_type=config.acquisition_type,
+        instrument=instrument,
+        activation_method=activation_method,
+        energy_unit=energy_unit,
         down_sample_factor=config.down_sample_factor,
     )
 
