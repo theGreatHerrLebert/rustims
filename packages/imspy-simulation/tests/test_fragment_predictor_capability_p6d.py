@@ -1,0 +1,108 @@
+"""P6d: Orbitrap Astral NCE fragment-intensity model capability + model-aware
+Koina input.
+
+The unconditional tests cover the capability contract (no network). The live
+Koina contract test is gated on TIMSIM_KOINA_LIVE=1 (needs network access to
+koina.wilhelmlab.org).
+"""
+import os
+
+import pandas as pd
+import pytest
+
+from imspy_simulation.timsim.jobs.fragment_predictor_capability import (
+    assert_predictor_supports,
+    capability_for,
+)
+from imspy_simulation.timsim.jobs.simulate_fragment_intensities import (
+    KOINA_INTENSITY_MODELS,
+    _koina_input_df,
+)
+
+
+def test_orbitrap_nce_capability_declared_for_prosit_hcd():
+    # Registered under both the short key and the full Koina alias.
+    for key in ("prosit_hcd", "Prosit_2020_intensity_HCD"):
+        cap = capability_for(key)
+        assert cap is not None, f"{key} must be declared"
+        assert cap.energy_unit == "nce"
+        assert cap.supported_methods == frozenset({"hcd"})
+        # Encoding is shared with the timsTOF models (NCE fed as a fraction /100).
+        assert cap.ce_encoding == "normalized_div100"
+    # And the short key routes to the Orbitrap Koina model.
+    assert KOINA_INTENSITY_MODELS["prosit_hcd"] == "Prosit_2020_intensity_HCD"
+
+
+def test_timstof_models_remain_ev():
+    for key in ("local", "prosit", "alphapeptdeep", "ms2pip"):
+        assert capability_for(key).energy_unit == "ev"
+
+
+def test_astral_model_accepts_hcd_nce_rejects_mismatches():
+    # The Astral model accepts HCD + NCE ...
+    assert_predictor_supports("prosit_hcd", "hcd", "nce")
+    # ... and rejects an eV unit (a timsTOF set fed to the Astral model) ...
+    with pytest.raises(ValueError):
+        assert_predictor_supports("prosit_hcd", "hcd", "ev")
+    # ... a non-HCD method ...
+    with pytest.raises(ValueError):
+        assert_predictor_supports("prosit_hcd", "cid", "nce")
+    # ... and the inverse: a timsTOF (eV) model fed an NCE unit.
+    with pytest.raises(ValueError):
+        assert_predictor_supports("prosit", "hcd", "nce")
+
+
+class _FakeModel:
+    def __init__(self, inputs):
+        self.model_inputs = {k: None for k in inputs}
+
+
+def test_koina_input_df_is_model_aware():
+    data = pd.DataFrame(
+        {"sequence": ["PEPTIDEK", "ELVISR"], "charge": [2, 2], "collision_energy": [28.0, 30.0]}
+    )
+    enc = data["collision_energy"].values / 100.0
+
+    # Orbitrap HCD: only the core three columns, NO instrument_types.
+    hcd = _koina_input_df(
+        _FakeModel(["peptide_sequences", "precursor_charges", "collision_energies"]),
+        data,
+        enc,
+    )
+    assert set(hcd.columns) == {"peptide_sequences", "precursor_charges", "collision_energies"}
+    assert "instrument_types" not in hcd.columns
+
+    # timsTOF-style: instrument_types is required and supplied.
+    tims = _koina_input_df(
+        _FakeModel(
+            ["peptide_sequences", "precursor_charges", "collision_energies", "instrument_types"]
+        ),
+        data,
+        enc,
+    )
+    assert list(tims["instrument_types"]) == ["TIMSTOF", "TIMSTOF"]
+
+    # An unknown required column is a hard error (never silently dropped).
+    with pytest.raises(ValueError):
+        _koina_input_df(_FakeModel(["peptide_sequences", "mystery_field"]), data, enc)
+
+
+@pytest.mark.skipif(
+    os.environ.get("TIMSIM_KOINA_LIVE") != "1",
+    reason="set TIMSIM_KOINA_LIVE=1 to run the live Koina Prosit HCD contract test",
+)
+def test_prosit_hcd_live_koina_contract():
+    import numpy as np
+
+    from imspy_simulation.timsim.jobs.simulate_fragment_intensities import (
+        _predict_intensities_with_koina,
+    )
+
+    data = pd.DataFrame(
+        {"sequence": ["LGGNEQVTR"], "charge": [2], "collision_energy": [28.0]}
+    )
+    out = _predict_intensities_with_koina(data, model_name="prosit_hcd", verbose=False)
+    iv = np.vstack(out["intensity"].values)
+    assert iv.shape == (1, 174)
+    # A real Prosit HCD spectrum has several non-zero fragments.
+    assert (iv > 0).sum() >= 3

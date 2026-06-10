@@ -28,10 +28,52 @@ KOINA_INTENSITY_MODELS = {
     "alphapeptdeep": "AlphaPeptDeep_ms2_generic",
     "ms2pip": "ms2pip_timsTOF2024",
     "ms2pip_2023": "ms2pip_timsTOF2023",
+    # P6d: Orbitrap Astral NCE model (HCD). Unlike the timsTOF models it takes NO
+    # instrument_types input (see _koina_input_df); its CE is a normalized
+    # collision energy fed as a fraction (NCE/100) — the capability owns that.
+    "prosit_hcd": "Prosit_2020_intensity_HCD",
 }
 
 # Models that support phosphorylation
 PHOSPHO_COMPATIBLE_MODELS = {"alphapeptdeep", "AlphaPeptDeep_ms2_generic"}
+
+
+def _koina_input_df(model, data: pd.DataFrame, encoded_ce) -> pd.DataFrame:
+    """Build a Koina input DataFrame matching the MODEL's declared inputs (P6d).
+
+    Koina models differ in schema: the timsTOF intensity models require an
+    ``instrument_types`` column, but ``Prosit_2020_intensity_HCD`` (Orbitrap NCE)
+    requires only ``{peptide_sequences, precursor_charges, collision_energies}``
+    and would error on an extra column. We therefore build exactly the columns the
+    model declares via ``model.model_inputs`` rather than hardcoding the timsTOF
+    set. ``encoded_ce`` is already in the model's network encoding (the capability
+    applied it). Unknown required columns raise rather than being silently dropped.
+    """
+    try:
+        required = set(model.model_inputs.keys())
+    except Exception:
+        # If the schema cannot be introspected, fall back to the common core set.
+        required = {"peptide_sequences", "precursor_charges", "collision_energies"}
+
+    n = len(data)
+    available = {
+        "peptide_sequences": lambda: data["sequence"].values,
+        "precursor_charges": lambda: data["charge"].values,
+        "collision_energies": lambda: encoded_ce,
+        # timsTOF models condition on the instrument; HCD/Orbitrap models do not.
+        "instrument_types": lambda: ["TIMSTOF"] * n,
+        "fragmentation_types": lambda: ["HCD"] * n,
+    }
+    cols = {}
+    for name in required:
+        if name not in available:
+            raise ValueError(
+                f"Koina model requires input column '{name}' that TimSim does not "
+                f"know how to supply (known: {sorted(available)}). Model inputs: "
+                f"{sorted(required)}."
+            )
+        cols[name] = available[name]()
+    return pd.DataFrame(cols)
 
 
 def _predict_intensities_with_koina(
@@ -58,22 +100,22 @@ def _predict_intensities_with_koina(
     if verbose:
         logger.info(f"Using Koina model: {koina_model_name}")
 
-    # Prepare input for Koina. The eV->network-input encoding (the legacy /100)
-    # is now owned by the predictor capability (P5d) rather than a magic literal;
-    # an undeclared model raises rather than being silently /100-encoded.
+    # Prepare input for Koina. The CE->network-input encoding (the legacy /100)
+    # is owned by the predictor capability (P5d) rather than a magic literal; an
+    # undeclared model raises rather than being silently /100-encoded.
     from .fragment_predictor_capability import require_capability
     encoded_ce = require_capability(model_name).encode_collision_energy(
         data['collision_energy'].values
     )
-    input_df = pd.DataFrame({
-        'peptide_sequences': data['sequence'].values,
-        'precursor_charges': data['charge'].values,
-        'collision_energies': encoded_ce,
-        'instrument_types': ['TIMSTOF'] * len(data),
-    })
+
+    # Build the input df from the model's DECLARED required inputs (P6d): Koina
+    # models differ in schema — the timsTOF models require `instrument_types`, but
+    # Prosit_2020_intensity_HCD (Orbitrap NCE) does NOT and would reject it. Drive
+    # off model.model_inputs instead of hardcoding the timsTOF columns.
+    model = ModelFromKoina(model_name=koina_model_name)
+    input_df = _koina_input_df(model, data, encoded_ce)
 
     # Get predictions
-    model = ModelFromKoina(model_name=koina_model_name)
     result = model.predict(input_df)
 
     # Extract intensities and convert to Prosit-style 174-dim vectors
@@ -112,60 +154,65 @@ def _koina_result_to_prosit_vectors(
     n_peps = len(original_data)
     max_frags = max_len - 1  # 29 fragments max
 
-    # Initialize output array
+    # Prosit masking convention: -1 marks structurally-absent fragment slots.
     prosit_mat = np.full((n_peps, 174), fill_value, dtype=np.float32)
+    if koina_result is None or len(koina_result) == 0:
+        return prosit_mat
 
-    # Check if we have the expected columns
-    if 'intensities' not in koina_result.columns:
-        # Some models return different column names - try to find intensity column
-        intensity_cols = [c for c in koina_result.columns if 'intens' in c.lower()]
-        if intensity_cols:
-            intensity_col = intensity_cols[0]
-        else:
-            raise ValueError(f"Could not find intensity column in Koina result. Columns: {koina_result.columns}")
-    else:
+    # Locate the intensity column (some models name it differently).
+    if 'intensities' in koina_result.columns:
         intensity_col = 'intensities'
+    else:
+        intensity_cols = [c for c in koina_result.columns if 'intens' in c.lower()]
+        if not intensity_cols:
+            raise ValueError(
+                f"Could not find intensity column in Koina result. Columns: "
+                f"{list(koina_result.columns)}"
+            )
+        intensity_col = intensity_cols[0]
+    has_ann = 'annotation' in koina_result.columns
 
-    # Check if intensities are already in array format per peptide
-    if koina_result[intensity_col].iloc[0] is not None and hasattr(koina_result[intensity_col].iloc[0], '__len__'):
-        # Intensities are arrays - process per peptide
-        for i in range(n_peps):
-            intensities = np.array(koina_result[intensity_col].iloc[i])
+    # koinapy (df_output=True) returns the prediction in LONG format: one row per
+    # fragment ion, and the result's INDEX is the input row position — preserved
+    # through input filtering, which masks rather than reindexes. (Both timsTOF and
+    # Orbitrap-HCD Prosit models share this shape.) Group by that index to rebuild
+    # each peptide's (29, 2, 3) b/y x charge tensor -> flattened 174-dim vector.
+    # NOTE: this replaces a stale per-peptide-array assumption that silently left
+    # every Koina vector at -1 (the path was effectively unused — local is default).
+    for idx, group in koina_result.groupby(level=0):
+        try:
+            pos = int(idx)
+        except (TypeError, ValueError):
+            continue
+        if pos < 0 or pos >= n_peps:
+            continue
 
-            # If we have annotation, use it to map to correct positions
-            if 'annotation' in koina_result.columns:
-                annotations = koina_result['annotation'].iloc[i]
-                tensor = np.full((max_frags, 2, 3), fill_value, dtype=np.float32)
+        if has_ann:
+            tensor = np.full((max_frags, 2, 3), fill_value, dtype=np.float32)
+            for ann, inten in zip(group['annotation'].values, group[intensity_col].values):
+                if ann is None or inten is None or inten <= 0:
+                    continue
+                # Parse an annotation like b'y5+1' or b'b3+2'.
+                ann_str = ann.decode() if isinstance(ann, bytes) else str(ann)
+                match = re.match(r'([by])(\d+)\+(\d+)', ann_str)
+                if not match:
+                    continue
+                ion_type = match.group(1)
+                frag_idx = int(match.group(2)) - 1   # 0-indexed
+                charge_idx = int(match.group(3)) - 1  # 0-indexed
+                if 0 <= frag_idx < max_frags and 0 <= charge_idx < 3:
+                    tensor[frag_idx, 0 if ion_type == 'y' else 1, charge_idx] = inten
+            vec = tensor.flatten()
+        else:
+            vals = np.asarray(group[intensity_col].values, dtype=np.float32)
+            vec = np.full(174, fill_value, dtype=np.float32)
+            vec[:min(174, len(vals))] = vals[:174]
 
-                for j, (ann, inten) in enumerate(zip(annotations, intensities)):
-                    if ann is None or inten <= 0:
-                        continue
-                    # Parse annotation like b'y5+1' or b'b3+2'
-                    ann_str = ann.decode() if isinstance(ann, bytes) else str(ann)
-                    match = re.match(r'([by])(\d+)\+(\d+)', ann_str)
-                    if match:
-                        ion_type = match.group(1)
-                        frag_idx = int(match.group(2)) - 1  # 0-indexed
-                        charge_idx = int(match.group(3)) - 1  # 0-indexed
-
-                        if frag_idx < max_frags and charge_idx < 3:
-                            ion_type_idx = 0 if ion_type == 'y' else 1
-                            tensor[frag_idx, ion_type_idx, charge_idx] = inten
-
-                # Flatten tensor to 174-dim vector
-                prosit_mat[i, :] = tensor.flatten()
-            else:
-                # No annotation - assume already in correct format
-                if len(intensities) == 174:
-                    prosit_mat[i, :] = intensities
-                else:
-                    # Try to reshape if possible
-                    prosit_mat[i, :len(intensities)] = intensities[:174]
-
-            # Normalize to max = 1
-            max_val = prosit_mat[i, :].max()
-            if max_val > 0:
-                prosit_mat[i, :] = prosit_mat[i, :] / max_val
+        # Normalize to base-peak = 1 (Prosit convention).
+        max_val = vec.max()
+        if max_val > 0:
+            vec = vec / max_val
+        prosit_mat[pos, :] = vec
 
     return prosit_mat
 

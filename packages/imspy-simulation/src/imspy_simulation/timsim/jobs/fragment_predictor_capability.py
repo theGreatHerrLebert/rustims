@@ -54,6 +54,19 @@ _TIMSTOF_COLLISIONAL = FragmentPredictorCapability(
     ce_encoding="normalized_div100",
 )
 
+# P6d: Orbitrap (Astral) collisional model — Prosit_2020_intensity_HCD. It is an
+# HCD model whose collision energy is a NORMALIZED collision energy (NCE), fed to
+# the network as a fraction (NCE/100) exactly like the timsTOF models — so the
+# *encoding* is identical (normalized_div100); only the *unit* differs (nce vs ev).
+# Verified against the live Koina model: inputs are {peptide_sequences,
+# precursor_charges, collision_energies} with NO instrument_types, and CE 0.28/0.35
+# (fraction) yields a rich spectrum while raw 28.0 is degenerate.
+_ORBITRAP_NCE = FragmentPredictorCapability(
+    supported_methods=frozenset({"hcd"}),
+    energy_unit="nce",
+    ce_encoding="normalized_div100",
+)
+
 # Declared per model — registered under BOTH the short key and the full Koina
 # alias, so a model passed by its full Koina name is recognised too. An
 # UNDECLARED model has no entry: its activation contract is unknown, so the
@@ -69,6 +82,9 @@ FRAGMENT_PREDICTOR_CAPABILITIES = {
     "ms2pip_timstof2024": _TIMSTOF_COLLISIONAL,
     "ms2pip_2023": _TIMSTOF_COLLISIONAL,
     "ms2pip_timstof2023": _TIMSTOF_COLLISIONAL,
+    # P6d: Orbitrap Astral NCE model (HCD, NCE unit).
+    "prosit_hcd": _ORBITRAP_NCE,
+    "prosit_2020_intensity_hcd": _ORBITRAP_NCE,
 }
 
 
