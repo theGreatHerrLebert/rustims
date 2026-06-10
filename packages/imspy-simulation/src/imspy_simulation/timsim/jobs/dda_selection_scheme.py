@@ -202,7 +202,14 @@ def schedule_precursors(
     known_selection_modes = ["topN", "random"]
 
     if selection_mode.lower() == "topn":
-        ions_sorted = ions.sort_values(by="ion_intensity", ascending=False).copy()
+        # Secondary sort key ion_id breaks equal-intensity ties deterministically.
+        # pandas' default quicksort is unstable, so without a tiebreak the topN
+        # selection order (and therefore pasef_meta / the rendered DDA .d) would
+        # vary run-to-run for precursors sharing an ion_intensity. Required for
+        # the P4 determinism contract.
+        ions_sorted = ions.sort_values(
+            by=["ion_intensity", "ion_id"], ascending=[False, True]
+        ).copy()
     elif selection_mode.lower() == "random":
         ions_sorted = ions.sample(frac=1.0, random_state=None).copy()
     else:
