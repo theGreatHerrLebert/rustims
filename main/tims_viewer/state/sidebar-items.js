@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TransferMode","ViewMode","VolStyle"],"struct":["AppState","Window"]};

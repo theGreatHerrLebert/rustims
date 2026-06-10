@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["main"],"mod":["app","camera","data","offscreen","render","state","ui"],"struct":["Args"]};

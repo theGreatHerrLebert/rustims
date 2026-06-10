@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["demo","loader","meta","point"]};
