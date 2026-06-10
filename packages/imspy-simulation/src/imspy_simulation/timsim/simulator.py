@@ -1396,6 +1396,19 @@ def main():
         phospho_mode=config.phospho_mode,
     )
 
+    # JOB 9.6 (P5a): register the fragment prediction set — record HOW the
+    # fragment intensities were produced (model / instrument / acquisition /
+    # activation / CE encoding) and stamp fragment_ions.prediction_set_id.
+    # Additive + idempotent: does not change fragment rows or values. A renderer
+    # (P5b) uses this to verify stored fragments match the instrument it renders.
+    from .jobs.register_prediction_set import register_prediction_set
+    register_prediction_set(
+        str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+        predictor_model=intensity_model,
+        acquisition_type=config.acquisition_type,
+        down_sample_factor=config.down_sample_factor,
+    )
+
     # JOB 10: Assemble frames
     logger.info(section_header("Assembling Frames", use_unicode))
     assemble_frames(
