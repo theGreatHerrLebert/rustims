@@ -20,6 +20,7 @@ use crate::sim::containers::{FragmentIonSim, FramesSim, IonSim, PeptidesSim, Sca
 use crate::sim::dda::TimsTofSyntheticsFrameBuilderDDA;
 use crate::sim::handle::TimsTofSyntheticsDataHandle;
 use crate::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
+use crate::sim::projector::DistributionSource;
 
 /// A lazy frame builder for DIA experiments that only loads data as needed.
 ///
@@ -48,6 +49,8 @@ pub struct TimsTofLazyFrameBuilderDIA {
     pub fragmentation_settings: TimsTofCollisionEnergyDIA,
     /// Number of threads for parallel processing
     pub num_threads: usize,
+    /// Source for occurrence/abundance distributions (legacy columns or projector)
+    pub source: DistributionSource,
 }
 
 impl TimsTofLazyFrameBuilderDIA {
@@ -65,6 +68,16 @@ impl TimsTofLazyFrameBuilderDIA {
     ///
     /// Result containing the lazy frame builder
     pub fn new(path: &Path, num_threads: usize) -> rusqlite::Result<Self> {
+        Self::new_with_source(path, num_threads, DistributionSource::Columns)
+    }
+
+    /// Like `new`, but reads occurrence/abundance distributions from `source`
+    /// (legacy columns by default, or the render-time projector).
+    pub fn new_with_source(
+        path: &Path,
+        num_threads: usize,
+        source: DistributionSource,
+    ) -> rusqlite::Result<Self> {
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
 
         let frames = handle.read_frames()?;
@@ -87,6 +100,7 @@ impl TimsTofLazyFrameBuilderDIA {
             transmission_settings,
             fragmentation_settings,
             num_threads,
+            source,
         })
     }
 
@@ -101,8 +115,8 @@ impl TimsTofLazyFrameBuilderDIA {
         let path = Path::new(&self.db_path);
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
 
-        // Load only peptides for this frame range
-        let peptides = handle.read_peptides_for_frame_range(frame_min, frame_max)?;
+        // Load only peptides for this frame range (source-aware: columns or projector)
+        let peptides = handle.read_peptides_for_frame_range_with_source(frame_min, frame_max, &self.source)?;
 
         if peptides.is_empty() {
             return Ok((Vec::new(), Vec::new(), Vec::new()));
@@ -112,7 +126,7 @@ impl TimsTofLazyFrameBuilderDIA {
         let peptide_ids: Vec<u32> = peptides.iter().map(|p| p.peptide_id).collect();
 
         // Load ions and fragment ions for these peptides
-        let ions = handle.read_ions_for_peptides(&peptide_ids)?;
+        let ions = handle.read_ions_for_peptides_with_source(&peptide_ids, &self.source)?;
         let fragment_ions = handle.read_fragment_ions_for_peptides(&peptide_ids)?;
 
         Ok((peptides, ions, fragment_ions))
@@ -548,6 +562,8 @@ pub struct TimsTofLazyFrameBuilderDDA {
     pub transmission_settings: TimsTransmissionDDA,
     /// Number of threads for parallel processing
     pub num_threads: usize,
+    /// Source for occurrence/abundance distributions (legacy columns or projector)
+    pub source: DistributionSource,
 }
 
 impl TimsTofLazyFrameBuilderDDA {
@@ -565,6 +581,16 @@ impl TimsTofLazyFrameBuilderDDA {
     ///
     /// Result containing the lazy frame builder
     pub fn new(path: &Path, num_threads: usize) -> rusqlite::Result<Self> {
+        Self::new_with_source(path, num_threads, DistributionSource::Columns)
+    }
+
+    /// Like `new`, but reads occurrence/abundance distributions from `source`
+    /// (legacy columns by default, or the render-time projector).
+    pub fn new_with_source(
+        path: &Path,
+        num_threads: usize,
+        source: DistributionSource,
+    ) -> rusqlite::Result<Self> {
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
 
         let frames = handle.read_frames()?;
@@ -585,6 +611,7 @@ impl TimsTofLazyFrameBuilderDDA {
             scan_to_mobility,
             transmission_settings,
             num_threads,
+            source,
         })
     }
 
@@ -599,8 +626,8 @@ impl TimsTofLazyFrameBuilderDDA {
         let path = Path::new(&self.db_path);
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
 
-        // Load only peptides for this frame range
-        let peptides = handle.read_peptides_for_frame_range(frame_min, frame_max)?;
+        // Load only peptides for this frame range (source-aware: columns or projector)
+        let peptides = handle.read_peptides_for_frame_range_with_source(frame_min, frame_max, &self.source)?;
 
         if peptides.is_empty() {
             return Ok((Vec::new(), Vec::new(), Vec::new()));
@@ -610,7 +637,7 @@ impl TimsTofLazyFrameBuilderDDA {
         let peptide_ids: Vec<u32> = peptides.iter().map(|p| p.peptide_id).collect();
 
         // Load ions and fragment ions for these peptides
-        let ions = handle.read_ions_for_peptides(&peptide_ids)?;
+        let ions = handle.read_ions_for_peptides_with_source(&peptide_ids, &self.source)?;
         let fragment_ions = handle.read_fragment_ions_for_peptides(&peptide_ids)?;
 
         Ok((peptides, ions, fragment_ions))

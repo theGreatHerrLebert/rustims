@@ -370,12 +370,28 @@ impl TimsTofSyntheticsDataHandle {
         &self,
         source: &crate::sim::projector::DistributionSource,
     ) -> rusqlite::Result<Vec<PeptidesSim>> {
-        use crate::sim::projector::{DistributionSource, ProjectionMode};
+        use crate::sim::projector::DistributionSource;
         let (mode, params) = match source {
             DistributionSource::Columns => return self.read_peptides(),
             DistributionSource::Projector { mode, params, .. } => (*mode, *params),
         };
         let scalars = self.read_peptides_scalar()?;
+        self.project_peptide_scalars(scalars, mode, params)
+    }
+
+    /// Project a (possibly filtered) set of scalar peptides into `PeptidesSim`
+    /// with projector-filled frame distributions. Shared by the eager
+    /// (full-table) reader and the lazy per-batch reader so there is one
+    /// projection implementation. Projection is per-peptide independent, so a
+    /// filtered subset yields identical entities to projecting all then
+    /// filtering.
+    fn project_peptide_scalars(
+        &self,
+        scalars: Vec<PeptideScalar>,
+        mode: crate::sim::projector::ProjectionMode,
+        params: crate::sim::projector::ProjectionParams,
+    ) -> rusqlite::Result<Vec<PeptidesSim>> {
+        use crate::sim::projector::ProjectionMode;
         // Frames table, ascending by id, as the projector expects.
         let mut frames = self.read_frames()?;
         frames.sort_by_key(|f| f.frame_id);
@@ -442,12 +458,27 @@ impl TimsTofSyntheticsDataHandle {
         &self,
         source: &crate::sim::projector::DistributionSource,
     ) -> rusqlite::Result<Vec<IonSim>> {
-        use crate::sim::projector::{DistributionSource, ProjectionMode};
+        use crate::sim::projector::DistributionSource;
         let (mode, env, params) = match source {
             DistributionSource::Columns => return self.read_ions(),
             DistributionSource::Projector { mode, env, params } => (*mode, *env, *params),
         };
         let scalars = self.read_ions_scalar(&env)?;
+        self.project_ion_scalars(scalars, mode, env, params)
+    }
+
+    /// Project a (possibly filtered) set of scalar ions into `IonSim` with
+    /// projector-filled scan distributions. Shared by the eager (full-table)
+    /// reader and the lazy per-batch reader. Per-ion independent, so a filtered
+    /// subset yields identical entities.
+    fn project_ion_scalars(
+        &self,
+        scalars: Vec<IonScalar>,
+        mode: crate::sim::projector::ProjectionMode,
+        env: MobilityEnv,
+        params: crate::sim::projector::ProjectionParams,
+    ) -> rusqlite::Result<Vec<IonSim>> {
+        use crate::sim::projector::ProjectionMode;
         // Scans ascending by mobility (im_cycle_length > 0), as the projector expects.
         let mut scans = self.read_scans()?;
         scans.sort_by(|a, b| a.mobility.partial_cmp(&b.mobility).unwrap_or(std::cmp::Ordering::Equal));
@@ -490,6 +521,80 @@ impl TimsTofSyntheticsDataHandle {
                 )
             })
             .collect())
+    }
+
+    /// Candidate peptide ids overlapping a frame range, by the legacy occurrence
+    /// columns. P4a2 uses this as the lazy candidate index for BOTH the columns
+    /// and projector paths; P4d replaces it with a scalar RT-support index that
+    /// does not depend on the occurrence columns. For LegacyCompat this is exact;
+    /// for Accurate it is the same conservative window the columns already define.
+    fn candidate_peptide_ids_for_frame_range(
+        &self,
+        frame_min: u32,
+        frame_max: u32,
+    ) -> rusqlite::Result<Vec<u32>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT peptide_id FROM peptides WHERE frame_occurrence_start <= ?1 AND frame_occurrence_end >= ?2 ORDER BY peptide_id",
+        )?;
+        let iter = stmt.query_map([frame_max, frame_min], |row| row.get::<_, u32>(0))?;
+        let mut out = Vec::new();
+        for id in iter {
+            out.push(id?);
+        }
+        Ok(out)
+    }
+
+    /// Lazy per-batch peptide read, source-aware. `Columns` returns the legacy
+    /// column-fed `read_peptides_for_frame_range`; `Projector` selects candidates
+    /// for the range, reads their scalars, and projects (same entities the eager
+    /// projector reader produces, restricted to the batch).
+    pub fn read_peptides_for_frame_range_with_source(
+        &self,
+        frame_min: u32,
+        frame_max: u32,
+        source: &crate::sim::projector::DistributionSource,
+    ) -> rusqlite::Result<Vec<PeptidesSim>> {
+        use crate::sim::projector::DistributionSource;
+        let (mode, params) = match source {
+            DistributionSource::Columns => {
+                return self.read_peptides_for_frame_range(frame_min, frame_max)
+            }
+            DistributionSource::Projector { mode, params, .. } => (*mode, *params),
+        };
+        let id_set: HashSet<u32> = self
+            .candidate_peptide_ids_for_frame_range(frame_min, frame_max)?
+            .into_iter()
+            .collect();
+        // Scalar read is cheap (no occurrence vectors); filter to candidates so
+        // only the batch's peptides get the (expensive) projection.
+        let scalars: Vec<PeptideScalar> = self
+            .read_peptides_scalar()?
+            .into_iter()
+            .filter(|p| id_set.contains(&p.peptide_id))
+            .collect();
+        self.project_peptide_scalars(scalars, mode, params)
+    }
+
+    /// Lazy per-batch ion read, source-aware. `Columns` returns the legacy
+    /// `read_ions_for_peptides`; `Projector` reads the scalars for these peptides
+    /// and projects their scan distributions.
+    pub fn read_ions_for_peptides_with_source(
+        &self,
+        peptide_ids: &[u32],
+        source: &crate::sim::projector::DistributionSource,
+    ) -> rusqlite::Result<Vec<IonSim>> {
+        use crate::sim::projector::DistributionSource;
+        let (mode, env, params) = match source {
+            DistributionSource::Columns => return self.read_ions_for_peptides(peptide_ids),
+            DistributionSource::Projector { mode, env, params } => (*mode, *env, *params),
+        };
+        let id_set: HashSet<u32> = peptide_ids.iter().copied().collect();
+        let scalars: Vec<IonScalar> = self
+            .read_ions_scalar(&env)?
+            .into_iter()
+            .filter(|i| id_set.contains(&i.peptide_id))
+            .collect();
+        self.project_ion_scalars(scalars, mode, env, params)
     }
 
     pub fn read_window_group_settings(&self) -> rusqlite::Result<Vec<WindowGroupSettingsSim>> {
