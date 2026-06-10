@@ -58,11 +58,16 @@ def _predict_intensities_with_koina(
     if verbose:
         logger.info(f"Using Koina model: {koina_model_name}")
 
-    # Prepare input for Koina
+    # Prepare input for Koina. The eV->network-input encoding (the legacy /100)
+    # is now owned by the predictor capability (P5d) rather than a magic literal.
+    from .fragment_predictor_capability import capability_for
+    encoded_ce = capability_for(model_name).encode_collision_energy(
+        data['collision_energy'].values
+    )
     input_df = pd.DataFrame({
         'peptide_sequences': data['sequence'].values,
         'precursor_charges': data['charge'].values,
-        'collision_energies': data['collision_energy'].values / 100.0,  # Normalize CE
+        'collision_energies': encoded_ce,
         'instrument_types': ['TIMSTOF'] * len(data),
     })
 
@@ -177,6 +182,8 @@ def simulate_fragment_intensities(
     lazy_loading: bool = False,
     frame_batch_size: int = 500,
     phospho_mode: bool = False,
+    activation_method: str = "hcd",
+    energy_unit: str = "ev",
 ) -> str:
     """Simulate fragment ion intensity distributions.
 
@@ -226,6 +233,13 @@ def simulate_fragment_intensities(
                 "Phospho mode enabled with local intensity model. "
                 "Note: Local model may have limited support for modified peptides."
             )
+
+    # P5d: refuse to feed this predictor an activation/CE unit it was not trained
+    # for (e.g. a Thermo NCE value to a timsTOF eV model). No-op for the Bruker
+    # eV/collisional path; the guard makes a future Thermo path fail loudly unless
+    # an Astral-appropriate model is selected.
+    from .fragment_predictor_capability import assert_predictor_supports
+    assert_predictor_supports(effective_model_name, activation_method, energy_unit)
 
     native_path = Path(path) / name / "synthetic_data.db"
     native_handle = TransmissionHandle(str(native_path))
