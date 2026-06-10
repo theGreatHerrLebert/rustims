@@ -615,3 +615,51 @@ class TestRegressions:
 
         assert events_10x > events_1x
         assert events_10x == pytest.approx(events_1x * 10, rel=0.01)
+
+
+# ---------------------------------------------------------------------------
+# reference_median: shared event-scaling denominator preserves cross-sample ratios
+# ---------------------------------------------------------------------------
+
+class TestReferenceMedian:
+    """events = intensity / median * upscale. With the per-sample median, two
+    conditions whose intensity distributions differ rescale cross-sample ratios
+    by median_j/median_i. A shared reference_median removes that."""
+
+    SHARED = "SHAREDPEPTIDEK"          # present in both samples
+    _FILLERS = ["AAAAAAAK", "DDDDDDDK", "EEEEEEEK"]
+
+    def _events(self, tmp_path, name, shared_int, filler_int, reference_median):
+        # no charge column -> simplest (no_charge) path; wide ranges so nothing is filtered
+        df = pd.DataFrame({
+            "protein": ["P0"] + [f"P{i+1}" for i in range(len(self._FILLERS))],
+            "sequence": [self.SHARED] + self._FILLERS,
+            "intensity": [float(shared_int)] + [float(filler_int)] * len(self._FILLERS),
+        })
+        path = tmp_path / f"{name}.tsv"
+        df.to_csv(path, sep="\t", index=False)
+        res = load_findings(str(path), rt_lower=0.0, rt_upper=1e9, mz_lower=0.0,
+                            mz_upper=1e9, im_lower=0.0, im_upper=2.0,
+                            upscale_factor=100_000, inverse_mobility_std_mean=0.009,
+                            intensity_multiplier=1.0, verbose=False,
+                            reference_median=reference_median)
+        pep = res.peptides.set_index("sequence")
+        return float(pep.loc[self.SHARED, "events"])
+
+    def test_shared_reference_preserves_ratio(self, tmp_path):
+        # A: shared=100, fillers=50 (median 50); B: shared=300, fillers=200 (median 200)
+        # seed ratio B/A for the shared peptide = 3.0
+        ea = self._events(tmp_path, "A", 100, 50, reference_median=100.0)
+        eb = self._events(tmp_path, "B", 300, 200, reference_median=100.0)
+        assert eb / ea == pytest.approx(3.0, rel=0.01)
+
+    def test_per_sample_median_distorts_ratio(self, tmp_path):
+        # legacy behaviour (reference_median=None): ratio scaled by median_A/median_B = 50/200
+        ea = self._events(tmp_path, "A", 100, 50, reference_median=None)
+        eb = self._events(tmp_path, "B", 300, 200, reference_median=None)
+        assert eb / ea == pytest.approx(3.0 * 50.0 / 200.0, rel=0.01)  # = 0.75, NOT 3.0
+
+    @pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf")])
+    def test_invalid_reference_raises(self, tmp_path, bad):
+        with pytest.raises(ValueError, match="reference_median"):
+            self._events(tmp_path, "x", 100, 50, reference_median=bad)

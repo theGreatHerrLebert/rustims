@@ -87,14 +87,22 @@ def load_findings(
             event-scaling denominator instead of this sample's own median.
             Default None = per-sample median (legacy behaviour). Pass the
             SAME value to every condition of a multi-sample experiment to
-            preserve cross-sample (e.g. A/B) intensity ratios — otherwise the
-            per-sample median differs between conditions and silently rescales
-            every cross-sample ratio by median(condition_i)/median(condition_j).
+            preserve cross-sample (e.g. A/B) intensity ratios — otherwise each
+            condition divides by its own median, so (events = intensity/median)
+            any cross-sample ratio events_i/events_j is silently scaled by
+            median_j/median_i, which is != 1 when the conditions' intensity
+            distributions differ. Must be finite and > 0.
 
     Returns:
         FindingsResult with peptides, proteins, ions (if charge provided),
         and flags indicating which optional columns were present.
     """
+    if reference_median is not None and not (
+        np.isfinite(reference_median) and reference_median > 0
+    ):
+        raise ValueError(
+            f"reference_median must be a finite positive number, got {reference_median!r}"
+        )
 
     # ------------------------------------------------------------------
     # 1. Read and validate the input table
@@ -477,10 +485,10 @@ def _build_peptides_from_ions(
     peptide_intensities = ions.groupby("sequence")["relative_abundance"].first()  # placeholder
     # Recompute from deduped to include all charge-state intensities
     ion_intensity_by_seq = deduped[deduped["sequence"].isin(surviving_set)].groupby("sequence")["intensity"].sum()
-    median_intensity = reference_median if reference_median else _safe_median(ion_intensity_by_seq)
+    median_intensity = reference_median if reference_median is not None else _safe_median(ion_intensity_by_seq)
 
     if verbose:
-        src = "reference (shared)" if reference_median else "per-sample"
+        src = "reference (shared)" if reference_median is not None else "per-sample"
         logger.info(f"  Intensity scaling: median={median_intensity:.0f} ({src}) -> "
                      f"upscale_factor={upscale_factor}")
 
@@ -539,10 +547,10 @@ def _build_peptides_no_charge(
     unique_proteins = deduped["protein"].unique()
     protein_name_to_id = {name: idx for idx, name in enumerate(unique_proteins)}
 
-    median_intensity = reference_median if reference_median else _safe_median(deduped["intensity"])
+    median_intensity = reference_median if reference_median is not None else _safe_median(deduped["intensity"])
 
     if verbose:
-        src = "reference (shared)" if reference_median else "per-sample"
+        src = "reference (shared)" if reference_median is not None else "per-sample"
         logger.info(f"  Intensity scaling: median={median_intensity:.0f} ({src}) -> "
                      f"upscale_factor={upscale_factor}")
 
