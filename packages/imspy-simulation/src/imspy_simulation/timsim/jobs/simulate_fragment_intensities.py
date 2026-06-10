@@ -177,7 +177,7 @@ def simulate_fragment_intensities(
     lazy_loading: bool = False,
     frame_batch_size: int = 500,
     phospho_mode: bool = False,
-) -> None:
+) -> str:
     """Simulate fragment ion intensity distributions.
 
     Args:
@@ -200,7 +200,9 @@ def simulate_fragment_intensities(
         phospho_mode: If True and model doesn't support phospho, auto-switch to AlphaPeptDeep.
 
     Returns:
-        None, writes frames to disk and metadata to database.
+        The effective intensity model name actually used (after the phospho
+        auto-switch); "local" for the bundled PyTorch model. Used as fragment
+        prediction-set provenance. Side effect: writes fragment metadata to the DB.
     """
 
     logger.info("Simulating fragment ion intensity distributions ...")
@@ -251,6 +253,11 @@ def simulate_fragment_intensities(
             model_name=effective_model_name,
             verbose=verbose,
         )
+
+    # Return the EFFECTIVE model used (after the phospho auto-switch), for
+    # provenance (P5a prediction set). None means the bundled local PyTorch
+    # model (PROSPECT fine-tuned); report it as "local".
+    return effective_model_name or "local"
 
 
 def _simulate_fragment_intensities_standard(

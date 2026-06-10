@@ -1381,7 +1381,7 @@ def main():
         logger.info(f"  Using intensity model: {intensity_model}")
     if config.lazy_frame_assembly:
         logger.info("  Using lazy loading for fragment intensity simulation")
-    simulate_fragment_intensities(
+    effective_intensity_model = simulate_fragment_intensities(
         path=save_path,
         name=name,
         acquisition_builder=acquisition_builder,
@@ -1404,7 +1404,7 @@ def main():
     from .jobs.register_prediction_set import register_prediction_set
     register_prediction_set(
         str(Path(acquisition_builder.path) / 'synthetic_data.db'),
-        predictor_model=intensity_model,
+        predictor_model=effective_intensity_model,
         acquisition_type=config.acquisition_type,
         down_sample_factor=config.down_sample_factor,
     )
