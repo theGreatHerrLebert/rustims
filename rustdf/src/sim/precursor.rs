@@ -104,6 +104,54 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         }
     }
 
+    /// Vendor-neutral MS1 spectral-contribution kernel (P6a): the ordered
+    /// `(scan, scaled_spectrum)` contributions for a precursor frame — for each
+    /// (peptide, ion, scan) the isotope spectrum scaled by its abundance factor,
+    /// PRE m/z-noise, in builder order (peptide → ion → scan). Bruker aggregates
+    /// these per scan into a `TimsFrame` (see `build_precursor_frame`); a non-IMS
+    /// instrument sums them into a single MS1 `Scan`. Factoring this out lets both
+    /// vendors share the exact same physics without duplicating it.
+    pub fn precursor_frame_contributions(&self, frame_id: u32) -> Vec<(i32, MzSpectrum)> {
+        let mut out: Vec<(i32, MzSpectrum)> = Vec::new();
+        let Some((peptide_ids, abundances)) = self.frame_to_abundances.get(&frame_id) else {
+            return out;
+        };
+        out.reserve(peptide_ids.len() * 4);
+        for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
+            let Some((ion_abundances, scan_occurrences, scan_abundances, _, spectra)) =
+                self.peptide_to_ions.get(peptide_id)
+            else {
+                continue;
+            };
+            let total_events = *self.peptide_to_events.get(peptide_id).unwrap();
+            for (index, ion_abundance) in ion_abundances.iter().enumerate() {
+                let scan_occurrence = &scan_occurrences[index];
+                let scan_abundance = &scan_abundances[index];
+                let spectrum = &spectra[index];
+                for (scan, scan_abu) in scan_occurrence.iter().zip(scan_abundance.iter()) {
+                    let abundance_factor = abundance * ion_abundance * scan_abu * total_events;
+                    out.push((*scan as i32, spectrum.clone() * abundance_factor as f64));
+                }
+            }
+        }
+        out
+    }
+
+    /// Non-IMS (e.g. Astral) MS1 consumer of the contribution kernel (P6a): the
+    /// mobility axis collapses, so all `(scan, scaled_spectrum)` contributions for
+    /// the frame sum into ONE spectrum — the single MS1 spectrum a no-mobility
+    /// instrument records. The scan coordinate is discarded; peaks at the same m/z
+    /// merge (`from_collection`'s deterministic m/z binning). This is the second
+    /// consumer the Bruker `TimsFrame` adapter shares the kernel with.
+    pub fn precursor_scan_spectrum(&self, frame_id: u32) -> MzSpectrum {
+        let specs: Vec<MzSpectrum> = self
+            .precursor_frame_contributions(frame_id)
+            .into_iter()
+            .map(|(_scan, spectrum)| spectrum)
+            .collect();
+        MzSpectrum::from_collection(specs)
+    }
+
     /// Build a precursor frame
     ///
     /// # Arguments
@@ -129,63 +177,34 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         };
         let rt = *self.frame_to_rt.get(&frame_id).unwrap() as f64;
 
-        // Single lookup instead of contains_key + get
-        let Some((peptide_ids, abundances)) = self.frame_to_abundances.get(&frame_id) else {
-            return TimsFrame::new(frame_id as i32, ms_type, rt, vec![], vec![], vec![], vec![], vec![]);
-        };
-
-        // Preallocate with estimated capacity
-        let estimated_capacity = peptide_ids.len() * 4;
-        let mut tims_spectra: Vec<TimsSpectrum> = Vec::with_capacity(estimated_capacity);
-
-        // Go over all peptides and their abundances in the frame
-        for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
-            // Single lookup instead of contains_key + get
-            let Some((ion_abundances, scan_occurrences, scan_abundances, _, spectra)) =
-                self.peptide_to_ions.get(peptide_id)
-            else {
-                continue;
+        // Bruker adapter over the vendor-neutral contribution kernel (P6a):
+        // aggregate the ordered (scan, scaled_spectrum) contributions per scan
+        // into a TimsFrame. Behaviour is identical to the previous inline loop —
+        // same order, same per-contribution m/z-noise, same TimsSpectrum build.
+        let contributions = self.precursor_frame_contributions(frame_id);
+        let mut tims_spectra: Vec<TimsSpectrum> = Vec::with_capacity(contributions.len());
+        for (scan, scaled_spec) in contributions {
+            let mz_spectrum = if mz_noise_precursor {
+                if uniform {
+                    scaled_spec.add_mz_noise_uniform(precursor_noise_ppm, right_drag)
+                } else {
+                    scaled_spec.add_mz_noise_normal(precursor_noise_ppm)
+                }
+            } else {
+                scaled_spec
             };
 
-            // Cache peptide-level lookup
-            let total_events = *self.peptide_to_events.get(peptide_id).unwrap();
+            let scan_mobility = *self.scan_to_mobility.get(&(scan as u32)).unwrap() as f64;
+            let spectrum_len = mz_spectrum.mz.len();
 
-            for (index, ion_abundance) in ion_abundances.iter().enumerate() {
-                let scan_occurrence = &scan_occurrences[index];
-                let scan_abundance = &scan_abundances[index];
-                let spectrum = &spectra[index];
-
-                for (scan, scan_abu) in scan_occurrence.iter().zip(scan_abundance.iter()) {
-                    let abundance_factor = abundance * ion_abundance * scan_abu * total_events;
-                    let scaled_spec: MzSpectrum = spectrum.clone() * abundance_factor as f64;
-
-                    let mz_spectrum = if mz_noise_precursor {
-                        if uniform {
-                            scaled_spec.add_mz_noise_uniform(precursor_noise_ppm, right_drag)
-                        } else {
-                            scaled_spec.add_mz_noise_normal(precursor_noise_ppm)
-                        }
-                    } else {
-                        scaled_spec
-                    };
-
-                    // Cache scan mobility
-                    let scan_mobility = *self.scan_to_mobility.get(scan).unwrap() as f64;
-                    let spectrum_len = mz_spectrum.mz.len();
-
-                    tims_spectra.push(TimsSpectrum::new(
-                        frame_id as i32,
-                        *scan as i32,
-                        rt,
-                        scan_mobility,
-                        ms_type.clone(),
-                        IndexedMzSpectrum::from_mz_spectrum(
-                            vec![0; spectrum_len],
-                            mz_spectrum,
-                        ),
-                    ));
-                }
-            }
+            tims_spectra.push(TimsSpectrum::new(
+                frame_id as i32,
+                scan,
+                rt,
+                scan_mobility,
+                ms_type.clone(),
+                IndexedMzSpectrum::from_mz_spectrum(vec![0; spectrum_len], mz_spectrum),
+            ));
         }
 
         // A precursor frame can have peptides assigned (passed the
