@@ -869,6 +869,14 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     let Some(collision_energy_quantized) = crate::sim::handle::resolve_fragment_ce_key(
                         fragment_ions, *peptide_id, charge_state, collision_energy,
                     ) else {
+                        if crate::sim::handle::fragment_prefix_exists(fragment_ions, *peptide_id, charge_state) {
+                            panic!(
+                                "DIA (annotated) fragment lookup miss: peptide {} charge {} applied CE \
+                                 {:.4} eV has predicted fragments, but none within 0.1 eV — the \
+                                 prediction set does not cover this instrument's collision energy",
+                                *peptide_id, charge_state, collision_energy,
+                            );
+                        }
                         continue;
                     };
                     let (_, fragment_series_vec) = fragment_ions

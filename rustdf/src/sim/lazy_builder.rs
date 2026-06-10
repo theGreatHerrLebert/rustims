@@ -79,6 +79,11 @@ impl TimsTofLazyFrameBuilderDIA {
         source: DistributionSource,
     ) -> rusqlite::Result<Self> {
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
+        // P5b: refuse an incompatible fragment prediction set (Bruker/legacy pass).
+        handle
+            .read_prediction_set()?
+            .assert_render_compatible()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
 
         let frames = handle.read_frames()?;
         let scans = handle.read_scans()?;
@@ -446,12 +451,24 @@ impl TimsTofLazyFrameBuilderDIA {
                         frame_id as i32,
                         *scan as i32,
                     );
-                    let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
-
-                    // Single lookup with let-else
-                    let Some((_, fragment_series_vec)) = fragment_ions.get(&(*peptide_id, charge_state, collision_energy_quantized)) else {
+                    // Resolve the fragment CE key tolerant to ~0.1 eV quantization
+                    // noise (same fix as eager render); fail loud on a real CE miss.
+                    let Some(collision_energy_quantized) = crate::sim::handle::resolve_fragment_ce_key(
+                        fragment_ions, *peptide_id, charge_state, collision_energy,
+                    ) else {
+                        if crate::sim::handle::fragment_prefix_exists(fragment_ions, *peptide_id, charge_state) {
+                            panic!(
+                                "lazy DIA fragment lookup miss: peptide {} charge {} applied CE {:.4} eV \
+                                 has predicted fragments, but none within 0.1 eV — the prediction set \
+                                 does not cover this instrument's collision energy",
+                                *peptide_id, charge_state, collision_energy,
+                            );
+                        }
                         continue;
                     };
+                    let (_, fragment_series_vec) = fragment_ions
+                        .get(&(*peptide_id, charge_state, collision_energy_quantized))
+                        .expect("resolve_fragment_ce_key returned a present key");
 
                     // Cache scan mobility
                     let scan_mobility = *self.scan_to_mobility.get(scan).unwrap_or(&0.0) as f64;
@@ -592,6 +609,11 @@ impl TimsTofLazyFrameBuilderDDA {
         source: DistributionSource,
     ) -> rusqlite::Result<Self> {
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
+        // P5b: refuse an incompatible fragment prediction set (Bruker/legacy pass).
+        handle
+            .read_prediction_set()?
+            .assert_render_compatible()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
 
         let frames = handle.read_frames()?;
         let scans = handle.read_scans()?;
