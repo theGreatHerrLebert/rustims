@@ -291,9 +291,14 @@ pub struct PeptideScalar {
     /// integrates around. NOT equal to `retention_time`: the legacy pipeline
     /// derives it via `estimate_mu_from_mode_emg(rt_apex, sigma, lambda)` and
     /// stores it as `rt_mu`. Falls back to `retention_time` when absent.
-    pub rt_mu: f32,
-    pub rt_sigma: f32,
-    pub rt_lambda: f32,
+    ///
+    /// Held as f64 (the DB column is REAL): the Python column writer computed the
+    /// occurrence/abundance distributions from these f64 params, so the projector
+    /// must read them at full precision to byte-reproduce the columns (an f32
+    /// round-trip straddles the 4-decimal rounding / remove_epsilon boundary).
+    pub rt_mu: f64,
+    pub rt_sigma: f64,
+    pub rt_lambda: f64,
     pub events: f32,
     /// Reserved per-analyte condition override (NULL -> the run's single row).
     pub condition_id: Option<i64>,
@@ -313,7 +318,10 @@ pub struct IonScalar {
     /// Legacy mobility spread (conformer width) in **1/K0 units** as stored — not
     /// CCS-space (renamed from a misleading `ccs_std`). Transforming the spread
     /// into CCS space is deferred; until then read it as a 1/K0 std.
-    pub inv_mobility_std: f32,
+    ///
+    /// Held as f64 (DB column is REAL) so the scan-distribution projection reads
+    /// it at the precision the column writer used (see PeptideScalar::rt_mu).
+    pub inv_mobility_std: f64,
     /// Isotope composition (m/z + relative intensity), pre-detector.
     pub simulated_spectrum: MzSpectrum,
     pub condition_id: Option<i64>,

@@ -271,8 +271,9 @@ impl TimsTofSyntheticsDataHandle {
         };
         let retention_time: f32 = row.get("retention_time_gru_predictor")?;
         // The EMG location is rt_mu (derived from the apex); fall back to the
-        // apex itself only when the column is absent (pre-distribution DB).
-        let rt_mu: f32 = if has_rt_mu { row.get("rt_mu")? } else { retention_time };
+        // apex itself only when the column is absent (pre-distribution DB). Read
+        // as f64 (DB REAL) for byte-faithful projection.
+        let rt_mu: f64 = if has_rt_mu { row.get("rt_mu")? } else { retention_time as f64 };
         Ok(PeptideScalar {
             protein_id: row.get("protein_id")?,
             peptide_id,
@@ -318,7 +319,7 @@ impl TimsTofSyntheticsDataHandle {
         };
         // Probe presence explicitly; propagate real conversion errors
         // (only a genuinely absent column defaults to 0.0).
-        let inv_mobility_std: f32 = if has_inv_std {
+        let inv_mobility_std: f64 = if has_inv_std {
             row.get("inv_mobility_gru_predictor_std")?
         } else {
             0.0
@@ -510,9 +511,9 @@ impl TimsTofSyntheticsDataHandle {
             return Err(rusqlite::Error::InvalidQuery);
         }
         let rt_cycle = mean_consecutive_diff(&frame_times);
-        let mus: Vec<f64> = scalars.iter().map(|p| p.rt_mu as f64).collect();
-        let sigmas: Vec<f64> = scalars.iter().map(|p| p.rt_sigma as f64).collect();
-        let lambdas: Vec<f64> = scalars.iter().map(|p| p.rt_lambda as f64).collect();
+        let mus: Vec<f64> = scalars.iter().map(|p| p.rt_mu).collect();
+        let sigmas: Vec<f64> = scalars.iter().map(|p| p.rt_sigma).collect();
+        let lambdas: Vec<f64> = scalars.iter().map(|p| p.rt_lambda).collect();
 
         let projected: Vec<Vec<(u32, f64)>> = match mode {
             ProjectionMode::LegacyCompat => crate::sim::projector::project_time_legacy(
@@ -598,7 +599,7 @@ impl TimsTofSyntheticsDataHandle {
         }
         let im_cycle = mean_consecutive_diff(&scan_mob);
         let means: Vec<f64> = scalars.iter().map(|i| i.inv_mobility(&env)).collect();
-        let sigmas: Vec<f64> = scalars.iter().map(|i| i.inv_mobility_std as f64).collect();
+        let sigmas: Vec<f64> = scalars.iter().map(|i| i.inv_mobility_std).collect();
 
         let projected: Vec<Vec<(i32, f64)>> = match mode {
             ProjectionMode::LegacyCompat => crate::sim::projector::project_mobility_legacy_par(

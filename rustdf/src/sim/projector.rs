@@ -720,7 +720,7 @@ mod tests {
         assert_eq!(tl.ms1_intervals().len(), 10);
     }
 
-    fn peptide(rt: f32, sigma: f32, lambda: f32) -> PeptideScalar {
+    fn peptide(rt: f64, sigma: f64, lambda: f64) -> PeptideScalar {
         use mscore::data::peptide::PeptideSequence;
         PeptideScalar {
             protein_id: 0,
@@ -732,7 +732,7 @@ mod tests {
             n_term: None,
             c_term: None,
             mono_isotopic_mass: 930.0,
-            retention_time: rt,
+            retention_time: rt as f32,
             rt_mu: rt,
             rt_sigma: sigma,
             rt_lambda: lambda,
@@ -763,7 +763,7 @@ mod tests {
         }
     }
 
-    fn ion(ccs: f64, mz: f64, charge: i8, std: f32) -> IonScalar {
+    fn ion(ccs: f64, mz: f64, charge: i8, std: f64) -> IonScalar {
         IonScalar {
             ion_id: 1,
             peptide_id: 1,
