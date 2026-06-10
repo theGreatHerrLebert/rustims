@@ -258,42 +258,131 @@ impl TimsTofSyntheticsDataHandle {
     }
 
     /// Read peptides as scalar-native trunk entities (no frame-occurrence vectors).
+    fn peptide_scalar_from_row(
+        row: &rusqlite::Row,
+        has_condition: bool,
+        has_rt_mu: bool,
+    ) -> rusqlite::Result<PeptideScalar> {
+        let peptide_id: u32 = row.get("peptide_id")?;
+        let condition_id = if has_condition {
+            row.get::<_, Option<i64>>("condition_id")?
+        } else {
+            None
+        };
+        let retention_time: f32 = row.get("retention_time_gru_predictor")?;
+        // The EMG location is rt_mu (derived from the apex); fall back to the
+        // apex itself only when the column is absent (pre-distribution DB).
+        let rt_mu: f32 = if has_rt_mu { row.get("rt_mu")? } else { retention_time };
+        Ok(PeptideScalar {
+            protein_id: row.get("protein_id")?,
+            peptide_id,
+            sequence: PeptideSequence::new(row.get("sequence")?, Some(peptide_id as i32)),
+            proteins: row.get("protein")?,
+            decoy: row.get("decoy")?,
+            missed_cleavages: row.get("missed_cleavages")?,
+            n_term: row.get("n_term")?,
+            c_term: row.get("c_term")?,
+            mono_isotopic_mass: row.get("monoisotopic-mass")?,
+            retention_time,
+            rt_mu,
+            rt_sigma: row.get("rt_sigma")?,
+            rt_lambda: row.get("rt_lambda")?,
+            events: row.get("events")?,
+            condition_id,
+        })
+    }
+
+    fn ion_scalar_from_row(
+        row: &rusqlite::Row,
+        env: &MobilityEnv,
+        has_ccs: bool,
+        has_condition: bool,
+        has_inv_std: bool,
+    ) -> rusqlite::Result<IonScalar> {
+        let simulated_spectrum_str: String = row.get("simulated_spectrum")?;
+        let simulated_spectrum: MzSpectrum = serde_json::from_str(&simulated_spectrum_str)
+            .map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    0,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
+        let charge: i8 = row.get("charge")?;
+        let mz: f64 = row.get("mz")?;
+        let ccs: f64 = if has_ccs {
+            row.get("ccs")?
+        } else {
+            let one_over_k0: f64 = row.get("inv_mobility_gru_predictor")?;
+            env.ccs_from_inv_mobility(one_over_k0, mz, charge)
+        };
+        // Probe presence explicitly; propagate real conversion errors
+        // (only a genuinely absent column defaults to 0.0).
+        let inv_mobility_std: f32 = if has_inv_std {
+            row.get("inv_mobility_gru_predictor_std")?
+        } else {
+            0.0
+        };
+        let condition_id = if has_condition {
+            row.get::<_, Option<i64>>("condition_id")?
+        } else {
+            None
+        };
+        Ok(IonScalar {
+            ion_id: row.get("ion_id")?,
+            peptide_id: row.get("peptide_id")?,
+            sequence: row.get("sequence")?,
+            charge,
+            relative_abundance: row.get("relative_abundance")?,
+            mz,
+            ccs,
+            inv_mobility_std,
+            simulated_spectrum,
+            condition_id,
+        })
+    }
+
     pub fn read_peptides_scalar(&self) -> rusqlite::Result<Vec<PeptideScalar>> {
         let has_condition = self.table_has_column("peptides", "condition_id")?;
         let has_rt_mu = self.table_has_column("peptides", "rt_mu")?;
         let mut stmt = self.connection.prepare("SELECT * FROM peptides ORDER BY peptide_id")?;
         let iter = stmt.query_map([], |row| {
-            let peptide_id: u32 = row.get("peptide_id")?;
-            let condition_id = if has_condition {
-                row.get::<_, Option<i64>>("condition_id")?
-            } else {
-                None
-            };
-            let retention_time: f32 = row.get("retention_time_gru_predictor")?;
-            // The EMG location is rt_mu (derived from the apex); fall back to the
-            // apex itself only when the column is absent (pre-distribution DB).
-            let rt_mu: f32 = if has_rt_mu { row.get("rt_mu")? } else { retention_time };
-            Ok(PeptideScalar {
-                protein_id: row.get("protein_id")?,
-                peptide_id,
-                sequence: PeptideSequence::new(row.get("sequence")?, Some(peptide_id as i32)),
-                proteins: row.get("protein")?,
-                decoy: row.get("decoy")?,
-                missed_cleavages: row.get("missed_cleavages")?,
-                n_term: row.get("n_term")?,
-                c_term: row.get("c_term")?,
-                mono_isotopic_mass: row.get("monoisotopic-mass")?,
-                retention_time,
-                rt_mu,
-                rt_sigma: row.get("rt_sigma")?,
-                rt_lambda: row.get("rt_lambda")?,
-                events: row.get("events")?,
-                condition_id,
-            })
+            Self::peptide_scalar_from_row(row, has_condition, has_rt_mu)
         })?;
         let mut out = Vec::new();
         for p in iter {
             out.push(p?);
+        }
+        Ok(out)
+    }
+
+    /// Read scalar peptides for a specific set of ids (chunked `IN` query), so
+    /// the lazy projector path loads only the batch's candidates instead of the
+    /// whole table. Order matches `read_peptides_scalar` (ORDER BY peptide_id).
+    pub fn read_peptides_scalar_for_ids(
+        &self,
+        peptide_ids: &[u32],
+    ) -> rusqlite::Result<Vec<PeptideScalar>> {
+        if peptide_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let has_condition = self.table_has_column("peptides", "condition_id")?;
+        let has_rt_mu = self.table_has_column("peptides", "rt_mu")?;
+        const CHUNK_SIZE: usize = 500;
+        let mut out = Vec::new();
+        for chunk in peptide_ids.chunks(CHUNK_SIZE) {
+            let placeholders: String = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT * FROM peptides WHERE peptide_id IN ({}) ORDER BY peptide_id",
+                placeholders
+            );
+            let mut stmt = self.connection.prepare(&sql)?;
+            let iter = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+                Self::peptide_scalar_from_row(row, has_condition, has_rt_mu)
+            })?;
+            for p in iter {
+                out.push(p?);
+            }
         }
         Ok(out)
     }
@@ -308,51 +397,47 @@ impl TimsTofSyntheticsDataHandle {
         let mut stmt = self.connection.prepare("SELECT * FROM ions ORDER BY ion_id")?;
         let env = *env;
         let iter = stmt.query_map([], move |row| {
-            let simulated_spectrum_str: String = row.get("simulated_spectrum")?;
-            let simulated_spectrum: MzSpectrum = serde_json::from_str(&simulated_spectrum_str)
-                .map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        0,
-                        rusqlite::types::Type::Text,
-                        Box::new(e),
-                    )
-                })?;
-            let charge: i8 = row.get("charge")?;
-            let mz: f64 = row.get("mz")?;
-            let ccs: f64 = if has_ccs {
-                row.get("ccs")?
-            } else {
-                let one_over_k0: f64 = row.get("inv_mobility_gru_predictor")?;
-                env.ccs_from_inv_mobility(one_over_k0, mz, charge)
-            };
-            // Probe presence explicitly; propagate real conversion errors
-            // (only a genuinely absent column defaults to 0.0).
-            let inv_mobility_std: f32 = if has_inv_std {
-                row.get("inv_mobility_gru_predictor_std")?
-            } else {
-                0.0
-            };
-            let condition_id = if has_condition {
-                row.get::<_, Option<i64>>("condition_id")?
-            } else {
-                None
-            };
-            Ok(IonScalar {
-                ion_id: row.get("ion_id")?,
-                peptide_id: row.get("peptide_id")?,
-                sequence: row.get("sequence")?,
-                charge,
-                relative_abundance: row.get("relative_abundance")?,
-                mz,
-                ccs,
-                inv_mobility_std,
-                simulated_spectrum,
-                condition_id,
-            })
+            Self::ion_scalar_from_row(row, &env, has_ccs, has_condition, has_inv_std)
         })?;
         let mut out = Vec::new();
         for i in iter {
             out.push(i?);
+        }
+        Ok(out)
+    }
+
+    /// Read scalar ions for a specific set of peptide ids (chunked `IN` query).
+    /// The lazy projector path uses this so it does NOT load + JSON-deserialize
+    /// every ion's simulated spectrum per batch (that would restore eager-scale
+    /// memory). Within a peptide, ions are ordered by ion_id (chunking is by
+    /// peptide_id, so a peptide's ions all live in one chunk).
+    pub fn read_ions_scalar_for_peptides(
+        &self,
+        peptide_ids: &[u32],
+        env: &MobilityEnv,
+    ) -> rusqlite::Result<Vec<IonScalar>> {
+        if peptide_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let has_ccs = self.table_has_column("ions", "ccs")?;
+        let has_condition = self.table_has_column("ions", "condition_id")?;
+        let has_inv_std = self.table_has_column("ions", "inv_mobility_gru_predictor_std")?;
+        let env = *env;
+        const CHUNK_SIZE: usize = 500;
+        let mut out = Vec::new();
+        for chunk in peptide_ids.chunks(CHUNK_SIZE) {
+            let placeholders: String = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT * FROM ions WHERE peptide_id IN ({}) ORDER BY peptide_id, ion_id",
+                placeholders
+            );
+            let mut stmt = self.connection.prepare(&sql)?;
+            let iter = stmt.query_map(rusqlite::params_from_iter(chunk.iter()), move |row| {
+                Self::ion_scalar_from_row(row, &env, has_ccs, has_condition, has_inv_std)
+            })?;
+            for i in iter {
+                out.push(i?);
+            }
         }
         Ok(out)
     }
@@ -561,17 +646,14 @@ impl TimsTofSyntheticsDataHandle {
             }
             DistributionSource::Projector { mode, params, .. } => (*mode, *params),
         };
-        let id_set: HashSet<u32> = self
-            .candidate_peptide_ids_for_frame_range(frame_min, frame_max)?
-            .into_iter()
-            .collect();
-        // Scalar read is cheap (no occurrence vectors); filter to candidates so
-        // only the batch's peptides get the (expensive) projection.
-        let scalars: Vec<PeptideScalar> = self
-            .read_peptides_scalar()?
-            .into_iter()
-            .filter(|p| id_set.contains(&p.peptide_id))
-            .collect();
+        // Candidate selection by the legacy occurrence-column range query. Exact
+        // for LegacyCompat (the projector reproduces the column kernel); P4d
+        // replaces this with a scalar RT-support index that (a) does not depend
+        // on the occurrence columns and (b) conservatively covers Accurate
+        // support that may extend beyond the legacy stored range.
+        let candidate_ids = self.candidate_peptide_ids_for_frame_range(frame_min, frame_max)?;
+        // Load + project only the batch's candidate scalars (filtered in SQL).
+        let scalars = self.read_peptides_scalar_for_ids(&candidate_ids)?;
         self.project_peptide_scalars(scalars, mode, params)
     }
 
@@ -588,12 +670,9 @@ impl TimsTofSyntheticsDataHandle {
             DistributionSource::Columns => return self.read_ions_for_peptides(peptide_ids),
             DistributionSource::Projector { mode, env, params } => (*mode, *env, *params),
         };
-        let id_set: HashSet<u32> = peptide_ids.iter().copied().collect();
-        let scalars: Vec<IonScalar> = self
-            .read_ions_scalar(&env)?
-            .into_iter()
-            .filter(|i| id_set.contains(&i.peptide_id))
-            .collect();
+        // Filter ions to the requested peptides in SQL — avoids loading and
+        // JSON-deserializing every ion's simulated spectrum per batch.
+        let scalars = self.read_ions_scalar_for_peptides(peptide_ids, &env)?;
         self.project_ion_scalars(scalars, mode, env, params)
     }
 
