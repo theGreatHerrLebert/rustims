@@ -41,6 +41,9 @@ fn make_distribution_source(
             n_steps: Some(n_steps),
             remove_epsilon,
             num_threads: num_threads.max(1),
+            // Matches the column writer's default; LegacyCompat rounds stored
+            // abundances to this many decimals for byte parity.
+            num_decimals: 4,
         },
     }
 }

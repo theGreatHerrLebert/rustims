@@ -304,6 +304,11 @@ pub struct ProjectionParams {
     pub n_steps: Option<usize>,
     pub remove_epsilon: f64,
     pub num_threads: usize,
+    /// Decimal places the legacy / `project_distributions` writer rounds stored
+    /// abundances to (`python_list_to_json_string` num_decimals, default 4).
+    /// LegacyCompat rounds to this so projector-fed rendering byte-matches the
+    /// columns a DB was written with. Accurate ignores it (full precision).
+    pub num_decimals: u32,
 }
 
 impl Default for ProjectionParams {
@@ -315,6 +320,7 @@ impl Default for ProjectionParams {
             n_steps: Some(1000),
             remove_epsilon: 1e-4,
             num_threads: 4,
+            num_decimals: 4,
         }
     }
 }
