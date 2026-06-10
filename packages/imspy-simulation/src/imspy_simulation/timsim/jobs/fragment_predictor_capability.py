@@ -20,7 +20,7 @@ here for now as the sim-side contract and mirrors what those models expect.)
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import FrozenSet
+from typing import FrozenSet, Optional
 
 
 @dataclass(frozen=True)
@@ -54,31 +54,52 @@ _TIMSTOF_COLLISIONAL = FragmentPredictorCapability(
     ce_encoding="normalized_div100",
 )
 
+# Declared per model — registered under BOTH the short key and the full Koina
+# alias, so a model passed by its full Koina name is recognised too. An
+# UNDECLARED model has no entry: its activation contract is unknown, so the
+# guard rejects it rather than silently assuming the timsTOF eV/100 contract
+# (which would mis-encode e.g. an Orbitrap NCE model).
 FRAGMENT_PREDICTOR_CAPABILITIES = {
     "local": _TIMSTOF_COLLISIONAL,
     "prosit": _TIMSTOF_COLLISIONAL,
+    "prosit_2023_intensity_timstof": _TIMSTOF_COLLISIONAL,
     "alphapeptdeep": _TIMSTOF_COLLISIONAL,
+    "alphapeptdeep_ms2_generic": _TIMSTOF_COLLISIONAL,
     "ms2pip": _TIMSTOF_COLLISIONAL,
+    "ms2pip_timstof2024": _TIMSTOF_COLLISIONAL,
     "ms2pip_2023": _TIMSTOF_COLLISIONAL,
+    "ms2pip_timstof2023": _TIMSTOF_COLLISIONAL,
 }
 
 
-def capability_for(model_key: str | None) -> FragmentPredictorCapability:
-    """Capability for a model key. Unknown / direct-Koina names default to the
-    timsTOF collisional contract (every shipped model shares it)."""
-    return FRAGMENT_PREDICTOR_CAPABILITIES.get(
-        (model_key or "local").lower(), _TIMSTOF_COLLISIONAL
-    )
+def capability_for(model_key: str | None) -> Optional[FragmentPredictorCapability]:
+    """Declared capability for a model key (short key or full Koina alias), or
+    `None` if the model is undeclared — there is intentionally NO default, so an
+    unknown model's CE encoding/activation are never silently assumed."""
+    return FRAGMENT_PREDICTOR_CAPABILITIES.get((model_key or "local").lower())
+
+
+def require_capability(model_key: str | None) -> FragmentPredictorCapability:
+    """Capability for a model, raising if it is undeclared."""
+    cap = capability_for(model_key)
+    if cap is None:
+        raise ValueError(
+            f"intensity model '{model_key}' has no declared activation capability. "
+            f"Register it in FRAGMENT_PREDICTOR_CAPABILITIES with its activation "
+            f"method(s), energy unit, and CE encoding so its collision energy is "
+            f"not silently mis-encoded (known models: "
+            f"{sorted(FRAGMENT_PREDICTOR_CAPABILITIES)})."
+        )
+    return cap
 
 
 def assert_predictor_supports(
     model_key: str | None, activation_method: str, energy_unit: str
 ) -> FragmentPredictorCapability:
-    """Raise if the predictor was not trained for this activation/unit.
-
-    Returns the capability so the caller can use its CE encoding.
+    """Raise if the predictor is undeclared, or was not trained for this
+    activation/unit. Returns the capability so the caller can use its CE encoding.
     """
-    cap = capability_for(model_key)
+    cap = require_capability(model_key)
     if not cap.accepts(activation_method, energy_unit):
         raise ValueError(
             f"intensity model '{model_key or 'local'}' does not support activation "

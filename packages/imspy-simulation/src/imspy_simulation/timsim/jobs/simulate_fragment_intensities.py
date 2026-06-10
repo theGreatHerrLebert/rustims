@@ -59,9 +59,10 @@ def _predict_intensities_with_koina(
         logger.info(f"Using Koina model: {koina_model_name}")
 
     # Prepare input for Koina. The eV->network-input encoding (the legacy /100)
-    # is now owned by the predictor capability (P5d) rather than a magic literal.
-    from .fragment_predictor_capability import capability_for
-    encoded_ce = capability_for(model_name).encode_collision_energy(
+    # is now owned by the predictor capability (P5d) rather than a magic literal;
+    # an undeclared model raises rather than being silently /100-encoded.
+    from .fragment_predictor_capability import require_capability
+    encoded_ce = require_capability(model_name).encode_collision_energy(
         data['collision_energy'].values
     )
     input_df = pd.DataFrame({
