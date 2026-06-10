@@ -95,9 +95,11 @@ class DIAFrameBuilder:
         if lazy and with_annotations:
             raise ValueError("Annotation support is not available with lazy loading.")
 
-        if lazy and projection_mode not in (None, "columns"):
+        if lazy and projection_mode not in (None, "off", "columns"):
             # The lazy builder is not yet projector-fed (P4a2). Fail loudly rather
-            # than silently fall back to the legacy columns.
+            # than silently fall back to the legacy columns. "off"/"columns"/None
+            # all mean "read the legacy columns" — matching the eager Rust path
+            # (make_distribution_source), so they are allowed through.
             raise ValueError(
                 f"projection_mode={projection_mode!r} is not yet supported with lazy "
                 "loading (the lazy builder still reads the legacy columns)."
