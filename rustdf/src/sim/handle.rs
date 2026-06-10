@@ -42,6 +42,21 @@ pub fn resolve_fragment_ce_key<V>(
         .find(|&k| map.contains_key(&(peptide_id, charge, k)))
 }
 
+/// Whether ANY collision-energy entry exists for `(peptide, charge)`. Used at
+/// render time to distinguish a legitimate "this precursor has no predicted
+/// fragments" skip (prefix absent) from a real "fragments exist but none near
+/// the applied CE" mismatch (prefix present) — the latter means the prediction
+/// set does not cover the instrument's applied CE and is a hard error.
+pub fn fragment_prefix_exists<V>(
+    map: &std::collections::BTreeMap<(u32, i8, i32), V>,
+    peptide_id: u32,
+    charge: i8,
+) -> bool {
+    map.range((peptide_id, charge, i32::MIN)..=(peptide_id, charge, i32::MAX))
+        .next()
+        .is_some()
+}
+
 /// Mean of consecutive differences of `xs` (the frame `rt_cycle_length` /
 /// `im_cycle_length` the legacy jobs derive via `np.mean(np.diff(...))`).
 fn mean_consecutive_diff(xs: &[f64]) -> f64 {
@@ -50,6 +65,58 @@ fn mean_consecutive_diff(xs: &[f64]) -> f64 {
     }
     let total: f64 = xs.windows(2).map(|w| w[1] - w[0]).sum();
     total / (xs.len() - 1) as f64
+}
+
+/// How the stored `fragment_ions` were produced (P5 prediction set). The
+/// renderer reads this to verify the stored fragments are compatible with the
+/// instrument it is rendering for, instead of silently rendering against a set
+/// built for a different instrument / collision-energy encoding.
+#[derive(Debug, Clone)]
+pub struct PredictionSet {
+    pub prediction_set_id: i64,
+    pub predictor_model: Option<String>,
+    pub instrument: String,
+    pub acquisition_type: String,
+    pub activation_method: String,
+    pub energy_unit: String,
+    /// How collision energy is encoded in `fragment_ions` — the render-time CE
+    /// keying (`resolve_fragment_ce_key`) only matches the legacy
+    /// `normalized_div100` encoding.
+    pub collision_energy_encoding: String,
+}
+
+impl PredictionSet {
+    /// The implicit set for pre-P5 DBs (no `prediction_sets` table): timsTOF
+    /// collisional activation, CE stored normalized (raw/100), eV.
+    pub fn legacy_bruker() -> Self {
+        PredictionSet {
+            prediction_set_id: 0,
+            predictor_model: None,
+            instrument: "bruker_timstof".to_string(),
+            acquisition_type: "unknown".to_string(),
+            activation_method: "hcd".to_string(),
+            energy_unit: "ev".to_string(),
+            collision_energy_encoding: "normalized_div100".to_string(),
+        }
+    }
+
+    /// Fail unless this set's collision-energy encoding is the one the render-time
+    /// CE keying assumes. Guards against rendering fragments that were stored with
+    /// an encoding the current keying cannot resolve (e.g. a future Thermo set).
+    pub fn assert_render_compatible(&self) -> Result<(), String> {
+        if self.collision_energy_encoding != "normalized_div100" {
+            return Err(format!(
+                "prediction set {} has collision_energy_encoding='{}' but the \
+                 renderer expects 'normalized_div100'; the stored fragments were \
+                 built for a different instrument/encoding (model={:?}, instrument={})",
+                self.prediction_set_id,
+                self.collision_energy_encoding,
+                self.predictor_model,
+                self.instrument,
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -660,6 +727,42 @@ impl TimsTofSyntheticsDataHandle {
                 )
             })
             .collect())
+    }
+
+    /// Read the fragment prediction set (P5). Returns the single registered set,
+    /// or `PredictionSet::legacy_bruker()` for pre-P5 DBs that have no
+    /// `prediction_sets` table (so existing data keeps rendering as the implicit
+    /// Bruker set). Distinguishes "verified provenance" from "assumed legacy" by
+    /// virtue of the table's presence.
+    pub fn read_prediction_set(&self) -> rusqlite::Result<PredictionSet> {
+        let has_table: bool = self
+            .connection
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='prediction_sets'",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
+        if !has_table {
+            return Ok(PredictionSet::legacy_bruker());
+        }
+        self.connection.query_row(
+            "SELECT prediction_set_id, predictor_model, instrument, acquisition_type, \
+             activation_method, energy_unit, collision_energy_encoding \
+             FROM prediction_sets ORDER BY prediction_set_id LIMIT 1",
+            [],
+            |row| {
+                Ok(PredictionSet {
+                    prediction_set_id: row.get(0)?,
+                    predictor_model: row.get(1)?,
+                    instrument: row.get(2)?,
+                    acquisition_type: row.get(3)?,
+                    activation_method: row.get(4)?,
+                    energy_unit: row.get(5)?,
+                    collision_energy_encoding: row.get(6)?,
+                })
+            },
+        )
     }
 
     /// Candidate peptide ids overlapping a frame range, by the legacy occurrence
@@ -1625,6 +1728,18 @@ pub struct FragmentIonsWithComplementary {
 mod scalar_reader_tests {
     use super::*;
     use rusqlite::Connection;
+
+    #[test]
+    fn prediction_set_compatibility() {
+        // Legacy / Bruker set: render-compatible.
+        assert!(PredictionSet::legacy_bruker().assert_render_compatible().is_ok());
+        // A set with a different CE encoding (e.g. a future Thermo NCE set) is
+        // rejected by the renderer rather than silently mis-keyed.
+        let mut s = PredictionSet::legacy_bruker();
+        s.instrument = "orbitrap_astral".to_string();
+        s.collision_energy_encoding = "nce_raw".to_string();
+        assert!(s.assert_render_compatible().is_err());
+    }
 
     #[test]
     fn resolve_fragment_ce_key_tolerates_quantization_noise() {

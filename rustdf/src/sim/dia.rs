@@ -72,6 +72,13 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::from_source(path, source)?;
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
 
+        // P5b: refuse to render fragments stored under an incompatible prediction
+        // set (CE encoding the render keying can't resolve). Bruker/legacy pass.
+        handle
+            .read_prediction_set()?
+            .assert_render_compatible()
+            .map_err(|_| rusqlite::Error::InvalidQuery)?;
+
         let fragment_ions = handle.read_fragment_ions()?;
 
         // get collision energy settings per window group
@@ -592,7 +599,17 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     let Some(collision_energy_quantized) = crate::sim::handle::resolve_fragment_ce_key(
                         fragment_ions, *peptide_id, charge_state, collision_energy,
                     ) else {
-                        // No fragments predicted near this CE for this ion — skip.
+                        // Fail loud if fragments exist for this ion but none near the
+                        // applied CE (prediction set doesn't cover this CE, P5b); a
+                        // precursor with no predicted fragments at all is a legit skip.
+                        if crate::sim::handle::fragment_prefix_exists(fragment_ions, *peptide_id, charge_state) {
+                            panic!(
+                                "DIA fragment lookup miss: peptide {} charge {} applied CE {:.4} eV \
+                                 has predicted fragments, but none within 0.1 eV — the prediction \
+                                 set does not cover this instrument's collision energy",
+                                *peptide_id, charge_state, collision_energy,
+                            );
+                        }
                         continue;
                     };
                     let (_, fragment_series_vec) = fragment_ions

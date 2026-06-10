@@ -52,6 +52,14 @@ impl TimsTofSyntheticsFrameBuilderDDA {
         isotope_config: Option<IsotopeTransmissionConfig>,
     ) -> Self {
         let handle = TimsTofSyntheticsDataHandle::new(path).unwrap();
+        // P5b: refuse to render fragments stored under an incompatible prediction
+        // set (e.g. a future Thermo set whose CE encoding the render keying can't
+        // resolve). Bruker/legacy sets pass; this never fires for current DBs.
+        handle
+            .read_prediction_set()
+            .expect("read prediction set")
+            .assert_render_compatible()
+            .expect("incompatible fragment prediction set for this renderer");
         let fragment_ions_raw = handle.read_fragment_ions().unwrap();
         let transmission_settings = handle.get_transmission_dda();
 
@@ -623,7 +631,19 @@ impl TimsTofSyntheticsFrameBuilderDDA {
             let Some(collision_energy_quantized) = crate::sim::handle::resolve_fragment_ce_key(
                 fragment_ions, peptide_id, charge_state, collision_energy,
             ) else {
-                // No fragments predicted near this CE for this precursor — skip.
+                // Fail loud if fragments exist for this precursor but none near the
+                // applied CE: the prediction set does not cover this instrument's CE
+                // (P5b). A precursor with NO predicted fragments at all is a
+                // legitimate skip. (For Bruker after the ±0.1 eV probe this never
+                // fires — verified 0 misses.)
+                if crate::sim::handle::fragment_prefix_exists(fragment_ions, peptide_id, charge_state) {
+                    panic!(
+                        "DDA fragment lookup miss: peptide {} charge {} applied CE {:.4} eV has \
+                         predicted fragments, but none within 0.1 eV — the prediction set does \
+                         not cover this instrument's collision energy",
+                        peptide_id, charge_state, collision_energy,
+                    );
+                }
                 continue;
             };
             let (_, fragment_series_vec) = fragment_ions
@@ -916,7 +936,19 @@ impl TimsTofSyntheticsFrameBuilderDDA {
             let Some(collision_energy_quantized) = crate::sim::handle::resolve_fragment_ce_key(
                 fragment_ions, peptide_id, charge_state, collision_energy,
             ) else {
-                // No fragments predicted near this CE for this precursor — skip.
+                // Fail loud if fragments exist for this precursor but none near the
+                // applied CE: the prediction set does not cover this instrument's CE
+                // (P5b). A precursor with NO predicted fragments at all is a
+                // legitimate skip. (For Bruker after the ±0.1 eV probe this never
+                // fires — verified 0 misses.)
+                if crate::sim::handle::fragment_prefix_exists(fragment_ions, peptide_id, charge_state) {
+                    panic!(
+                        "DDA fragment lookup miss: peptide {} charge {} applied CE {:.4} eV has \
+                         predicted fragments, but none within 0.1 eV — the prediction set does \
+                         not cover this instrument's collision energy",
+                        peptide_id, charge_state, collision_energy,
+                    );
+                }
                 continue;
             };
             let (_, fragment_series_vec) = fragment_ions
