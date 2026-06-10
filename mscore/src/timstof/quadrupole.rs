@@ -129,6 +129,56 @@ pub fn apply_transmission(midpoint: f64, window_length: f64, k: f64, mz: Vec<f64
     ion_transition_function_midpoint(midpoint, window_length, k)(mz)
 }
 
+/// Vendor-neutral precursor transmission for ONE isolation window (P6b).
+///
+/// The quadrupole m/z transfer is the SAME [`apply_transmission`] curve the
+/// scan-indexed Bruker path uses internally — the only vendor difference is HOW
+/// the active window is found: Bruker locates it by `(frame_id, scan_id)` (the
+/// mobility-partitioned PASEF window), while a no-IMS instrument (Orbitrap
+/// Astral) locates it by acquisition event / cycle position + m/z (there is no
+/// scan axis). This type decouples the m/z transfer from that lookup, so the
+/// fragment render can ask "is this precursor transmitted?" without knowing how
+/// the window was selected. It is purely additive — the existing
+/// `IonTransmission` (TimsTransmissionDIA/DDA) path is unchanged.
+#[derive(Clone, Copy, Debug)]
+pub struct WindowTransmission {
+    pub center_mz: f64,
+    pub width_mz: f64,
+    /// Sigmoid steepness of the quadrupole edge (same `k` as the Bruker path).
+    pub k: f64,
+}
+
+impl WindowTransmission {
+    pub fn new(center_mz: f64, width_mz: f64, k: f64) -> Self {
+        WindowTransmission { center_mz, width_mz, k }
+    }
+
+    /// Per-m/z transmission probabilities through this window — identical to the
+    /// curve the scan-indexed path applies once it has found the window.
+    pub fn probabilities(&self, mz: &[f64]) -> Vec<f64> {
+        apply_transmission(self.center_mz, self.width_mz, self.k, mz.to_vec())
+    }
+
+    /// True if ANY of `mz` is transmitted above `min_proba` (default 0.5) — the
+    /// window-based equivalent of `IonTransmission::any_transmitted`.
+    pub fn any_transmitted(&self, mz: &[f64], min_proba: Option<f64>) -> bool {
+        let cutoff = min_proba.unwrap_or(0.5);
+        self.probabilities(mz).iter().any(|&p| p > cutoff)
+    }
+
+    /// Indices of `mz` transmitted above `min_proba` (default 0.5) — the
+    /// window-based equivalent of `IonTransmission::get_transmission_set`.
+    pub fn transmitted_set(&self, mz: &[f64], min_proba: Option<f64>) -> HashSet<usize> {
+        let cutoff = min_proba.unwrap_or(0.5);
+        let p = self.probabilities(mz);
+        mz.iter()
+            .enumerate()
+            .filter(|&(i, _)| p[i] > cutoff)
+            .map(|(i, _)| i)
+            .collect()
+    }
+}
+
 pub trait IonTransmission {
     fn apply_transmission(&self, frame_id: i32, scan_id: i32, mz: &Vec<f64>) -> Vec<f64>;
 
@@ -566,5 +616,48 @@ impl IonTransmission for TimsTransmissionDDA {
             // if frame is not in the metadata, no ions are transmitted
             None => vec![0.0; mz.len()],
         }
+    }
+}
+#[cfg(test)]
+mod p6b_window_transmission_tests {
+    use super::*;
+
+    // The window-based seam must reproduce the scan-indexed Bruker decision when
+    // both see the same isolation window — proving WindowTransmission is a faithful
+    // vendor-neutral factoring of the quad transfer, not a reimplementation.
+    #[test]
+    fn window_transmission_matches_scan_indexed_dia() {
+        // DIA: frame 2 -> window group 1; group 1 isolates m/z 700 +/- 20 over
+        // scans 0..=50. Default sigmoid k = 15.
+        let dia = TimsTransmissionDIA::new(
+            vec![2],            // frame
+            vec![1],            // frame -> window group
+            vec![1],            // window group
+            vec![0],            // scan_start
+            vec![50],           // scan_end
+            vec![700.0],        // isolation_mz
+            vec![20.0],         // isolation_width
+            None,               // k = 15.0
+        );
+        let win = WindowTransmission::new(700.0, 20.0, 15.0);
+
+        // m/z spanning inside, on the edges, and well outside the 690..710 window.
+        let mz = vec![650.0, 689.0, 691.0, 700.0, 709.0, 711.0, 760.0];
+        let scan = 25; // inside the window's scan range
+
+        // Per-m/z probabilities identical.
+        assert_eq!(dia.apply_transmission(2, scan, &mz), win.probabilities(&mz));
+        // Decisions identical.
+        assert_eq!(
+            dia.any_transmitted(2, scan, &mz, None),
+            win.any_transmitted(&mz, None)
+        );
+        assert_eq!(
+            dia.get_transmission_set(2, scan, &mz, Some(0.5)),
+            win.transmitted_set(&mz, Some(0.5))
+        );
+        // Sanity: the window does transmit the center and block the far peaks.
+        assert!(win.any_transmitted(&[700.0], None));
+        assert!(!win.any_transmitted(&[650.0], None));
     }
 }
