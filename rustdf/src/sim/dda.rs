@@ -1,7 +1,4 @@
-use mscore::algorithm::isotope::{
-    calculate_transmission_dependent_fragment_ion_isotope_distribution,
-    calculate_precursor_transmission_factor,
-};
+use mscore::algorithm::isotope::calculate_precursor_transmission_factor;
 use crate::sim::containers::IsotopeTransmissionMode;
 use mscore::data::peptide::{PeptideIon, PeptideProductIonSeriesCollection};
 use mscore::data::spectrum::{IndexedMzSpectrum, MsType, MzSpectrum};
@@ -726,58 +723,25 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     1.0
                 };
 
+                // Complementary per-(peptide,charge,CE) data for PerFragment;
+                // looked up once (same for all series) and passed to the shared
+                // kernel — same lookup the transmission_factor block above uses.
+                let frag_data = self
+                    .fragment_ions_with_complementary
+                    .as_ref()
+                    .and_then(|c| c.get(&(peptide_id, charge_state, collision_energy_quantized)));
+
                 for (series_idx, fragment_ion_series) in fragment_series_vec.iter().enumerate() {
-                    let final_spectrum = match self.isotope_transmission_config.mode {
-                        IsotopeTransmissionMode::None => {
-                            // Standard spectrum scaling
-                            fragment_ion_series.clone() * fraction_events as f64
-                        },
-                        IsotopeTransmissionMode::PrecursorScaling => {
-                            // Apply precursor-based transmission factor
-                            fragment_ion_series.clone() * (fraction_events as f64 * transmission_factor)
-                        },
-                        IsotopeTransmissionMode::PerFragment => {
-                            // Per-fragment transmission-dependent calculation
-                            if let Some(comp_data) = self.fragment_ions_with_complementary.as_ref() {
-                                if let Some(frag_data) = comp_data.get(&(peptide_id, charge_state, collision_energy_quantized)) {
-                                    if series_idx < frag_data.per_fragment_data.len() {
-                                        // Aggregate adjusted spectra from all fragment ions in this series
-                                        let series_data = &frag_data.per_fragment_data[series_idx];
-                                        let mut aggregated_mz: Vec<f64> = Vec::new();
-                                        let mut aggregated_intensity: Vec<f64> = Vec::new();
-
-                                        for frag_ion_data in series_data {
-                                            // Apply transmission-dependent calculation for this fragment
-                                            let adjusted_dist = calculate_transmission_dependent_fragment_ion_isotope_distribution(
-                                                &frag_ion_data.fragment_distribution,
-                                                &frag_ion_data.complementary_distribution,
-                                                &transmitted_indices,
-                                                self.isotope_transmission_config.max_isotopes,
-                                            );
-
-                                            // Scale by predicted intensity and fraction_events
-                                            for (mz, abundance) in adjusted_dist {
-                                                aggregated_mz.push(mz);
-                                                aggregated_intensity.push(abundance * frag_ion_data.predicted_intensity * fraction_events as f64);
-                                            }
-                                        }
-
-                                        if !aggregated_mz.is_empty() {
-                                            MzSpectrum::new(aggregated_mz, aggregated_intensity)
-                                        } else {
-                                            fragment_ion_series.clone() * fraction_events as f64
-                                        }
-                                    } else {
-                                        fragment_ion_series.clone() * fraction_events as f64
-                                    }
-                                } else {
-                                    fragment_ion_series.clone() * fraction_events as f64
-                                }
-                            } else {
-                                fragment_ion_series.clone() * fraction_events as f64
-                            }
-                        },
-                    };
+                    let final_spectrum = crate::sim::dia::fragment_series_spectrum(
+                        self.isotope_transmission_config.mode,
+                        fragment_ion_series,
+                        series_idx,
+                        fraction_events,
+                        transmission_factor,
+                        frag_data,
+                        &transmitted_indices,
+                        self.isotope_transmission_config.max_isotopes,
+                    );
 
                     let mz_spectrum = if mz_noise_fragment {
                         if uniform {
