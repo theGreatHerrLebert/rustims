@@ -11,6 +11,8 @@ use std::path::Path;
 
 use crate::sim::containers::{FramesSim, IonSim, PeptidesSim, ScansSim};
 use crate::sim::handle::TimsTofSyntheticsDataHandle;
+use crate::sim::projector::{IntensityStage, MzCoordSpace, RenderedEvent, RenderedSpectrum};
+use crate::sim::scheme::DataMode;
 use rayon::prelude::*;
 
 pub struct TimsTofSyntheticsPrecursorFrameBuilder {
@@ -150,6 +152,37 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             .map(|(_scan, spectrum)| spectrum)
             .collect();
         MzSpectrum::from_collection(specs)
+    }
+
+    /// Render a precursor (MS1) frame as a vendor-neutral [`RenderedEvent::Scan`]
+    /// for a non-IMS instrument (P6c). This is the scan-based render core's MS1
+    /// path: it collapses the mobility axis via [`Self::precursor_scan_spectrum`]
+    /// into the single MS1 spectrum an Astral/Orbitrap records.
+    ///
+    /// The spectrum is tagged as physical-m/z, NOT detector-applied, at the
+    /// [`IntensityStage::Mobility`] stage — the contributions already carry the
+    /// yield (events), time (frame abundance) and mobility (scan abundance)
+    /// factors, but no quadrupole transmission (MS1 is unisolated) and no detector
+    /// response; the writer / detector model applies those downstream without
+    /// double-counting. `data_mode` is the instrument's MS1 acquisition mode
+    /// (Astral MS1 = `Profile`). Returns an empty-spectrum `Scan` for a frame with
+    /// no contributions (the caller decides whether to emit it).
+    pub fn render_precursor_scan(&self, frame_id: u32, data_mode: DataMode) -> RenderedEvent {
+        let rt = *self.frame_to_rt.get(&frame_id).unwrap() as f64;
+        let spectrum = self.precursor_scan_spectrum(frame_id);
+        RenderedEvent::Scan {
+            ms_level: 1,
+            retention_time_s: rt,
+            isolation: None,
+            spectrum: RenderedSpectrum {
+                mz: (*spectrum.mz).clone(),
+                intensity: (*spectrum.intensity).clone(),
+                coords: MzCoordSpace::Physical,
+                mode: data_mode,
+                detector_applied: false,
+                stage: IntensityStage::Mobility,
+            },
+        }
     }
 
     /// Build a precursor frame

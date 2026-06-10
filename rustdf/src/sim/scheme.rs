@@ -160,9 +160,29 @@ pub struct InstrumentCapabilities {
 impl Default for InstrumentCapabilities {
     fn default() -> Self {
         // Bruker timsTOF: both present — preserves current behaviour.
+        Self::bruker_timstof()
+    }
+}
+
+impl InstrumentCapabilities {
+    /// Bruker timsTOF: TIMS mobility + mobility-dependent quad isotope
+    /// transmission both present (the default; preserves current behaviour).
+    pub fn bruker_timstof() -> Self {
         InstrumentCapabilities {
             has_tims_mobility: true,
             has_quad_isotope_transmission: true,
+        }
+    }
+
+    /// Orbitrap Astral: quadrupole isolation IS present (so isolation-window
+    /// transmission still applies — that is not gated here), but there is NO TIMS
+    /// mobility axis and therefore NO mobility-dependent quad isotope transmission.
+    /// Both capability flags are false; the isotope-transmission config is forced
+    /// to `None` mode for an Astral render (see `IsotopeTransmissionConfig::gated_by`).
+    pub fn astral() -> Self {
+        InstrumentCapabilities {
+            has_tims_mobility: false,
+            has_quad_isotope_transmission: false,
         }
     }
 }
@@ -202,6 +222,22 @@ impl ActivationPolicy {
             method: ActivationMethod::Hcd,
             unit: EnergyUnit::ElectronVolt,
             model: CollisionEnergyModel::BrukerPasef { ce_bias, ce_slope },
+        }
+    }
+
+    /// Thermo Orbitrap Astral: collisional activation (HCD) reported as a
+    /// **normalized** collision energy (NCE), produced per isolation window. The
+    /// per-window NCE is carried in the window's own [`CollisionEnergyPolicy`]
+    /// (`ce`), and the unit is [`EnergyUnit::NormalizedCe`] — so a downstream
+    /// fragment predictor that was calibrated in eV will *reject* it rather than
+    /// silently mis-encode an NCE as an absolute energy. There is no scan
+    /// dependence (no IMS): `condition_for_scan` is `None`; use
+    /// [`Self::condition_for_window`].
+    pub fn thermo_nce(ce: CollisionEnergyPolicy) -> Self {
+        ActivationPolicy {
+            method: ActivationMethod::Hcd,
+            unit: EnergyUnit::NormalizedCe,
+            model: CollisionEnergyModel::PerWindow(ce),
         }
     }
 
@@ -1166,12 +1202,40 @@ mod tests {
         let bruker = InstrumentCapabilities::default();
         assert!(bruker.has_tims_mobility);
         assert!(bruker.has_quad_isotope_transmission);
+        assert_eq!(bruker, InstrumentCapabilities::bruker_timstof());
 
-        let astral = InstrumentCapabilities {
-            has_tims_mobility: false,
-            has_quad_isotope_transmission: false,
-        };
+        // P6c: the named Astral constructor is both-false (isotope mode gated off).
+        let astral = InstrumentCapabilities::astral();
+        assert!(!astral.has_tims_mobility);
+        assert!(!astral.has_quad_isotope_transmission);
         assert_ne!(bruker, astral);
+    }
+
+    #[test]
+    fn thermo_nce_activation_policy_is_normalized_per_window() {
+        // P6c: Astral NCE policy. Per-window normalized CE; no scan dependence.
+        let p = ActivationPolicy::thermo_nce(CollisionEnergyPolicy::Value(27.0));
+        assert_eq!(p.method, ActivationMethod::Hcd);
+        assert_eq!(p.unit, EnergyUnit::NormalizedCe);
+
+        // Resolves a window CE as an NCE-unit condition (NOT eV) — a downstream
+        // eV-calibrated predictor must be able to reject it on the unit alone.
+        let cond = p.condition_for_window(650.0).expect("NCE condition for window");
+        assert_eq!(cond.value, 27.0);
+        assert_eq!(cond.unit, EnergyUnit::NormalizedCe);
+        assert_ne!(cond.unit, EnergyUnit::ElectronVolt);
+
+        // No IMS: there is no scan-parameterised CE.
+        assert_eq!(p.collision_energy_for_scan(100), None);
+        assert!(p.condition_for_scan(100).is_none());
+
+        // A rolling (linear) NCE model resolves per window center.
+        let rolling = ActivationPolicy::thermo_nce(CollisionEnergyPolicy::Linear {
+            intercept: 20.0,
+            slope_per_mz: 0.01,
+        });
+        assert_eq!(rolling.condition_for_window(700.0).unwrap().value, 20.0 + 0.01 * 700.0);
+        assert_eq!(rolling.condition_for_window(700.0).unwrap().unit, EnergyUnit::NormalizedCe);
     }
 
     fn linear_windows(n: usize) -> Vec<DiaWindow> {

@@ -20,7 +20,8 @@
 
 use crate::sim::containers::{IonScalar, MobilityEnv, PeptideScalar, ScansSim};
 use crate::sim::scheme::{
-    AcquisitionEvent, AcquisitionScheme, DataMode, IsolationWindow, RepeatPolicy,
+    AcquisitionEvent, AcquisitionScheme, ActivationPolicy, DataMode, InstrumentCapabilities,
+    InstrumentKind, IsolationWindow, RepeatPolicy,
 };
 use mscore::algorithm::utility::{
     calculate_abundance_gaussian, calculate_frame_abundances_emg_par,
@@ -86,6 +87,64 @@ impl SamplingGeometry {
             MobilityModality::None => 1,
             MobilityModality::Tims => self.inv_mobility.len(),
         }
+    }
+}
+
+// --------------------------------------------------------------------------- //
+// Instrument config (the dispatch bundle threaded through the render core)
+// --------------------------------------------------------------------------- //
+
+/// The vendor-specific configuration the render core dispatches on (P6c). Bundles
+/// the three orthogonal axes that decide how a vendor-neutral trunk is recorded:
+///
+/// * [`InstrumentKind`] — vendor identity (selects the writer at the boundary);
+/// * [`InstrumentCapabilities`] — what physics applies (gates mobility / quad
+///   isotope transmission; an Astral forces isotope mode to `None`);
+/// * [`MobilityModality`] — whether events render as `MobilityFrame` (TIMS) or a
+///   single collapsed `Scan` (non-IMS);
+/// * [`ActivationPolicy`] — how the collision energy + its *unit* are produced
+///   (Bruker eV-per-scan vs Thermo NCE-per-window), so a fragment predictor can
+///   reject a unit it was not calibrated for.
+///
+/// The Bruker default reproduces current behaviour exactly; `astral` is the first
+/// non-IMS instrument. This is pure configuration — it holds no analyte state.
+#[derive(Debug, Clone, Copy)]
+pub struct InstrumentConfig {
+    pub kind: InstrumentKind,
+    pub capabilities: InstrumentCapabilities,
+    pub mobility: MobilityModality,
+    pub activation: ActivationPolicy,
+}
+
+impl InstrumentConfig {
+    /// Bruker timsTOF DDA-PASEF: TIMS mobility, full capabilities, eV CE linear in
+    /// scan. `ce_bias`/`ce_slope` reproduce the legacy `dda_selection_scheme`
+    /// formula (defaults 54.1984 / -0.0345). Matches the pre-dispatch behaviour.
+    pub fn bruker_pasef(ce_bias: f64, ce_slope: f64) -> Self {
+        InstrumentConfig {
+            kind: InstrumentKind::TimsTofDia,
+            capabilities: InstrumentCapabilities::bruker_timstof(),
+            mobility: MobilityModality::Tims,
+            activation: ActivationPolicy::bruker_pasef(ce_bias, ce_slope),
+        }
+    }
+
+    /// Orbitrap Astral: no mobility axis (events collapse to a single `Scan`),
+    /// Astral capabilities (both false — isotope transmission forced to `None`),
+    /// and a Thermo NCE activation policy carrying the per-window normalized CE.
+    pub fn astral(activation: ActivationPolicy) -> Self {
+        InstrumentConfig {
+            kind: InstrumentKind::OrbitrapAstral,
+            capabilities: InstrumentCapabilities::astral(),
+            mobility: MobilityModality::None,
+            activation,
+        }
+    }
+
+    /// Whether events render as a single collapsed [`RenderedEvent::Scan`] (no
+    /// mobility axis) rather than a [`RenderedEvent::MobilityFrame`].
+    pub fn is_scan_based(&self) -> bool {
+        self.mobility == MobilityModality::None
     }
 }
 
@@ -658,10 +717,36 @@ pub fn project_mobility_accurate_par(
 mod tests {
     use super::*;
     use crate::sim::scheme::{
-        Analyzer, CollisionEnergyPolicy, DiaGeometry, DiaMs2Frame, DiaWindow, InstrumentKind,
-        Ms1Event, Provenance, SchemeSource,
+        ActivationPolicy, Analyzer, CollisionEnergyPolicy, DiaGeometry, DiaMs2Frame, DiaWindow,
+        EnergyUnit, InstrumentKind, Ms1Event, Provenance, SchemeSource,
     };
     use mscore::data::spectrum::MzSpectrum;
+
+    #[test]
+    fn instrument_config_bundles_the_dispatch_axes() {
+        // P6c: Bruker config = TIMS mobility, full capabilities, eV CE, frames.
+        let bruker = InstrumentConfig::bruker_pasef(54.1984, -0.0345);
+        assert_eq!(bruker.kind, InstrumentKind::TimsTofDia);
+        assert_eq!(bruker.mobility, MobilityModality::Tims);
+        assert!(bruker.capabilities.has_tims_mobility);
+        assert!(bruker.capabilities.has_quad_isotope_transmission);
+        assert!(!bruker.is_scan_based());
+        assert_eq!(bruker.activation.unit, EnergyUnit::ElectronVolt);
+        assert_eq!(bruker.activation.collision_energy_for_scan(250), Some(54.1984 - 0.0345 * 250.0));
+
+        // Astral config = no mobility (scan-based), both capabilities off, NCE.
+        let astral = InstrumentConfig::astral(ActivationPolicy::thermo_nce(
+            CollisionEnergyPolicy::Value(27.0),
+        ));
+        assert_eq!(astral.kind, InstrumentKind::OrbitrapAstral);
+        assert_eq!(astral.mobility, MobilityModality::None);
+        assert!(!astral.capabilities.has_tims_mobility);
+        assert!(!astral.capabilities.has_quad_isotope_transmission);
+        assert!(astral.is_scan_based());
+        assert_eq!(astral.activation.unit, EnergyUnit::NormalizedCe);
+        // No IMS: the Astral policy has no scan-parameterised CE.
+        assert_eq!(astral.activation.collision_energy_for_scan(250), None);
+    }
 
     fn scheme_one_ms1_two_ms2() -> AcquisitionScheme {
         let win = |c: f64| DiaWindow {
