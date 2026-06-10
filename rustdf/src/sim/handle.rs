@@ -808,6 +808,24 @@ impl TimsTofSyntheticsDataHandle {
         // replaces this with a scalar RT-support index that (a) does not depend
         // on the occurrence columns and (b) conservatively covers Accurate
         // support that may extend beyond the legacy stored range.
+        //
+        // Until P4d lands that index, lazy + Accurate would silently OMIT
+        // peptides whose accurate RT support extends past the stored occurrence
+        // window at the batch boundary. The eager Accurate path (read_peptides_
+        // with_source) has no such window and is complete; production wires lazy
+        // to Columns only. Fail loudly here rather than truncate the signal: the
+        // connector exposes lazy+Accurate directly, and silent omission is worse
+        // than an explicit "not yet supported".
+        if matches!(mode, crate::sim::projector::ProjectionMode::Accurate) {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "lazy loading with projection_mode='accurate' is not yet supported \
+                 (the per-batch candidate index uses legacy occurrence columns and \
+                 would omit peptides whose accurate RT support crosses a batch \
+                 boundary); use eager loading for accurate projection, or \
+                 projection_mode='legacy_compat' with lazy loading"
+                    .to_string(),
+            ));
+        }
         let candidate_ids = self.candidate_peptide_ids_for_frame_range(frame_min, frame_max)?;
         // Load + project only the batch's candidate scalars (filtered in SQL).
         let scalars = self.read_peptides_scalar_for_ids(&candidate_ids)?;

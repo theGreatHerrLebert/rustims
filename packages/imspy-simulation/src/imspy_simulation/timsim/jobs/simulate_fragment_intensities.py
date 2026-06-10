@@ -246,7 +246,7 @@ def simulate_fragment_intensities(
     native_handle = TransmissionHandle(str(native_path))
 
     if lazy_loading:
-        _simulate_fragment_intensities_lazy(
+        used_model = _simulate_fragment_intensities_lazy(
             native_handle=native_handle,
             acquisition_builder=acquisition_builder,
             batch_size=batch_size,
@@ -258,7 +258,7 @@ def simulate_fragment_intensities(
             verbose=verbose,
         )
     else:
-        _simulate_fragment_intensities_standard(
+        used_model = _simulate_fragment_intensities_standard(
             native_handle=native_handle,
             acquisition_builder=acquisition_builder,
             batch_size=batch_size,
@@ -269,10 +269,10 @@ def simulate_fragment_intensities(
             verbose=verbose,
         )
 
-    # Return the EFFECTIVE model used (after the phospho auto-switch), for
-    # provenance (P5a prediction set). None means the bundled local PyTorch
-    # model (PROSPECT fine-tuned); report it as "local".
-    return effective_model_name or "local"
+    # Return the model ACTUALLY used, for provenance (P5a prediction set). The
+    # inner functions resolve this after the phospho auto-switch AND after the
+    # local->Prosit fallback (so a fallback is not silently recorded as "local").
+    return used_model
 
 
 def _simulate_fragment_intensities_standard(
@@ -284,10 +284,13 @@ def _simulate_fragment_intensities_standard(
     dda: bool,
     model_name: Optional[str],
     verbose: bool,
-) -> None:
+) -> str:
     """Standard (non-lazy) fragment intensity simulation.
 
     Loads all transmitted ions into memory at once.
+
+    Returns the canonical name of the model actually used (so a local->Prosit
+    fallback is reported as "prosit", not "local").
     """
     logger.info("Calculating precursor ion transmissions and collision energies ...")
 
@@ -300,6 +303,7 @@ def _simulate_fragment_intensities_standard(
     # ------------------------------------------------------------------
     intensity_already_flat = False
     model_key = (model_name or "local").lower()
+    used_model = model_name or "local"
 
     if model_key in (None, "", "local"):
         # Default: Local PyTorch model (PROSPECT fine-tuned)
@@ -320,6 +324,7 @@ def _simulate_fragment_intensities_standard(
                 batch_size_tf_ds=batch_size,
             )
             intensity_already_flat = False
+            used_model = "prosit"
 
     elif model_key == "prosit":
         # Prosit via Koina
@@ -427,6 +432,8 @@ def _simulate_fragment_intensities_standard(
 
         batch_counter += 1
 
+    return used_model
+
 
 def _simulate_fragment_intensities_lazy(
     native_handle: TransmissionHandle,
@@ -438,7 +445,7 @@ def _simulate_fragment_intensities_lazy(
     model_name: Optional[str],
     frame_batch_size: int,
     verbose: bool,
-) -> None:
+) -> str:
     """Lazy fragment intensity simulation.
 
     Processes ions in batches by frame range to reduce memory usage.
@@ -446,6 +453,9 @@ def _simulate_fragment_intensities_lazy(
     1. Gets the total frame range
     2. Processes ions in frame-range batches
     3. Writes each batch to the database incrementally
+
+    Returns the canonical name of the model actually used (so a local->Prosit
+    fallback is reported as "prosit", not "local").
     """
     logger.info("Using lazy loading mode for fragment intensity simulation ...")
 
@@ -459,6 +469,7 @@ def _simulate_fragment_intensities_lazy(
 
     # Determine model type
     model_key = (model_name or "local").lower()
+    used_model = model_name or "local"
     use_koina_direct = model_key in KOINA_INTENSITY_MODELS or model_key in ["alphapeptdeep", "ms2pip", "ms2pip_2023"]
 
     # Initialize intensity predictor once
@@ -472,6 +483,7 @@ def _simulate_fragment_intensities_lazy(
             logger.warning(f"Local intensity model not available: {e}. Falling back to Koina (Prosit).")
             IntensityPredictor = Prosit2023TimsTofWrapper()
             intensity_already_flat = False
+            used_model = "prosit"
     elif model_key == "prosit":
         logger.info("Using Prosit2023 TIMS-TOF intensity model via Koina ...")
         IntensityPredictor = Prosit2023TimsTofWrapper()
@@ -582,3 +594,5 @@ def _simulate_fragment_intensities_lazy(
             batch_counter += 1
 
     logger.info(f"Finished processing {batch_counter} batches")
+
+    return used_model
