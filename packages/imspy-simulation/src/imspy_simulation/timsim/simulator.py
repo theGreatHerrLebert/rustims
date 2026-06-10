@@ -290,6 +290,10 @@ def get_default_settings() -> dict:
         'from_findings': False,
         'findings_path': None,
         'intensity_multiplier': 1.0,
+        # Shared event-scaling denominator across conditions; None = per-sample
+        # median (legacy). Set the SAME value for every condition (A/B/...) of a
+        # multi-sample experiment to preserve cross-sample intensity ratios.
+        'findings_reference_median': None,
         'use_bruker_sdk': True,
 
         # Peptide digestion
@@ -1016,6 +1020,7 @@ def main():
             inverse_mobility_std_mean=config.inverse_mobility_std_mean,
             intensity_multiplier=config.intensity_multiplier,
             verbose=not config.silent_mode,
+            reference_median=config.findings_reference_median,
         )
         peptides = findings_result.peptides
         proteins = findings_result.proteins
