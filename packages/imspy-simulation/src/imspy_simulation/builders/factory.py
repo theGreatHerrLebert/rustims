@@ -28,7 +28,7 @@ class LoadingStrategy(Enum):
 
     LAZY: Loads data on-demand for each batch of frames.
           Lower memory usage, better for large simulations.
-          Currently only supported for DIA mode.
+          Supported for both DIA and DDA (P4a2).
     """
     STANDARD = auto()
     LAZY = auto()
@@ -77,7 +77,6 @@ def create_frame_builder(
         A FrameBuilder implementation appropriate for the given parameters.
 
     Raises:
-        ValueError: If lazy loading is requested for DDA mode.
         ValueError: If annotations are requested with lazy loading.
 
     Example:
@@ -92,16 +91,25 @@ def create_frame_builder(
     db_path = str(db_path)
 
     # Validate parameter combinations
-    if loading_strategy == LoadingStrategy.LAZY and acquisition_mode == AcquisitionMode.DDA:
-        logger.warning("Lazy loading is not yet supported for DDA mode, using standard loading.")
-        loading_strategy = LoadingStrategy.STANDARD
-
     if with_annotations and loading_strategy == LoadingStrategy.LAZY:
         raise ValueError("Annotation support is not available with lazy loading strategy.")
 
     # Import here to avoid circular imports
     if acquisition_mode == AcquisitionMode.DDA:
         from .dda import DDAFrameBuilder
+        if loading_strategy == LoadingStrategy.LAZY:
+            # P4a2: lazy DDA delegates to the eager algorithm over a per-batch
+            # slice (one DDA algorithm, parity by construction).
+            logger.info("Creating DDA frame builder with lazy loading.")
+            if quad_isotope_transmission_mode != 'none':
+                logger.warning("Quad-dependent isotope transmission is not supported with lazy loading, ignoring.")
+            if precursor_survival_max > 0.0:
+                logger.warning("Precursor survival is not supported with lazy loading, ignoring.")
+            return DDAFrameBuilder(
+                db_path=db_path,
+                num_threads=num_threads,
+                lazy=True,
+            )
         logger.info("Creating DDA frame builder with standard loading.")
         if quad_isotope_transmission_mode != 'none':
             logger.info(f"Quad-dependent isotope transmission enabled: {quad_isotope_transmission_mode}")

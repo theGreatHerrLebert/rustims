@@ -95,23 +95,20 @@ class DIAFrameBuilder:
         if lazy and with_annotations:
             raise ValueError("Annotation support is not available with lazy loading.")
 
-        if lazy and projection_mode not in (None, "off", "columns"):
-            # The lazy builder is not yet projector-fed (P4a2). Fail loudly rather
-            # than silently fall back to the legacy columns. "off"/"columns"/None
-            # all mean "read the legacy columns" — matching the eager Rust path
-            # (make_distribution_source), so they are allowed through.
-            raise ValueError(
-                f"projection_mode={projection_mode!r} is not yet supported with lazy "
-                "loading (the lazy builder still reads the legacy columns)."
-            )
-
         if lazy:
             if quad_isotope_transmission_mode != 'none':
                 import logging
                 logging.getLogger(__name__).warning(
                     "Quad-dependent isotope transmission is not supported with lazy loading, ignoring."
                 )
-            self._py_ptr = ims.PyTimsTofLazyFrameBuilderDIA(db_path, num_threads)
+            # P4a2: the lazy builder is now projector-fed. None/'off'/'columns'
+            # read the legacy columns (byte-unchanged); 'legacy_compat'/'accurate'
+            # source occurrence/abundance from the render-time projector per batch.
+            self._py_ptr = ims.PyTimsTofLazyFrameBuilderDIA(
+                db_path, num_threads,
+                projection_mode, target_p, frame_step_size, scan_step_size,
+                n_steps, remove_epsilon,
+            )
             self._with_annotations = False
         else:
             # Create isotope transmission config

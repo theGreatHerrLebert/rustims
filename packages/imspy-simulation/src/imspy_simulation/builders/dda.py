@@ -38,6 +38,13 @@ class DDAFrameBuilder:
         quad_transmission_max_isotopes: int = 10,
         precursor_survival_min: float = 0.0,
         precursor_survival_max: float = 0.0,
+        lazy: bool = False,
+        projection_mode: str = None,
+        target_p: float = 0.999,
+        frame_step_size: float = 0.001,
+        scan_step_size: float = 0.0001,
+        n_steps: int = 1000,
+        remove_epsilon: float = 1e-4,
     ):
         """Initialize the DDA frame builder.
 
@@ -60,23 +67,48 @@ class DDAFrameBuilder:
                 fragmentation intact (0.0-1.0, default 0.0).
         """
         self.path = db_path
+        self.lazy = lazy
 
         if num_threads == -1:
             num_threads = os.cpu_count() or 4
 
-        # Create isotope transmission config
-        isotope_config = ims.PyIsotopeTransmissionConfig(
-            mode=quad_isotope_transmission_mode,
-            min_probability=quad_transmission_min_probability,
-            max_isotopes=quad_transmission_max_isotopes,
-            precursor_survival_min=precursor_survival_min,
-            precursor_survival_max=precursor_survival_max,
-        )
+        if lazy and with_annotations:
+            raise ValueError("Annotation support is not available with lazy loading.")
 
-        self._py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDDA(
-            db_path, with_annotations, num_threads, isotope_config
-        )
-        self._with_annotations = with_annotations
+        if lazy:
+            if quad_isotope_transmission_mode != 'none':
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Quad-dependent isotope transmission is not supported with lazy loading, ignoring."
+                )
+            if precursor_survival_max > 0.0:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Precursor survival is not supported with lazy loading, ignoring."
+                )
+            # P4a2: the lazy DDA builder delegates to the eager algorithm over a
+            # per-batch slice and is projector-fed. None/'off'/'columns' read the
+            # legacy columns; 'legacy_compat'/'accurate' use the render-time projector.
+            self._py_ptr = ims.PyTimsTofLazyFrameBuilderDDA(
+                db_path, num_threads,
+                projection_mode, target_p, frame_step_size, scan_step_size,
+                n_steps, remove_epsilon,
+            )
+            self._with_annotations = False
+        else:
+            # Create isotope transmission config
+            isotope_config = ims.PyIsotopeTransmissionConfig(
+                mode=quad_isotope_transmission_mode,
+                min_probability=quad_transmission_min_probability,
+                max_isotopes=quad_transmission_max_isotopes,
+                precursor_survival_min=precursor_survival_min,
+                precursor_survival_max=precursor_survival_max,
+            )
+
+            self._py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDDA(
+                db_path, with_annotations, num_threads, isotope_config
+            )
+            self._with_annotations = with_annotations
 
     @property
     def _ptr(self):
@@ -97,6 +129,7 @@ class DDAFrameBuilder:
         instance._py_ptr = ptr
         instance._with_annotations = False
         instance.path = ""
+        instance.lazy = False
         return instance
 
     def build_frames(
@@ -127,17 +160,30 @@ class DDAFrameBuilder:
         Returns:
             List of built TimsFrame objects.
         """
-        frames = self._py_ptr.build_frames(
-            frame_ids,
-            fragment,
-            mz_noise_precursor,
-            mz_noise_uniform,
-            precursor_noise_ppm,
-            mz_noise_fragment,
-            fragment_noise_ppm,
-            right_drag,
-            num_threads,
-        )
+        if self.lazy:
+            # The lazy builder fixes its own thread count and takes no num_threads arg.
+            frames = self._py_ptr.build_frames_lazy(
+                frame_ids,
+                fragment,
+                mz_noise_precursor,
+                mz_noise_uniform,
+                precursor_noise_ppm,
+                mz_noise_fragment,
+                fragment_noise_ppm,
+                right_drag,
+            )
+        else:
+            frames = self._py_ptr.build_frames(
+                frame_ids,
+                fragment,
+                mz_noise_precursor,
+                mz_noise_uniform,
+                precursor_noise_ppm,
+                mz_noise_fragment,
+                fragment_noise_ppm,
+                right_drag,
+                num_threads,
+            )
         return [TimsFrame.from_py_ptr(frame) for frame in frames]
 
     def build_frame(
@@ -166,6 +212,13 @@ class DDAFrameBuilder:
         Returns:
             Built TimsFrame object.
         """
+        if self.lazy:
+            # The lazy builder has no single-frame entry point; route through the
+            # batch path (returns one frame).
+            return self.build_frames(
+                [frame_id], fragment, mz_noise_precursor, mz_noise_uniform,
+                precursor_noise_ppm, mz_noise_fragment, fragment_noise_ppm, right_drag,
+            )[0]
         frame = self._py_ptr.build_frame(
             frame_id,
             fragment,
