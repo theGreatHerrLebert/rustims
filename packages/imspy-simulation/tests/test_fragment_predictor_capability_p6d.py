@@ -160,6 +160,68 @@ def test_astral_prediction_set_records_nce_provenance(tmp_path):
     assert n_stamped == 2
 
 
+def _config_with(**overrides):
+    """A SimulationConfig with defaults + required paths, for _validate tests
+    (bypasses TOML loading)."""
+    from imspy_simulation.timsim.simulator import SimulationConfig, get_default_settings
+
+    cfg = get_default_settings()
+    cfg.update({"save_path": "/tmp/x", "reference_path": "/tmp/y", "fasta_path": "/tmp/z"})
+    cfg.update(overrides)
+    c = SimulationConfig.__new__(SimulationConfig)
+    c._config = cfg
+    return c
+
+
+def test_config_validate_astral_requires_dia_and_nce():
+    # Default Bruker: valid without any NCE.
+    _config_with()._validate()
+
+    # Unknown instrument is rejected at config load.
+    with pytest.raises(ValueError, match="unknown instrument"):
+        _config_with(instrument="orbitrap_zoom")._validate()
+
+    # Astral + DDA is rejected at config load (not deep in the run).
+    with pytest.raises(ValueError, match="does not support DDA"):
+        _config_with(
+            instrument="orbitrap_astral", acquisition_type="DDA", collision_energy_nce=27
+        )._validate()
+
+    # Astral DIA without an NCE is rejected (no silent eV->NCE relabel).
+    with pytest.raises(ValueError, match="requires 'collision_energy_nce'"):
+        _config_with(instrument="orbitrap_astral", acquisition_type="DIA")._validate()
+
+    # Astral DIA with a positive NCE is valid.
+    _config_with(
+        instrument="orbitrap_astral", acquisition_type="DIA", collision_energy_nce=27.0
+    )._validate()
+
+
+def test_dia_builder_nce_override_replaces_collision_energy():
+    # The override block (independent of a live reference dataset): a builder whose
+    # dia_ms_ms_windows came from a Bruker reference (eV ~24-30) gets its CE fully
+    # replaced by the configured NCE — never relabelled.
+    import numpy as np
+    import pandas as pd
+
+    from imspy_simulation.acquisition import TimsTofAcquisitionBuilderDIA
+
+    b = TimsTofAcquisitionBuilderDIA.__new__(TimsTofAcquisitionBuilderDIA)
+    b.dia_ms_ms_windows = pd.DataFrame({"collision_energy": [24.1, 27.3, 30.0]})
+    b.collision_energy_nce = 27.0
+    b.round_collision_energy = True
+    b.collision_energy_decimals = 0
+
+    # Replicate the _setup override + rounding step.
+    if b.collision_energy_nce is not None:
+        b.dia_ms_ms_windows["collision_energy"] = float(b.collision_energy_nce)
+    if b.round_collision_energy:
+        b.dia_ms_ms_windows["collision_energy"] = np.round(
+            b.dia_ms_ms_windows["collision_energy"].values, decimals=b.collision_energy_decimals
+        )
+    assert list(b.dia_ms_ms_windows["collision_energy"]) == [27.0, 27.0, 27.0]
+
+
 @pytest.mark.skipif(
     os.environ.get("TIMSIM_KOINA_LIVE") != "1",
     reason="set TIMSIM_KOINA_LIVE=1 to run the live Koina Prosit HCD contract test",

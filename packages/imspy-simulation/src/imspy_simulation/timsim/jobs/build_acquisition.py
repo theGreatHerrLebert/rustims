@@ -16,6 +16,7 @@ def build_acquisition(
         reference_in_memory: bool = True,
         round_collision_energy: bool = True,
         collision_energy_decimals: int = 0,
+        collision_energy_nce: float = None,
         use_bruker_sdk: bool = True,
 ) -> TimsTofAcquisitionBuilder:
     """Build acquisition object from reference path.
@@ -43,6 +44,13 @@ def build_acquisition(
                                                               f"must be one of {known_acquisitions}."
 
     if acquisition_type.lower() == 'dda':
+
+        if collision_energy_nce is not None:
+            # Astral (NCE) is a DIA instrument; DDA-PASEF CE is Bruker scan-driven.
+            raise ValueError(
+                "collision_energy_nce (normalized CE) is only valid for DIA "
+                "acquisition; DDA-PASEF collision energy is Bruker scan-driven."
+            )
 
         if verbose:
             print("Using DDA acquisition mode ...")
@@ -89,5 +97,6 @@ def build_acquisition(
             verbose=verbose,
             use_reference_layout=use_reference_ds_layout,
             round_collision_energy=round_collision_energy,
-            collision_energy_decimals=collision_energy_decimals
+            collision_energy_decimals=collision_energy_decimals,
+            collision_energy_nce=collision_energy_nce,
         )

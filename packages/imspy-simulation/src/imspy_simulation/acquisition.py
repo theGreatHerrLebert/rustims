@@ -167,7 +167,8 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
                  rt_cycle_length=0.1054,
                  use_reference_ds_layout: bool = True,
                  round_collision_energy: bool = True,
-                 collision_energy_decimals: int = 1
+                 collision_energy_decimals: int = 1,
+                 collision_energy_nce: float = None
                  ):
 
         super().__init__(path, reference_ds, gradient_length, rt_cycle_length,
@@ -191,6 +192,10 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
         self.reference = reference_ds
         self.round_collision_energy = round_collision_energy
         self.collision_energy_decimals = collision_energy_decimals
+        # P6d: when set (Orbitrap Astral), the DIA window collision energies are
+        # REPLACED by this normalized collision energy (NCE) — the reference-derived
+        # Bruker eV values are not a valid NCE and must not be relabelled.
+        self.collision_energy_nce = collision_energy_nce
 
         # TODO: check if the number of scans in the window group file matches the number of scans in the experiment
 
@@ -287,6 +292,14 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             self.frame_table['ms_type'] = self.calculate_frame_types(verbose=verbose)
             self.frames_to_window_groups = self.generate_frame_to_window_group_table(verbose=verbose)
 
+        # P6d: for an Orbitrap Astral (NCE) run, REPLACE the reference-derived
+        # Bruker eV window collision energies with the configured NCE — a single
+        # fixed normalized collision energy across all windows. This makes the
+        # stored/applied CE a genuine NCE (not a relabelled eV value), so the NCE
+        # fragment model (Prosit HCD) and the render see consistent NCE.
+        if self.collision_energy_nce is not None:
+            self.dia_ms_ms_windows['collision_energy'] = float(self.collision_energy_nce)
+
         if self.round_collision_energy:
             self.dia_ms_ms_windows['collision_energy'] = np.round(self.dia_ms_ms_windows['collision_energy'].values,
                                                                   decimals=self.collision_energy_decimals)
@@ -317,7 +330,8 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             verbose: bool = True,
             use_reference_layout: bool = True,
             round_collision_energy: bool = True,
-            collision_energy_decimals: int = 1
+            collision_energy_decimals: int = 1,
+            collision_energy_nce: float = None
     ) -> 'TimsTofAcquisitionBuilderDIA':
 
         acquisition_name = config['name'].lower().replace('pasef', '')
@@ -335,7 +349,8 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             rt_cycle_length=config['rt_cycle_length'],
             use_reference_ds_layout=use_reference_layout,
             round_collision_energy=round_collision_energy,
-            collision_energy_decimals=collision_energy_decimals
+            collision_energy_decimals=collision_energy_decimals,
+            collision_energy_nce=collision_energy_nce
         )
 
     @classmethod

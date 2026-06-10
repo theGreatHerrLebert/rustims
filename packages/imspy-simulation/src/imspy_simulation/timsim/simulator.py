@@ -361,6 +361,10 @@ def get_default_settings() -> dict:
         # Acquisition settings
         'round_collision_energy': True,
         'collision_energy_decimals': 0,
+        # P6d: for instrument='orbitrap_astral', the normalized collision energy
+        # (NCE) that REPLACES the reference-derived Bruker eV window CE (required
+        # for an Astral run). Ignored for Bruker timsTOF.
+        'collision_energy_nce': None,
 
         # Variation settings
         're_scale_rt': False,
@@ -549,6 +553,34 @@ class SimulationConfig:
                 raise ValueError(
                     "projection_mode is not yet supported with enable_checkpoints "
                     "(checkpoint resume would restore pre-projection distributions)"
+                )
+
+        # P6d: validate the instrument selection at config load (fail fast, before
+        # any expensive acquisition/simulation work leaves partial output).
+        from .jobs.register_prediction_set import INSTRUMENT_ACTIVATION
+        instrument = str(self._config.get('instrument', 'bruker_timstof')).lower()
+        if instrument not in INSTRUMENT_ACTIVATION:
+            raise ValueError(
+                f"unknown instrument '{instrument}'. Supported: "
+                f"{sorted(INSTRUMENT_ACTIVATION)}."
+            )
+        if instrument == 'orbitrap_astral':
+            # Astral is a DIA, no-IMS, NCE instrument. DDA-PASEF CE is Bruker
+            # scan-driven, and the run MUST supply a genuine normalized collision
+            # energy — otherwise the reference-derived Bruker eV windows would be
+            # silently mislabelled as NCE and fed to the NCE predictor.
+            if self._config.get('acquisition_type') == 'DDA':
+                raise ValueError(
+                    "instrument 'orbitrap_astral' does not support DDA acquisition "
+                    "(DDA-PASEF collision energy is Bruker scan-driven). Use DIA."
+                )
+            nce = self._config.get('collision_energy_nce')
+            if nce is None or not (isinstance(nce, (int, float)) and nce > 0):
+                raise ValueError(
+                    "instrument 'orbitrap_astral' requires 'collision_energy_nce' "
+                    "(a positive normalized collision energy, e.g. 27). The DIA "
+                    "windows' collision energies are reference-derived Bruker eV and "
+                    "must be replaced by a real NCE for an Astral run, not relabelled."
                 )
 
     def __getattr__(self, name: str):
@@ -904,6 +936,7 @@ def main():
         reference_in_memory=config.reference_in_memory,
         round_collision_energy=config.round_collision_energy,
         collision_energy_decimals=config.collision_energy_decimals,
+        collision_energy_nce=getattr(config, 'collision_energy_nce', None),
         use_bruker_sdk=use_bruker_sdk,
     )
 
@@ -1397,14 +1430,8 @@ def main():
     )
     instrument = str(getattr(config, 'instrument', 'bruker_timstof'))
     activation_method, energy_unit = resolve_instrument_activation(instrument)
-    # Astral DDA-PASEF is not modelled (PASEF CE is Bruker scan-driven); the Astral
-    # acquisition is DIA. Refuse the contradiction rather than emit eV-formula CE
-    # under an NCE label.
-    if instrument.lower() == 'orbitrap_astral' and config.acquisition_type == 'DDA':
-        raise ValueError(
-            "instrument 'orbitrap_astral' does not support DDA acquisition "
-            "(DDA-PASEF collision energy is Bruker scan-driven). Use DIA."
-        )
+    # (instrument validity, Astral⇒DIA, and Astral⇒collision_energy_nce are all
+    # enforced at config load in SimulationConfig._validate — fail fast.)
     if instrument.lower() != 'bruker_timstof':
         logger.info(
             f"  Instrument: {instrument} (activation={activation_method}, CE unit={energy_unit})"
