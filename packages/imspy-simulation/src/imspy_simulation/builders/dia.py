@@ -53,6 +53,12 @@ class DIAFrameBuilder:
         quad_transmission_max_isotopes: int = 10,
         precursor_survival_min: float = 0.0,
         precursor_survival_max: float = 0.0,
+        projection_mode: str | None = None,
+        target_p: float = 0.999,
+        frame_step_size: float = 0.001,
+        scan_step_size: float = 0.0001,
+        n_steps: int = 1000,
+        remove_epsilon: float = 1e-4,
     ):
         """Initialize the DIA frame builder.
 
@@ -89,6 +95,14 @@ class DIAFrameBuilder:
         if lazy and with_annotations:
             raise ValueError("Annotation support is not available with lazy loading.")
 
+        if lazy and projection_mode not in (None, "columns"):
+            # The lazy builder is not yet projector-fed (P4a2). Fail loudly rather
+            # than silently fall back to the legacy columns.
+            raise ValueError(
+                f"projection_mode={projection_mode!r} is not yet supported with lazy "
+                "loading (the lazy builder still reads the legacy columns)."
+            )
+
         if lazy:
             if quad_isotope_transmission_mode != 'none':
                 import logging
@@ -107,8 +121,14 @@ class DIAFrameBuilder:
                 precursor_survival_max=precursor_survival_max,
             )
 
+            # projection_mode (P4): None/'columns' = legacy JSON columns (default);
+            # 'legacy_compat'/'accurate' source occurrence/abundance from the
+            # render-time projector instead, so the builder is fed without the
+            # device-projection columns.
             self._py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDIA(
-                db_path, with_annotations, num_threads, isotope_config
+                db_path, with_annotations, num_threads, isotope_config,
+                projection_mode, target_p, frame_step_size, scan_step_size,
+                n_steps, remove_epsilon,
             )
             self._with_annotations = with_annotations
 

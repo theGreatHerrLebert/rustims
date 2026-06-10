@@ -51,7 +51,25 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         num_threads: usize,
         isotope_config: IsotopeTransmissionConfig,
     ) -> rusqlite::Result<Self> {
-        let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::new(path)?;
+        Self::new_with_config_and_source(
+            path,
+            with_annotations,
+            num_threads,
+            isotope_config,
+            &crate::sim::projector::DistributionSource::Columns,
+        )
+    }
+
+    /// As [`new_with_config`], but the precursor builder's occurrence/abundance
+    /// distributions come from `source` (P4: `Columns` default, or the projector).
+    pub fn new_with_config_and_source(
+        path: &Path,
+        with_annotations: bool,
+        num_threads: usize,
+        isotope_config: IsotopeTransmissionConfig,
+        source: &crate::sim::projector::DistributionSource,
+    ) -> rusqlite::Result<Self> {
+        let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::from_source(path, source)?;
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
 
         let fragment_ions = handle.read_fragment_ions()?;

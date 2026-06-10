@@ -49,9 +49,20 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
     /// * A Result containing the TimsTofSynthetics instance
     ///
     pub fn new(path: &Path) -> Result<Self> {
+        Self::from_source(path, &crate::sim::projector::DistributionSource::Columns)
+    }
+
+    /// Construct the builder with occurrence/abundance distributions sourced from
+    /// `source` (P4): `Columns` (legacy JSON, the default — byte-unchanged) or the
+    /// render-time `Projector`. Identical-shape `PeptidesSim`/`IonSim` either way,
+    /// so the maps + all downstream consumers are untouched.
+    pub fn from_source(
+        path: &Path,
+        source: &crate::sim::projector::DistributionSource,
+    ) -> Result<Self> {
         let handle = TimsTofSyntheticsDataHandle::new(path)?;
-        let ions = handle.read_ions()?;
-        let peptides = handle.read_peptides()?;
+        let ions = handle.read_ions_with_source(source)?;
+        let peptides = handle.read_peptides_with_source(source)?;
         let scans = handle.read_scans()?;
         let frames = handle.read_frames()?;
 
