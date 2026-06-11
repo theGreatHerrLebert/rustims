@@ -112,10 +112,16 @@ class ThermoRawWriter(AcquisitionWriter):
         template: str,
         out: str,
         overlay_merge_tol_ppm: Optional[float] = None,
+        allow_partial: bool = False,
     ) -> None:
+        # ``allow_partial`` permits ``finalize`` even when fewer scans than the
+        # template holds were authored; otherwise a Replace run that does not fill
+        # every slot fails loudly (the unauthored slots keep the template's real
+        # signal). Production Astral runs author every slot; this is for partial
+        # writes (e.g. smoke tests).
         acq = _require_thermo()
         self._writer = acq.PyThermoRawWriter.from_template(
-            template, out, overlay_merge_tol_ppm
+            template, out, overlay_merge_tol_ppm, allow_partial
         )
         self._finalized = False
 

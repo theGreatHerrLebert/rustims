@@ -48,7 +48,8 @@ def test_thermo_writer_round_trips_ms1_and_ms2(tmp_path):
     ms1 = _Spec([400.1234, 500.5678, 750.3456], [1.0e5, 2.5e5, 3.3e5])
     ms2 = _Spec([150.05, 333.33, 555.55], [2.0e4, 1.0e5, 3.0e4])
 
-    with ThermoRawWriter(TEMPLATE, out) as w:
+    # Authors only 2 of the template's many slots -> opt into partial finalize.
+    with ThermoRawWriter(TEMPLATE, out, allow_partial=True) as w:
         assert isinstance(w, AcquisitionWriter)
         cap_ms1, cap_ms2 = w.capacity
         assert cap_ms1 > 0 and cap_ms2 > 0
@@ -68,7 +69,7 @@ def test_thermo_writer_round_trips_ms1_and_ms2(tmp_path):
 @needs_thermo
 def test_thermo_writer_rejects_finalize_twice(tmp_path):
     out = str(tmp_path / "double_final.raw")
-    w = ThermoRawWriter(TEMPLATE, out)
+    w = ThermoRawWriter(TEMPLATE, out, allow_partial=True)
     w.write_ms1(_Spec([400.0], [1.0e5]), retention_time=0.5)
     w.finalize()
     with pytest.raises(RuntimeError):

@@ -270,14 +270,18 @@ fn pack_peaks(mz: &[f64], intensity: &[f64]) -> PyResult<Vec<(f64, f32)>> {
 impl PyThermoRawWriter {
     /// Open `template` and prepare to author into `out`. Pass
     /// `overlay_merge_tol_ppm` (finite, > 0) to overlay onto the real template
-    /// signal instead of replacing it.
+    /// signal instead of replacing it. Pass `allow_partial=True` to permit
+    /// `finalize` even when fewer scans than the template holds were authored —
+    /// otherwise a Replace run that does not fill every slot fails loudly (the
+    /// zero-residual contract: unauthored slots keep the template's real signal).
     #[staticmethod]
-    #[pyo3(signature = (template, out, overlay_merge_tol_ppm=None))]
+    #[pyo3(signature = (template, out, overlay_merge_tol_ppm=None, allow_partial=false))]
     pub fn from_template(
         py: Python<'_>,
         template: &str,
         out: &str,
         overlay_merge_tol_ppm: Option<f64>,
+        allow_partial: bool,
     ) -> PyResult<Self> {
         use rustdf::sim::acquisition::{ThermoRawWriter, WriteMode};
         if let Some(tol) = overlay_merge_tol_ppm {
@@ -289,7 +293,8 @@ impl PyThermoRawWriter {
         }
         let mut w = py
             .allow_threads(|| ThermoRawWriter::from_template(template, out))
-            .map_err(PyErr::from)?;
+            .map_err(PyErr::from)?
+            .with_allow_partial(allow_partial);
         if let Some(tol) = overlay_merge_tol_ppm {
             w = w.with_mode(WriteMode::Overlay { merge_tol_ppm: tol });
         }
