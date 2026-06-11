@@ -634,6 +634,22 @@ class SimulationConfig:
                 )
             if not os.path.exists(template):
                 raise FileNotFoundError(f"astral_template_path does not exist: {template}")
+            # The Astral .raw writer + dispatch live behind the connector's 'thermo'
+            # feature, which the published wheels disable (the Thermo writer
+            # dependency is private). Fail fast at config load instead of an
+            # AttributeError after a full simulation.
+            try:
+                import imspy_connector
+                thermo_ok = bool(imspy_connector.py_acquisition.has_thermo())
+            except Exception:
+                thermo_ok = False
+            if not thermo_ok:
+                raise ValueError(
+                    "instrument 'orbitrap_astral' requires imspy-connector built with "
+                    "the 'thermo' feature (maturin build --release --features thermo, "
+                    "then reinstall). The published wheels disable it because the "
+                    "Thermo .raw writer dependency is private."
+                )
 
     def __getattr__(self, name: str):
         """Allow attribute-style access to configuration values."""

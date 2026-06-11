@@ -161,16 +161,20 @@ pub fn write_astral_raw(
             let ev = builder.render_fragment_scan(frame_id, &wt, ce, DataMode::Centroid);
             let mut d = ScanDescriptor::from_rendered_event(&ev, ce)?;
             cap_top_intensity(&mut d.peaks, opts.max_ms2_peaks);
-            if !d.peaks.is_empty() {
-                ms2_nonempty += 1;
-            }
             (d, ce)
         };
 
         // Author; on a residual packet-budget overflow, consume the slot with an
-        // empty (cleared) scan so the schedule + checksum stay intact.
+        // empty (cleared) scan so the schedule + checksum stay intact. Count a
+        // non-empty MS2 only when its actual (non-empty) payload was authored — a
+        // cleared scan is empty in the output and must not be counted.
+        let had_peaks = !desc.peaks.is_empty();
         match writer.write_scan(&desc) {
-            Ok(()) => {}
+            Ok(()) => {
+                if !is_ms1 && had_peaks {
+                    ms2_nonempty += 1;
+                }
+            }
             Err(_) => {
                 desc.peaks = Vec::new();
                 writer

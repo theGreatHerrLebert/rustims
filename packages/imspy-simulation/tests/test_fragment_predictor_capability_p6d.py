@@ -197,18 +197,25 @@ def test_config_validate_astral_requires_dia_and_nce():
     with pytest.raises(ValueError, match="does not support DDA"):
         astral(acquisition_type="DDA")._validate()
 
-    # collision_energy_nce is OPTIONAL for the build-from-template path: the
-    # template supplies a genuine per-window NCE, so an Astral run is valid WITHOUT
-    # it (the template's NCE is used).
-    astral(collision_energy_nce=None)._validate()
-
-    # But if set, it must be positive (it overrides every window with that NCE).
+    # If set, collision_energy_nce must be positive (checked before the connector
+    # thermo check, so this holds regardless of the connector build).
     with pytest.raises(ValueError, match="collision_energy_nce"):
         astral(collision_energy_nce=-5.0)._validate()
 
-    # Astral DIA with a positive NCE override + an existing template is valid (no
-    # Bruker reference needed).
-    astral(collision_energy_nce=27.0)._validate()
+    # The fully-valid Astral cases require the connector built with the 'thermo'
+    # feature (the .raw writer). With it: valid (NCE optional, template-sourced).
+    # Without it: a clear fail-fast at config load (no Bruker reference needed).
+    try:
+        import imspy_connector
+        _thermo = bool(imspy_connector.py_acquisition.has_thermo())
+    except Exception:
+        _thermo = False
+    if _thermo:
+        astral(collision_energy_nce=None)._validate()
+        astral(collision_energy_nce=27.0)._validate()
+    else:
+        with pytest.raises(ValueError, match="thermo"):
+            astral(collision_energy_nce=27.0)._validate()
 
     # Astral + precursor survival is rejected (deterministic render; survival is
     # stochastic — refuse rather than silently drop it).
