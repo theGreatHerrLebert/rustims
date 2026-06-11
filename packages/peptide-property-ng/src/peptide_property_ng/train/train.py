@@ -51,6 +51,14 @@ def train_epoch(model, loader, loss_fn, optimizer, device, tasks=None) -> dict[s
 def main() -> None:
     ap = argparse.ArgumentParser(description="Train the unified peptide property model.")
     ap.add_argument("--datasets-glob", default="/scratch/claudius-proteomics/*")
+    ap.add_argument("--hf-corpus", default=None,
+                    help="path to aggregated HF corpus dir (tier1/ + tier3/ with "
+                         "{train,val,test}.parquet); uses the HF loader instead of Sage")
+    ap.add_argument("--hf-max-datasets", type=int, default=0,
+                    help="limit the HF run to the first N accessions (0 = all)")
+    ap.add_argument("--hf-rt-lookup", default=None,
+                    help="aligned_rt lookup parquet (accession,psm_id,aligned_rt); "
+                         "uses Sage cross-run-aligned RT instead of raw rt_seconds")
     ap.add_argument("--catalog", default=None,
                     help="path to timstof_catalog.tsv for per-dataset instrument/acq conditioning")
     ap.add_argument("--default-ce", type=float, default=0.26,
@@ -92,19 +100,34 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"[{time.strftime('%H:%M:%S')}] discovering datasets ...", flush=True)
-    sage_dirs = discover_sage_dirs(args.datasets_glob)
-    if args.max_datasets:
-        sage_dirs = sage_dirs[: args.max_datasets]
-    print(f"  {len(sage_dirs)} datasets")
-
-    print(f"[{time.strftime('%H:%M:%S')}] preparing examples (cap {args.cap}/dataset) ...", flush=True)
-    ce_cal = load_ce_calibration(args.ce_calibration) if args.ce_calibration else None
-    if ce_cal is not None:
-        print(f"  CE calibration loaded: {len(ce_cal):,} keys from {args.ce_calibration}")
     t0 = time.time()
-    splits = build_split_datasets(sage_dirs, cap=args.cap, seed=args.seed,
-                                  catalog_path=args.catalog, default_ce=args.default_ce,
-                                  ce_calibration=ce_cal)
+    if args.hf_corpus:
+        import pyarrow.compute as _pc
+        import pyarrow.dataset as _pds
+        from peptide_property_ng.data.hf_corpus_dataset import build_split_datasets_hf
+        accs = None
+        if args.hf_max_datasets:
+            all_accs = sorted(_pc.unique(_pds.dataset(
+                f"{args.hf_corpus}/tier1/val.parquet").to_table(
+                columns=["accession"])["accession"]).to_pylist())
+            accs = all_accs[: args.hf_max_datasets]
+        print(f"[{time.strftime('%H:%M:%S')}] HF corpus {args.hf_corpus} "
+              f"(cap {args.cap}/dataset, {len(accs) if accs else 'all'} datasets) ...", flush=True)
+        splits = build_split_datasets_hf(args.hf_corpus, cap=args.cap,
+                                         seed=args.seed, accessions=accs,
+                                         rt_lookup=args.hf_rt_lookup)
+    else:
+        sage_dirs = discover_sage_dirs(args.datasets_glob)
+        if args.max_datasets:
+            sage_dirs = sage_dirs[: args.max_datasets]
+        print(f"  {len(sage_dirs)} datasets")
+        print(f"[{time.strftime('%H:%M:%S')}] preparing examples (cap {args.cap}/dataset) ...", flush=True)
+        ce_cal = load_ce_calibration(args.ce_calibration) if args.ce_calibration else None
+        if ce_cal is not None:
+            print(f"  CE calibration loaded: {len(ce_cal):,} keys from {args.ce_calibration}")
+        splits = build_split_datasets(sage_dirs, cap=args.cap, seed=args.seed,
+                                      catalog_path=args.catalog, default_ce=args.default_ce,
+                                      ce_calibration=ce_cal)
     for name, ds in splits.items():
         print(f"  {name}: {len(ds):,} examples")
     print(f"  prepared in {time.time() - t0:.0f}s")
