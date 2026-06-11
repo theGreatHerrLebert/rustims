@@ -340,6 +340,10 @@ def get_default_settings() -> dict:
         # the fragment-model compatibility guard, and the prediction-set provenance.
         # Default 'bruker_timstof' preserves current behaviour exactly.
         'instrument': 'bruker_timstof',
+        # P6e(b): for instrument='orbitrap_astral', the Thermo .raw template the run
+        # is built from — its real per-scan schedule + windows become the
+        # acquisition (no Bruker reference). Required for an Astral run.
+        'astral_template_path': None,
 
         'sigma_lower_rt': None,
         'sigma_upper_rt': None,
@@ -516,10 +520,15 @@ class SimulationConfig:
         if self._config.get('from_findings') and self._config.get('from_existing'):
             raise ValueError("Cannot use both 'from_findings' and 'from_existing' at the same time")
 
+        # An Astral run is built from a Thermo .raw template, NOT a Bruker
+        # reference .d — so it requires astral_template_path in place of
+        # reference_path (the lean, Bruker-independent build-from-template path).
+        instrument = str(self._config.get('instrument', 'bruker_timstof')).lower()
+        ref_key = 'astral_template_path' if instrument == 'orbitrap_astral' else 'reference_path'
         if self._config.get('from_findings'):
-            required = ['save_path', 'reference_path', 'findings_path']
+            required = ['save_path', ref_key, 'findings_path']
         else:
-            required = ['save_path', 'reference_path', 'fasta_path']
+            required = ['save_path', ref_key, 'fasta_path']
         missing = [key for key in required if not self._config.get(key)]
 
         if missing:
@@ -611,6 +620,17 @@ class SimulationConfig:
                     "(the Astral MS2 render is deterministic; survival is stochastic). "
                     "Set precursor_survival_min/max to 0 for an Astral run."
                 )
+            # Build-from-template: an Astral run is built from a Thermo .raw template
+            # (its real per-scan schedule + windows become the acquisition).
+            template = self._config.get('astral_template_path')
+            if not template:
+                raise ValueError(
+                    "instrument 'orbitrap_astral' requires 'astral_template_path' "
+                    "(a Thermo .raw whose per-scan schedule + windows the run is "
+                    "built from)."
+                )
+            if not os.path.exists(template):
+                raise FileNotFoundError(f"astral_template_path does not exist: {template}")
 
     def __getattr__(self, name: str):
         """Allow attribute-style access to configuration values."""
@@ -938,7 +958,8 @@ def main():
 
     # Prepare paths
     save_path = check_path(config.save_path)
-    reference_path = check_path(config.reference_path)
+    # An Astral run has no Bruker reference .d (it builds from a .raw template).
+    reference_path = check_path(config.reference_path) if config.reference_path else None
     name = config.experiment_name.replace('[PLACEHOLDER]', f'{config.acquisition_type}').replace("'", "")
 
     # Save configuration for future reference
@@ -954,22 +975,37 @@ def main():
         logger.info(f"  Output path: {save_path}")
         logger.info("")
 
-    acquisition_builder = build_acquisition(
-        path=save_path,
-        reference_path=reference_path,
-        exp_name=name,
-        acquisition_type=config.acquisition_type,
-        verbose=not config.silent_mode,
-        gradient_length=config.gradient_length,
-        use_reference_ds_layout=config.use_reference_layout,
-        reference_in_memory=config.reference_in_memory,
-        round_collision_energy=config.round_collision_energy,
-        collision_energy_decimals=config.collision_energy_decimals,
-        # NCE override is Astral-only — never replace Bruker eV windows with an NCE
-        # (that would silently mislabel eV as NCE). Ignored for Bruker by design.
-        collision_energy_nce=astral_nce_override(config),
-        use_bruker_sdk=use_bruker_sdk,
-    )
+    instrument = str(getattr(config, 'instrument', 'bruker_timstof')).lower()
+    if instrument == 'orbitrap_astral':
+        # Build-from-template (P6e option b): NO Bruker reference. The Astral
+        # template's real per-scan schedule + windows become the acquisition, so
+        # the trunk is simulated on the template's true non-uniform timeline.
+        from .jobs.astral_acquisition import AstralAcquisitionBuilder
+        logger.info(f"  Astral build-from-template: {config.astral_template_path}")
+        acquisition_builder = AstralAcquisitionBuilder(
+            str(Path(save_path) / name),
+            config.astral_template_path,
+            round_collision_energy=config.round_collision_energy,
+            collision_energy_decimals=config.collision_energy_decimals,
+            verbose=not config.silent_mode,
+        )
+    else:
+        acquisition_builder = build_acquisition(
+            path=save_path,
+            reference_path=reference_path,
+            exp_name=name,
+            acquisition_type=config.acquisition_type,
+            verbose=not config.silent_mode,
+            gradient_length=config.gradient_length,
+            use_reference_ds_layout=config.use_reference_layout,
+            reference_in_memory=config.reference_in_memory,
+            round_collision_energy=config.round_collision_energy,
+            collision_energy_decimals=config.collision_energy_decimals,
+            # NCE override is Astral-only — never replace Bruker eV windows with an
+            # NCE (that would silently mislabel eV as NCE). Ignored for Bruker.
+            collision_energy_nce=astral_nce_override(config),
+            use_bruker_sdk=use_bruker_sdk,
+        )
 
     if not config.silent_mode:
         logger.info(str(acquisition_builder))
@@ -1501,7 +1537,20 @@ def main():
         down_sample_factor=config.down_sample_factor,
     )
 
-    # JOB 10: Assemble frames
+    # JOB 10: Assemble frames -> vendor output.
+    if instrument == 'orbitrap_astral':
+        # The trunk is now simulated on the Astral template's timeline + windows
+        # (fragments at per-window NCE). The vendor output is a Thermo .raw authored
+        # from the template — NOT a Bruker .d via assemble_frames. The .raw dispatch
+        # (render frames -> ThermoRawWriter, frame->template slot) is the final P6e
+        # step; stop cleanly here rather than driving the Bruker .d path on the lean
+        # Astral builder's stubs.
+        raise NotImplementedError(
+            "Astral build-from-template acquisition + simulation are wired (the DB now "
+            "holds template-timed frames + per-window NCE fragments); the Thermo .raw "
+            "dispatch (write_astral_raw) is the next P6e step."
+        )
+
     logger.info(section_header("Assembling Frames", use_unicode))
     assemble_frames(
         acquisition_builder=acquisition_builder,

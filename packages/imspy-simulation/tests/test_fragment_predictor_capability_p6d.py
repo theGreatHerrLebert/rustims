@@ -181,30 +181,34 @@ def test_config_validate_astral_requires_dia_and_nce():
     with pytest.raises(ValueError, match="unknown instrument"):
         _config_with(instrument="orbitrap_zoom")._validate()
 
+    # An Astral run requires astral_template_path in place of reference_path
+    # (built from a .raw template, not a Bruker reference) — the early required-keys
+    # gate. Use this test file itself as a stand-in existing template path.
+    def astral(**o):
+        o.setdefault("acquisition_type", "DIA")
+        o.setdefault("collision_energy_nce", 27.0)
+        o.setdefault("astral_template_path", __file__)
+        return _config_with(instrument="orbitrap_astral", **o)
+
+    with pytest.raises(ValueError, match="astral_template_path"):
+        astral(astral_template_path=None)._validate()
+
     # Astral + DDA is rejected at config load (not deep in the run).
     with pytest.raises(ValueError, match="does not support DDA"):
-        _config_with(
-            instrument="orbitrap_astral", acquisition_type="DDA", collision_energy_nce=27
-        )._validate()
+        astral(acquisition_type="DDA")._validate()
 
     # Astral DIA without an NCE is rejected (no silent eV->NCE relabel).
     with pytest.raises(ValueError, match="requires 'collision_energy_nce'"):
-        _config_with(instrument="orbitrap_astral", acquisition_type="DIA")._validate()
+        astral(collision_energy_nce=None)._validate()
 
-    # Astral DIA with a positive NCE is valid.
-    _config_with(
-        instrument="orbitrap_astral", acquisition_type="DIA", collision_energy_nce=27.0
-    )._validate()
+    # Astral DIA with a positive NCE + an existing template is valid (no Bruker
+    # reference needed).
+    astral()._validate()
 
     # Astral + precursor survival is rejected (deterministic render; survival is
     # stochastic — refuse rather than silently drop it).
     with pytest.raises(ValueError, match="precursor_survival"):
-        _config_with(
-            instrument="orbitrap_astral",
-            acquisition_type="DIA",
-            collision_energy_nce=27.0,
-            precursor_survival_max=0.2,
-        )._validate()
+        astral(precursor_survival_max=0.2)._validate()
 
 
 def test_astral_nce_override_is_astral_only():
