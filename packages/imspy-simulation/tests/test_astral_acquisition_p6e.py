@@ -69,6 +69,38 @@ def test_rejects_degenerate_schedules():
     os.environ.get("TIMSIM_ASTRAL_TEMPLATE") is None,
     reason="set TIMSIM_ASTRAL_TEMPLATE + a thermo-enabled connector for the live test",
 )
+def test_astral_acquisition_builder_writes_db_without_bruker_reference(tmp_path):
+    import sqlite3
+
+    from imspy_simulation.timsim.jobs.astral_acquisition import AstralAcquisitionBuilder
+
+    template = os.environ["TIMSIM_ASTRAL_TEMPLATE"]
+    out = str(tmp_path / "astral_exp")
+    b = AstralAcquisitionBuilder(out, template, num_scans=64, verbose=False)
+
+    # Interface the simulator reads — present, no Bruker reference needed.
+    assert b.gradient_length > 0 and b.rt_cycle_length >= 0
+    assert b.tdf_writer.helper_handle.mz_lower > 0
+    assert b.tdf_writer.helper_handle.im_lower == 0.6
+    assert len(b.frame_to_template_scan) == len(b.frame_table)
+
+    # The four acquisition tables are written to synthetic_data.db.
+    con = sqlite3.connect(b.synthetics_handle.database_path)
+    tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"frames", "scans", "dia_ms_ms_info", "dia_ms_ms_windows"} <= tables
+    n_frames = con.execute("SELECT COUNT(*) FROM frames").fetchone()[0]
+    # Frame times are the template's real RTs (non-uniform): more than one distinct gap.
+    times = [r[0] for r in con.execute("SELECT time FROM frames ORDER BY frame_id")]
+    con.close()
+    assert n_frames == len(b.frame_table)
+    gaps = {round(times[i + 1] - times[i], 6) for i in range(min(50, len(times) - 1))}
+    assert len(gaps) > 1, "Astral RTs should be non-uniform (template-sourced)"
+
+
+@pytest.mark.skipif(
+    os.environ.get("TIMSIM_ASTRAL_TEMPLATE") is None,
+    reason="set TIMSIM_ASTRAL_TEMPLATE + a thermo-enabled connector for the live test",
+)
 def test_real_template_schedule_builds_tables():
     import imspy_connector
 
