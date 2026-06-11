@@ -63,6 +63,7 @@ def load_findings(
     inverse_mobility_std_mean: float,
     intensity_multiplier: float,
     verbose: bool,
+    reference_median: float | None = None,
 ) -> FindingsResult:
     """Read a standardized findings table and build TimSim DataFrames.
 
@@ -82,11 +83,26 @@ def load_findings(
         intensity_multiplier: User-facing knob applied *after* the
             auto-scaling (e.g. 10.0 for 10x brighter, 0.1 for 10x dimmer).
         verbose: Whether to log progress.
+        reference_median: Optional fixed intensity median used as the
+            event-scaling denominator instead of this sample's own median.
+            Default None = per-sample median (legacy behaviour). Pass the
+            SAME value to every condition of a multi-sample experiment to
+            preserve cross-sample (e.g. A/B) intensity ratios — otherwise each
+            condition divides by its own median, so (events = intensity/median)
+            any cross-sample ratio events_i/events_j is silently scaled by
+            median_j/median_i, which is != 1 when the conditions' intensity
+            distributions differ. Must be finite and > 0.
 
     Returns:
         FindingsResult with peptides, proteins, ions (if charge provided),
         and flags indicating which optional columns were present.
     """
+    if reference_median is not None and not (
+        np.isfinite(reference_median) and reference_median > 0
+    ):
+        raise ValueError(
+            f"reference_median must be a finite positive number, got {reference_median!r}"
+        )
 
     # ------------------------------------------------------------------
     # 1. Read and validate the input table
@@ -155,11 +171,13 @@ def load_findings(
             )
 
         peptides = _build_peptides_from_ions(ions, deduped, upscale_factor,
-                                              intensity_multiplier, has_rt, verbose)
+                                              intensity_multiplier, has_rt, verbose,
+                                              reference_median)
     else:
         # No ions to build — peptides directly from deduped rows
         peptides = _build_peptides_no_charge(deduped, upscale_factor,
-                                              intensity_multiplier, has_rt, verbose)
+                                              intensity_multiplier, has_rt, verbose,
+                                              reference_median)
         ions = None
 
     if len(peptides) == 0:
@@ -429,6 +447,7 @@ def _build_peptides_from_ions(
     intensity_multiplier: float,
     has_rt: bool,
     verbose: bool,
+    reference_median: float | None = None,
 ) -> pd.DataFrame:
     """Build peptides from the surviving ion set (charge path).
 
@@ -466,10 +485,11 @@ def _build_peptides_from_ions(
     peptide_intensities = ions.groupby("sequence")["relative_abundance"].first()  # placeholder
     # Recompute from deduped to include all charge-state intensities
     ion_intensity_by_seq = deduped[deduped["sequence"].isin(surviving_set)].groupby("sequence")["intensity"].sum()
-    median_intensity = _safe_median(ion_intensity_by_seq)
+    median_intensity = reference_median if reference_median is not None else _safe_median(ion_intensity_by_seq)
 
     if verbose:
-        logger.info(f"  Intensity scaling: median={median_intensity:.0f} -> "
+        src = "reference (shared)" if reference_median is not None else "per-sample"
+        logger.info(f"  Intensity scaling: median={median_intensity:.0f} ({src}) -> "
                      f"upscale_factor={upscale_factor}")
 
     peptide_rows = []
@@ -521,15 +541,17 @@ def _build_peptides_no_charge(
     intensity_multiplier: float,
     has_rt: bool,
     verbose: bool,
+    reference_median: float | None = None,
 ) -> pd.DataFrame:
     """Build peptides when charge column is absent (each row = one peptide)."""
     unique_proteins = deduped["protein"].unique()
     protein_name_to_id = {name: idx for idx, name in enumerate(unique_proteins)}
 
-    median_intensity = _safe_median(deduped["intensity"])
+    median_intensity = reference_median if reference_median is not None else _safe_median(deduped["intensity"])
 
     if verbose:
-        logger.info(f"  Intensity scaling: median={median_intensity:.0f} -> "
+        src = "reference (shared)" if reference_median is not None else "per-sample"
+        logger.info(f"  Intensity scaling: median={median_intensity:.0f} ({src}) -> "
                      f"upscale_factor={upscale_factor}")
 
     peptide_rows = []

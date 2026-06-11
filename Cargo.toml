@@ -2,9 +2,10 @@
 members = [
     "mscore",
     "rustdf",
-    "rustms", 
+    "rustms",
     "imspy_connector",
-    "imsjl_connector"
+    "imsjl_connector",
+    "tims-viewer"
 ]
 
 resolver = "2"
