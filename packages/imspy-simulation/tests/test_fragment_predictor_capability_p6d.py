@@ -197,6 +197,21 @@ def test_config_validate_astral_requires_dia_and_nce():
     )._validate()
 
 
+def test_astral_nce_override_is_astral_only():
+    from imspy_simulation.timsim.simulator import astral_nce_override
+
+    # Astral run: the configured NCE is forwarded.
+    assert astral_nce_override(
+        _config_with(instrument="orbitrap_astral", collision_energy_nce=27.0)
+    ) == 27.0
+    # Bruker run with a stray NCE: IGNORED (None) — never relabels eV as NCE.
+    assert astral_nce_override(
+        _config_with(instrument="bruker_timstof", collision_energy_nce=27.0)
+    ) is None
+    # Default (no instrument set): Bruker -> ignored.
+    assert astral_nce_override(_config_with()) is None
+
+
 def test_dia_builder_nce_override_replaces_collision_energy():
     # The override block (independent of a live reference dataset): a builder whose
     # dia_ms_ms_windows came from a Bruker reference (eV ~24-30) gets its CE fully

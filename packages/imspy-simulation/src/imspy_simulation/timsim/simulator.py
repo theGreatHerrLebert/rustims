@@ -459,6 +459,19 @@ def get_default_settings() -> dict:
     }
 
 
+def astral_nce_override(config) -> "float | None":
+    """The DIA-window NCE override to apply for this run (P6d).
+
+    Returns the configured normalized collision energy ONLY for an Orbitrap Astral
+    run; ``None`` (i.e. ignore it, keep the reference eV windows) for Bruker — so a
+    stray ``collision_energy_nce`` on a Bruker config can never silently replace eV
+    windows with an NCE while provenance still labels them eV."""
+    instrument = str(getattr(config, 'instrument', 'bruker_timstof')).lower()
+    if instrument == 'orbitrap_astral':
+        return getattr(config, 'collision_energy_nce', None)
+    return None
+
+
 class SimulationConfig:
     """
     Configuration container for timsim simulation parameters.
@@ -936,7 +949,9 @@ def main():
         reference_in_memory=config.reference_in_memory,
         round_collision_energy=config.round_collision_energy,
         collision_energy_decimals=config.collision_energy_decimals,
-        collision_energy_nce=getattr(config, 'collision_energy_nce', None),
+        # NCE override is Astral-only — never replace Bruker eV windows with an NCE
+        # (that would silently mislabel eV as NCE). Ignored for Bruker by design.
+        collision_energy_nce=astral_nce_override(config),
         use_bruker_sdk=use_bruker_sdk,
     )
 
