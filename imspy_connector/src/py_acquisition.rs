@@ -46,6 +46,36 @@ impl PyAcquisitionScheme {
         Ok(Self { inner })
     }
 
+    /// The template's FULL per-scan schedule (build-from-template timeline, P6e):
+    /// one row per scan as `(scan, retention_time_s, ms_level, isolation_center_mz,
+    /// isolation_width_mz, collision_energy)`. `isolation_*`/`collision_energy` are
+    /// `None` for MS1. An Astral run mirrors these frames 1:1 so the trunk is
+    /// simulated on the template's REAL (non-uniform) scan retention times rather
+    /// than a recomputed fixed cycle. Requires the `thermo` feature.
+    #[cfg(feature = "thermo")]
+    #[staticmethod]
+    pub fn thermo_frame_schedule(
+        py: Python<'_>,
+        path: &str,
+    ) -> PyResult<Vec<(u32, f64, u8, Option<f64>, Option<f64>, Option<f64>)>> {
+        let sched = py
+            .allow_threads(|| AcquisitionScheme::thermo_frame_schedule(path))
+            .map_err(PyErr::from)?;
+        Ok(sched
+            .into_iter()
+            .map(|s| {
+                (
+                    s.scan,
+                    s.retention_time_s,
+                    s.ms_level,
+                    s.isolation.map(|w| w.center_mz),
+                    s.isolation.map(|w| w.width_mz),
+                    s.collision_energy,
+                )
+            })
+            .collect())
+    }
+
     /// Extract from a SCIEX `.wiff` SWATH method (requires the `sciex` feature).
     /// SCIEX rolling CE isn't stored per-window, so it's left `Unknown` unless a
     /// linear rolling-CE model is supplied; supplying only one of the two CE
