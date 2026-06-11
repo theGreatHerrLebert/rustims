@@ -9,7 +9,7 @@ use mscore::simulation::annotation::{
 };
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
 use mscore::timstof::frame::TimsFrame;
-use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA};
+use mscore::timstof::quadrupole::{IonTransmission, TimsTransmissionDIA, WindowTransmission};
 use mscore::timstof::spectrum::TimsSpectrum;
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
@@ -20,7 +20,8 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 
 use crate::sim::containers::{IsotopeTransmissionConfig, IsotopeTransmissionMode};
-use crate::sim::scheme::InstrumentCapabilities;
+use crate::sim::projector::{IntensityStage, MzCoordSpace, RenderedEvent, RenderedSpectrum};
+use crate::sim::scheme::{DataMode, InstrumentCapabilities, IsolationWindow};
 use crate::sim::handle::{FragmentIonsWithComplementary, TimsTofSyntheticsDataHandle};
 use crate::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
 
@@ -820,6 +821,124 @@ impl TimsTofSyntheticsFrameBuilderDIA {
         )
     }
 
+    /// Render a fragment (MS2) frame as a vendor-neutral [`RenderedEvent::Scan`]
+    /// for a non-IMS instrument (P6e): collapse ONE isolation window's fragment
+    /// signal into the single MS2 spectrum an Astral/Orbitrap records.
+    ///
+    /// Astral has no ion-mobility axis, so (a) each precursor ion is gated into the
+    /// window ONCE via [`WindowTransmission::any_transmitted`] on its isotope
+    /// envelope (an m/z window, NOT a scan range), and (b) every transmitted ion
+    /// contributes its fragment series at the FULL mobility marginal
+    /// `frame_abundance × ion_abundance × total_events` (scan factor folded to 1.0)
+    /// — the same marginal contract as the MS1 render
+    /// ([`TimsTofSyntheticsPrecursorFrameBuilder::precursor_scan_marginal_spectrum`]),
+    /// NOT the Bruker per-scan `scan_abundance` sum. The isotope-transmission mode
+    /// is `None` (Astral capabilities gate it off), so the shared
+    /// [`fragment_series_spectrum`] kernel does the per-series scaling. `nce` is the
+    /// window's normalized collision energy: both the CE key the stored fragments
+    /// were predicted at AND the applied CE (the keying is unit-agnostic). Returns
+    /// an empty-spectrum MS2 `Scan` when nothing is transmitted / no fragments exist
+    /// — the writer must still consume and clear that template slot (zero residual).
+    pub fn render_fragment_scan(
+        &self,
+        frame_id: u32,
+        window: &WindowTransmission,
+        nce: f64,
+        data_mode: DataMode,
+    ) -> RenderedEvent {
+        let rt = *self
+            .precursor_frame_builder
+            .frame_to_rt
+            .get(&frame_id)
+            .unwrap_or(&0.0) as f64;
+        let isolation = Some(IsolationWindow {
+            center_mz: window.center_mz,
+            width_mz: window.width_mz,
+        });
+        let make_scan = |peaks: MzSpectrum| RenderedEvent::Scan {
+            ms_level: 2,
+            retention_time_s: rt,
+            isolation,
+            spectrum: RenderedSpectrum {
+                mz: (*peaks.mz).clone(),
+                intensity: (*peaks.intensity).clone(),
+                coords: MzCoordSpace::Physical,
+                mode: data_mode,
+                detector_applied: false,
+                stage: IntensityStage::Transmitted,
+            },
+        };
+
+        let (Some(fragment_ions), Some((peptide_ids, frame_abundances))) = (
+            self.fragment_ions.as_ref(),
+            self.precursor_frame_builder.frame_to_abundances.get(&frame_id),
+        ) else {
+            return make_scan(MzSpectrum::from_collection(vec![]));
+        };
+
+        let mut specs: Vec<MzSpectrum> = Vec::new();
+        for (peptide_id, frame_abundance) in peptide_ids.iter().zip(frame_abundances.iter()) {
+            let Some((ion_abundances, _scan_occ, _scan_abu, charges, spectra)) =
+                self.precursor_frame_builder.peptide_to_ions.get(peptide_id)
+            else {
+                continue;
+            };
+            let total_events = *self
+                .precursor_frame_builder
+                .peptide_to_events
+                .get(peptide_id)
+                .unwrap();
+            for (index, ion_abundance) in ion_abundances.iter().enumerate() {
+                let spectrum = &spectra[index];
+                let charge_state = charges[index];
+                // Quadrupole window gating (m/z), once per ion — no IMS scans.
+                if !window.any_transmitted(&spectrum.mz, None) {
+                    continue;
+                }
+                // Resolve the fragment CE key at the window NCE (unit-agnostic).
+                let Some(ce_key) = crate::sim::handle::resolve_fragment_ce_key(
+                    fragment_ions,
+                    *peptide_id,
+                    charge_state,
+                    nce,
+                ) else {
+                    if crate::sim::handle::fragment_prefix_exists(
+                        fragment_ions,
+                        *peptide_id,
+                        charge_state,
+                    ) {
+                        panic!(
+                            "Astral fragment lookup miss: peptide {} charge {} applied NCE {:.4} \
+                             has predicted fragments, but none within 0.1 — the prediction set \
+                             does not cover this collision energy",
+                            *peptide_id, charge_state, nce,
+                        );
+                    }
+                    continue;
+                };
+                let (_, fragment_series_vec) = fragment_ions
+                    .get(&(*peptide_id, charge_state, ce_key))
+                    .expect("resolve_fragment_ce_key returned a present key");
+
+                // Full mobility marginal: scan factor folded to 1.0 (no grid).
+                let fraction_events = frame_abundance * ion_abundance * total_events;
+                for (series_idx, fragment_ion_series) in fragment_series_vec.iter().enumerate() {
+                    specs.push(fragment_series_spectrum(
+                        IsotopeTransmissionMode::None,
+                        fragment_ion_series,
+                        series_idx,
+                        fraction_events,
+                        1.0,
+                        None,
+                        &HashSet::new(),
+                        self.isotope_config.max_isotopes,
+                    ));
+                }
+            }
+        }
+        make_scan(MzSpectrum::from_collection(specs))
+    }
+
     pub fn build_fragment_frame_annotated(
         &self,
         frame_id: u32,
@@ -1203,5 +1322,107 @@ mod p6a_fragment_kernel_tests {
             IsotopeTransmissionMode::PerFragment, &series, 0, 2.0, 0.5, None, &empty, 10,
         );
         assert_eq!(*pf.intensity, vec![20.0, 40.0]);
+    }
+
+    use crate::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
+
+    /// Hand-built single-frame DIA builder: frame 2 holds peptide 10 (charge 2,
+    /// precursor m/z 600) at frame_abundance 0.8, total_events 1000, captured on a
+    /// scan grid Σ scan_abundance = 0.5. Its fragments (one b/y series, a single
+    /// peak at m/z 200) are stored at NCE 27 (map key round(27*10)=270).
+    fn one_fragment_frame_dia() -> TimsTofSyntheticsFrameBuilderDIA {
+        let mut frame_to_abundances = BTreeMap::new();
+        frame_to_abundances.insert(2u32, (vec![10u32], vec![0.8f32]));
+        let mut peptide_to_ions = BTreeMap::new();
+        peptide_to_ions.insert(
+            10u32,
+            (
+                vec![1.0f32],
+                vec![vec![100u32, 101u32]],
+                vec![vec![0.3f32, 0.2f32]], // Σ = 0.5 captured (ignored by the marginal)
+                vec![2i8],
+                vec![MzSpectrum::new(vec![600.0], vec![1.0])], // precursor envelope
+            ),
+        );
+        let mut peptide_to_events = BTreeMap::new();
+        peptide_to_events.insert(10u32, 1000.0f32);
+        let mut frame_to_rt = BTreeMap::new();
+        frame_to_rt.insert(2u32, 30.0f32);
+
+        let precursor = TimsTofSyntheticsPrecursorFrameBuilder {
+            ions: BTreeMap::new(),
+            peptides: BTreeMap::new(),
+            scans: Vec::new(),
+            frames: Vec::new(),
+            precursor_frame_id_set: HashSet::new(),
+            frame_to_abundances,
+            peptide_to_ions,
+            frame_to_rt,
+            scan_to_mobility: BTreeMap::new(),
+            peptide_to_events,
+            ion_id_to_peptide_charge: BTreeMap::new(),
+        };
+
+        let mut fragment_ions = BTreeMap::new();
+        fragment_ions.insert(
+            (10u32, 2i8, 270i32), // NCE 27 -> round(27*10)
+            (
+                PeptideProductIonSeriesCollection::new(vec![]),
+                vec![MzSpectrum::new(vec![200.0], vec![1.0])],
+            ),
+        );
+
+        TimsTofSyntheticsFrameBuilderDIA {
+            path: String::new(),
+            precursor_frame_builder: precursor,
+            transmission_settings: TimsTransmissionDIA::new(
+                vec![], vec![], vec![], vec![], vec![], vec![], vec![], None,
+            ),
+            fragmentation_settings: TimsTofCollisionEnergyDIA::new(
+                vec![], vec![], vec![], vec![], vec![], vec![],
+            ),
+            fragment_ions: Some(fragment_ions),
+            fragment_ions_annotated: None,
+            isotope_config: IsotopeTransmissionConfig::default(),
+            fragment_ions_with_transmission: None,
+            capabilities: InstrumentCapabilities::astral(),
+        }
+    }
+
+    #[test]
+    fn astral_ms2_render_full_marginal_and_window_gating() {
+        let b = one_fragment_frame_dia();
+
+        // Window covering the precursor (m/z 600): the ion is transmitted once and
+        // contributes its fragment series at the FULL mobility marginal
+        // 0.8 * 1.0 * 1000 * 1.0 = 800 (NOT the captured Σ scan_abundance=0.5 -> 400).
+        let win = WindowTransmission::new(600.0, 50.0, 15.0);
+        let RenderedEvent::Scan { ms_level, isolation, spectrum, .. } =
+            b.render_fragment_scan(2, &win, 27.0, DataMode::Centroid)
+        else {
+            panic!("MS2 render must be a Scan");
+        };
+        assert_eq!(ms_level, 2);
+        let iso = isolation.expect("MS2 scan carries an isolation window");
+        assert!((iso.center_mz - 600.0).abs() < 1e-9 && (iso.width_mz - 50.0).abs() < 1e-9);
+        assert_eq!(spectrum.mz, vec![200.0]);
+        assert!((spectrum.intensity[0] - 800.0).abs() < 1e-2, "full marginal, got {}", spectrum.intensity[0]);
+
+        // A window that does NOT cover the precursor transmits nothing -> empty scan
+        // (the slot is still authored/cleared by the writer).
+        let off = WindowTransmission::new(900.0, 50.0, 15.0);
+        let RenderedEvent::Scan { spectrum: empty, .. } =
+            b.render_fragment_scan(2, &off, 27.0, DataMode::Centroid)
+        else {
+            panic!("must be a Scan");
+        };
+        assert!(empty.mz.is_empty(), "no precursor transmitted -> empty MS2 scan");
+
+        // Determinism.
+        let RenderedEvent::Scan { spectrum: s2, .. } =
+            b.render_fragment_scan(2, &win, 27.0, DataMode::Centroid)
+        else { panic!() };
+        assert_eq!(s2.mz, spectrum.mz);
+        assert_eq!(s2.intensity, spectrum.intensity);
     }
 }
