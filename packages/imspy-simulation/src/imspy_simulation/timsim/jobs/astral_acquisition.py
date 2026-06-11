@@ -15,10 +15,36 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence, Tuple
 
+import numpy as np
 import pandas as pd
 
 # A schedule row: (scan, rt_s, ms_level, center_mz|None, width_mz|None, ce|None)
 ScheduleRow = Tuple[int, float, int, Optional[float], Optional[float], Optional[float]]
+
+
+def build_synthetic_scan_table(
+    num_scans: int = 451,
+    im_lower: float = 0.6,
+    im_upper: float = 1.6,
+) -> pd.DataFrame:
+    """A synthetic mobility (scan) grid for an Astral run — NO Bruker reference.
+
+    Astral has no ion mobility, and the render marginalises the mobility axis away
+    (P6c/P6e), so the actual 1/K0 values do not affect Astral output — but the
+    simulation pipeline still projects ion-mobility distributions onto a scan grid,
+    so it needs SOME grid. We provide a plausible descending 1/K0 grid (the Bruker
+    `scans` table is descending scan index with ascending mobility) without reading
+    a reference `.d`. This is the key decoupling primitive for the lean Astral
+    acquisition path (option b): it removes the `TDFWriter.helper_handle` dependency.
+    """
+    if num_scans < 1:
+        raise ValueError("num_scans must be >= 1")
+    if not (im_lower < im_upper):
+        raise ValueError("im_lower must be < im_upper")
+    # Descending scan index (Bruker convention), ascending inverse mobility.
+    scans = np.arange(num_scans, dtype=np.int64)[::-1]
+    mobilities = np.linspace(im_lower, im_upper, num_scans, dtype=np.float64)
+    return pd.DataFrame({"scan": scans, "mobility": mobilities})
 
 
 def build_astral_frame_tables(
