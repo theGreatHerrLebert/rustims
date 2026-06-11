@@ -77,13 +77,21 @@ mod thermo {
         raw: RawFile,
         out_path: PathBuf,
         calib: Calibration,
-        /// Template scans that carry a profile (treated as MS1 targets).
-        profile_scans: Vec<u32>,
-        /// Centroid-only template scans (treated as MS2 targets).
-        centroid_scans: Vec<u32>,
-        prof_cur: usize,
-        cent_cur: usize,
+        /// Template slots in ACQUISITION (scan) order: `(scan_number, is_profile)`,
+        /// where `is_profile` marks an MS1 FTMS-profile slot (vs an MS2 centroid
+        /// slot). A SINGLE cursor walks this in order, so the caller must feed scans
+        /// in the template's schedule — a level mismatch is rejected (independent
+        /// MS1/MS2 cursors could not catch a reordered stream).
+        slots: Vec<(u32, bool)>,
+        cursor: usize,
         mode: WriteMode,
+    }
+
+    /// Whether a descriptor's ms-level fits the next template slot type (MS1 ⇒
+    /// profile slot, MS2+ ⇒ centroid slot). Free fn so the ordering contract is
+    /// unit-testable without a template.
+    pub(crate) fn slot_level_matches(is_profile: bool, ms_level: u8) -> bool {
+        (ms_level <= 1) == is_profile
     }
 
     impl ThermoRawWriter {
@@ -99,10 +107,10 @@ mod thermo {
                     io::Error::new(io::ErrorKind::InvalidData, "no MS1 calibration in template")
                 })?;
 
-            // Classify template scans by packet type: a non-zero profile section
-            // marks an MS1-style (FTMS profile) scan; centroid-only is MS2 (ASTMS).
-            let mut profile_scans = Vec::new();
-            let mut centroid_scans = Vec::new();
+            // Build the ordered slot manifest: a non-zero profile section marks an
+            // MS1-style (FTMS profile) slot; centroid-only is MS2 (ASTMS). Kept in
+            // scan order so a single cursor enforces the template's schedule.
+            let mut slots = Vec::with_capacity(raw.index.len());
             for (i, e) in raw.index.iter().enumerate() {
                 let pkt = (raw.data_addr + e.offset) as usize;
                 if pkt + 8 > raw.bytes.len() {
@@ -111,20 +119,14 @@ mod thermo {
                 let profile_size =
                     u32::from_le_bytes(raw.bytes[pkt + 4..pkt + 8].try_into().unwrap());
                 let scan = raw.first_scan + i as u32;
-                if profile_size > 0 {
-                    profile_scans.push(scan);
-                } else {
-                    centroid_scans.push(scan);
-                }
+                slots.push((scan, profile_size > 0));
             }
             Ok(Self {
                 raw,
                 out_path: out.as_ref().to_path_buf(),
                 calib,
-                profile_scans,
-                centroid_scans,
-                prof_cur: 0,
-                cent_cur: 0,
+                slots,
+                cursor: 0,
                 mode: WriteMode::Replace,
             })
         }
@@ -139,36 +141,73 @@ mod thermo {
 
         /// Template MS1/MS2 capacity, so callers can check a run fits.
         pub fn capacity(&self) -> (usize, usize) {
-            (self.profile_scans.len(), self.centroid_scans.len())
+            let ms1 = self.slots.iter().filter(|s| s.1).count();
+            (ms1, self.slots.len() - ms1)
+        }
+
+        /// Total number of template slots (the exact scan count a complete run
+        /// must author, in order).
+        pub fn slot_count(&self) -> usize {
+            self.slots.len()
+        }
+
+        /// Number of slots authored so far.
+        pub fn position(&self) -> usize {
+            self.cursor
+        }
+
+        /// Whether every template slot has been authored (the zero-residual
+        /// contract: a `Replace`-mode run that does not fill the template leaves
+        /// real template signal in the unconsumed slots).
+        pub fn is_complete(&self) -> bool {
+            self.cursor == self.slots.len()
+        }
+
+        /// The ordered slot manifest `(scan_number, is_profile)` — for preflight
+        /// (matching the run's MS-level sequence to the template before writing).
+        pub fn manifest(&self) -> &[(u32, bool)] {
+            &self.slots
         }
     }
 
     impl AcquisitionWriter for ThermoRawWriter {
         fn write_scan(&mut self, scan: &ScanDescriptor) -> io::Result<()> {
-            if scan.ms_level <= 1 {
-                let t = *self.profile_scans.get(self.prof_cur).ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "template exhausted of MS1 (profile) scans",
-                    )
-                })?;
-                // Only advance the cursor once authoring fully succeeds, so a
-                // failed write doesn't permanently consume the template slot.
+            let (t, is_profile) = *self.slots.get(self.cursor).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "template exhausted: {} slots, tried to author slot {}",
+                        self.slots.len(),
+                        self.cursor + 1
+                    ),
+                )
+            })?;
+            // Enforce the template's GLOBAL scan order: the descriptor's level must
+            // match the next slot's type. A single cursor catches a reordered stream
+            // (MS1,MS2,MS1,MS2 vs MS1,MS1,MS2,MS2) that independent cursors could not.
+            if !slot_level_matches(is_profile, scan.ms_level) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "scan-order mismatch at slot {} (template scan {}): template \
+                         expects {} but got ms_level {}",
+                        self.cursor,
+                        t,
+                        if is_profile { "MS1/profile" } else { "MS2/centroid" },
+                        scan.ms_level
+                    ),
+                ));
+            }
+            if is_profile {
+                // Advance the cursor only after authoring succeeds, so a failed
+                // write doesn't permanently consume the slot.
                 match self.mode {
                     WriteMode::Replace => self.raw.author_profile(t, &scan.peaks, &self.calib),
                     WriteMode::Overlay { .. } => {
                         self.raw.overlay_profile(t, &scan.peaks, &self.calib)
                     }
                 }?;
-                self.prof_cur += 1;
-                Ok(())
             } else {
-                let t = *self.centroid_scans.get(self.cent_cur).ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidInput,
-                        "template exhausted of MS2 (centroid) scans",
-                    )
-                })?;
                 match self.mode {
                     WriteMode::Replace => {
                         self.raw.author_centroids(t, &scan.peaks)?;
@@ -191,10 +230,9 @@ mod thermo {
                         self.raw.overlay_centroids(t, &scan.peaks, merge_tol_ppm)?
                     }
                 }
-                // Slot consumed only after the centroid+isolation write succeeded.
-                self.cent_cur += 1;
-                Ok(())
             }
+            self.cursor += 1;
+            Ok(())
         }
 
         fn finalize(&mut self) -> io::Result<()> {
@@ -207,6 +245,19 @@ mod thermo {
 #[cfg(all(test, feature = "thermo"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slot_level_matches_enforces_ordering_contract() {
+        use super::thermo::slot_level_matches;
+        // MS1 (ms_level 0/1) belongs in a profile slot; MS2+ in a centroid slot.
+        assert!(slot_level_matches(true, 1));
+        assert!(slot_level_matches(true, 0));
+        assert!(slot_level_matches(false, 2));
+        assert!(slot_level_matches(false, 3));
+        // Mismatches the single-cursor writer rejects.
+        assert!(!slot_level_matches(true, 2)); // MS2 into a profile slot
+        assert!(!slot_level_matches(false, 1)); // MS1 into a centroid slot
+    }
 
     // Gated: set TIMSIM_ASTRAL_TEMPLATE to a real Orbitrap Astral .raw to run.
     // `cargo test --features thermo -- --nocapture thermo_roundtrip`
