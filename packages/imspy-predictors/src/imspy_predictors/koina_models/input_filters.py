@@ -265,7 +265,9 @@ def validate_model_compatibility(
             allowed_mods = f["modifications"]
             import re
             for seq in peptide_sequences:
-                mods = re.findall(r".\[[^\]]*\]", seq)
+                # `[A-Z]?` so a leading (N-terminal) mod is captured too (see
+                # filter_peptide_modifications).
+                mods = re.findall(r"[A-Z]?\[[^\]]*\]", seq)
                 for mod in mods:
                     if mod not in allowed_mods:
                         incompatible_count += 1
@@ -406,8 +408,11 @@ def filter_peptide_modifications(
         return df
 
     df = df.copy()
-    # Extract modifications including the preceding amino acid
-    df["_modifications"] = df["peptide_sequences"].str.findall(r".\[[^\]]*\]")
+    # Extract modifications WITH their preceding amino acid when present — `[A-Z]?`
+    # so a LEADING (N-terminal) modification like `[UNIMOD:1]PEP...` is captured too
+    # (a bare `.` requires a preceding char and silently MISSES N-term mods, letting
+    # e.g. acetyl peptides slip past the filter into a model that rejects them).
+    df["_modifications"] = df["peptide_sequences"].str.findall(r"[A-Z]?\[[^\]]*\]")
 
     def check_mods(mods):
         if not isinstance(mods, list) or len(mods) == 0:

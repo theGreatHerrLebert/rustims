@@ -123,6 +123,13 @@ def _predict_intensities_with_koina(
 
     out = data.copy()
     out['intensity'] = list(intensities)
+    # Store the NORMALIZED (encoded) collision energy, NOT the raw value: the
+    # fragment_ions.collision_energy column is the /100-encoded CE the render-time
+    # key resolution expects (round(stored*1e3) == round(applied*1e1) only holds
+    # when stored == applied/100). The local PyTorch path already stores the
+    # encoded value; the Koina path must match, or its fragments never key-match at
+    # render (every MS2 scan comes out empty).
+    out['collision_energy'] = encoded_ce
 
     return out
 
