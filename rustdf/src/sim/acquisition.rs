@@ -30,6 +30,61 @@ pub struct ScanDescriptor {
     pub peaks: Vec<(f64, f32)>,
 }
 
+impl ScanDescriptor {
+    /// Convert a rendered event into a writer-ready descriptor (P6e-2 glue).
+    ///
+    /// `collision_energy` is the window's applied CE (eV/NCE) — it is NOT carried
+    /// on [`crate::sim::projector::RenderedEvent`]'s isolation (which is m/z-only),
+    /// so the driver supplies it. A [`crate::sim::projector::RenderedEvent::MobilityFrame`]
+    /// is not writable to a scan-based (Thermo) file. Peak m/z and intensity are
+    /// validated finite and the intensity is range-checked into `f32` (claudex):
+    /// a non-finite or `f32`-overflowing value is a hard error rather than a NaN/inf
+    /// silently authored into the packet.
+    pub fn from_rendered_event(
+        ev: &crate::sim::projector::RenderedEvent,
+        collision_energy: f64,
+    ) -> Result<ScanDescriptor, String> {
+        use crate::sim::projector::RenderedEvent;
+        let (ms_level, retention_time, isolation, spectrum) = match ev {
+            RenderedEvent::Scan { ms_level, retention_time_s, isolation, spectrum } => {
+                let iso = isolation.map(|w| IsolationWindow {
+                    center_mz: w.center_mz,
+                    width_mz: w.width_mz,
+                    collision_energy,
+                });
+                (*ms_level, *retention_time_s, iso, spectrum)
+            }
+            RenderedEvent::MobilityFrame { .. } => {
+                return Err("a MobilityFrame cannot be written to a scan-based (Thermo) file; \
+                            it is an IMS instrument's output"
+                    .to_string());
+            }
+        };
+        if spectrum.mz.len() != spectrum.intensity.len() {
+            return Err(format!(
+                "rendered spectrum m/z ({}) and intensity ({}) length mismatch",
+                spectrum.mz.len(),
+                spectrum.intensity.len()
+            ));
+        }
+        let mut peaks = Vec::with_capacity(spectrum.mz.len());
+        for (&m, &i) in spectrum.mz.iter().zip(spectrum.intensity.iter()) {
+            if !m.is_finite() {
+                return Err(format!("non-finite peak m/z {m}"));
+            }
+            if !i.is_finite() {
+                return Err(format!("non-finite peak intensity {i} at m/z {m}"));
+            }
+            let i32 = i as f32;
+            if !i32.is_finite() {
+                return Err(format!("peak intensity {i} at m/z {m} overflows f32"));
+            }
+            peaks.push((m, i32));
+        }
+        Ok(ScanDescriptor { ms_level, retention_time, isolation, peaks })
+    }
+}
+
 /// A sink that writes vendor-neutral scans into a vendor raw file. Scans are
 /// written in acquisition order; `finalize` flushes the file (and fixes any
 /// integrity checksum).
@@ -239,6 +294,55 @@ mod thermo {
             let path = self.out_path.clone();
             self.raw.save(path)
         }
+    }
+}
+
+#[cfg(test)]
+mod glue_tests {
+    use super::*;
+    use crate::sim::projector::{IntensityStage, MzCoordSpace, RenderedEvent, RenderedSpectrum};
+    use crate::sim::scheme::{DataMode, IsolationWindow as SchemeIso};
+
+    fn ms2_event(mz: Vec<f64>, intensity: Vec<f64>) -> RenderedEvent {
+        RenderedEvent::Scan {
+            ms_level: 2,
+            retention_time_s: 12.5,
+            isolation: Some(SchemeIso { center_mz: 600.0, width_mz: 25.0 }),
+            spectrum: RenderedSpectrum {
+                mz,
+                intensity,
+                coords: MzCoordSpace::Physical,
+                mode: DataMode::Centroid,
+                detector_applied: false,
+                stage: IntensityStage::Transmitted,
+            },
+        }
+    }
+
+    #[test]
+    fn from_rendered_event_maps_and_attaches_ce() {
+        let d = ScanDescriptor::from_rendered_event(&ms2_event(vec![200.0, 300.0], vec![10.0, 20.0]), 27.0)
+            .expect("valid");
+        assert_eq!(d.ms_level, 2);
+        assert!((d.retention_time - 12.5).abs() < 1e-9);
+        let iso = d.isolation.expect("MS2 isolation");
+        assert!((iso.center_mz - 600.0).abs() < 1e-9 && (iso.collision_energy - 27.0).abs() < 1e-9);
+        assert_eq!(d.peaks, vec![(200.0, 10.0f32), (300.0, 20.0f32)]);
+    }
+
+    #[test]
+    fn from_rendered_event_rejects_nonfinite_and_mobility() {
+        // Non-finite intensity is a hard error (not a NaN authored into the packet).
+        assert!(ScanDescriptor::from_rendered_event(
+            &ms2_event(vec![200.0], vec![f64::NAN]), 27.0
+        ).is_err());
+        // Non-finite m/z too.
+        assert!(ScanDescriptor::from_rendered_event(
+            &ms2_event(vec![f64::INFINITY], vec![1.0]), 27.0
+        ).is_err());
+        // A MobilityFrame is not writable to a scan-based file.
+        let mob = RenderedEvent::MobilityFrame { ms_level: 1, retention_time_s: 0.0, scans: vec![] };
+        assert!(ScanDescriptor::from_rendered_event(&mob, 0.0).is_err());
     }
 }
 
