@@ -196,6 +196,16 @@ def test_config_validate_astral_requires_dia_and_nce():
         instrument="orbitrap_astral", acquisition_type="DIA", collision_energy_nce=27.0
     )._validate()
 
+    # Astral + precursor survival is rejected (deterministic render; survival is
+    # stochastic — refuse rather than silently drop it).
+    with pytest.raises(ValueError, match="precursor_survival"):
+        _config_with(
+            instrument="orbitrap_astral",
+            acquisition_type="DIA",
+            collision_energy_nce=27.0,
+            precursor_survival_max=0.2,
+        )._validate()
+
 
 def test_astral_nce_override_is_astral_only():
     from imspy_simulation.timsim.simulator import astral_nce_override

@@ -839,6 +839,11 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     /// were predicted at AND the applied CE (the keying is unit-agnostic). Returns
     /// an empty-spectrum MS2 `Scan` when nothing is transmitted / no fragments exist
     /// — the writer must still consume and clear that template slot (zero residual).
+    ///
+    /// Fragments ONLY: precursor-survival signal is intentionally not modelled here
+    /// (it is stochastic, which would break this deterministic render), and an
+    /// Astral run that configures `precursor_survival_*` is rejected at config load
+    /// rather than silently dropping it.
     pub fn render_fragment_scan(
         &self,
         frame_id: u32,

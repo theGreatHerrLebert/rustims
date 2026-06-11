@@ -595,6 +595,18 @@ class SimulationConfig:
                     "windows' collision energies are reference-derived Bruker eV and "
                     "must be replaced by a real NCE for an Astral run, not relabelled."
                 )
+            # The Astral MS2 render is deterministic; precursor survival is a
+            # stochastic (per-scan random fraction) feature. Refuse rather than
+            # silently drop the configured survival signal (it is not modelled on
+            # the Astral path yet).
+            if self._config.get('precursor_survival_max', 0.0) and float(
+                self._config.get('precursor_survival_max', 0.0)
+            ) > 0.0:
+                raise ValueError(
+                    "instrument 'orbitrap_astral' does not support precursor_survival_* "
+                    "(the Astral MS2 render is deterministic; survival is stochastic). "
+                    "Set precursor_survival_min/max to 0 for an Astral run."
+                )
 
     def __getattr__(self, name: str):
         """Allow attribute-style access to configuration values."""
