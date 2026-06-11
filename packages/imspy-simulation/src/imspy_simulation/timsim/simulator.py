@@ -600,13 +600,16 @@ class SimulationConfig:
                     "instrument 'orbitrap_astral' does not support DDA acquisition "
                     "(DDA-PASEF collision energy is Bruker scan-driven). Use DIA."
                 )
+            # collision_energy_nce is OPTIONAL for the build-from-template path: the
+            # Astral template already supplies a genuine per-window NCE, which is
+            # used by default. If set, it OVERRIDES every window with that single
+            # NCE (a deliberate manual choice); if set, it must be positive.
             nce = self._config.get('collision_energy_nce')
-            if nce is None or not (isinstance(nce, (int, float)) and nce > 0):
+            if nce is not None and not (isinstance(nce, (int, float)) and nce > 0):
                 raise ValueError(
-                    "instrument 'orbitrap_astral' requires 'collision_energy_nce' "
-                    "(a positive normalized collision energy, e.g. 27). The DIA "
-                    "windows' collision energies are reference-derived Bruker eV and "
-                    "must be replaced by a real NCE for an Astral run, not relabelled."
+                    "collision_energy_nce, if set, must be a positive normalized "
+                    "collision energy (e.g. 27); it overrides the template's "
+                    "per-window NCE for an Astral run."
                 )
             # The Astral MS2 render is deterministic; precursor survival is a
             # stochastic (per-scan random fraction) feature. Refuse rather than
@@ -987,6 +990,9 @@ def main():
             config.astral_template_path,
             round_collision_energy=config.round_collision_energy,
             collision_energy_decimals=config.collision_energy_decimals,
+            # Optional override: if set, forces a single NCE across all windows;
+            # otherwise the template's genuine per-window NCE is used.
+            collision_energy_nce=astral_nce_override(config),
             verbose=not config.silent_mode,
         )
     else:
@@ -1496,7 +1502,9 @@ def main():
         register_prediction_set,
         resolve_instrument_activation,
     )
-    instrument = str(getattr(config, 'instrument', 'bruker_timstof'))
+    # Normalize once (lower-case) so the later exact dispatch comparison can't be
+    # fooled by a case variant like 'ORBITRAP_ASTRAL'.
+    instrument = str(getattr(config, 'instrument', 'bruker_timstof')).lower()
     activation_method, energy_unit = resolve_instrument_activation(instrument)
     # (instrument validity, Astral⇒DIA, and Astral⇒collision_energy_nce are all
     # enforced at config load in SimulationConfig._validate — fail fast.)

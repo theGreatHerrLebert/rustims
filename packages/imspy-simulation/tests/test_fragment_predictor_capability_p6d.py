@@ -197,13 +197,18 @@ def test_config_validate_astral_requires_dia_and_nce():
     with pytest.raises(ValueError, match="does not support DDA"):
         astral(acquisition_type="DDA")._validate()
 
-    # Astral DIA without an NCE is rejected (no silent eV->NCE relabel).
-    with pytest.raises(ValueError, match="requires 'collision_energy_nce'"):
-        astral(collision_energy_nce=None)._validate()
+    # collision_energy_nce is OPTIONAL for the build-from-template path: the
+    # template supplies a genuine per-window NCE, so an Astral run is valid WITHOUT
+    # it (the template's NCE is used).
+    astral(collision_energy_nce=None)._validate()
 
-    # Astral DIA with a positive NCE + an existing template is valid (no Bruker
-    # reference needed).
-    astral()._validate()
+    # But if set, it must be positive (it overrides every window with that NCE).
+    with pytest.raises(ValueError, match="collision_energy_nce"):
+        astral(collision_energy_nce=-5.0)._validate()
+
+    # Astral DIA with a positive NCE override + an existing template is valid (no
+    # Bruker reference needed).
+    astral(collision_energy_nce=27.0)._validate()
 
     # Astral + precursor survival is rejected (deterministic render; survival is
     # stochastic — refuse rather than silently drop it).

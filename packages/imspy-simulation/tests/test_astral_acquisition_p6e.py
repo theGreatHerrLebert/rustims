@@ -101,6 +101,26 @@ def test_astral_acquisition_builder_writes_db_without_bruker_reference(tmp_path)
     os.environ.get("TIMSIM_ASTRAL_TEMPLATE") is None,
     reason="set TIMSIM_ASTRAL_TEMPLATE + a thermo-enabled connector for the live test",
 )
+def test_astral_builder_nce_override_and_precision(tmp_path):
+    from imspy_simulation.timsim.jobs.astral_acquisition import AstralAcquisitionBuilder
+
+    template = os.environ["TIMSIM_ASTRAL_TEMPLATE"]
+
+    # Default: keep the template's genuine per-window NCE (no override).
+    base = AstralAcquisitionBuilder(str(tmp_path / "a"), template, num_scans=32, verbose=False)
+    assert (base.dia_ms_ms_windows["collision_energy"] > 0).all()
+
+    # Override: every window forced to the single configured NCE.
+    over = AstralAcquisitionBuilder(
+        str(tmp_path / "b"), template, num_scans=32, collision_energy_nce=29.0, verbose=False
+    )
+    assert (over.dia_ms_ms_windows["collision_energy"] == 29.0).all()
+
+
+@pytest.mark.skipif(
+    os.environ.get("TIMSIM_ASTRAL_TEMPLATE") is None,
+    reason="set TIMSIM_ASTRAL_TEMPLATE + a thermo-enabled connector for the live test",
+)
 def test_real_template_schedule_builds_tables():
     import imspy_connector
 

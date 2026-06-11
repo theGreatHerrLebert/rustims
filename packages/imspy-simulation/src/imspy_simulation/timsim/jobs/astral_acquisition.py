@@ -178,6 +178,7 @@ class AstralAcquisitionBuilder:
         mz_upper: Optional[float] = None,
         round_collision_energy: bool = True,
         collision_energy_decimals: int = 2,
+        collision_energy_nce: Optional[float] = None,
         verbose: bool = True,
     ) -> None:
         import imspy_connector
@@ -194,11 +195,18 @@ class AstralAcquisitionBuilder:
         if verbose:
             print(f"Astral build-from-template: {len(schedule)} template scans")
 
-        ft, win, f2g, f2scan = build_astral_frame_tables(schedule, num_scans=num_scans)
-        if round_collision_energy:
-            win["collision_energy"] = np.round(
-                win["collision_energy"].values, decimals=collision_energy_decimals
-            )
+        # Round (and window-group) collision energies at the configured precision —
+        # do it ONCE inside build_astral_frame_tables so grouping and the stored CE
+        # use the same values (no premature truncation). round_collision_energy=False
+        # keeps full precision (grouped at 6 dp to avoid float over-splitting).
+        ce_decimals = collision_energy_decimals if round_collision_energy else 6
+        ft, win, f2g, f2scan = build_astral_frame_tables(
+            schedule, num_scans=num_scans, ce_decimals=ce_decimals
+        )
+        # Optional manual override: force a single NCE across all windows. Off by
+        # default — the template's genuine per-window NCE is used as-is.
+        if collision_energy_nce is not None:
+            win["collision_energy"] = float(collision_energy_nce)
 
         self.frame_table = ft
         self.scan_table = build_synthetic_scan_table(num_scans, im_lower, im_upper)
