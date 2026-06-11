@@ -1,4 +1,6 @@
 pub mod acquisition;
+#[cfg(feature = "thermo")]
+pub mod astral_dispatch;
 pub mod containers;
 pub mod dda;
 pub mod dia;

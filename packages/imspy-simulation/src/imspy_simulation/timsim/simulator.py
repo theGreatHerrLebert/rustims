@@ -1545,47 +1545,57 @@ def main():
         down_sample_factor=config.down_sample_factor,
     )
 
-    # JOB 10: Assemble frames -> vendor output.
+    # JOB 10: vendor output.
     if instrument == 'orbitrap_astral':
         # The trunk is now simulated on the Astral template's timeline + windows
-        # (fragments at per-window NCE). The vendor output is a Thermo .raw authored
-        # from the template — NOT a Bruker .d via assemble_frames. The .raw dispatch
-        # (render frames -> ThermoRawWriter, frame->template slot) is the final P6e
-        # step; stop cleanly here rather than driving the Bruker .d path on the lean
-        # Astral builder's stubs.
-        raise NotImplementedError(
-            "Astral build-from-template acquisition + simulation are wired (the DB now "
-            "holds template-timed frames + per-window NCE fragments); the Thermo .raw "
-            "dispatch (write_astral_raw) is the next P6e step."
+        # (fragments at per-window NCE). Author a Thermo .raw from the template
+        # (render each frame -> its template slot) — NOT a Bruker .d.
+        import imspy_connector
+        logger.info(section_header("Authoring Astral .raw", use_unicode))
+        db_path = acquisition_builder.synthetics_handle.database_path
+        out_raw = str(Path(save_path) / f"{name}.raw")
+        scans, n_ms1, n_ms2, n_ms2_nz, n_cleared, ok = (
+            imspy_connector.py_acquisition.write_astral_raw(
+                db_path, config.astral_template_path, out_raw, num_threads,
+            )
         )
-
-    logger.info(section_header("Assembling Frames", use_unicode))
-    assemble_frames(
-        acquisition_builder=acquisition_builder,
-        frames=acquisition_builder.frame_table,
-        batch_size=config.batch_size,
-        verbose=not config.silent_mode,
-        mz_noise_precursor=config.mz_noise_precursor,
-        mz_noise_uniform=config.mz_noise_uniform,
-        precursor_noise_ppm=config.precursor_noise_ppm,
-        mz_noise_fragment=config.mz_noise_fragment,
-        fragment_noise_ppm=config.fragment_noise_ppm,
-        num_threads=num_threads,
-        add_real_data_noise=config.add_real_data_noise,
-        intensity_max_precursor=config.reference_noise_intensity_max,
-        intensity_max_fragment=config.reference_noise_intensity_max,
-        precursor_sample_fraction=config.precursor_sample_fraction,
-        fragment_sample_fraction=config.fragment_sample_fraction,
-        num_precursor_frames=config.num_precursor_noise_frames,
-        num_fragment_frames=config.num_fragment_noise_frames,
-        fragment=config.apply_fragmentation,
-        pasef_meta=pasef_meta,
-        lazy_loading=config.lazy_frame_assembly,
-        quad_isotope_transmission_mode=config.quad_isotope_transmission_mode,
-        quad_transmission_min_probability=config.quad_transmission_min_probability,
-        quad_transmission_max_isotopes=config.quad_transmission_max_isotopes,
-        superimpose_on_reference=config.superimpose_on_reference,
-    )
+        logger.info(
+            f"  Astral .raw -> {out_raw}: {scans} scans | {n_ms1} MS1 | "
+            f"{n_ms2} MS2 ({n_ms2_nz} non-empty) | {n_cleared} budget-cleared | "
+            f"checksum_valid={ok}"
+        )
+        if not ok:
+            raise RuntimeError(
+                f"authored Astral .raw failed checksum validation: {out_raw}"
+            )
+    else:
+        logger.info(section_header("Assembling Frames", use_unicode))
+        assemble_frames(
+            acquisition_builder=acquisition_builder,
+            frames=acquisition_builder.frame_table,
+            batch_size=config.batch_size,
+            verbose=not config.silent_mode,
+            mz_noise_precursor=config.mz_noise_precursor,
+            mz_noise_uniform=config.mz_noise_uniform,
+            precursor_noise_ppm=config.precursor_noise_ppm,
+            mz_noise_fragment=config.mz_noise_fragment,
+            fragment_noise_ppm=config.fragment_noise_ppm,
+            num_threads=num_threads,
+            add_real_data_noise=config.add_real_data_noise,
+            intensity_max_precursor=config.reference_noise_intensity_max,
+            intensity_max_fragment=config.reference_noise_intensity_max,
+            precursor_sample_fraction=config.precursor_sample_fraction,
+            fragment_sample_fraction=config.fragment_sample_fraction,
+            num_precursor_frames=config.num_precursor_noise_frames,
+            num_fragment_frames=config.num_fragment_noise_frames,
+            fragment=config.apply_fragmentation,
+            pasef_meta=pasef_meta,
+            lazy_loading=config.lazy_frame_assembly,
+            quad_isotope_transmission_mode=config.quad_isotope_transmission_mode,
+            quad_transmission_min_probability=config.quad_transmission_min_probability,
+            quad_transmission_max_isotopes=config.quad_transmission_max_isotopes,
+            superimpose_on_reference=config.superimpose_on_reference,
+        )
 
     # Collect final statistics
     stats.n_proteins = len(proteins) if proteins is not None else 0

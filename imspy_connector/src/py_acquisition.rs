@@ -597,12 +597,44 @@ impl PyActivationPolicy {
     }
 }
 
+/// Render an Astral build-from-template `synthetic_data.db` to a Thermo `.raw`
+/// (P6e dispatch). Walks the template slot manifest, renders each frame (MS1
+/// profile / MS2 per-window fragments), and authors it into its slot. Returns
+/// `(scans, ms1, ms2, ms2_nonempty, overflow_cleared, checksum_valid)`. Requires
+/// the `thermo` feature; the DB must have been built from this template (frames
+/// 1:1 with template slots), else a structured error is raised.
+#[cfg(feature = "thermo")]
+#[pyfunction]
+#[pyo3(signature = (db_path, template_path, out_path, num_threads=4, quad_k=15.0, max_ms1_peaks=400, max_ms2_peaks=120))]
+pub fn write_astral_raw(
+    py: Python<'_>,
+    db_path: &str,
+    template_path: &str,
+    out_path: &str,
+    num_threads: usize,
+    quad_k: f64,
+    max_ms1_peaks: usize,
+    max_ms2_peaks: usize,
+) -> PyResult<(usize, usize, usize, usize, usize, bool)> {
+    use rustdf::sim::astral_dispatch::{write_astral_raw as run, AstralWriteOptions};
+    use std::path::Path;
+    let opts = AstralWriteOptions { num_threads, quad_k, max_ms1_peaks, max_ms2_peaks };
+    let s = py
+        .allow_threads(|| {
+            run(Path::new(db_path), Path::new(template_path), Path::new(out_path), opts)
+        })
+        .map_err(PyValueError::new_err)?;
+    Ok((s.scans, s.ms1, s.ms2, s.ms2_nonempty, s.overflow_cleared, s.checksum_valid))
+}
+
 #[pymodule]
 pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAcquisitionScheme>()?;
     m.add_class::<PyActivationPolicy>()?;
     #[cfg(feature = "thermo")]
     m.add_class::<PyThermoRawWriter>()?;
+    #[cfg(feature = "thermo")]
+    m.add_function(wrap_pyfunction!(write_astral_raw, m)?)?;
     m.add_function(wrap_pyfunction!(legacy_frame_projection, m)?)?;
     m.add_function(wrap_pyfunction!(legacy_scan_projection, m)?)?;
     m.add_function(wrap_pyfunction!(legacy_scan_projection_par, m)?)?;
