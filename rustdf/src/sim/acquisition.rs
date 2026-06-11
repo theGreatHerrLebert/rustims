@@ -140,6 +140,11 @@ mod thermo {
         slots: Vec<(u32, bool)>,
         cursor: usize,
         mode: WriteMode,
+        /// Opt out of the zero-residual completeness check at `finalize` (e.g. a
+        /// smoke test authoring only a few of the template's slots). Off by default
+        /// so a real Replace run that does not fill every slot fails loudly rather
+        /// than saving a file with untouched template signal in the gaps.
+        allow_partial: bool,
     }
 
     /// Whether a descriptor's ms-level fits the next template slot type (MS1 ⇒
@@ -183,6 +188,7 @@ mod thermo {
                 slots,
                 cursor: 0,
                 mode: WriteMode::Replace,
+                allow_partial: false,
             })
         }
 
@@ -191,6 +197,14 @@ mod thermo {
         /// (real⊕sim) workflow.
         pub fn with_mode(mut self, mode: WriteMode) -> Self {
             self.mode = mode;
+            self
+        }
+
+        /// Permit `finalize` to save even when not every template slot was authored
+        /// (default: off). Only for partial-write smoke tests; a real Replace run
+        /// must fill every slot to honour the zero-residual contract.
+        pub fn with_allow_partial(mut self, allow: bool) -> Self {
+            self.allow_partial = allow;
             self
         }
 
@@ -291,6 +305,24 @@ mod thermo {
         }
 
         fn finalize(&mut self) -> io::Result<()> {
+            // Zero-residual contract: in Replace mode every template slot must have
+            // been authored, else the saved file keeps the template's REAL signal in
+            // the unconsumed slots (a partial/cancelled run masquerading as valid
+            // output). Overlay mode intentionally retains template signal, so it is
+            // exempt; `allow_partial` opts out for partial-write smoke tests.
+            if matches!(self.mode, WriteMode::Replace) && !self.allow_partial && !self.is_complete() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "incomplete Replace run: {}/{} template slots authored — the \
+                         remaining {} slots still hold the template's real signal. \
+                         Author every slot, or use with_allow_partial(true).",
+                        self.cursor,
+                        self.slots.len(),
+                        self.slots.len() - self.cursor
+                    ),
+                ));
+            }
             let path = self.out_path.clone();
             self.raw.save(path)
         }
@@ -376,7 +408,10 @@ mod tests {
         };
         let out = std::env::temp_dir().join("rustdf_thermo_roundtrip.raw");
 
-        let mut w = ThermoRawWriter::from_template(&template, &out).expect("open template");
+        // Authors only 2 of the template's many slots, so opt into partial finalize.
+        let mut w = ThermoRawWriter::from_template(&template, &out)
+            .expect("open template")
+            .with_allow_partial(true);
         let (n_ms1, n_ms2) = w.capacity();
         assert!(n_ms1 > 0 && n_ms2 > 0, "template has no MS1/MS2 scans");
 

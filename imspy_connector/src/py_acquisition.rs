@@ -239,11 +239,10 @@ fn pack_peaks(mz: &[f64], intensity: &[f64]) -> PyResult<Vec<(f64, f32)>> {
     if mz.len() != intensity.len() {
         return Err(PyValueError::new_err("mz and intensity must have equal length"));
     }
-    if mz.is_empty() {
-        // A blank Replace scan silently erases the template slot — refuse it
-        // rather than make accidental data loss a one-liner.
-        return Err(PyValueError::new_err("peak arrays must be non-empty"));
-    }
+    // An EMPTY peak list is allowed: a sparse Astral acquisition legitimately has
+    // windows that transmit no precursor / no fragment, and the zero-residual
+    // contract requires authoring an empty (cleared) scan into that template slot
+    // rather than aborting or leaving the template's real signal behind.
     let mut peaks = Vec::with_capacity(mz.len());
     for (i, (&m, &inten)) in mz.iter().zip(intensity).enumerate() {
         if !m.is_finite() || m <= 0.0 {
