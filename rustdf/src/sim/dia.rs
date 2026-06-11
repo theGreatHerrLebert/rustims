@@ -836,8 +836,11 @@ impl TimsTofSyntheticsFrameBuilderDIA {
     /// is `None` (Astral capabilities gate it off), so the shared
     /// [`fragment_series_spectrum`] kernel does the per-series scaling. `nce` is the
     /// window's normalized collision energy: both the CE key the stored fragments
-    /// were predicted at AND the applied CE (the keying is unit-agnostic). Returns
-    /// an empty-spectrum MS2 `Scan` when nothing is transmitted / no fragments exist
+    /// were predicted at AND the applied CE (the keying is unit-agnostic). A
+    /// precursor whose fragments are not stored near `nce` is SKIPPED (predicted at
+    /// a different window's CE) — compatibility is enforced once at registration
+    /// (P6d), so the render core never panics on a per-precursor miss. Returns an
+    /// empty-spectrum MS2 `Scan` when nothing is transmitted / no fragments exist
     /// — the writer must still consume and clear that template slot (zero residual).
     ///
     /// Fragments ONLY: precursor-survival signal is intentionally not modelled here
@@ -901,24 +904,18 @@ impl TimsTofSyntheticsFrameBuilderDIA {
                     continue;
                 }
                 // Resolve the fragment CE key at the window NCE (unit-agnostic).
+                // A miss SKIPS this precursor for this window — unlike the Bruker
+                // same-instrument frame builder (which panics on a coverage gap),
+                // the Astral render gates precursors by m/z ALONE (no mobility), so
+                // a precursor whose fragments were predicted at a different window's
+                // CE legitimately does not contribute here. Prediction-set/instrument
+                // compatibility is enforced once, up front, at registration (P6d).
                 let Some(ce_key) = crate::sim::handle::resolve_fragment_ce_key(
                     fragment_ions,
                     *peptide_id,
                     charge_state,
                     nce,
                 ) else {
-                    if crate::sim::handle::fragment_prefix_exists(
-                        fragment_ions,
-                        *peptide_id,
-                        charge_state,
-                    ) {
-                        panic!(
-                            "Astral fragment lookup miss: peptide {} charge {} applied NCE {:.4} \
-                             has predicted fragments, but none within 0.1 — the prediction set \
-                             does not cover this collision energy",
-                            *peptide_id, charge_state, nce,
-                        );
-                    }
                     continue;
                 };
                 let (_, fragment_series_vec) = fragment_ions
