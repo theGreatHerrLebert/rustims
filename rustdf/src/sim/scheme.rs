@@ -1145,6 +1145,74 @@ impl AcquisitionScheme {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         Ok(scheme)
     }
+
+    /// Extract the template's FULL per-scan schedule (every scan, not just the
+    /// first cycle): scan number, its actual retention time, ms-level, and (for
+    /// MS2) the isolation window + collision energy.
+    ///
+    /// This is the build-from-template timeline source (P6e): an Astral run mirrors
+    /// these frames 1:1, so the trunk's per-frame abundances are keyed to the
+    /// template's real scan RTs and the authored output's RT/schedule are correct
+    /// by construction (rather than relabelling a Bruker-timed frame with a template
+    /// RT). The RT is the template's recorded time; ms-level comes from the scan
+    /// event (falling back to the profile/centroid packet type when absent).
+    pub fn thermo_frame_schedule<P: AsRef<std::path::Path>>(
+        path: P,
+    ) -> io::Result<Vec<TemplateScan>> {
+        use thermorawfile::RawFile;
+        let raw = RawFile::open(path)?;
+        let mut out = Vec::with_capacity(raw.index.len());
+        for scan in raw.first_scan..=raw.last_scan {
+            let i = (scan - raw.first_scan) as usize;
+            let rt = raw.index[i].time;
+            let ev = raw.scan_event(scan);
+            // ms-level: prefer the scan event; else classify by packet type
+            // (a non-zero profile section = MS1 FTMS).
+            let ms_level = match ev.as_ref() {
+                Some(e) if e.ms_order >= 1 => e.ms_order,
+                _ => {
+                    let pkt = (raw.data_addr + raw.index[i].offset) as usize;
+                    if pkt + 8 <= raw.bytes.len()
+                        && u32::from_le_bytes(raw.bytes[pkt + 4..pkt + 8].try_into().unwrap()) > 0
+                    {
+                        1
+                    } else {
+                        2
+                    }
+                }
+            };
+            let (isolation, collision_energy) = match ev.as_ref() {
+                Some(e) if ms_level > 1 => (
+                    Some(IsolationWindow {
+                        center_mz: e.isolation_center,
+                        width_mz: e.isolation_width,
+                    }),
+                    Some(e.collision_energy),
+                ),
+                _ => (None, None),
+            };
+            out.push(TemplateScan { scan, retention_time_s: rt, ms_level, isolation, collision_energy });
+        }
+        if out.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "template has no scans"));
+        }
+        Ok(out)
+    }
+}
+
+/// One template scan in the build-from-template frame schedule (P6e). The Astral
+/// acquisition mirrors these 1:1 so the trunk's frames align with the template's
+/// real scan RTs and windows.
+#[cfg(feature = "thermo")]
+#[derive(Clone, Copy, Debug)]
+pub struct TemplateScan {
+    pub scan: u32,
+    pub retention_time_s: f64,
+    pub ms_level: u8,
+    /// Present for MS2 (the precursor isolation window; m/z only — no IMS).
+    pub isolation: Option<IsolationWindow>,
+    /// Present for MS2 (the template's recorded collision energy).
+    pub collision_energy: Option<f64>,
 }
 
 #[cfg(test)]
@@ -1711,6 +1779,43 @@ mod tests {
             "from_thermo_raw OK: instrument={:?}, {} MS2 windows, mz {:.1}..{:.1}, cycle {:.4}s",
             s.instrument, n_win, s.mz_range.0, s.mz_range.1,
             match s.repeat { RepeatPolicy::FixedCycleTime { cycle_time_s, .. } => cycle_time_s }
+        );
+    }
+
+    #[cfg(feature = "thermo")]
+    #[test]
+    fn thermo_frame_schedule_covers_every_scan() {
+        let template = match std::env::var("TIMSIM_ASTRAL_TEMPLATE") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP thermo_frame_schedule_covers_every_scan: set TIMSIM_ASTRAL_TEMPLATE");
+                return;
+            }
+        };
+        let sched = AcquisitionScheme::thermo_frame_schedule(&template).expect("schedule");
+        assert!(sched.len() > 100, "expected the full run, got {}", sched.len());
+        // Scans are contiguous and ascending; RT is finite and non-decreasing.
+        let mut last_rt = f64::NEG_INFINITY;
+        let (mut n_ms1, mut n_ms2) = (0usize, 0usize);
+        for (k, f) in sched.iter().enumerate() {
+            assert_eq!(f.scan, sched[0].scan + k as u32, "scans must be contiguous");
+            assert!(f.retention_time_s.is_finite());
+            assert!(f.retention_time_s >= last_rt - 1e-6, "RT must be non-decreasing");
+            last_rt = f.retention_time_s;
+            if f.ms_level <= 1 {
+                n_ms1 += 1;
+                assert!(f.isolation.is_none(), "MS1 carries no isolation window");
+            } else {
+                n_ms2 += 1;
+                let iso = f.isolation.expect("MS2 carries an isolation window");
+                assert!(iso.width_mz > 0.0 && iso.center_mz > 0.0);
+                assert!(f.collision_energy.is_some(), "MS2 carries a collision energy");
+            }
+        }
+        assert!(n_ms1 > 0 && n_ms2 > 0, "expected both MS1 and MS2 scans");
+        eprintln!(
+            "thermo_frame_schedule OK: {} scans ({} MS1, {} MS2), RT {:.2}..{:.2}s",
+            sched.len(), n_ms1, n_ms2, sched.first().unwrap().retention_time_s, last_rt
         );
     }
 }
