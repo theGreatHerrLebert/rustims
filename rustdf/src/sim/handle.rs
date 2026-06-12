@@ -1437,12 +1437,17 @@ impl TimsTofSyntheticsDataHandle {
 
         for peptide in peptides.iter() {
             let peptide_id = peptide.peptide_id;
-            let frame_occurrence = peptide.frame_distribution.occurrence.clone();
-            let frame_abundance = peptide.frame_distribution.abundance.clone();
-
-            for (frame_id, abundance) in frame_occurrence.iter().zip(frame_abundance.iter()) {
+            // Borrow the per-peptide occurrence/abundance vectors instead of cloning
+            // them — the loop only copies the scalar peptide_id (u32) and abundance
+            // (f32) into the map, so the clones were pure transient garbage (~300M
+            // elements copied at 150K peptides). Output is identical.
+            for (frame_id, abundance) in peptide
+                .frame_distribution
+                .occurrence
+                .iter()
+                .zip(peptide.frame_distribution.abundance.iter())
+            {
                 // only insert if the abundance is greater than 1e-6
-
                 if *abundance > 1e-6 {
                     let (occurrences, abundances) = frame_to_abundances
                         .entry(*frame_id)
