@@ -6,19 +6,26 @@ chunking the projection (to bound peak memory on dense-frame templates like the 
 nDIA grid, ~2000 frames/peptide) must be output-equivalent to a single full-array call:
 
 - noise OFF (the default): byte-identical occurrence + abundance.
-- noise ON: structurally identical (same occurrence, same per-peptide length, same
-  normalization) but a different random noise realization — `add_uniform_noise` draws
-  np.random per frame, so reordering the stream changes values (statistical
-  equivalence, not byte parity — by design).
+- noise ON: also byte-identical, PROVIDED both RNGs are seeded. `add_uniform_noise`
+  is Numba-jitted and draws Numba's RNG (which `np.random.seed` does NOT reset — a
+  jitted seeder does). Batching preserves peptide-iteration order, so with the same
+  Numba RNG state the noise draws are identical; the apparent non-determinism without
+  a Numba seed is Numba's un-seeded stream, not a batching effect.
 """
 import json
 
 import numpy as np
 import pandas as pd
+from numba import njit
 
 from imspy_simulation.timsim.jobs.simulate_frame_distributions_emg import (
     simulate_frame_distributions_emg,
 )
+
+
+@njit
+def _seed_numba(s):  # Python np.random.seed does not reset Numba's nopython RNG
+    np.random.seed(s)
 
 # Dense-frame fixture mimicking the Astral nDIA template (many frames / short gradient).
 _F, _T, _N = 6000, 300.0, 1500
@@ -37,34 +44,42 @@ def _peptides():
 
 
 def _run(batch_size, add_noise):
-    np.random.seed(123)  # fix sigma/k/mu sampling so only batching differs
+    np.random.seed(123)   # fix sigma/k/mu sampling + Python-RNG draws
+    _seed_numba(123)      # fix add_uniform_noise's Numba RNG so only batching differs
     out = simulate_frame_distributions_emg(
         peptides=_peptides(), add_noise=add_noise, batch_size=batch_size, **_KW
     )
     return out.sort_values("peptide_id").reset_index(drop=True)
 
 
+def _assert_byte_identical(full, chunked):
+    assert len(full) == len(chunked)
+    for col in ("frame_occurrence", "frame_abundance",
+                "frame_occurrence_start", "frame_occurrence_end"):
+        assert full[col].tolist() == chunked[col].tolist(), col
+
+
 def test_chunking_byte_identical_noise_off():
-    full = _run(batch_size=None, add_noise=False)
-    chunked = _run(batch_size=200, add_noise=False)
-    assert len(full) == len(chunked)
-    assert full["frame_occurrence"].tolist() == chunked["frame_occurrence"].tolist()
-    assert full["frame_abundance"].tolist() == chunked["frame_abundance"].tolist()
-    assert full["frame_occurrence_start"].tolist() == chunked["frame_occurrence_start"].tolist()
-    assert full["frame_occurrence_end"].tolist() == chunked["frame_occurrence_end"].tolist()
+    _assert_byte_identical(_run(batch_size=None, add_noise=False),
+                           _run(batch_size=200, add_noise=False))
 
 
-def test_chunking_structurally_equivalent_noise_on():
-    full = _run(batch_size=None, add_noise=True)
-    chunked = _run(batch_size=200, add_noise=True)
-    assert len(full) == len(chunked)
-    # occurrence (frame membership) is deterministic -> identical even with noise
-    assert full["frame_occurrence"].tolist() == chunked["frame_occurrence"].tolist()
-    fa, fb = full["frame_abundance"].tolist(), chunked["frame_abundance"].tolist()
-    for sa, sb in zip(fa, fb):
-        va, vb = np.array(json.loads(sa)), np.array(json.loads(sb))
-        assert len(va) == len(vb)                       # same structure
-        # both normalized to ~1; values are different random noise realizations, so
-        # they do NOT match each other tightly (statistical equivalence, by design).
-        assert abs(va.sum() - 1.0) < 0.05
-        assert abs(vb.sum() - 1.0) < 0.05
+def test_chunking_byte_identical_noise_on():
+    # With both RNGs seeded, batching is byte-identical even with noise (peptide order
+    # is preserved, so Numba's per-frame noise stream is identical).
+    _assert_byte_identical(_run(batch_size=None, add_noise=True),
+                           _run(batch_size=200, add_noise=True))
+
+
+def test_zero_peptides_does_not_crash():
+    np.random.seed(0)
+    empty = pd.DataFrame({"peptide_id": pd.Series([], dtype=int),
+                          "retention_time_gru_predictor": pd.Series([], dtype=float)})
+    out = simulate_frame_distributions_emg(peptides=empty, add_noise=False, batch_size=200, **_KW)
+    assert len(out) == 0
+
+
+def test_nonpositive_batch_size_rejected():
+    import pytest
+    with pytest.raises(ValueError):
+        simulate_frame_distributions_emg(peptides=_peptides(), add_noise=False, batch_size=0, **_KW)

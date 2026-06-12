@@ -302,9 +302,14 @@ def simulate_frame_distributions_emg(
 
     # Project in batches to bound peak memory. The per-(peptide, frame) projection is
     # deterministic and peptide-local, so chunking is output-equivalent to one full
-    # call; on dense-frame templates (e.g. Astral nDIA, ~2000 frames/peptide) holding
-    # all peptides' profiles + their copies at once OOMs. batch_size=None disables it.
-    bs = batch_size if (batch_size and n > batch_size) else n
+    # call (the peptide-iteration order is preserved, so even the noise path —
+    # add_uniform_noise, which is Numba-jitted and draws Numba's RNG in peptide order —
+    # is byte-identical for a fixed RNG state). On dense-frame templates (e.g. Astral
+    # nDIA, ~2000 frames/peptide) holding all peptides' profiles + their copies at once
+    # OOMs. batch_size=None disables batching.
+    if batch_size is not None and batch_size <= 0:
+        raise ValueError(f"batch_size must be a positive int or None, got {batch_size}")
+    bs = batch_size if (batch_size and n > batch_size) else max(n, 1)  # max(n,1): n==0 safe
     first_occurrence: List[int] = []
     last_occurrence: List[int] = []
     occurrence_json: List[str] = []
