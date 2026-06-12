@@ -29,7 +29,7 @@ _PROTON = 1.007276
 
 _T1_COLS = ["accession", "raw_file", "precursor_id", "sage_psm_id",
             "modified_sequence", "sequence", "charge", "mz", "rt_seconds",
-            "mobility", "collision_energy_mean_v"]
+            "rt_aligned", "mobility", "collision_energy_mean_v"]
 
 
 def load_rt_aligned_lookup(path):
@@ -73,10 +73,11 @@ def prepare_examples_hf(corpus_dir, split, *, cap=4000, max_len=30, seed=0,
     # per-accession RT range. Pass 2: stream Tier-3, keep only the selected
     # precursors' fragments. Memory stays bounded by the selection (~50k prec).
     t1set = pds.dataset(corpus_dir / "tier1" / f"{split}.parquet")
+    cols = [c for c in _T1_COLS if c in t1set.schema.names]   # rt_aligned only in v0.2+
     sel: dict = {}                       # key -> props
     per_acc_count: dict = defaultdict(int)
     rt_lo, rt_hi = {}, {}
-    for rb in t1set.scanner(columns=_T1_COLS, filter=afilter,
+    for rb in t1set.scanner(columns=cols, filter=afilter,
                             batch_size=131072).to_batches():
         d = rb.to_pydict()
         for i in range(len(d["precursor_id"])):
@@ -92,7 +93,8 @@ def prepare_examples_hf(corpus_dir, split, *, cap=4000, max_len=30, seed=0,
                         "charge": d["charge"][i], "mz": d["mz"][i],
                         "rt": rt, "mobility": d["mobility"][i],
                         "ce_v": d["collision_energy_mean_v"][i],
-                        "sage_psm_id": d["sage_psm_id"][i]}
+                        "sage_psm_id": d["sage_psm_id"][i],
+                        "rt_aligned": d["rt_aligned"][i] if "rt_aligned" in d else None}
             per_acc_count[acc] += 1
 
     by_prec: dict = defaultdict(lambda: ([], [], [], []))
@@ -139,10 +141,13 @@ def prepare_examples_hf(corpus_dir, split, *, cap=4000, max_len=30, seed=0,
 
         im = p["mobility"]
         im = float(im) if im is not None else float("nan")
-        # RT target: prefer Sage aligned_rt (cross-run consistent, ~[0,1]);
-        # else fall back to per-accession-normalised raw rt_seconds.
+        # RT target: prefer the native rt_aligned column (v0.2+), else an
+        # external aligned_rt lookup, else per-accession-normalised rt_seconds.
         al = None
-        if rt_lookup is not None and p["sage_psm_id"] is not None:
+        ra = p.get("rt_aligned")
+        if ra is not None and np.isfinite(ra):
+            al = ra
+        elif rt_lookup is not None and p["sage_psm_id"] is not None:
             al = rt_lookup.get((acc, int(p["sage_psm_id"])))
         if al is not None and np.isfinite(al):
             rt_norm = float(min(1.0, max(0.0, al)))
