@@ -1164,7 +1164,9 @@ impl AcquisitionScheme {
         let mut out = Vec::with_capacity(raw.index.len());
         for scan in raw.first_scan..=raw.last_scan {
             let i = (scan - raw.first_scan) as usize;
-            let rt = raw.index[i].time;
+            // Thermo stores scan time in MINUTES; expose SECONDS so the `_s` field is
+            // honest and downstream (seconds-based) consumers need no further scaling.
+            let rt = raw.index[i].time * 60.0;
             let ev = raw.scan_event(scan);
             // ms-level: prefer the scan event; else classify by packet type
             // (a non-zero profile section = MS1 FTMS).

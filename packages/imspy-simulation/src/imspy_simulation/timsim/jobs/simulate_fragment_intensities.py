@@ -115,8 +115,11 @@ def _predict_intensities_with_koina(
     model = ModelFromKoina(model_name=koina_model_name)
     input_df = _koina_input_df(model, data, encoded_ce)
 
-    # Get predictions
-    result = model.predict(input_df)
+    # Get predictions. drop_nonstandard: fragment-intensity prediction is index-keyed
+    # downstream (_koina_result_to_prosit_vectors), so dropping peptides with residues
+    # the Prosit tokenizer can't encode (U/X/B/... in whole-proteome FASTAs) is safe
+    # here and prevents a tokenizer crash on proteome-scale runs.
+    result = model.predict(input_df, drop_nonstandard=True)
 
     # Extract intensities and convert to Prosit-style 174-dim vectors
     intensities = _koina_result_to_prosit_vectors(result, data)

@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use mscore::data::spectrum::MzSpectrum;
 use mscore::timstof::quadrupole::WindowTransmission;
 
 use crate::sim::acquisition::{AcquisitionWriter, ScanDescriptor, ThermoRawWriter};
@@ -43,11 +44,22 @@ pub struct AstralWriteOptions {
     pub quad_k: f64,
     pub max_ms1_peaks: usize,
     pub max_ms2_peaks: usize,
+    /// Gaussian m/z noise (≈ppm at 3σ) applied to MS1 precursor peaks. 0 = off.
+    pub precursor_noise_ppm: f64,
+    /// Gaussian m/z noise (≈ppm at 3σ) applied to MS2 fragment peaks. 0 = off.
+    pub fragment_noise_ppm: f64,
 }
 
 impl Default for AstralWriteOptions {
     fn default() -> Self {
-        AstralWriteOptions { num_threads: 4, quad_k: 15.0, max_ms1_peaks: 400, max_ms2_peaks: 120 }
+        AstralWriteOptions {
+            num_threads: 4,
+            quad_k: 15.0,
+            max_ms1_peaks: 400,
+            max_ms2_peaks: 120,
+            precursor_noise_ppm: 0.0,
+            fragment_noise_ppm: 0.0,
+        }
     }
 }
 
@@ -56,6 +68,31 @@ fn cap_top_intensity(peaks: &mut Vec<(f64, f32)>, max: usize) {
         peaks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
         peaks.truncate(max);
     }
+}
+
+/// Apply Gaussian m/z noise (≈`ppm` at 3σ) to rendered centroids — the
+/// recording-stage mass-error artifact a real Orbitrap/Astral analyzer imparts.
+/// Off when `ppm <= 0`. Applied at dispatch (not in the physics render kernels) so
+/// the trunk stays deterministic and instrument-neutral; each authored peak gets an
+/// INDEPENDENT error, which is exactly what gives a downstream search engine a
+/// normal mass-error distribution to mass-calibrate against (a perfectly-zero-error
+/// spectrum is degenerate for that fit). Reuses the same `MzSpectrum` primitive the
+/// Bruker path uses; Gaussian (not the TOF-shaped uniform/right-drag) fits FT optics.
+fn apply_mz_noise(peaks: &mut Vec<(f64, f32)>, ppm: f64) {
+    // Non-finite or non-positive ppm = noise off (defensive — the PyO3 boundary also
+    // rejects non-finite/negative ppm up front, so a NaN never reaches Normal::new).
+    if !ppm.is_finite() || ppm <= 0.0 || peaks.is_empty() {
+        return;
+    }
+    let mz: Vec<f64> = peaks.iter().map(|(m, _)| *m).collect();
+    let inten: Vec<f64> = peaks.iter().map(|(_, i)| *i as f64).collect();
+    let noised = MzSpectrum::new(mz, inten).add_mz_noise_normal(ppm);
+    *peaks = noised
+        .mz
+        .iter()
+        .zip(noised.intensity.iter())
+        .map(|(m, i)| (*m, *i as f32))
+        .collect();
 }
 
 /// Render the Astral build-from-template DB at `db_path` to a Thermo `.raw` at
@@ -144,6 +181,9 @@ pub fn write_astral_raw(
                 .precursor_frame_builder
                 .render_precursor_scan(frame_id, DataMode::Profile);
             let mut d = ScanDescriptor::from_rendered_event(&ev, 0.0)?;
+            // Mass-error noise BEFORE the grid-extent filter, so a peak jittered just
+            // past the FTMS grid edge is dropped rather than clamped.
+            apply_mz_noise(&mut d.peaks, opts.precursor_noise_ppm);
             // Keep only peaks within this scan's FTMS frequency-grid m/z extent.
             if let Some(p) = raw.profile(slot_scan) {
                 let a = p.mz_of_bin(0, &calib);
@@ -160,6 +200,7 @@ pub fn write_astral_raw(
             let wt = WindowTransmission::new(center, width, opts.quad_k);
             let ev = builder.render_fragment_scan(frame_id, &wt, ce, DataMode::Centroid);
             let mut d = ScanDescriptor::from_rendered_event(&ev, ce)?;
+            apply_mz_noise(&mut d.peaks, opts.fragment_noise_ppm);
             cap_top_intensity(&mut d.peaks, opts.max_ms2_peaks);
             (d, ce)
         };

@@ -189,11 +189,26 @@ class AstralAcquisitionBuilder:
         self.acquisition_name = "dia"
         self.synthetics_handle = SyntheticExperimentDataHandle(database_path=path)
 
-        schedule = imspy_connector.py_acquisition.PyAcquisitionScheme.thermo_frame_schedule(
-            template_path
+        # `thermo_frame_schedule` returns retention times already in SECONDS (it
+        # converts the Thermo `.raw`'s native minutes at the boundary). The entire
+        # timsim trunk — the RT model, the EMG sigma defaults (`calculate_rt_defaults`:
+        # sigma ~= gradient_s/3600*0.75 + 1.125), and the frame-distribution sampling —
+        # works in seconds, so no further scaling is needed here. (Historically this
+        # boundary multiplied by 60; that now lives in the Rust extractor so the
+        # `retention_time_s` field is honest for every caller.) The `.raw` writer
+        # authors into the template's own slots and preserves the template's native
+        # (minute) scan times, so the output file is unaffected.
+        schedule = list(
+            imspy_connector.py_acquisition.PyAcquisitionScheme.thermo_frame_schedule(
+                template_path
+            )
         )
         if verbose:
-            print(f"Astral build-from-template: {len(schedule)} template scans")
+            grad_min = (max(r[1] for r in schedule) / 60.0) if schedule else 0.0
+            print(
+                f"Astral build-from-template: {len(schedule)} template scans "
+                f"({grad_min:.1f} min gradient)"
+            )
 
         # Round (and window-group) collision energies at the configured precision —
         # do it ONCE inside build_astral_frame_tables so grouping and the stored CE

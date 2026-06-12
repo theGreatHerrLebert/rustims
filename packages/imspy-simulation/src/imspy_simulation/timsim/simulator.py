@@ -1086,8 +1086,20 @@ def main():
             logger.info(f"  Ions:     {ions.shape[0]}")
 
         if config.re_scale_rt:
+            # For an Astral build-from-template run the timeline comes from the template
+            # (seconds, after the minutes->seconds conversion in AstralAcquisitionBuilder),
+            # which can differ from config.gradient_length; rescaling to the config value
+            # would smear elution peaks onto the wrong timeline. Use the template-derived
+            # length there. Other instruments keep the configured gradient length (their
+            # builder derives it from the config/reference) to avoid a silent behavior
+            # change to the Bruker path.
+            rescale_gradient = (
+                acquisition_builder.gradient_length
+                if instrument == 'orbitrap_astral'
+                else config.gradient_length
+            )
             if not config.silent_mode:
-                logger.info(f"Re-scaling retention times to gradient length of {config.gradient_length} seconds")
+                logger.info(f"Re-scaling retention times to gradient length of {rescale_gradient} seconds")
 
             # Support both rt_model and deprecated koina_rt_model
             rt_model = config.rt_model or config.koina_rt_model
@@ -1095,7 +1107,7 @@ def main():
             peptides = simulate_retention_times(
                 peptides=peptides,
                 verbose=not config.silent_mode,
-                gradient_length=config.gradient_length,
+                gradient_length=rescale_gradient,
                 use_koina_model=rt_model,
             )
 
@@ -1157,12 +1169,19 @@ def main():
                 verbose=not config.silent_mode
             )
 
-        # Warn if gradient length mismatch is large
+        # Warn if gradient length mismatch is large. Compare against the template-derived
+        # gradient for Astral (authoritative there) and the configured one otherwise
+        # (matching the Bruker reference-layout expectation).
         rt_max = peptides['retention_time_gru_predictor'].max()
-        if abs(rt_max - config.gradient_length) / config.gradient_length > 0.05:
+        grad = (
+            acquisition_builder.gradient_length
+            if instrument == 'orbitrap_astral'
+            else config.gradient_length
+        )
+        if abs(rt_max - grad) / grad > 0.05:
             logger.warning(
                 f"Existing simulation gradient length ({rt_max}s) differs by >5% "
-                f"from configured gradient length ({config.gradient_length}s)"
+                f"from acquisition gradient length ({grad}s)"
             )
 
     # ----------------------------------------
@@ -1570,9 +1589,20 @@ def main():
         logger.info(section_header("Authoring Astral .raw", use_unicode))
         db_path = acquisition_builder.synthetics_handle.database_path
         out_raw = str(Path(save_path) / f"{name}.raw")
+        # Recording-stage m/z noise (Gaussian, ppm). Respect the same toggles the
+        # Bruker path uses; 0 ppm = off. A few ppm of mass-error scatter gives a
+        # downstream search engine a realistic (non-degenerate) error distribution
+        # to mass-calibrate against.
+        prec_noise_ppm = config.precursor_noise_ppm if config.mz_noise_precursor else 0.0
+        frag_noise_ppm = config.fragment_noise_ppm if config.mz_noise_fragment else 0.0
+        if prec_noise_ppm or frag_noise_ppm:
+            logger.info(
+                f"  m/z noise: precursor {prec_noise_ppm} ppm, fragment {frag_noise_ppm} ppm (Gaussian)"
+            )
         scans, n_ms1, n_ms2, n_ms2_nz, n_cleared, ok = (
             imspy_connector.py_acquisition.write_astral_raw(
                 db_path, config.astral_template_path, out_raw, num_threads,
+                precursor_noise_ppm=prec_noise_ppm, fragment_noise_ppm=frag_noise_ppm,
             )
         )
         logger.info(

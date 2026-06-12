@@ -605,7 +605,7 @@ impl PyActivationPolicy {
 /// 1:1 with template slots), else a structured error is raised.
 #[cfg(feature = "thermo")]
 #[pyfunction]
-#[pyo3(signature = (db_path, template_path, out_path, num_threads=4, quad_k=15.0, max_ms1_peaks=400, max_ms2_peaks=120))]
+#[pyo3(signature = (db_path, template_path, out_path, num_threads=4, quad_k=15.0, max_ms1_peaks=400, max_ms2_peaks=120, precursor_noise_ppm=0.0, fragment_noise_ppm=0.0))]
 pub fn write_astral_raw(
     py: Python<'_>,
     db_path: &str,
@@ -615,10 +615,24 @@ pub fn write_astral_raw(
     quad_k: f64,
     max_ms1_peaks: usize,
     max_ms2_peaks: usize,
+    precursor_noise_ppm: f64,
+    fragment_noise_ppm: f64,
 ) -> PyResult<(usize, usize, usize, usize, usize, bool)> {
     use rustdf::sim::astral_dispatch::{write_astral_raw as run, AstralWriteOptions};
     use std::path::Path;
-    let opts = AstralWriteOptions { num_threads, quad_k, max_ms1_peaks, max_ms2_peaks };
+    for (name, v) in [("precursor_noise_ppm", precursor_noise_ppm), ("fragment_noise_ppm", fragment_noise_ppm)] {
+        if !v.is_finite() || v < 0.0 {
+            return Err(PyValueError::new_err(format!("{name} must be finite and >= 0, got {v}")));
+        }
+    }
+    let opts = AstralWriteOptions {
+        num_threads,
+        quad_k,
+        max_ms1_peaks,
+        max_ms2_peaks,
+        precursor_noise_ppm,
+        fragment_noise_ppm,
+    };
     let s = py
         .allow_threads(|| {
             run(Path::new(db_path), Path::new(template_path), Path::new(out_path), opts)
