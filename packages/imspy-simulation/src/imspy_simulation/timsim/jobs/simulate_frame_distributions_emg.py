@@ -1,4 +1,4 @@
-from typing import Tuple, Union
+from typing import List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from scipy.special import erfcx
@@ -163,6 +163,45 @@ def estimate_mu_from_mode_emg(mode: ArrayLike, sigma: ArrayLike, lambda_: ArrayL
     return mode + np.sqrt(2)*sigma*erfcxinv(1/(lambda_*sigma)*np.sqrt(2/np.pi))-np.power(sigma,2)*lambda_
 
 
+def _emg_project_slice(
+        frames_np, times_np, mus, sigmas, lambdas, noise_levels,
+        target_p, step_size, rt_cycle_length, n_steps, num_threads,
+        remove_epsilon, add_noise,
+) -> Tuple[List[int], List[int], List[str], List[str]]:
+    """Project ONE slice of peptides to (first_idx, last_idx, occurrence_json,
+    abundance_json), replicating the per-peptide steps of
+    ``simulate_frame_distributions_emg`` exactly.
+
+    The per-(peptide, frame) EMG projection is deterministic and peptide-local (no
+    cross-peptide coupling — see the streaming design notes), so calling this over
+    slices is output-equivalent to one full-array call while bounding peak memory to
+    the slice. Noise levels are passed IN (pre-drawn for all peptides) so batching
+    does not perturb the global RNG stream.
+    """
+    occurrences = ims.calculate_frame_occurrences_emg_par(
+        times_np, mus, sigmas, lambdas, target_p, step_size,
+        num_threads=num_threads, n_steps=n_steps,
+    )
+    abundances = ims.calculate_frame_abundances_emg_par(
+        frames_np, times_np, occurrences, mus, sigmas, lambdas, rt_cycle_length,
+        num_threads=num_threads, n_steps=n_steps,
+    )
+    # remove_epsilon filter on the unrounded f64 abundances (membership + values)
+    occurrences = [list(np.array(o)[np.array(a) > remove_epsilon]) for o, a in zip(occurrences, abundances)]
+    abundances = [list(np.array(a)[np.array(a) > remove_epsilon]) for a in abundances]
+    first = [(-1 if len(o) == 0 else o[0]) for o in occurrences]
+    last = [(-1 if len(o) == 0 else o[-1]) for o in occurrences]
+    if add_noise:
+        abundances = [add_uniform_noise(np.array(a), nl) for a, nl in zip(abundances, noise_levels)]
+        abundances = [a / np.sum(a) for a in abundances]
+    occ_json = [python_list_to_json_string(o, as_float=False) for o in occurrences]
+    ab_json = [
+        python_list_to_json_string(np.nan_to_num(np.array(a), nan=0.0).tolist(), as_float=True)
+        for a in abundances
+    ]
+    return first, last, occ_json, ab_json
+
+
 def simulate_frame_distributions_emg(
         peptides: pd.DataFrame,
         frames: pd.DataFrame,
@@ -186,6 +225,7 @@ def simulate_frame_distributions_emg(
         lambdas: np.ndarray = None,
         gradient_length: float = None,
         remove_epsilon: float = 1e-4,
+        batch_size: Optional[int] = 25000,
 ) -> pd.DataFrame:
     """Simulate frame distributions for peptides.
 
@@ -251,73 +291,41 @@ def simulate_frame_distributions_emg(
     peptide_rt['rt_sigma'] = sigmas
     peptide_rt['rt_lambda'] = lambdas
     
-    occurrences = ims.calculate_frame_occurrences_emg_par(
-        times_np,
-        mus,
-        sigmas,
-        lambdas,
-        target_p,
-        step_size,
-        num_threads=num_threads,
-        n_steps=n_steps,
-    )
-
-    abundances = ims.calculate_frame_abundances_emg_par(
-        frames_np,
-        times_np,
-        occurrences,
-        mus,
-        sigmas,
-        lambdas,
-        rt_cycle_length,
-        num_threads=num_threads,
-        n_steps=n_steps,
-    )
+    # Pre-draw ALL per-peptide noise levels here (one np.random.uniform(0,2,n) call,
+    # exactly as the original did over the full set) so batching cannot perturb the
+    # global RNG stream — the EMG/Rust projection calls between here and the original
+    # draw site consume no np.random state.
+    all_noise_levels = np.random.uniform(0.0, 2.0, n) if add_noise else None
 
     if verbose:
         print("Serializing frame distributions to json ...")
 
-    # filter occurrences and abundances
-    occurrences = [list(np.array(occurrence)[np.array(abundance) > remove_epsilon]) for occurrence, abundance in zip(occurrences, abundances)]
-    abundances = [list(np.array(abundance)[np.array(abundance) > remove_epsilon]) for abundance in abundances]
-
-    # this could now fail, if all values are removed because they are below remove_epsilon
-
-    first_occurrence, last_occurrence = [], []
-
-    for oc, ab in zip(occurrences, abundances):
-        if len(oc) == 0 or len(ab) == 0:
-            first_occurrence.append(-1)
-            last_occurrence.append(-1)
-        else:
-            first_occurrence.append(oc[0])
-            last_occurrence.append(oc[-1])
+    # Project in batches to bound peak memory. The per-(peptide, frame) projection is
+    # deterministic and peptide-local, so chunking is output-equivalent to one full
+    # call; on dense-frame templates (e.g. Astral nDIA, ~2000 frames/peptide) holding
+    # all peptides' profiles + their copies at once OOMs. batch_size=None disables it.
+    bs = batch_size if (batch_size and n > batch_size) else n
+    first_occurrence: List[int] = []
+    last_occurrence: List[int] = []
+    occurrence_json: List[str] = []
+    abundance_json: List[str] = []
+    for s in range(0, n, bs):
+        e = min(s + bs, n)
+        noise_slice = None if all_noise_levels is None else all_noise_levels[s:e]
+        f, l, oj, aj = _emg_project_slice(
+            frames_np, times_np, mus[s:e], sigmas[s:e], lambdas[s:e], noise_slice,
+            target_p, step_size, rt_cycle_length, n_steps, num_threads,
+            remove_epsilon, add_noise,
+        )
+        first_occurrence.extend(f)
+        last_occurrence.extend(l)
+        occurrence_json.extend(oj)
+        abundance_json.extend(aj)
 
     peptide_rt['frame_occurrence_start'] = first_occurrence
     peptide_rt['frame_occurrence_end'] = last_occurrence
-
-    peptide_rt['frame_occurrence'] = occurrences
-
-    if add_noise:
-        # TODO: make noise model configurable
-        noise_levels = np.random.uniform(0.0, 2.0, len(abundances))
-        abundances = [add_uniform_noise(np.array(abundance), noise_level) for abundance, noise_level in zip(abundances, noise_levels)]
-        # Normalize frame abundance
-        abundances = [frame_abundance / np.sum(frame_abundance) for frame_abundance in abundances]
-
-    peptide_rt['frame_abundance'] = [list(x) for x in abundances]
-
-    peptide_rt['frame_occurrence'] = peptide_rt['frame_occurrence'].apply(
-        lambda r: python_list_to_json_string(r, as_float=False)
-    )
-
-    # replace NaN values with 0.0 in frame abundance
-    peptide_rt['frame_abundance'] = [np.nan_to_num(np.array(x), nan=0.0).tolist() for x in abundances]
-
-    peptide_rt['frame_abundance'] = peptide_rt['frame_abundance'].apply(
-        lambda r: python_list_to_json_string(r, as_float=True)
-    )
-
+    peptide_rt['frame_occurrence'] = occurrence_json
+    peptide_rt['frame_abundance'] = abundance_json
     peptide_rt['rt_mu'] = mus
 
     # print how many rows get removed, if any
