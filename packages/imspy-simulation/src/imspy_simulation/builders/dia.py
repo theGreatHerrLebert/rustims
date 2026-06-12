@@ -53,6 +53,12 @@ class DIAFrameBuilder:
         quad_transmission_max_isotopes: int = 10,
         precursor_survival_min: float = 0.0,
         precursor_survival_max: float = 0.0,
+        projection_mode: str | None = None,
+        target_p: float = 0.999,
+        frame_step_size: float = 0.001,
+        scan_step_size: float = 0.0001,
+        n_steps: int = 1000,
+        remove_epsilon: float = 1e-4,
     ):
         """Initialize the DIA frame builder.
 
@@ -95,7 +101,14 @@ class DIAFrameBuilder:
                 logging.getLogger(__name__).warning(
                     "Quad-dependent isotope transmission is not supported with lazy loading, ignoring."
                 )
-            self._py_ptr = ims.PyTimsTofLazyFrameBuilderDIA(db_path, num_threads)
+            # P4a2: the lazy builder is now projector-fed. None/'off'/'columns'
+            # read the legacy columns (byte-unchanged); 'legacy_compat'/'accurate'
+            # source occurrence/abundance from the render-time projector per batch.
+            self._py_ptr = ims.PyTimsTofLazyFrameBuilderDIA(
+                db_path, num_threads,
+                projection_mode, target_p, frame_step_size, scan_step_size,
+                n_steps, remove_epsilon,
+            )
             self._with_annotations = False
         else:
             # Create isotope transmission config
@@ -107,8 +120,14 @@ class DIAFrameBuilder:
                 precursor_survival_max=precursor_survival_max,
             )
 
+            # projection_mode (P4): None/'columns' = legacy JSON columns (default);
+            # 'legacy_compat'/'accurate' source occurrence/abundance from the
+            # render-time projector instead, so the builder is fed without the
+            # device-projection columns.
             self._py_ptr = ims.PyTimsTofSyntheticsFrameBuilderDIA(
-                db_path, with_annotations, num_threads, isotope_config
+                db_path, with_annotations, num_threads, isotope_config,
+                projection_mode, target_p, frame_step_size, scan_step_size,
+                n_steps, remove_epsilon,
             )
             self._with_annotations = with_annotations
 

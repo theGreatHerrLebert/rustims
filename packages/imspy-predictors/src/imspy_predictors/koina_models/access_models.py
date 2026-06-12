@@ -253,6 +253,7 @@ class ModelFromKoina:
         inputs: pd.DataFrame,
         filter_inputs: bool = True,
         raise_on_empty: bool = False,
+        drop_nonstandard: bool = False,
     ) -> pd.DataFrame:
         """
         Predict the output of the model with retry logic.
@@ -265,6 +266,11 @@ class ModelFromKoina:
                 - 'fragmentation_types': Fragmentation type (required for some models)
             filter_inputs: Whether to filter inputs based on model requirements.
             raise_on_empty: Whether to raise an error if all inputs are filtered out.
+            drop_nonstandard: Drop peptides with non-standard residues (U/X/B/...)
+                before prediction. Only request this from a caller that keys the
+                result back by index (e.g. fragment-intensity), never one that
+                assigns predictions positionally (RT/CCS/flyability) — see
+                `filter_input_by_model`.
 
         Returns:
             pd.DataFrame: Output data from the model.
@@ -293,7 +299,9 @@ class ModelFromKoina:
         # Filter inputs based on model requirements
         if filter_inputs:
             from .input_filters import filter_input_by_model
-            inputs = filter_input_by_model(self.model_name, inputs)
+            inputs = filter_input_by_model(
+                self.model_name, inputs, drop_nonstandard=drop_nonstandard
+            )
 
         filtered_count = len(inputs)
 

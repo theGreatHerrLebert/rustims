@@ -335,6 +335,16 @@ def get_default_settings() -> dict:
         # Intensity models: "local"/"prosit", "alphapeptdeep", "ms2pip", or full Koina name
         'intensity_model': None,
 
+        # P6d: instrument the run records fragments for. Drives the collision-energy
+        # UNIT (Bruker timsTOF = absolute eV; Orbitrap Astral = normalized CE / NCE),
+        # the fragment-model compatibility guard, and the prediction-set provenance.
+        # Default 'bruker_timstof' preserves current behaviour exactly.
+        'instrument': 'bruker_timstof',
+        # P6e(b): for instrument='orbitrap_astral', the Thermo .raw template the run
+        # is built from — its real per-scan schedule + windows become the
+        # acquisition (no Bruker reference). Required for an Astral run.
+        'astral_template_path': None,
+
         'sigma_lower_rt': None,
         'sigma_upper_rt': None,
         'sigma_alpha_rt': 4,
@@ -347,12 +357,22 @@ def get_default_settings() -> dict:
         'sampling_step_size': 0.001,
         'n_steps': 1000,
         'remove_epsilon': 1e-4,
+        # Instrument-dispatch projector (opt-in). 'off' (default) keeps the
+        # legacy frame/scan distribution columns untouched; 'legacy_compat'
+        # regenerates them via the Rust projector reproducing the legacy kernels;
+        # 'accurate' uses the improved projection (event-interval time + per-scan
+        # mobility bins). See jobs/project_distributions.py.
+        'projection_mode': 'off',
         'use_inverse_mobility_std_mean': True,
         'inverse_mobility_std_mean': 0.009,
 
         # Acquisition settings
         'round_collision_energy': True,
         'collision_energy_decimals': 0,
+        # P6d: for instrument='orbitrap_astral', the normalized collision energy
+        # (NCE) that REPLACES the reference-derived Bruker eV window CE (required
+        # for an Astral run). Ignored for Bruker timsTOF.
+        'collision_energy_nce': None,
 
         # Variation settings
         're_scale_rt': False,
@@ -447,6 +467,19 @@ def get_default_settings() -> dict:
     }
 
 
+def astral_nce_override(config) -> "float | None":
+    """The DIA-window NCE override to apply for this run (P6d).
+
+    Returns the configured normalized collision energy ONLY for an Orbitrap Astral
+    run; ``None`` (i.e. ignore it, keep the reference eV windows) for Bruker — so a
+    stray ``collision_energy_nce`` on a Bruker config can never silently replace eV
+    windows with an NCE while provenance still labels them eV."""
+    instrument = str(getattr(config, 'instrument', 'bruker_timstof')).lower()
+    if instrument == 'orbitrap_astral':
+        return getattr(config, 'collision_energy_nce', None)
+    return None
+
+
 class SimulationConfig:
     """
     Configuration container for timsim simulation parameters.
@@ -487,10 +520,15 @@ class SimulationConfig:
         if self._config.get('from_findings') and self._config.get('from_existing'):
             raise ValueError("Cannot use both 'from_findings' and 'from_existing' at the same time")
 
+        # An Astral run is built from a Thermo .raw template, NOT a Bruker
+        # reference .d — so it requires astral_template_path in place of
+        # reference_path (the lean, Bruker-independent build-from-template path).
+        instrument = str(self._config.get('instrument', 'bruker_timstof')).lower()
+        ref_key = 'astral_template_path' if instrument == 'orbitrap_astral' else 'reference_path'
         if self._config.get('from_findings'):
-            required = ['save_path', 'reference_path', 'findings_path']
+            required = ['save_path', ref_key, 'findings_path']
         else:
-            required = ['save_path', 'reference_path', 'fasta_path']
+            required = ['save_path', ref_key, 'fasta_path']
         missing = [key for key in required if not self._config.get(key)]
 
         if missing:
@@ -517,6 +555,101 @@ class SimulationConfig:
         p_charge = self._config.get('p_charge', 0.8)
         if not (0.0 < p_charge < 1.0):
             raise ValueError(f"p_charge must be between 0 and 1, got {p_charge}")
+
+        # Validate instrument-dispatch projector mode (fail fast on bad TOML,
+        # before any expensive simulation runs).
+        projection_mode = str(self._config.get('projection_mode', 'off')).lower()
+        if projection_mode not in ('off', 'legacy_compat', 'accurate'):
+            raise ValueError(
+                f"projection_mode must be off|legacy_compat|accurate, got {projection_mode!r}"
+            )
+        if projection_mode != 'off':
+            # The projector is deterministic, so it would silently overwrite any
+            # configured abundance noise. Reject the combination explicitly.
+            if self._config.get('noise_frame_abundance') or self._config.get('noise_scan_abundance'):
+                raise ValueError(
+                    "projection_mode is incompatible with noise_frame_abundance/"
+                    "noise_scan_abundance (the projector is deterministic and would "
+                    "drop the noise); disable the noise or projection_mode"
+                )
+            # The 'ions' checkpoint persists in-memory distributions; resuming would
+            # restore the legacy (pre-projection) columns and diverge from a projected
+            # run. Not yet supported together.
+            if self._config.get('enable_checkpoints'):
+                raise ValueError(
+                    "projection_mode is not yet supported with enable_checkpoints "
+                    "(checkpoint resume would restore pre-projection distributions)"
+                )
+
+        # P6d: validate the instrument selection at config load (fail fast, before
+        # any expensive acquisition/simulation work leaves partial output).
+        from .jobs.register_prediction_set import INSTRUMENT_ACTIVATION
+        instrument = str(self._config.get('instrument', 'bruker_timstof')).lower()
+        if instrument not in INSTRUMENT_ACTIVATION:
+            raise ValueError(
+                f"unknown instrument '{instrument}'. Supported: "
+                f"{sorted(INSTRUMENT_ACTIVATION)}."
+            )
+        if instrument == 'orbitrap_astral':
+            # Astral is a DIA, no-IMS, NCE instrument. DDA-PASEF CE is Bruker
+            # scan-driven, and the run MUST supply a genuine normalized collision
+            # energy — otherwise the reference-derived Bruker eV windows would be
+            # silently mislabelled as NCE and fed to the NCE predictor.
+            if self._config.get('acquisition_type') == 'DDA':
+                raise ValueError(
+                    "instrument 'orbitrap_astral' does not support DDA acquisition "
+                    "(DDA-PASEF collision energy is Bruker scan-driven). Use DIA."
+                )
+            # collision_energy_nce is OPTIONAL for the build-from-template path: the
+            # Astral template already supplies a genuine per-window NCE, which is
+            # used by default. If set, it OVERRIDES every window with that single
+            # NCE (a deliberate manual choice); if set, it must be positive.
+            nce = self._config.get('collision_energy_nce')
+            if nce is not None and not (isinstance(nce, (int, float)) and nce > 0):
+                raise ValueError(
+                    "collision_energy_nce, if set, must be a positive normalized "
+                    "collision energy (e.g. 27); it overrides the template's "
+                    "per-window NCE for an Astral run."
+                )
+            # The Astral MS2 render is deterministic; precursor survival is a
+            # stochastic (per-scan random fraction) feature. Refuse rather than
+            # silently drop the configured survival signal (it is not modelled on
+            # the Astral path yet).
+            if self._config.get('precursor_survival_max', 0.0) and float(
+                self._config.get('precursor_survival_max', 0.0)
+            ) > 0.0:
+                raise ValueError(
+                    "instrument 'orbitrap_astral' does not support precursor_survival_* "
+                    "(the Astral MS2 render is deterministic; survival is stochastic). "
+                    "Set precursor_survival_min/max to 0 for an Astral run."
+                )
+            # Build-from-template: an Astral run is built from a Thermo .raw template
+            # (its real per-scan schedule + windows become the acquisition).
+            template = self._config.get('astral_template_path')
+            if not template:
+                raise ValueError(
+                    "instrument 'orbitrap_astral' requires 'astral_template_path' "
+                    "(a Thermo .raw whose per-scan schedule + windows the run is "
+                    "built from)."
+                )
+            if not os.path.exists(template):
+                raise FileNotFoundError(f"astral_template_path does not exist: {template}")
+            # The Astral .raw writer + dispatch live behind the connector's 'thermo'
+            # feature, which the published wheels disable (the Thermo writer
+            # dependency is private). Fail fast at config load instead of an
+            # AttributeError after a full simulation.
+            try:
+                import imspy_connector
+                thermo_ok = bool(imspy_connector.py_acquisition.has_thermo())
+            except Exception:
+                thermo_ok = False
+            if not thermo_ok:
+                raise ValueError(
+                    "instrument 'orbitrap_astral' requires imspy-connector built with "
+                    "the 'thermo' feature (maturin build --release --features thermo, "
+                    "then reinstall). The published wheels disable it because the "
+                    "Thermo .raw writer dependency is private."
+                )
 
     def __getattr__(self, name: str):
         """Allow attribute-style access to configuration values."""
@@ -732,6 +865,14 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
         action="store_true",
         help="Resume from the latest checkpoint (requires a previous run with enable_checkpoints=true)"
     )
+    parser.add_argument(
+        "--projection-mode",
+        choices=["off", "legacy_compat", "accurate"],
+        default=None,
+        help="Instrument-dispatch projector for frame/scan distributions: 'off' (default) "
+             "keeps the legacy columns; 'legacy_compat' reproduces them via the Rust projector; "
+             "'accurate' uses the improved projection."
+    )
     return parser
 
 
@@ -764,6 +905,8 @@ def main():
         overrides['intensity_multiplier'] = cli_args.intensity_multiplier
     if cli_args.resume:
         overrides['enable_checkpoints'] = True
+    if cli_args.projection_mode is not None:
+        overrides['projection_mode'] = cli_args.projection_mode
 
     # Load configuration from TOML file
     try:
@@ -834,7 +977,8 @@ def main():
 
     # Prepare paths
     save_path = check_path(config.save_path)
-    reference_path = check_path(config.reference_path)
+    # An Astral run has no Bruker reference .d (it builds from a .raw template).
+    reference_path = check_path(config.reference_path) if config.reference_path else None
     name = config.experiment_name.replace('[PLACEHOLDER]', f'{config.acquisition_type}').replace("'", "")
 
     # Save configuration for future reference
@@ -850,19 +994,40 @@ def main():
         logger.info(f"  Output path: {save_path}")
         logger.info("")
 
-    acquisition_builder = build_acquisition(
-        path=save_path,
-        reference_path=reference_path,
-        exp_name=name,
-        acquisition_type=config.acquisition_type,
-        verbose=not config.silent_mode,
-        gradient_length=config.gradient_length,
-        use_reference_ds_layout=config.use_reference_layout,
-        reference_in_memory=config.reference_in_memory,
-        round_collision_energy=config.round_collision_energy,
-        collision_energy_decimals=config.collision_energy_decimals,
-        use_bruker_sdk=use_bruker_sdk,
-    )
+    instrument = str(getattr(config, 'instrument', 'bruker_timstof')).lower()
+    if instrument == 'orbitrap_astral':
+        # Build-from-template (P6e option b): NO Bruker reference. The Astral
+        # template's real per-scan schedule + windows become the acquisition, so
+        # the trunk is simulated on the template's true non-uniform timeline.
+        from .jobs.astral_acquisition import AstralAcquisitionBuilder
+        logger.info(f"  Astral build-from-template: {config.astral_template_path}")
+        acquisition_builder = AstralAcquisitionBuilder(
+            str(Path(save_path) / name),
+            config.astral_template_path,
+            round_collision_energy=config.round_collision_energy,
+            collision_energy_decimals=config.collision_energy_decimals,
+            # Optional override: if set, forces a single NCE across all windows;
+            # otherwise the template's genuine per-window NCE is used.
+            collision_energy_nce=astral_nce_override(config),
+            verbose=not config.silent_mode,
+        )
+    else:
+        acquisition_builder = build_acquisition(
+            path=save_path,
+            reference_path=reference_path,
+            exp_name=name,
+            acquisition_type=config.acquisition_type,
+            verbose=not config.silent_mode,
+            gradient_length=config.gradient_length,
+            use_reference_ds_layout=config.use_reference_layout,
+            reference_in_memory=config.reference_in_memory,
+            round_collision_energy=config.round_collision_energy,
+            collision_energy_decimals=config.collision_energy_decimals,
+            # NCE override is Astral-only — never replace Bruker eV windows with an
+            # NCE (that would silently mislabel eV as NCE). Ignored for Bruker.
+            collision_energy_nce=astral_nce_override(config),
+            use_bruker_sdk=use_bruker_sdk,
+        )
 
     if not config.silent_mode:
         logger.info(str(acquisition_builder))
@@ -921,8 +1086,20 @@ def main():
             logger.info(f"  Ions:     {ions.shape[0]}")
 
         if config.re_scale_rt:
+            # For an Astral build-from-template run the timeline comes from the template
+            # (seconds, after the minutes->seconds conversion in AstralAcquisitionBuilder),
+            # which can differ from config.gradient_length; rescaling to the config value
+            # would smear elution peaks onto the wrong timeline. Use the template-derived
+            # length there. Other instruments keep the configured gradient length (their
+            # builder derives it from the config/reference) to avoid a silent behavior
+            # change to the Bruker path.
+            rescale_gradient = (
+                acquisition_builder.gradient_length
+                if instrument == 'orbitrap_astral'
+                else config.gradient_length
+            )
             if not config.silent_mode:
-                logger.info(f"Re-scaling retention times to gradient length of {config.gradient_length} seconds")
+                logger.info(f"Re-scaling retention times to gradient length of {rescale_gradient} seconds")
 
             # Support both rt_model and deprecated koina_rt_model
             rt_model = config.rt_model or config.koina_rt_model
@@ -930,7 +1107,7 @@ def main():
             peptides = simulate_retention_times(
                 peptides=peptides,
                 verbose=not config.silent_mode,
-                gradient_length=config.gradient_length,
+                gradient_length=rescale_gradient,
                 use_koina_model=rt_model,
             )
 
@@ -992,12 +1169,19 @@ def main():
                 verbose=not config.silent_mode
             )
 
-        # Warn if gradient length mismatch is large
+        # Warn if gradient length mismatch is large. Compare against the template-derived
+        # gradient for Astral (authoritative there) and the configured one otherwise
+        # (matching the Bruker reference-layout expectation).
         rt_max = peptides['retention_time_gru_predictor'].max()
-        if abs(rt_max - config.gradient_length) / config.gradient_length > 0.05:
+        grad = (
+            acquisition_builder.gradient_length
+            if instrument == 'orbitrap_astral'
+            else config.gradient_length
+        )
+        if abs(rt_max - grad) / grad > 0.05:
             logger.warning(
                 f"Existing simulation gradient length ({rt_max}s) differs by >5% "
-                f"from configured gradient length ({config.gradient_length}s)"
+                f"from acquisition gradient length ({grad}s)"
             )
 
     # ----------------------------------------
@@ -1274,6 +1458,34 @@ def main():
         # Save ions
         acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
 
+        # JOB 8.5 (opt-in): regenerate the frame/scan distribution columns via the
+        # instrument-dispatch projector, BEFORE DDA selection + fragment intensity +
+        # assembly so every downstream step reads one consistent set of
+        # distributions. Default 'off' is a hard no-op (the legacy columns written
+        # above are the fallback). The config validator rejects projection combined
+        # with abundance noise or checkpoints (see SimulationConfig._validate).
+        projection_mode = str(getattr(config, 'projection_mode', 'off')).lower()
+        if projection_mode != 'off':
+            from imspy_simulation.timsim.jobs.project_distributions import (
+                write_projected_distributions,
+            )
+            logger.info(section_header(f"Projecting Distributions ({projection_mode})", use_unicode))
+            db_path = str(Path(acquisition_builder.path) / 'synthetic_data.db')
+            summary = write_projected_distributions(
+                db_path,
+                mode=projection_mode,
+                target_p=config.target_p,
+                frame_step_size=config.sampling_step_size,
+                scan_step_size=0.0001,  # the scan distribution job's fixed step
+                n_steps=config.n_steps,
+                remove_epsilon=config.remove_epsilon,
+                num_threads=num_threads if num_threads and num_threads > 0 else 4,
+            )
+            logger.info(
+                f"  projector ({projection_mode}): {summary['peptides']} peptides, "
+                f"{summary['ions']} ions"
+            )
+
         if config.acquisition_type == 'DDA':
             logger.info(section_header("Simulating DDA-PASEF Selection", use_unicode))
             pasef_meta, precursors = simulate_dda_pasef_selection_scheme(
@@ -1317,7 +1529,26 @@ def main():
         logger.info(f"  Using intensity model: {intensity_model}")
     if config.lazy_frame_assembly:
         logger.info("  Using lazy loading for fragment intensity simulation")
-    simulate_fragment_intensities(
+
+    # P6d: the instrument fixes the collision-energy UNIT the run stores/applies.
+    # The fragment job validates the selected model's capability accepts it (an
+    # eV timsTOF model for an NCE Astral run, or vice-versa, fails loudly).
+    from .jobs.register_prediction_set import (
+        register_prediction_set,
+        resolve_instrument_activation,
+    )
+    # Normalize once (lower-case) so the later exact dispatch comparison can't be
+    # fooled by a case variant like 'ORBITRAP_ASTRAL'.
+    instrument = str(getattr(config, 'instrument', 'bruker_timstof')).lower()
+    activation_method, energy_unit = resolve_instrument_activation(instrument)
+    # (instrument validity, Astral⇒DIA, and Astral⇒collision_energy_nce are all
+    # enforced at config load in SimulationConfig._validate — fail fast.)
+    if instrument.lower() != 'bruker_timstof':
+        logger.info(
+            f"  Instrument: {instrument} (activation={activation_method}, CE unit={energy_unit})"
+        )
+
+    effective_intensity_model = simulate_fragment_intensities(
         path=save_path,
         name=name,
         acquisition_builder=acquisition_builder,
@@ -1330,36 +1561,87 @@ def main():
         lazy_loading=config.lazy_frame_assembly,
         frame_batch_size=config.frame_batch_size,
         phospho_mode=config.phospho_mode,
+        activation_method=activation_method,
+        energy_unit=energy_unit,
     )
 
-    # JOB 10: Assemble frames
-    logger.info(section_header("Assembling Frames", use_unicode))
-    assemble_frames(
-        acquisition_builder=acquisition_builder,
-        frames=acquisition_builder.frame_table,
-        batch_size=config.batch_size,
-        verbose=not config.silent_mode,
-        mz_noise_precursor=config.mz_noise_precursor,
-        mz_noise_uniform=config.mz_noise_uniform,
-        precursor_noise_ppm=config.precursor_noise_ppm,
-        mz_noise_fragment=config.mz_noise_fragment,
-        fragment_noise_ppm=config.fragment_noise_ppm,
-        num_threads=num_threads,
-        add_real_data_noise=config.add_real_data_noise,
-        intensity_max_precursor=config.reference_noise_intensity_max,
-        intensity_max_fragment=config.reference_noise_intensity_max,
-        precursor_sample_fraction=config.precursor_sample_fraction,
-        fragment_sample_fraction=config.fragment_sample_fraction,
-        num_precursor_frames=config.num_precursor_noise_frames,
-        num_fragment_frames=config.num_fragment_noise_frames,
-        fragment=config.apply_fragmentation,
-        pasef_meta=pasef_meta,
-        lazy_loading=config.lazy_frame_assembly,
-        quad_isotope_transmission_mode=config.quad_isotope_transmission_mode,
-        quad_transmission_min_probability=config.quad_transmission_min_probability,
-        quad_transmission_max_isotopes=config.quad_transmission_max_isotopes,
-        superimpose_on_reference=config.superimpose_on_reference,
+    # JOB 9.6 (P5a): register the fragment prediction set — record HOW the
+    # fragment intensities were produced (model / instrument / acquisition /
+    # activation / CE encoding) and stamp fragment_ions.prediction_set_id.
+    # Additive + idempotent: does not change fragment rows or values. A renderer
+    # (P5b) uses this to verify stored fragments match the instrument it renders.
+    register_prediction_set(
+        str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+        predictor_model=effective_intensity_model,
+        acquisition_type=config.acquisition_type,
+        instrument=instrument,
+        activation_method=activation_method,
+        energy_unit=energy_unit,
+        down_sample_factor=config.down_sample_factor,
     )
+
+    # JOB 10: vendor output.
+    if instrument == 'orbitrap_astral':
+        # The trunk is now simulated on the Astral template's timeline + windows
+        # (fragments at per-window NCE). Author a Thermo .raw from the template
+        # (render each frame -> its template slot) — NOT a Bruker .d.
+        import imspy_connector
+        logger.info(section_header("Authoring Astral .raw", use_unicode))
+        db_path = acquisition_builder.synthetics_handle.database_path
+        out_raw = str(Path(save_path) / f"{name}.raw")
+        # Recording-stage m/z noise (Gaussian, ppm). Respect the same toggles the
+        # Bruker path uses; 0 ppm = off. A few ppm of mass-error scatter gives a
+        # downstream search engine a realistic (non-degenerate) error distribution
+        # to mass-calibrate against.
+        prec_noise_ppm = config.precursor_noise_ppm if config.mz_noise_precursor else 0.0
+        frag_noise_ppm = config.fragment_noise_ppm if config.mz_noise_fragment else 0.0
+        if prec_noise_ppm or frag_noise_ppm:
+            logger.info(
+                f"  m/z noise: precursor {prec_noise_ppm} ppm, fragment {frag_noise_ppm} ppm (Gaussian)"
+            )
+        scans, n_ms1, n_ms2, n_ms2_nz, n_cleared, ok = (
+            imspy_connector.py_acquisition.write_astral_raw(
+                db_path, config.astral_template_path, out_raw, num_threads,
+                precursor_noise_ppm=prec_noise_ppm, fragment_noise_ppm=frag_noise_ppm,
+            )
+        )
+        logger.info(
+            f"  Astral .raw -> {out_raw}: {scans} scans | {n_ms1} MS1 | "
+            f"{n_ms2} MS2 ({n_ms2_nz} non-empty) | {n_cleared} budget-cleared | "
+            f"checksum_valid={ok}"
+        )
+        if not ok:
+            raise RuntimeError(
+                f"authored Astral .raw failed checksum validation: {out_raw}"
+            )
+    else:
+        logger.info(section_header("Assembling Frames", use_unicode))
+        assemble_frames(
+            acquisition_builder=acquisition_builder,
+            frames=acquisition_builder.frame_table,
+            batch_size=config.batch_size,
+            verbose=not config.silent_mode,
+            mz_noise_precursor=config.mz_noise_precursor,
+            mz_noise_uniform=config.mz_noise_uniform,
+            precursor_noise_ppm=config.precursor_noise_ppm,
+            mz_noise_fragment=config.mz_noise_fragment,
+            fragment_noise_ppm=config.fragment_noise_ppm,
+            num_threads=num_threads,
+            add_real_data_noise=config.add_real_data_noise,
+            intensity_max_precursor=config.reference_noise_intensity_max,
+            intensity_max_fragment=config.reference_noise_intensity_max,
+            precursor_sample_fraction=config.precursor_sample_fraction,
+            fragment_sample_fraction=config.fragment_sample_fraction,
+            num_precursor_frames=config.num_precursor_noise_frames,
+            num_fragment_frames=config.num_fragment_noise_frames,
+            fragment=config.apply_fragmentation,
+            pasef_meta=pasef_meta,
+            lazy_loading=config.lazy_frame_assembly,
+            quad_isotope_transmission_mode=config.quad_isotope_transmission_mode,
+            quad_transmission_min_probability=config.quad_transmission_min_probability,
+            quad_transmission_max_isotopes=config.quad_transmission_max_isotopes,
+            superimpose_on_reference=config.superimpose_on_reference,
+        )
 
     # Collect final statistics
     stats.n_proteins = len(proteins) if proteins is not None else 0

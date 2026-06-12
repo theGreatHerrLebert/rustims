@@ -4,10 +4,49 @@ use pyo3::prelude::*;
 use rustdf::sim::containers::{IsotopeTransmissionConfig, IsotopeTransmissionMode};
 use rustdf::sim::dda::TimsTofSyntheticsFrameBuilderDDA;
 use rustdf::sim::dia::TimsTofSyntheticsFrameBuilderDIA;
-use rustdf::sim::lazy_builder::TimsTofLazyFrameBuilderDIA;
+use rustdf::sim::lazy_builder::{TimsTofLazyFrameBuilderDIA, TimsTofLazyFrameBuilderDDA};
 use rustdf::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
 use rustdf::sim::handle::TimsTofSyntheticsDataHandle;
+use rustdf::sim::projector::{DistributionSource, ProjectionMode, ProjectionParams};
 use crate::py_annotation::PyTimsFrameAnnotated;
+
+/// Build the P4 `DistributionSource` for a builder: `None`/`"columns"`/`"off"` →
+/// legacy JSON columns (default); `"legacy_compat"`/`"accurate"` → the projector
+/// with the DB's mobility environment + the given params. Unknown → columns.
+fn make_distribution_source(
+    path: &std::path::Path,
+    mode: Option<&str>,
+    target_p: f64,
+    frame_step_size: f64,
+    scan_step_size: f64,
+    n_steps: usize,
+    remove_epsilon: f64,
+    num_threads: usize,
+) -> DistributionSource {
+    let mode = match mode {
+        Some("legacy_compat") => ProjectionMode::LegacyCompat,
+        Some("accurate") => ProjectionMode::Accurate,
+        _ => return DistributionSource::Columns,
+    };
+    let env = TimsTofSyntheticsDataHandle::new(path)
+        .and_then(|h| h.read_mobility_env())
+        .unwrap_or_default();
+    DistributionSource::Projector {
+        mode,
+        env,
+        params: ProjectionParams {
+            target_p,
+            frame_step_size,
+            scan_step_size,
+            n_steps: Some(n_steps),
+            remove_epsilon,
+            num_threads: num_threads.max(1),
+            // Matches the column writer's default; LegacyCompat rounds stored
+            // abundances to this many decimals for byte parity.
+            num_decimals: 4,
+        },
+    }
+}
 use crate::py_mz_spectrum::PyMzSpectrum;
 use crate::py_peptide::PyPeptideProductIonSeriesCollection;
 use crate::py_quadrupole::PyPasefMeta;
@@ -200,21 +239,35 @@ pub struct PyTimsTofSyntheticsFrameBuilderDIA {
 #[pymethods]
 impl PyTimsTofSyntheticsFrameBuilderDIA {
     #[new]
-    #[pyo3(signature = (db_path, with_annotations, num_threads, isotope_config=None))]
+    #[pyo3(signature = (db_path, with_annotations, num_threads, isotope_config=None, projection_mode=None, target_p=0.999, frame_step_size=0.001, scan_step_size=0.0001, n_steps=1000, remove_epsilon=1e-4))]
     pub fn new(
         db_path: &str,
         with_annotations: bool,
         num_threads: usize,
         isotope_config: Option<PyIsotopeTransmissionConfig>,
+        projection_mode: Option<String>,
+        target_p: f64,
+        frame_step_size: f64,
+        scan_step_size: f64,
+        n_steps: usize,
+        remove_epsilon: f64,
     ) -> Self {
         let path = std::path::Path::new(db_path);
         let config = isotope_config.map(|c| c.inner).unwrap_or_default();
+        // P4: where occurrence/abundance come from. Default 'columns' (or None) =
+        // the legacy JSON columns, byte-unchanged. 'legacy_compat'/'accurate' use
+        // the render-time projector with the DB's mobility env.
+        let source = make_distribution_source(
+            path, projection_mode.as_deref(), target_p, frame_step_size, scan_step_size,
+            n_steps, remove_epsilon, num_threads,
+        );
         PyTimsTofSyntheticsFrameBuilderDIA {
-            inner: TimsTofSyntheticsFrameBuilderDIA::new_with_config(
+            inner: TimsTofSyntheticsFrameBuilderDIA::new_with_config_and_source(
                 path,
                 with_annotations,
                 num_threads,
                 config,
+                &source,
             ).unwrap()
         }
     }
@@ -373,11 +426,119 @@ pub struct PyTimsTofLazyFrameBuilderDIA {
 #[pymethods]
 impl PyTimsTofLazyFrameBuilderDIA {
     #[new]
-    #[pyo3(signature = (db_path, num_threads=4))]
-    pub fn new(db_path: &str, num_threads: usize) -> Self {
+    #[pyo3(signature = (db_path, num_threads=4, projection_mode=None, target_p=0.999, frame_step_size=0.001, scan_step_size=0.0001, n_steps=1000, remove_epsilon=1e-4))]
+    pub fn new(
+        db_path: &str,
+        num_threads: usize,
+        projection_mode: Option<String>,
+        target_p: f64,
+        frame_step_size: f64,
+        scan_step_size: f64,
+        n_steps: usize,
+        remove_epsilon: f64,
+    ) -> Self {
         let path = std::path::Path::new(db_path);
+        // P4a2: where occurrence/abundance come from. Default None/'columns' =
+        // legacy JSON columns (byte-unchanged); 'legacy_compat'/'accurate' feed
+        // the lazy per-batch reads from the render-time projector.
+        let source = make_distribution_source(
+            path, projection_mode.as_deref(), target_p, frame_step_size, scan_step_size,
+            n_steps, remove_epsilon, num_threads,
+        );
         PyTimsTofLazyFrameBuilderDIA {
-            inner: TimsTofLazyFrameBuilderDIA::new(path, num_threads).unwrap(),
+            inner: TimsTofLazyFrameBuilderDIA::new_with_source(path, num_threads, source).unwrap(),
+        }
+    }
+
+    /// Build frames for the specified frame IDs using lazy loading.
+    ///
+    /// Only loads peptide/ion data for the frames being built, then releases it.
+    #[pyo3(signature = (
+        frame_ids,
+        fragmentation=true,
+        mz_noise_precursor=true,
+        uniform=false,
+        precursor_noise_ppm=5.0,
+        mz_noise_fragment=true,
+        fragment_noise_ppm=5.0,
+        right_drag=false
+    ))]
+    pub fn build_frames_lazy(
+        &self,
+        frame_ids: Vec<u32>,
+        fragmentation: bool,
+        mz_noise_precursor: bool,
+        uniform: bool,
+        precursor_noise_ppm: f64,
+        mz_noise_fragment: bool,
+        fragment_noise_ppm: f64,
+        right_drag: bool,
+    ) -> Vec<PyTimsFrame> {
+        let frames = self.inner.build_frames_lazy(
+            frame_ids,
+            fragmentation,
+            mz_noise_precursor,
+            uniform,
+            precursor_noise_ppm,
+            mz_noise_fragment,
+            fragment_noise_ppm,
+            right_drag,
+        );
+        frames.into_iter().map(|x| PyTimsFrame::from_inner(x)).collect()
+    }
+
+    /// Get total number of frames.
+    pub fn num_frames(&self) -> usize {
+        self.inner.num_frames()
+    }
+
+    /// Get all frame IDs.
+    pub fn frame_ids(&self) -> Vec<u32> {
+        self.inner.frame_ids()
+    }
+
+    /// Get precursor frame IDs.
+    pub fn precursor_frame_ids(&self) -> Vec<u32> {
+        self.inner.precursor_frame_ids()
+    }
+
+    /// Get fragment frame IDs.
+    pub fn fragment_frame_ids(&self) -> Vec<u32> {
+        self.inner.fragment_frame_ids()
+    }
+
+    /// Get collision energy for a specific frame and scan.
+    pub fn get_collision_energy(&self, frame_id: i32, scan_id: i32) -> f64 {
+        self.inner.get_collision_energy(frame_id, scan_id)
+    }
+}
+
+#[pyclass(unsendable)]
+pub struct PyTimsTofLazyFrameBuilderDDA {
+    pub inner: TimsTofLazyFrameBuilderDDA,
+}
+
+#[pymethods]
+impl PyTimsTofLazyFrameBuilderDDA {
+    #[new]
+    #[pyo3(signature = (db_path, num_threads=4, projection_mode=None, target_p=0.999, frame_step_size=0.001, scan_step_size=0.0001, n_steps=1000, remove_epsilon=1e-4))]
+    pub fn new(
+        db_path: &str,
+        num_threads: usize,
+        projection_mode: Option<String>,
+        target_p: f64,
+        frame_step_size: f64,
+        scan_step_size: f64,
+        n_steps: usize,
+        remove_epsilon: f64,
+    ) -> Self {
+        let path = std::path::Path::new(db_path);
+        let source = make_distribution_source(
+            path, projection_mode.as_deref(), target_p, frame_step_size, scan_step_size,
+            n_steps, remove_epsilon, num_threads,
+        );
+        PyTimsTofLazyFrameBuilderDDA {
+            inner: TimsTofLazyFrameBuilderDDA::new_with_source(path, num_threads, source).unwrap(),
         }
     }
 
@@ -452,5 +613,6 @@ pub fn py_simulation(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsTofSyntheticsFrameBuilderDIA>()?;
     m.add_class::<PyTimsTofSyntheticsFrameBuilderDDA>()?;
     m.add_class::<PyTimsTofLazyFrameBuilderDIA>()?;
+    m.add_class::<PyTimsTofLazyFrameBuilderDDA>()?;
     Ok(())
 }

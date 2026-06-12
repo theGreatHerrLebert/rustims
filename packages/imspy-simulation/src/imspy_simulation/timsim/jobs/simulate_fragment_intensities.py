@@ -28,10 +28,52 @@ KOINA_INTENSITY_MODELS = {
     "alphapeptdeep": "AlphaPeptDeep_ms2_generic",
     "ms2pip": "ms2pip_timsTOF2024",
     "ms2pip_2023": "ms2pip_timsTOF2023",
+    # P6d: Orbitrap Astral NCE model (HCD). Unlike the timsTOF models it takes NO
+    # instrument_types input (see _koina_input_df); its CE is a normalized
+    # collision energy fed as a fraction (NCE/100) — the capability owns that.
+    "prosit_hcd": "Prosit_2020_intensity_HCD",
 }
 
 # Models that support phosphorylation
 PHOSPHO_COMPATIBLE_MODELS = {"alphapeptdeep", "AlphaPeptDeep_ms2_generic"}
+
+
+def _koina_input_df(model, data: pd.DataFrame, encoded_ce) -> pd.DataFrame:
+    """Build a Koina input DataFrame matching the MODEL's declared inputs (P6d).
+
+    Koina models differ in schema: the timsTOF intensity models require an
+    ``instrument_types`` column, but ``Prosit_2020_intensity_HCD`` (Orbitrap NCE)
+    requires only ``{peptide_sequences, precursor_charges, collision_energies}``
+    and would error on an extra column. We therefore build exactly the columns the
+    model declares via ``model.model_inputs`` rather than hardcoding the timsTOF
+    set. ``encoded_ce`` is already in the model's network encoding (the capability
+    applied it). Unknown required columns raise rather than being silently dropped.
+    """
+    try:
+        required = set(model.model_inputs.keys())
+    except Exception:
+        # If the schema cannot be introspected, fall back to the common core set.
+        required = {"peptide_sequences", "precursor_charges", "collision_energies"}
+
+    n = len(data)
+    available = {
+        "peptide_sequences": lambda: data["sequence"].values,
+        "precursor_charges": lambda: data["charge"].values,
+        "collision_energies": lambda: encoded_ce,
+        # timsTOF models condition on the instrument; HCD/Orbitrap models do not.
+        "instrument_types": lambda: ["TIMSTOF"] * n,
+        "fragmentation_types": lambda: ["HCD"] * n,
+    }
+    cols = {}
+    for name in required:
+        if name not in available:
+            raise ValueError(
+                f"Koina model requires input column '{name}' that TimSim does not "
+                f"know how to supply (known: {sorted(available)}). Model inputs: "
+                f"{sorted(required)}."
+            )
+        cols[name] = available[name]()
+    return pd.DataFrame(cols)
 
 
 def _predict_intensities_with_koina(
@@ -58,23 +100,39 @@ def _predict_intensities_with_koina(
     if verbose:
         logger.info(f"Using Koina model: {koina_model_name}")
 
-    # Prepare input for Koina
-    input_df = pd.DataFrame({
-        'peptide_sequences': data['sequence'].values,
-        'precursor_charges': data['charge'].values,
-        'collision_energies': data['collision_energy'].values / 100.0,  # Normalize CE
-        'instrument_types': ['TIMSTOF'] * len(data),
-    })
+    # Prepare input for Koina. The CE->network-input encoding (the legacy /100)
+    # is owned by the predictor capability (P5d) rather than a magic literal; an
+    # undeclared model raises rather than being silently /100-encoded.
+    from .fragment_predictor_capability import require_capability
+    encoded_ce = require_capability(model_name).encode_collision_energy(
+        data['collision_energy'].values
+    )
 
-    # Get predictions
+    # Build the input df from the model's DECLARED required inputs (P6d): Koina
+    # models differ in schema — the timsTOF models require `instrument_types`, but
+    # Prosit_2020_intensity_HCD (Orbitrap NCE) does NOT and would reject it. Drive
+    # off model.model_inputs instead of hardcoding the timsTOF columns.
     model = ModelFromKoina(model_name=koina_model_name)
-    result = model.predict(input_df)
+    input_df = _koina_input_df(model, data, encoded_ce)
+
+    # Get predictions. drop_nonstandard: fragment-intensity prediction is index-keyed
+    # downstream (_koina_result_to_prosit_vectors), so dropping peptides with residues
+    # the Prosit tokenizer can't encode (U/X/B/... in whole-proteome FASTAs) is safe
+    # here and prevents a tokenizer crash on proteome-scale runs.
+    result = model.predict(input_df, drop_nonstandard=True)
 
     # Extract intensities and convert to Prosit-style 174-dim vectors
     intensities = _koina_result_to_prosit_vectors(result, data)
 
     out = data.copy()
     out['intensity'] = list(intensities)
+    # Store the NORMALIZED (encoded) collision energy, NOT the raw value: the
+    # fragment_ions.collision_energy column is the /100-encoded CE the render-time
+    # key resolution expects (round(stored*1e3) == round(applied*1e1) only holds
+    # when stored == applied/100). The local PyTorch path already stores the
+    # encoded value; the Koina path must match, or its fragments never key-match at
+    # render (every MS2 scan comes out empty).
+    out['collision_energy'] = encoded_ce
 
     return out
 
@@ -106,60 +164,65 @@ def _koina_result_to_prosit_vectors(
     n_peps = len(original_data)
     max_frags = max_len - 1  # 29 fragments max
 
-    # Initialize output array
+    # Prosit masking convention: -1 marks structurally-absent fragment slots.
     prosit_mat = np.full((n_peps, 174), fill_value, dtype=np.float32)
+    if koina_result is None or len(koina_result) == 0:
+        return prosit_mat
 
-    # Check if we have the expected columns
-    if 'intensities' not in koina_result.columns:
-        # Some models return different column names - try to find intensity column
-        intensity_cols = [c for c in koina_result.columns if 'intens' in c.lower()]
-        if intensity_cols:
-            intensity_col = intensity_cols[0]
-        else:
-            raise ValueError(f"Could not find intensity column in Koina result. Columns: {koina_result.columns}")
-    else:
+    # Locate the intensity column (some models name it differently).
+    if 'intensities' in koina_result.columns:
         intensity_col = 'intensities'
+    else:
+        intensity_cols = [c for c in koina_result.columns if 'intens' in c.lower()]
+        if not intensity_cols:
+            raise ValueError(
+                f"Could not find intensity column in Koina result. Columns: "
+                f"{list(koina_result.columns)}"
+            )
+        intensity_col = intensity_cols[0]
+    has_ann = 'annotation' in koina_result.columns
 
-    # Check if intensities are already in array format per peptide
-    if koina_result[intensity_col].iloc[0] is not None and hasattr(koina_result[intensity_col].iloc[0], '__len__'):
-        # Intensities are arrays - process per peptide
-        for i in range(n_peps):
-            intensities = np.array(koina_result[intensity_col].iloc[i])
+    # koinapy (df_output=True) returns the prediction in LONG format: one row per
+    # fragment ion, and the result's INDEX is the input row position — preserved
+    # through input filtering, which masks rather than reindexes. (Both timsTOF and
+    # Orbitrap-HCD Prosit models share this shape.) Group by that index to rebuild
+    # each peptide's (29, 2, 3) b/y x charge tensor -> flattened 174-dim vector.
+    # NOTE: this replaces a stale per-peptide-array assumption that silently left
+    # every Koina vector at -1 (the path was effectively unused — local is default).
+    for idx, group in koina_result.groupby(level=0):
+        try:
+            pos = int(idx)
+        except (TypeError, ValueError):
+            continue
+        if pos < 0 or pos >= n_peps:
+            continue
 
-            # If we have annotation, use it to map to correct positions
-            if 'annotation' in koina_result.columns:
-                annotations = koina_result['annotation'].iloc[i]
-                tensor = np.full((max_frags, 2, 3), fill_value, dtype=np.float32)
+        if has_ann:
+            tensor = np.full((max_frags, 2, 3), fill_value, dtype=np.float32)
+            for ann, inten in zip(group['annotation'].values, group[intensity_col].values):
+                if ann is None or inten is None or inten <= 0:
+                    continue
+                # Parse an annotation like b'y5+1' or b'b3+2'.
+                ann_str = ann.decode() if isinstance(ann, bytes) else str(ann)
+                match = re.match(r'([by])(\d+)\+(\d+)', ann_str)
+                if not match:
+                    continue
+                ion_type = match.group(1)
+                frag_idx = int(match.group(2)) - 1   # 0-indexed
+                charge_idx = int(match.group(3)) - 1  # 0-indexed
+                if 0 <= frag_idx < max_frags and 0 <= charge_idx < 3:
+                    tensor[frag_idx, 0 if ion_type == 'y' else 1, charge_idx] = inten
+            vec = tensor.flatten()
+        else:
+            vals = np.asarray(group[intensity_col].values, dtype=np.float32)
+            vec = np.full(174, fill_value, dtype=np.float32)
+            vec[:min(174, len(vals))] = vals[:174]
 
-                for j, (ann, inten) in enumerate(zip(annotations, intensities)):
-                    if ann is None or inten <= 0:
-                        continue
-                    # Parse annotation like b'y5+1' or b'b3+2'
-                    ann_str = ann.decode() if isinstance(ann, bytes) else str(ann)
-                    match = re.match(r'([by])(\d+)\+(\d+)', ann_str)
-                    if match:
-                        ion_type = match.group(1)
-                        frag_idx = int(match.group(2)) - 1  # 0-indexed
-                        charge_idx = int(match.group(3)) - 1  # 0-indexed
-
-                        if frag_idx < max_frags and charge_idx < 3:
-                            ion_type_idx = 0 if ion_type == 'y' else 1
-                            tensor[frag_idx, ion_type_idx, charge_idx] = inten
-
-                # Flatten tensor to 174-dim vector
-                prosit_mat[i, :] = tensor.flatten()
-            else:
-                # No annotation - assume already in correct format
-                if len(intensities) == 174:
-                    prosit_mat[i, :] = intensities
-                else:
-                    # Try to reshape if possible
-                    prosit_mat[i, :len(intensities)] = intensities[:174]
-
-            # Normalize to max = 1
-            max_val = prosit_mat[i, :].max()
-            if max_val > 0:
-                prosit_mat[i, :] = prosit_mat[i, :] / max_val
+        # Normalize to base-peak = 1 (Prosit convention).
+        max_val = vec.max()
+        if max_val > 0:
+            vec = vec / max_val
+        prosit_mat[pos, :] = vec
 
     return prosit_mat
 
@@ -177,7 +240,9 @@ def simulate_fragment_intensities(
     lazy_loading: bool = False,
     frame_batch_size: int = 500,
     phospho_mode: bool = False,
-) -> None:
+    activation_method: str = "hcd",
+    energy_unit: str = "ev",
+) -> str:
     """Simulate fragment ion intensity distributions.
 
     Args:
@@ -200,7 +265,9 @@ def simulate_fragment_intensities(
         phospho_mode: If True and model doesn't support phospho, auto-switch to AlphaPeptDeep.
 
     Returns:
-        None, writes frames to disk and metadata to database.
+        The effective intensity model name actually used (after the phospho
+        auto-switch); "local" for the bundled PyTorch model. Used as fragment
+        prediction-set provenance. Side effect: writes fragment metadata to the DB.
     """
 
     logger.info("Simulating fragment ion intensity distributions ...")
@@ -225,11 +292,18 @@ def simulate_fragment_intensities(
                 "Note: Local model may have limited support for modified peptides."
             )
 
+    # P5d: refuse to feed this predictor an activation/CE unit it was not trained
+    # for (e.g. a Thermo NCE value to a timsTOF eV model). No-op for the Bruker
+    # eV/collisional path; the guard makes a future Thermo path fail loudly unless
+    # an Astral-appropriate model is selected.
+    from .fragment_predictor_capability import assert_predictor_supports
+    assert_predictor_supports(effective_model_name, activation_method, energy_unit)
+
     native_path = Path(path) / name / "synthetic_data.db"
     native_handle = TransmissionHandle(str(native_path))
 
     if lazy_loading:
-        _simulate_fragment_intensities_lazy(
+        used_model = _simulate_fragment_intensities_lazy(
             native_handle=native_handle,
             acquisition_builder=acquisition_builder,
             batch_size=batch_size,
@@ -241,7 +315,7 @@ def simulate_fragment_intensities(
             verbose=verbose,
         )
     else:
-        _simulate_fragment_intensities_standard(
+        used_model = _simulate_fragment_intensities_standard(
             native_handle=native_handle,
             acquisition_builder=acquisition_builder,
             batch_size=batch_size,
@@ -251,6 +325,11 @@ def simulate_fragment_intensities(
             model_name=effective_model_name,
             verbose=verbose,
         )
+
+    # Return the model ACTUALLY used, for provenance (P5a prediction set). The
+    # inner functions resolve this after the phospho auto-switch AND after the
+    # local->Prosit fallback (so a fallback is not silently recorded as "local").
+    return used_model
 
 
 def _simulate_fragment_intensities_standard(
@@ -262,10 +341,13 @@ def _simulate_fragment_intensities_standard(
     dda: bool,
     model_name: Optional[str],
     verbose: bool,
-) -> None:
+) -> str:
     """Standard (non-lazy) fragment intensity simulation.
 
     Loads all transmitted ions into memory at once.
+
+    Returns the canonical name of the model actually used (so a local->Prosit
+    fallback is reported as "prosit", not "local").
     """
     logger.info("Calculating precursor ion transmissions and collision energies ...")
 
@@ -278,6 +360,7 @@ def _simulate_fragment_intensities_standard(
     # ------------------------------------------------------------------
     intensity_already_flat = False
     model_key = (model_name or "local").lower()
+    used_model = model_name or "local"
 
     if model_key in (None, "", "local"):
         # Default: Local PyTorch model (PROSPECT fine-tuned)
@@ -298,6 +381,7 @@ def _simulate_fragment_intensities_standard(
                 batch_size_tf_ds=batch_size,
             )
             intensity_already_flat = False
+            used_model = "prosit"
 
     elif model_key == "prosit":
         # Prosit via Koina
@@ -405,6 +489,8 @@ def _simulate_fragment_intensities_standard(
 
         batch_counter += 1
 
+    return used_model
+
 
 def _simulate_fragment_intensities_lazy(
     native_handle: TransmissionHandle,
@@ -416,7 +502,7 @@ def _simulate_fragment_intensities_lazy(
     model_name: Optional[str],
     frame_batch_size: int,
     verbose: bool,
-) -> None:
+) -> str:
     """Lazy fragment intensity simulation.
 
     Processes ions in batches by frame range to reduce memory usage.
@@ -424,6 +510,9 @@ def _simulate_fragment_intensities_lazy(
     1. Gets the total frame range
     2. Processes ions in frame-range batches
     3. Writes each batch to the database incrementally
+
+    Returns the canonical name of the model actually used (so a local->Prosit
+    fallback is reported as "prosit", not "local").
     """
     logger.info("Using lazy loading mode for fragment intensity simulation ...")
 
@@ -437,6 +526,7 @@ def _simulate_fragment_intensities_lazy(
 
     # Determine model type
     model_key = (model_name or "local").lower()
+    used_model = model_name or "local"
     use_koina_direct = model_key in KOINA_INTENSITY_MODELS or model_key in ["alphapeptdeep", "ms2pip", "ms2pip_2023"]
 
     # Initialize intensity predictor once
@@ -450,6 +540,7 @@ def _simulate_fragment_intensities_lazy(
             logger.warning(f"Local intensity model not available: {e}. Falling back to Koina (Prosit).")
             IntensityPredictor = Prosit2023TimsTofWrapper()
             intensity_already_flat = False
+            used_model = "prosit"
     elif model_key == "prosit":
         logger.info("Using Prosit2023 TIMS-TOF intensity model via Koina ...")
         IntensityPredictor = Prosit2023TimsTofWrapper()
@@ -560,3 +651,5 @@ def _simulate_fragment_intensities_lazy(
             batch_counter += 1
 
     logger.info(f"Finished processing {batch_counter} batches")
+
+    return used_model

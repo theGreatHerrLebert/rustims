@@ -1,7 +1,4 @@
-use mscore::algorithm::isotope::{
-    calculate_transmission_dependent_fragment_ion_isotope_distribution,
-    calculate_precursor_transmission_factor,
-};
+use mscore::algorithm::isotope::calculate_precursor_transmission_factor;
 use crate::sim::containers::IsotopeTransmissionMode;
 use mscore::data::peptide::{PeptideIon, PeptideProductIonSeriesCollection};
 use mscore::data::spectrum::{IndexedMzSpectrum, MsType, MzSpectrum};
@@ -18,6 +15,7 @@ use std::sync::Arc;
 use rand::Rng;
 use rayon::prelude::*;
 use crate::sim::containers::IsotopeTransmissionConfig;
+use crate::sim::scheme::InstrumentCapabilities;
 use crate::sim::handle::{FragmentIonsWithComplementary, TimsTofSyntheticsDataHandle};
 use crate::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
 
@@ -30,10 +28,13 @@ pub struct TimsTofSyntheticsFrameBuilderDDA {
     pub fragment_ions_annotated: Option<
         BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>)>,
     >,
-    /// Configuration for quad-selection dependent isotope transmission
+    /// Configuration for quad-selection dependent isotope transmission (already
+    /// gated by the instrument capabilities at construction — P5e).
     pub isotope_transmission_config: IsotopeTransmissionConfig,
     /// Fragment ions with complementary distribution data (only populated when isotope_transmission_config.enabled)
     pub fragment_ions_with_complementary: Option<BTreeMap<(u32, i8, i32), FragmentIonsWithComplementary>>,
+    /// Physical instrument capabilities (P5e). Default = Bruker timsTOF.
+    pub capabilities: InstrumentCapabilities,
 }
 
 impl TimsTofSyntheticsFrameBuilderDDA {
@@ -51,12 +52,40 @@ impl TimsTofSyntheticsFrameBuilderDDA {
         num_threads: usize,
         isotope_config: Option<IsotopeTransmissionConfig>,
     ) -> Self {
+        Self::new_with_capabilities(
+            path,
+            with_annotations,
+            num_threads,
+            isotope_config,
+            InstrumentCapabilities::default(),
+        )
+    }
+
+    /// Like [`Self::new`], but with explicit instrument capabilities (P5e). The
+    /// isotope-transmission config is gated by them (an instrument without
+    /// mobility-dependent quad isotope transmission forces the mode to None).
+    /// Default capabilities = Bruker timsTOF, so [`Self::new`] is unchanged.
+    pub fn new_with_capabilities(
+        path: &Path,
+        with_annotations: bool,
+        num_threads: usize,
+        isotope_config: Option<IsotopeTransmissionConfig>,
+        capabilities: InstrumentCapabilities,
+    ) -> Self {
         let handle = TimsTofSyntheticsDataHandle::new(path).unwrap();
+        // P5b: refuse to render fragments stored under an incompatible prediction
+        // set (e.g. a future Thermo set whose CE encoding the render keying can't
+        // resolve). Bruker/legacy sets pass; this never fires for current DBs.
+        handle
+            .read_prediction_set()
+            .expect("read prediction set")
+            .assert_render_compatible()
+            .expect("incompatible fragment prediction set for this renderer");
         let fragment_ions_raw = handle.read_fragment_ions().unwrap();
         let transmission_settings = handle.get_transmission_dda();
 
         let synthetics = TimsTofSyntheticsPrecursorFrameBuilder::new(path).unwrap();
-        let config = isotope_config.unwrap_or_default();
+        let config = isotope_config.unwrap_or_default().gated_by(capabilities);
 
         // Build fragment ions with complementary data if any transmission mode is enabled
         let fragment_ions_with_complementary = if config.is_enabled() {
@@ -85,6 +114,7 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     fragment_ions_annotated: fragment_ions,
                     isotope_transmission_config: config,
                     fragment_ions_with_complementary,
+                    capabilities,
                 }
             }
             false => {
@@ -101,10 +131,70 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     fragment_ions_annotated: None,
                     isotope_transmission_config: config,
                     fragment_ions_with_complementary,
+                    capabilities,
                 }
             }
         }
     }
+    /// Construct an eager DDA frame builder from already-loaded, in-memory
+    /// entities instead of reading the whole database.
+    ///
+    /// Used by the lazy DDA builder so it can delegate per-batch frame
+    /// construction to the *same* (correct) eager algorithm instead of keeping a
+    /// second, divergent copy. Only the non-annotated path is built (lazy loading
+    /// does not support annotations). `fragment_ions_raw` is the per-batch slice
+    /// of fragment ions for the supplied peptides, so memory stays bounded to the
+    /// batch.
+    pub fn from_entities(
+        precursor_frame_builder: TimsTofSyntheticsPrecursorFrameBuilder,
+        transmission_settings: TimsTransmissionDDA,
+        fragment_ions_raw: Vec<crate::sim::containers::FragmentIonSim>,
+        isotope_config: Option<IsotopeTransmissionConfig>,
+        fragmentation: bool,
+        num_threads: usize,
+    ) -> Self {
+        // Lazy DDA (delegates here) is Bruker timsTOF; gate is a no-op. P6 will
+        // thread real capabilities through the lazy path.
+        let config = isotope_config
+            .unwrap_or_default()
+            .gated_by(InstrumentCapabilities::default());
+
+        // The fragment isotope map is only consumed when fragmentation is on
+        // (build_ms2_frame's `true` branch). Expanding all predicted fragment
+        // intensities into isotope spectra is expensive, so skip it entirely in
+        // no-fragmentation mode (the `false` branch never touches these maps).
+        let (fragment_ions, fragment_ions_with_complementary) = if fragmentation {
+            let with_complementary = if config.is_enabled() {
+                Some(TimsTofSyntheticsDataHandle::build_fragment_ions_with_transmission_data(
+                    &precursor_frame_builder.peptides,
+                    &fragment_ions_raw,
+                    num_threads,
+                ))
+            } else {
+                None
+            };
+            let fragment_ions = Some(TimsTofSyntheticsDataHandle::build_fragment_ions(
+                &precursor_frame_builder.peptides,
+                &fragment_ions_raw,
+                num_threads,
+            ));
+            (fragment_ions, with_complementary)
+        } else {
+            (None, None)
+        };
+
+        Self {
+            path: String::new(),
+            precursor_frame_builder,
+            transmission_settings,
+            fragment_ions,
+            fragment_ions_annotated: None,
+            isotope_transmission_config: config,
+            fragment_ions_with_complementary,
+            capabilities: InstrumentCapabilities::default(),
+        }
+    }
+
     /// Build a frame for DDA synthetic experiment
     ///
     /// # Arguments
@@ -372,7 +462,12 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     .map(|x| x.round())
                     .collect::<Vec<_>>();
                 frame.ims_frame.intensity = Arc::new(intensities_rounded);
-                frame.ms_type = MsType::FragmentDia;
+                // DDA MS2 frames are PASEF fragment frames (MsMsType 8). The
+                // no-fragmentation mode still produces a DDA fragment frame
+                // (quad-filtered precursor), so it must keep the DDA type, not
+                // FragmentDia (9). The fragmentation=true branch already uses
+                // FragmentDda; this matches it.
+                frame.ms_type = MsType::FragmentDda;
                 frame
             }
             true => {
@@ -426,7 +521,8 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     .map(|x| x.round())
                     .collect::<Vec<_>>();
                 frame.intensity = intensities_rounded;
-                frame.ms_type = MsType::FragmentDia;
+                // See build_ms2_frame: DDA no-frag MS2 stays FragmentDda (8).
+                frame.ms_type = MsType::FragmentDda;
                 frame
             }
             true => {
@@ -558,12 +654,29 @@ impl TimsTofSyntheticsFrameBuilderDDA {
 
             // Collision energy from the PASEF meta
             let collision_energy = meta.collision_energy;
-            let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
-
-            // Look up fragment ions for this (peptide_id, charge, CE)
-            let Some((_, fragment_series_vec)) = fragment_ions.get(&(peptide_id, charge_state, collision_energy_quantized)) else {
+            // Resolve the fragment CE key, tolerant to ~0.1 eV quantization noise
+            // (DDA pasef CE is full-precision; the stored key is f32-quantized).
+            let Some(collision_energy_quantized) = crate::sim::handle::resolve_fragment_ce_key(
+                fragment_ions, peptide_id, charge_state, collision_energy,
+            ) else {
+                // Fail loud if fragments exist for this precursor but none near the
+                // applied CE: the prediction set does not cover this instrument's CE
+                // (P5b). A precursor with NO predicted fragments at all is a
+                // legitimate skip. (For Bruker after the ±0.1 eV probe this never
+                // fires — verified 0 misses.)
+                if crate::sim::handle::fragment_prefix_exists(fragment_ions, peptide_id, charge_state) {
+                    panic!(
+                        "DDA fragment lookup miss: peptide {} charge {} applied CE {:.4} eV has \
+                         predicted fragments, but none within 0.1 eV — the prediction set does \
+                         not cover this instrument's collision energy",
+                        peptide_id, charge_state, collision_energy,
+                    );
+                }
                 continue;
             };
+            let (_, fragment_series_vec) = fragment_ions
+                .get(&(peptide_id, charge_state, collision_energy_quantized))
+                .expect("resolve_fragment_ce_key returned a present key");
 
             // Process scans within the PASEF selection window
             for (scan, scan_abundance) in all_scan_occurrence.iter().zip(all_scan_abundance.iter()) {
@@ -610,58 +723,25 @@ impl TimsTofSyntheticsFrameBuilderDDA {
                     1.0
                 };
 
+                // Complementary per-(peptide,charge,CE) data for PerFragment;
+                // looked up once (same for all series) and passed to the shared
+                // kernel — same lookup the transmission_factor block above uses.
+                let frag_data = self
+                    .fragment_ions_with_complementary
+                    .as_ref()
+                    .and_then(|c| c.get(&(peptide_id, charge_state, collision_energy_quantized)));
+
                 for (series_idx, fragment_ion_series) in fragment_series_vec.iter().enumerate() {
-                    let final_spectrum = match self.isotope_transmission_config.mode {
-                        IsotopeTransmissionMode::None => {
-                            // Standard spectrum scaling
-                            fragment_ion_series.clone() * fraction_events as f64
-                        },
-                        IsotopeTransmissionMode::PrecursorScaling => {
-                            // Apply precursor-based transmission factor
-                            fragment_ion_series.clone() * (fraction_events as f64 * transmission_factor)
-                        },
-                        IsotopeTransmissionMode::PerFragment => {
-                            // Per-fragment transmission-dependent calculation
-                            if let Some(comp_data) = self.fragment_ions_with_complementary.as_ref() {
-                                if let Some(frag_data) = comp_data.get(&(peptide_id, charge_state, collision_energy_quantized)) {
-                                    if series_idx < frag_data.per_fragment_data.len() {
-                                        // Aggregate adjusted spectra from all fragment ions in this series
-                                        let series_data = &frag_data.per_fragment_data[series_idx];
-                                        let mut aggregated_mz: Vec<f64> = Vec::new();
-                                        let mut aggregated_intensity: Vec<f64> = Vec::new();
-
-                                        for frag_ion_data in series_data {
-                                            // Apply transmission-dependent calculation for this fragment
-                                            let adjusted_dist = calculate_transmission_dependent_fragment_ion_isotope_distribution(
-                                                &frag_ion_data.fragment_distribution,
-                                                &frag_ion_data.complementary_distribution,
-                                                &transmitted_indices,
-                                                self.isotope_transmission_config.max_isotopes,
-                                            );
-
-                                            // Scale by predicted intensity and fraction_events
-                                            for (mz, abundance) in adjusted_dist {
-                                                aggregated_mz.push(mz);
-                                                aggregated_intensity.push(abundance * frag_ion_data.predicted_intensity * fraction_events as f64);
-                                            }
-                                        }
-
-                                        if !aggregated_mz.is_empty() {
-                                            MzSpectrum::new(aggregated_mz, aggregated_intensity)
-                                        } else {
-                                            fragment_ion_series.clone() * fraction_events as f64
-                                        }
-                                    } else {
-                                        fragment_ion_series.clone() * fraction_events as f64
-                                    }
-                                } else {
-                                    fragment_ion_series.clone() * fraction_events as f64
-                                }
-                            } else {
-                                fragment_ion_series.clone() * fraction_events as f64
-                            }
-                        },
-                    };
+                    let final_spectrum = crate::sim::dia::fragment_series_spectrum(
+                        self.isotope_transmission_config.mode,
+                        fragment_ion_series,
+                        series_idx,
+                        fraction_events,
+                        transmission_factor,
+                        frag_data,
+                        &transmitted_indices,
+                        self.isotope_transmission_config.max_isotopes,
+                    );
 
                     let mz_spectrum = if mz_noise_fragment {
                         if uniform {
@@ -846,12 +926,29 @@ impl TimsTofSyntheticsFrameBuilderDDA {
 
             // Collision energy from the PASEF meta
             let collision_energy = meta.collision_energy;
-            let collision_energy_quantized = (collision_energy * 1e1).round() as i32;
-
-            // Look up fragment ions for this (peptide_id, charge, CE)
-            let Some((_, fragment_series_vec)) = fragment_ions.get(&(peptide_id, charge_state, collision_energy_quantized)) else {
+            // Resolve the fragment CE key, tolerant to ~0.1 eV quantization noise
+            // (DDA pasef CE is full-precision; the stored key is f32-quantized).
+            let Some(collision_energy_quantized) = crate::sim::handle::resolve_fragment_ce_key(
+                fragment_ions, peptide_id, charge_state, collision_energy,
+            ) else {
+                // Fail loud if fragments exist for this precursor but none near the
+                // applied CE: the prediction set does not cover this instrument's CE
+                // (P5b). A precursor with NO predicted fragments at all is a
+                // legitimate skip. (For Bruker after the ±0.1 eV probe this never
+                // fires — verified 0 misses.)
+                if crate::sim::handle::fragment_prefix_exists(fragment_ions, peptide_id, charge_state) {
+                    panic!(
+                        "DDA fragment lookup miss: peptide {} charge {} applied CE {:.4} eV has \
+                         predicted fragments, but none within 0.1 eV — the prediction set does \
+                         not cover this instrument's collision energy",
+                        peptide_id, charge_state, collision_energy,
+                    );
+                }
                 continue;
             };
+            let (_, fragment_series_vec) = fragment_ions
+                .get(&(peptide_id, charge_state, collision_energy_quantized))
+                .expect("resolve_fragment_ce_key returned a present key");
 
             // Create ion for annotation and precursor spectrum calculation
             let ion = PeptideIon::new(

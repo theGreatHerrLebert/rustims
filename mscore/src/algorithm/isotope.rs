@@ -172,7 +172,18 @@ pub fn generate_isotope_distribution(
         .map(|(k, v)| (k.to_string(), v.clone()))
         .collect();
 
-    for (element, &count) in atomic_composition.iter() {
+    // Iterate elements in a deterministic (sorted) order. `atomic_composition`
+    // is a HashMap whose iteration order is randomized per instance, and the
+    // convolution below is a TRUNCATING float operation (max_result /
+    // abundance_threshold drop low-abundance peaks), so it is not order-invariant
+    // — different element orders yield slightly different distributions. Sorting
+    // pins one canonical result, making isotope generation reproducible across
+    // builder constructions (required for rendered-output parity / determinism).
+    let mut elements: Vec<(&String, i32)> =
+        atomic_composition.iter().map(|(k, v)| (k, *v)).collect();
+    elements.sort_by(|a, b| a.0.cmp(b.0));
+
+    for (element, count) in elements {
         let elemental_isotope_weights = atoms_isotopic_weights
             .get(element)
             .expect("Element not found in isotopic weights table")

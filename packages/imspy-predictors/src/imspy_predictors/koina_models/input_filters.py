@@ -265,7 +265,9 @@ def validate_model_compatibility(
             allowed_mods = f["modifications"]
             import re
             for seq in peptide_sequences:
-                mods = re.findall(r".\[[^\]]*\]", seq)
+                # `[A-Z]?` so a leading (N-terminal) mod is captured too (see
+                # filter_peptide_modifications).
+                mods = re.findall(r"[A-Z]?\[[^\]]*\]", seq)
                 for mod in mods:
                     if mod not in allowed_mods:
                         incompatible_count += 1
@@ -287,13 +289,24 @@ def validate_model_compatibility(
     }
 
 
-def filter_input_by_model(model_name: str, df: pd.DataFrame) -> pd.DataFrame:
+def filter_input_by_model(
+    model_name: str, df: pd.DataFrame, drop_nonstandard: bool = False
+) -> pd.DataFrame:
     """
     Filter input DataFrame based on the model requirements.
 
     Args:
         model_name: Name of the model.
         df: Input DataFrame with peptide sequences.
+        drop_nonstandard: If True, drop peptides with non-standard residues (U/X/B/...)
+            BEFORE the per-model filters. The CALLER opts in — it must only do so when
+            it can tolerate the output having fewer rows than the input (i.e. it keys
+            results back by index, not by position). The fragment-intensity path does;
+            the RT/CCS/flyability callers assign predictions back POSITIONALLY (e.g.
+            rt/predictors.py: `data[...] = rts...`), so they must NOT request it, or the
+            shorter result would misalign. Model-family prefix can't decide this on its
+            own: `Prosit_2019_irt` and `AlphaPeptDeep_rt_generic` share a family with the
+            intensity models but are RT/CCS tasks — hence an explicit per-call opt-in.
 
     Returns:
         Filtered DataFrame.
@@ -310,12 +323,24 @@ def filter_input_by_model(model_name: str, df: pd.DataFrame) -> pd.DataFrame:
             f"Supported model types: {supported}"
         )
 
+    original_count = len(df)
+
+    # Non-standard residue guard (caller opt-in). Prosit / AlphaPeptDeep / MS2PIP
+    # tokenizers only know the 20 standard amino acids; a sequence carrying e.g.
+    # selenocysteine `U` or an ambiguous `X`/`B`/`Z` (common in whole-proteome FASTAs)
+    # tokenizes to None and crashes the predictor deep in `character_to_array`.
+    if drop_nonstandard:
+        df = filter_nonstandard_residues(df)
+
     filters = MODEL_FILTERS[model_type]
     if filters is None:
-        logger.debug(f"No filtering required for model {model_name}")
+        logger.debug(f"No model-specific filtering required for model {model_name}")
+        if len(df) < original_count:
+            logger.info(
+                f"Model {model_name}: dropped {original_count - len(df)}/{original_count} "
+                f"peptides with non-standard residues"
+            )
         return df
-
-    original_count = len(df)
 
     for filter_dict in filters:
         if "length" in filter_dict:
@@ -339,6 +364,32 @@ def filter_input_by_model(model_name: str, df: pd.DataFrame) -> pd.DataFrame:
         )
 
     return df
+
+
+#: The 20 standard amino acids every supported fragment-intensity model can tokenize.
+STANDARD_AMINO_ACIDS = frozenset("ACDEFGHIKLMNPQRSTVWY")
+
+
+def filter_nonstandard_residues(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop peptides whose backbone contains a non-standard amino acid.
+
+    Modification annotations (``[...]``) are stripped first, then the remaining
+    bare residues must match the 20-letter alphabet (:data:`STANDARD_AMINO_ACIDS`).
+    Anything else — ``U`` (selenocysteine), ``O`` (pyrrolysine), or the ambiguity
+    codes ``B``/``J``/``X``/``Z`` that appear in whole-proteome FASTAs — is removed,
+    because the Prosit / AlphaPeptDeep / MS2PIP tokenizers have no token for them
+    and return ``None`` (crashing the predictor). Empty backbones and null entries
+    are also dropped (``fullmatch`` requires >=1 residue; ``na=False``).
+    """
+    if "peptide_sequences" not in df.columns:
+        raise ValueError("DataFrame must contain 'peptide_sequences' column.")
+
+    backbones = df["peptide_sequences"].str.replace(r"\[[^\]]*\]", "", regex=True)
+    ok = backbones.str.fullmatch(r"[ACDEFGHIKLMNPQRSTVWY]+", na=False)
+    removed = int((~ok).sum())
+    if removed > 0:
+        logger.debug(f"Removed {removed} peptides with non-standard residues")
+    return df[ok]
 
 
 def filter_peptide_length(
@@ -406,8 +457,11 @@ def filter_peptide_modifications(
         return df
 
     df = df.copy()
-    # Extract modifications including the preceding amino acid
-    df["_modifications"] = df["peptide_sequences"].str.findall(r".\[[^\]]*\]")
+    # Extract modifications WITH their preceding amino acid when present — `[A-Z]?`
+    # so a LEADING (N-terminal) modification like `[UNIMOD:1]PEP...` is captured too
+    # (a bare `.` requires a preceding char and silently MISSES N-term mods, letting
+    # e.g. acetyl peptides slip past the filter into a model that rejects them).
+    df["_modifications"] = df["peptide_sequences"].str.findall(r"[A-Z]?\[[^\]]*\]")
 
     def check_mods(mods):
         if not isinstance(mods, list) or len(mods) == 0:
