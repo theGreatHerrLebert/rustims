@@ -2,7 +2,57 @@
 import numpy as np
 import pandas as pd
 
-from imspy_simulation.timsim.groundtruth_eval import evaluate, _strip_mods
+from imspy_simulation.timsim.groundtruth_eval import (
+    evaluate, _strip_mods,
+    _canon_inline, _canon_alphadia, _pf_key, _bb_key,
+    precursor_fdp_breakdown,
+)
+
+
+def test_canonical_peptidoform_consistent_across_sources():
+    # The SAME peptidoform must yield an identical canonical key whether it comes from
+    # the truth DB (UNIMOD brackets), DiaNN ((UniMod:n) parens), or alphaDIA
+    # (stripped + mod names + 1-based sites). Oxidation@M == UNIMOD:35 at residue 11.
+    st_t, m_t = _canon_inline("AAALLAKQAEM[UNIMOD:35]EVK")     # truth
+    st_d, m_d = _canon_inline("AAALLAKQAEM(UniMod:35)EVK")     # DiaNN
+    st_a, m_a = _canon_alphadia("AAALLAKQAEMEVK", "Oxidation@M", "11")  # alphaDIA
+    assert _pf_key(st_t, m_t) == _pf_key(st_d, m_d) == _pf_key(st_a, m_a) == "AAALLAKQAEMEVK/11:35"
+    # I/L normalization collapses the isobaric ambiguity at backbone + peptidoform level.
+    assert _bb_key("PEPTIDEK") == _bb_key("PEPTLDEK") == "PEPTLDEK"
+    # Unknown alphaDIA mod -> -1 sentinel (cannot match a real truth id).
+    _, m_u = _canon_alphadia("PEPK", "Glubbery@P", "1")
+    assert m_u == {1: -1}
+
+
+def test_precursor_fdp_breakdown_buckets():
+    # Truth: PEPTLDEK/z2 with oxidation at M-less... use a clear case.
+    # Simulated peptidoforms: ACDEK/z2 (no mod), MCDEK/z2 with ox@M1.
+    truth = {
+        "bb": {("ACDEK", 2), ("MCDEK", 2)},
+        "pf": {("ACDEK/", 2), ("MCDEK/1:35", 2)},
+        "bb_multiset": {("ACDEK", 2): {()}, ("MCDEK", 2): {(35,)}},
+        "n": 2,
+    }
+    # Report: 1 correct, 1 wrong-backbone (genuine FP), 1 right-bb+ox wrong SITE
+    # (localization-ambiguous: MCDEK has ox, but reported on... only one M, so emulate
+    # via a 2-M backbone), 1 right-bb wrong-mod-composition (genuine).
+    truth["bb"].add(("MMDEK", 2)); truth["pf"].add(("MMDEK/1:35", 2))
+    truth["bb_multiset"][("MMDEK", 2)] = {(35,)}
+    report = pd.DataFrame({
+        "bb":  ["ACDEK",   "ZZZEK",      "MMDEK",      "MMDEK"],
+        "pf":  ["ACDEK/",  "ZZZEK/",     "MMDEK/2:35", "MMDEK/1:4"],
+        "charge":       [2,        2,            2,            2],
+        "mod_multiset": [(),       (),           (35,),        (4,)],
+        "q":            [0.001,    0.001,        0.001,        0.001],
+    })
+    bd = precursor_fdp_breakdown(truth, report, q_thresholds=(0.01,))[0]
+    assert bd["n_precursors"] == 4
+    assert bd["wrong_backbone"] == 1           # ZZZEK
+    assert bd["localization_ambiguous"] == 1   # MMDEK ox wrong site (right mod multiset)
+    assert bd["wrong_mod_composition"] == 1    # MMDEK carbamidomethyl (not a simulated mod set)
+    # strict counts all 3 non-correct; genuine excludes the localization-ambiguous one.
+    assert abs(bd["fdp_peptidoform_strict"] - 3 / 4) < 1e-9
+    assert abs(bd["fdp_peptidoform_genuine"] - 2 / 4) < 1e-9
 
 
 def _truth():
