@@ -16,7 +16,7 @@ use std::path::Path;
 use mscore::data::spectrum::MzSpectrum;
 use mscore::timstof::quadrupole::WindowTransmission;
 
-use crate::sim::acquisition::{AcquisitionWriter, ScanDescriptor, ThermoRawWriter};
+use crate::sim::acquisition::{AcquisitionWriter, ScanDescriptor, ThermoRawWriter, WriteMode};
 use crate::sim::dia::TimsTofSyntheticsFrameBuilderDIA;
 use crate::sim::handle::TimsTofSyntheticsDataHandle;
 use crate::sim::scheme::DataMode;
@@ -48,6 +48,14 @@ pub struct AstralWriteOptions {
     pub precursor_noise_ppm: f64,
     /// Gaussian m/z noise (≈ppm at 3σ) applied to MS2 fragment peaks. 0 = off.
     pub fragment_noise_ppm: f64,
+    /// Superimpose simulated peaks onto the template's REAL signal (real⊕sim)
+    /// instead of replacing it; the value is the MS2 centroid merge tolerance in
+    /// ppm. `0` (default) = `WriteMode::Replace` (overwrite, zero-residual). `>0` =
+    /// `WriteMode::Overlay { merge_tol_ppm }` — the template's real signal is kept
+    /// and simulated peaks are added on top (the "reference run = layout + real
+    /// noise" workflow). On a packet-budget overflow in Overlay mode the slot keeps
+    /// the template signal untouched (no clear).
+    pub superimpose_ppm: f64,
 }
 
 impl Default for AstralWriteOptions {
@@ -59,6 +67,7 @@ impl Default for AstralWriteOptions {
             max_ms2_peaks: 120,
             precursor_noise_ppm: 0.0,
             fragment_noise_ppm: 0.0,
+            superimpose_ppm: 0.0,
         }
     }
 }
@@ -114,6 +123,20 @@ pub fn write_astral_raw(
 ) -> Result<AstralWriteSummary, String> {
     use thermorawfile::RawFile;
 
+    // Validate at the Rust entry point too (not only the PyO3 boundary), so a
+    // direct Rust caller can't smuggle in a non-finite/negative tolerance: a NaN
+    // would silently fall to Replace (the `> 0.0` test is false) and `inf` would
+    // select Overlay only to fail deep in the first MS2 author.
+    for (name, v) in [
+        ("precursor_noise_ppm", opts.precursor_noise_ppm),
+        ("fragment_noise_ppm", opts.fragment_noise_ppm),
+        ("superimpose_ppm", opts.superimpose_ppm),
+    ] {
+        if !v.is_finite() || v < 0.0 {
+            return Err(format!("{name} must be finite and >= 0, got {v}"));
+        }
+    }
+
     let builder = TimsTofSyntheticsFrameBuilderDIA::new(db_path, false, opts.num_threads)
         .map_err(|e| format!("open Astral DB: {e}"))?;
     let handle = TimsTofSyntheticsDataHandle::new(db_path)
@@ -145,6 +168,12 @@ pub fn write_astral_raw(
         .ok_or("template has no MS1 calibration")?;
     let mut writer = ThermoRawWriter::from_template(template_path, out_path)
         .map_err(|e| format!("open writer: {e}"))?;
+    // Replace (default) overwrites the template's signal — pure simulated output,
+    // zero-residual. Overlay keeps the template's real signal and adds simulated
+    // peaks on top (real⊕sim); the ppm is the MS2 centroid merge tolerance.
+    if opts.superimpose_ppm > 0.0 {
+        writer = writer.with_mode(WriteMode::Overlay { merge_tol_ppm: opts.superimpose_ppm });
+    }
     let manifest: Vec<(u32, bool)> = writer.manifest().to_vec();
 
     // Frames are 1:1 with template slots, in scan order (the Astral builder built
@@ -206,7 +235,10 @@ pub fn write_astral_raw(
         };
 
         // Author; on a residual packet-budget overflow, consume the slot with an
-        // empty (cleared) scan so the schedule + checksum stay intact. Count a
+        // empty payload so the schedule + checksum stay intact. In Replace mode that
+        // clears the slot (empty output); in Overlay mode an empty payload is a
+        // true no-op (write_scan short-circuits) that leaves the template's real
+        // signal byte-identical — so an overflowing slot keeps real noise. Count a
         // non-empty MS2 only when its actual (non-empty) payload was authored — a
         // cleared scan is empty in the output and must not be counted.
         let had_peaks = !desc.peaks.is_empty();
