@@ -37,7 +37,22 @@ DEFAULT_PREDICTION_SET_ID = 0
 INSTRUMENT_ACTIVATION = {
     "bruker_timstof": {"activation_method": "hcd", "energy_unit": "ev"},
     "orbitrap_astral": {"activation_method": "hcd", "energy_unit": "nce"},
+    "orbitrap_exploris": {"activation_method": "hcd", "energy_unit": "nce"},
 }
+
+#: Thermo instruments simulated via the build-from-template path (a Thermo ``.raw``
+#: template's per-scan schedule + windows become the acquisition; each rendered frame
+#: is authored into its slot). These share the SAME physics — no ion mobility, HCD with
+#: NCE — and the same dispatch; they differ only in the MS2 detector packet format
+#: (Astral ASTMS vs classic-Orbitrap FTMS centroids), which the ``.raw`` writer detects
+#: and authors automatically. Gate the build-from-template branches on membership here
+#: (not ``== 'orbitrap_astral'``) so the family is extensible.
+THERMO_TEMPLATE_INSTRUMENTS = frozenset({"orbitrap_astral", "orbitrap_exploris"})
+
+
+def is_thermo_template_instrument(instrument) -> bool:
+    """True if ``instrument`` uses the Thermo build-from-template path (Astral/Orbitrap)."""
+    return str(instrument or "").lower() in THERMO_TEMPLATE_INSTRUMENTS
 
 
 def resolve_instrument_activation(instrument: str) -> tuple[str, str]:

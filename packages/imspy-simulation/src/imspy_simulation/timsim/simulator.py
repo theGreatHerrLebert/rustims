@@ -340,9 +340,12 @@ def get_default_settings() -> dict:
         # the fragment-model compatibility guard, and the prediction-set provenance.
         # Default 'bruker_timstof' preserves current behaviour exactly.
         'instrument': 'bruker_timstof',
-        # P6e(b): for instrument='orbitrap_astral', the Thermo .raw template the run
-        # is built from — its real per-scan schedule + windows become the
-        # acquisition (no Bruker reference). Required for an Astral run.
+        # Build-from-template: for any Thermo instrument (orbitrap_astral,
+        # orbitrap_exploris), the Thermo .raw template the run is built from — its real
+        # per-scan schedule + windows become the acquisition (no Bruker reference).
+        # `template_path` is the generic name; `astral_template_path` is the historical
+        # alias (both accepted; see thermo_template_path()). Required for a Thermo run.
+        'template_path': None,
         'astral_template_path': None,
 
         'sigma_lower_rt': None,
@@ -467,15 +470,26 @@ def get_default_settings() -> dict:
     }
 
 
+def thermo_template_path(config) -> "str | None":
+    """The Thermo ``.raw`` template path for a build-from-template run.
+
+    Accepts the generic ``template_path`` and the historical ``astral_template_path``
+    alias (the latter takes precedence if both are set)."""
+    get = config.get if isinstance(config, dict) else (lambda k, d=None: getattr(config, k, d))
+    return get('astral_template_path', None) or get('template_path', None)
+
+
 def astral_nce_override(config) -> "float | None":
     """The DIA-window NCE override to apply for this run (P6d).
 
-    Returns the configured normalized collision energy ONLY for an Orbitrap Astral
-    run; ``None`` (i.e. ignore it, keep the reference eV windows) for Bruker — so a
-    stray ``collision_energy_nce`` on a Bruker config can never silently replace eV
-    windows with an NCE while provenance still labels them eV."""
+    Returns the configured normalized collision energy ONLY for a Thermo
+    build-from-template run (Astral/Orbitrap); ``None`` (i.e. ignore it, keep the
+    reference eV windows) for Bruker — so a stray ``collision_energy_nce`` on a Bruker
+    config can never silently replace eV windows with an NCE while provenance still
+    labels them eV."""
+    from .jobs.register_prediction_set import is_thermo_template_instrument
     instrument = str(getattr(config, 'instrument', 'bruker_timstof')).lower()
-    if instrument == 'orbitrap_astral':
+    if is_thermo_template_instrument(instrument):
         return getattr(config, 'collision_energy_nce', None)
     return None
 
@@ -520,15 +534,19 @@ class SimulationConfig:
         if self._config.get('from_findings') and self._config.get('from_existing'):
             raise ValueError("Cannot use both 'from_findings' and 'from_existing' at the same time")
 
-        # An Astral run is built from a Thermo .raw template, NOT a Bruker
-        # reference .d — so it requires astral_template_path in place of
-        # reference_path (the lean, Bruker-independent build-from-template path).
+        # A Thermo build-from-template run (Astral/Orbitrap) is built from a Thermo .raw
+        # template, NOT a Bruker reference .d — so it requires a template path in place
+        # of reference_path (the lean, Bruker-independent build-from-template path).
+        from .jobs.register_prediction_set import is_thermo_template_instrument
         instrument = str(self._config.get('instrument', 'bruker_timstof')).lower()
-        ref_key = 'astral_template_path' if instrument == 'orbitrap_astral' else 'reference_path'
+        is_thermo = is_thermo_template_instrument(instrument)
+        # For a Thermo run the template path may be given as `template_path` or the
+        # `astral_template_path` alias; require at least one (validated below).
+        ref_key = 'reference_path'
         if self._config.get('from_findings'):
-            required = ['save_path', ref_key, 'findings_path']
+            required = ['save_path', 'findings_path'] if is_thermo else ['save_path', ref_key, 'findings_path']
         else:
-            required = ['save_path', ref_key, 'fasta_path']
+            required = ['save_path', 'fasta_path'] if is_thermo else ['save_path', ref_key, 'fasta_path']
         missing = [key for key in required if not self._config.get(key)]
 
         if missing:
@@ -590,54 +608,54 @@ class SimulationConfig:
                 f"unknown instrument '{instrument}'. Supported: "
                 f"{sorted(INSTRUMENT_ACTIVATION)}."
             )
-        if instrument == 'orbitrap_astral':
-            # Astral is a DIA, no-IMS, NCE instrument. DDA-PASEF CE is Bruker
-            # scan-driven, and the run MUST supply a genuine normalized collision
-            # energy — otherwise the reference-derived Bruker eV windows would be
-            # silently mislabelled as NCE and fed to the NCE predictor.
+        if is_thermo:
+            # Thermo build-from-template instruments (Astral/Orbitrap) are DIA, no-IMS,
+            # NCE. DDA-PASEF CE is Bruker scan-driven, and the run MUST supply a genuine
+            # normalized collision energy — otherwise reference-derived Bruker eV
+            # windows would be silently mislabelled as NCE and fed to the NCE predictor.
             if self._config.get('acquisition_type') == 'DDA':
                 raise ValueError(
-                    "instrument 'orbitrap_astral' does not support DDA acquisition "
+                    f"instrument '{instrument}' does not support DDA acquisition "
                     "(DDA-PASEF collision energy is Bruker scan-driven). Use DIA."
                 )
             # collision_energy_nce is OPTIONAL for the build-from-template path: the
-            # Astral template already supplies a genuine per-window NCE, which is
-            # used by default. If set, it OVERRIDES every window with that single
-            # NCE (a deliberate manual choice); if set, it must be positive.
+            # template already supplies a genuine per-window NCE, used by default. If
+            # set, it OVERRIDES every window with that single NCE (a deliberate manual
+            # choice); if set, it must be positive.
             nce = self._config.get('collision_energy_nce')
             if nce is not None and not (isinstance(nce, (int, float)) and nce > 0):
                 raise ValueError(
                     "collision_energy_nce, if set, must be a positive normalized "
                     "collision energy (e.g. 27); it overrides the template's "
-                    "per-window NCE for an Astral run."
+                    "per-window NCE for a Thermo build-from-template run."
                 )
-            # The Astral MS2 render is deterministic; precursor survival is a
-            # stochastic (per-scan random fraction) feature. Refuse rather than
-            # silently drop the configured survival signal (it is not modelled on
-            # the Astral path yet).
+            # The Thermo MS2 render is deterministic; precursor survival is a stochastic
+            # (per-scan random fraction) feature. Refuse rather than silently drop the
+            # configured survival signal (it is not modelled on this path yet).
             if self._config.get('precursor_survival_max', 0.0) and float(
                 self._config.get('precursor_survival_max', 0.0)
             ) > 0.0:
                 raise ValueError(
-                    "instrument 'orbitrap_astral' does not support precursor_survival_* "
-                    "(the Astral MS2 render is deterministic; survival is stochastic). "
-                    "Set precursor_survival_min/max to 0 for an Astral run."
+                    f"instrument '{instrument}' does not support precursor_survival_* "
+                    "(the Thermo MS2 render is deterministic; survival is stochastic). "
+                    "Set precursor_survival_min/max to 0 for a Thermo run."
                 )
-            # Build-from-template: an Astral run is built from a Thermo .raw template
-            # (its real per-scan schedule + windows become the acquisition).
-            template = self._config.get('astral_template_path')
+            # Build-from-template: the run is built from a Thermo .raw template (its real
+            # per-scan schedule + windows become the acquisition). Accept either
+            # `template_path` or the `astral_template_path` alias.
+            template = thermo_template_path(self._config)
             if not template:
                 raise ValueError(
-                    "instrument 'orbitrap_astral' requires 'astral_template_path' "
-                    "(a Thermo .raw whose per-scan schedule + windows the run is "
-                    "built from)."
+                    f"instrument '{instrument}' requires 'template_path' (or the "
+                    "'astral_template_path' alias): a Thermo .raw whose per-scan "
+                    "schedule + windows the run is built from."
                 )
             if not os.path.exists(template):
-                raise FileNotFoundError(f"astral_template_path does not exist: {template}")
-            # The Astral .raw writer + dispatch live behind the connector's 'thermo'
-            # feature, which the published wheels disable (the Thermo writer
-            # dependency is private). Fail fast at config load instead of an
-            # AttributeError after a full simulation.
+                raise FileNotFoundError(f"template_path does not exist: {template}")
+            # The Thermo .raw writer + dispatch live behind the connector's 'thermo'
+            # feature, which the published wheels disable (the Thermo writer dependency
+            # is private). Fail fast at config load instead of an AttributeError after a
+            # full simulation.
             try:
                 import imspy_connector
                 thermo_ok = bool(imspy_connector.py_acquisition.has_thermo())
@@ -645,10 +663,10 @@ class SimulationConfig:
                 thermo_ok = False
             if not thermo_ok:
                 raise ValueError(
-                    "instrument 'orbitrap_astral' requires imspy-connector built with "
-                    "the 'thermo' feature (maturin build --release --features thermo, "
-                    "then reinstall). The published wheels disable it because the "
-                    "Thermo .raw writer dependency is private."
+                    f"instrument '{instrument}' requires imspy-connector built with the "
+                    "'thermo' feature (maturin build --release --features thermo, then "
+                    "reinstall). The published wheels disable it because the Thermo .raw "
+                    "writer dependency is private."
                 )
 
     def __getattr__(self, name: str):
@@ -994,16 +1012,19 @@ def main():
         logger.info(f"  Output path: {save_path}")
         logger.info("")
 
+    from .jobs.register_prediction_set import is_thermo_template_instrument
     instrument = str(getattr(config, 'instrument', 'bruker_timstof')).lower()
-    if instrument == 'orbitrap_astral':
-        # Build-from-template (P6e option b): NO Bruker reference. The Astral
-        # template's real per-scan schedule + windows become the acquisition, so
-        # the trunk is simulated on the template's true non-uniform timeline.
+    if is_thermo_template_instrument(instrument):
+        # Build-from-template (P6e option b): NO Bruker reference. The Thermo template's
+        # real per-scan schedule + windows become the acquisition, so the trunk is
+        # simulated on the template's true non-uniform timeline. Same path for Astral
+        # and classic Orbitrap — the .raw writer handles the MS2 detector format.
         from .jobs.astral_acquisition import AstralAcquisitionBuilder
-        logger.info(f"  Astral build-from-template: {config.astral_template_path}")
+        _template = thermo_template_path(config)
+        logger.info(f"  Thermo build-from-template ({instrument}): {_template}")
         acquisition_builder = AstralAcquisitionBuilder(
             str(Path(save_path) / name),
-            config.astral_template_path,
+            _template,
             round_collision_energy=config.round_collision_energy,
             collision_energy_decimals=config.collision_energy_decimals,
             # Optional override: if set, forces a single NCE across all windows;
@@ -1095,7 +1116,7 @@ def main():
             # change to the Bruker path.
             rescale_gradient = (
                 acquisition_builder.gradient_length
-                if instrument == 'orbitrap_astral'
+                if is_thermo_template_instrument(instrument)
                 else config.gradient_length
             )
             if not config.silent_mode:
@@ -1175,7 +1196,7 @@ def main():
         rt_max = peptides['retention_time_gru_predictor'].max()
         grad = (
             acquisition_builder.gradient_length
-            if instrument == 'orbitrap_astral'
+            if is_thermo_template_instrument(instrument)
             else config.gradient_length
         )
         if abs(rt_max - grad) / grad > 0.05:
@@ -1581,12 +1602,13 @@ def main():
     )
 
     # JOB 10: vendor output.
-    if instrument == 'orbitrap_astral':
-        # The trunk is now simulated on the Astral template's timeline + windows
-        # (fragments at per-window NCE). Author a Thermo .raw from the template
-        # (render each frame -> its template slot) — NOT a Bruker .d.
+    if is_thermo_template_instrument(instrument):
+        # The trunk is simulated on the Thermo template's timeline + windows (fragments
+        # at per-window NCE). Author a Thermo .raw from the template (render each frame
+        # -> its template slot) — NOT a Bruker .d. Same dispatch for Astral and classic
+        # Orbitrap; the writer authors the template's native MS2 centroid format.
         import imspy_connector
-        logger.info(section_header("Authoring Astral .raw", use_unicode))
+        logger.info(section_header(f"Authoring Thermo .raw ({instrument})", use_unicode))
         db_path = acquisition_builder.synthetics_handle.database_path
         out_raw = str(Path(save_path) / f"{name}.raw")
         # Recording-stage m/z noise (Gaussian, ppm). Respect the same toggles the
@@ -1601,7 +1623,7 @@ def main():
             )
         scans, n_ms1, n_ms2, n_ms2_nz, n_cleared, ok = (
             imspy_connector.py_acquisition.write_astral_raw(
-                db_path, config.astral_template_path, out_raw, num_threads,
+                db_path, thermo_template_path(config), out_raw, num_threads,
                 precursor_noise_ppm=prec_noise_ppm, fragment_noise_ppm=frag_noise_ppm,
             )
         )
