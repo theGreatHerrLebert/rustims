@@ -8,9 +8,14 @@ which charges, retention times, and abundances were simulated) and a DIA search 
   median absolute error). Tests that the render places elution at the intended RT.
 - **Charge accuracy**    — fraction of identified precursors whose charge was actually
   simulated for that peptide backbone.
-- **Empirical FDR**      — entrapment: identified backbones that were NOT simulated /
-  total identified. Validates the engine's FDR control on the data (meaningful only
-  when searching a library larger than the simulated set, e.g. the full proteome).
+- **FDP** (false discovery proportion) — identified backbones NOT in the simulated set
+  / total identified. This is the *realized* false fraction measured against the
+  COMPLETE ground truth (we know exactly what was simulated) — NOT an FDR estimate, and
+  NOT entrapment. (FDR is the expected FDP an estimator targets; entrapment estimates
+  FDR by spiking known non-target sequences as a separate axis — neither is needed here
+  since the truth is known.) Meaningful only when the search space exceeds the simulated
+  set (library-free / full proteome); assumes the run has no blank/noise-derived real
+  IDs (true today — only simulated-peptide signal is rendered).
 - **Quant correlation**  — reported quantity vs simulated abundance
   (``events × relative_abundance``), log10–log10 Pearson, across the dynamic range.
 - **Recall by abundance**— detection rate per simulated-abundance quartile (a flat
@@ -50,8 +55,8 @@ class GroundTruthMetrics:
     rt_pearson: float
     rt_median_abs_error: float           # in the report's RT unit (minutes)
     charge_accuracy: float               # of matched-backbone IDs, fraction at a simulated charge
-    empirical_fdr: float                 # identified backbones not in the simulated set / reported_total
-    empirical_fdr_n_false: int
+    fdp: float                           # false discovery PROPORTION: backbones not simulated / reported_total
+    n_false_discoveries: int             # reported IDs whose backbone was never simulated
     quant_log_pearson: float
     quant_log_spearman: float
     quant_dynamic_range_orders: float
@@ -96,19 +101,32 @@ def load_report(path: str, engine: str = "diann") -> pd.DataFrame:
             "quantity": r.get("Precursor.Quantity", pd.Series(np.nan, index=r.index)).astype(float),
         })
     if engine == "alphadia":
+        # alphaDIA `precursors.parquet`: dotted columns (precursor.sequence [stripped],
+        # precursor.charge, precursor.rt.observed [seconds], precursor.intensity [often
+        # NaN in the precursor table — quant lives in precursor.matrix], precursor.decoy,
+        # precursor.qval). Fall back to bare names for older/other layouts.
         r = pd.read_parquet(path) if path.endswith(".parquet") else pd.read_csv(path, sep="\t")
-        # alphaDIA precursor table: sequence (stripped), charge, rt (seconds), intensity
-        seq_col = next(c for c in ("sequence", "Sequence", "stripped_sequence") if c in r.columns)
-        rt_col = next((c for c in ("rt", "rt_observed", "rt_calibrated") if c in r.columns), None)
-        q_col = next((c for c in ("intensity", "quantity", "sum_b_ion_intensity") if c in r.columns), None)
-        rt = r[rt_col].astype(float) if rt_col else pd.Series(np.nan, index=r.index)
-        if rt_col and rt.max() > 200:   # heuristic: alphaDIA rt in seconds -> minutes
+        col = lambda *names: next((c for c in names if c in r.columns), None)
+        seq_c = col("precursor.sequence", "sequence", "Sequence", "stripped_sequence")
+        chg_c = col("precursor.charge", "charge")
+        rt_c = col("precursor.rt.observed", "precursor.rt.calibrated", "rt_observed", "rt")
+        q_c = col("precursor.intensity", "intensity", "quantity")
+        dec_c = col("precursor.decoy", "decoy")
+        qv_c = col("precursor.qval", "qval", "q_value")
+        if seq_c is None or chg_c is None:
+            raise ValueError(f"alphaDIA report missing sequence/charge columns; saw {list(r.columns)[:12]}")
+        if dec_c is not None:
+            r = r[r[dec_c] == 0]
+        if qv_c is not None:
+            r = r[r[qv_c] <= 0.01]
+        rt = r[rt_c].astype(float) if rt_c else pd.Series(np.nan, index=r.index)
+        if rt_c is not None and len(rt) and rt.max() > 200:   # seconds -> minutes
             rt = rt / 60.0
         return pd.DataFrame({
-            "bb": r[seq_col].map(_strip_mods),
-            "charge": r["charge"].astype(int),
-            "rt": rt,
-            "quantity": r[q_col].astype(float) if q_col else pd.Series(np.nan, index=r.index),
+            "bb": r[seq_c].map(_strip_mods),
+            "charge": r[chg_c].astype(int),
+            "rt": rt.values,
+            "quantity": r[q_c].astype(float).values if q_c else np.full(len(r), np.nan),
         })
     raise ValueError(f"unknown engine '{engine}' (expected 'diann' or 'alphadia')")
 
@@ -127,8 +145,13 @@ def evaluate(truth: pd.DataFrame, report: pd.DataFrame) -> GroundTruthMetrics:
 
     n = len(report)
     rep_pairs = list(zip(report["bb"], report["charge"]))
+    # FDP: a reported peptide whose backbone was never simulated is a realized false
+    # discovery (its signal is not in the .raw). NOTE: assumes no blank/noise-derived
+    # real IDs (true while only simulated signal is rendered). I/L isobars make this a
+    # mild upper bound (an L-variant of a simulated I-peptide is mass-equal but counts
+    # false under exact string match).
     false_bb = [b not in sim_bb for b in report["bb"]]
-    empirical_fdr = float(np.mean(false_bb)) if n else 0.0
+    fdp = float(np.mean(false_bb)) if n else 0.0
 
     matched = report[report["bb"].isin(sim_bb)].copy()
     # RT correlation on matched backbones
@@ -172,8 +195,8 @@ def evaluate(truth: pd.DataFrame, report: pd.DataFrame) -> GroundTruthMetrics:
         rt_pearson=rt_pearson,
         rt_median_abs_error=rt_mae,
         charge_accuracy=charge_acc,
-        empirical_fdr=empirical_fdr,
-        empirical_fdr_n_false=int(sum(false_bb)),
+        fdp=fdp,
+        n_false_discoveries=int(sum(false_bb)),
         quant_log_pearson=quant_p,
         quant_log_spearman=quant_s,
         quant_dynamic_range_orders=dyn,

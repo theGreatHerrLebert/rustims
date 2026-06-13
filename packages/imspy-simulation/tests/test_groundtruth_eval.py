@@ -32,13 +32,13 @@ def test_perfect_report_metrics():
     })
     m = evaluate(truth, report)
     assert m.identified == 3 and m.reported_total == 3 and m.simulated_ions == 4
-    assert m.empirical_fdr == 0.0 and m.empirical_fdr_n_false == 0
+    assert m.fdp == 0.0 and m.n_false_discoveries == 0
     assert m.charge_accuracy == 1.0
     assert m.rt_pearson > 0.999 and m.rt_median_abs_error < 1e-9
     assert m.quant_log_pearson > 0.999
 
 
-def test_entrapment_fdr_and_charge_error():
+def test_fdp_and_charge_error():
     truth = _truth()
     # 4 reported: 2 real (AAAK/z2, BBBR/z3), 1 wrong-charge (CCCK/z4 — backbone real,
     # charge not simulated), 1 entrapment false (XXXK not simulated at all).
@@ -49,9 +49,9 @@ def test_entrapment_fdr_and_charge_error():
         "quantity": [1e3,    1e4,    1e7,    1e2],
     })
     m = evaluate(truth, report)
-    # empirical FDR = backbones not simulated / total = 1 (XXXK) / 4
-    assert m.empirical_fdr_n_false == 1
-    assert abs(m.empirical_fdr - 0.25) < 1e-9
+    # FDP = backbones not simulated / total = 1 (XXXK) / 4
+    assert m.n_false_discoveries == 1
+    assert abs(m.fdp - 0.25) < 1e-9
     # matched-backbone IDs = AAAK,BBBR,CCCK (3); CCCK@z4 not a simulated charge -> 2/3
     assert abs(m.charge_accuracy - (2 / 3)) < 1e-9
     # only backbone+charge that match a simulated ion count as 'identified': AAAK/z2, BBBR/z3
