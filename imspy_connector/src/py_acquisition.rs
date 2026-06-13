@@ -602,10 +602,13 @@ impl PyActivationPolicy {
 /// profile / MS2 per-window fragments), and authors it into its slot. Returns
 /// `(scans, ms1, ms2, ms2_nonempty, overflow_cleared, checksum_valid)`. Requires
 /// the `thermo` feature; the DB must have been built from this template (frames
-/// 1:1 with template slots), else a structured error is raised.
+/// 1:1 with template slots), else a structured error is raised. `superimpose_ppm`
+/// `0` (default) replaces the template signal (pure simulated output); `>0` keeps
+/// the template's real signal and overlays simulated peaks on top (real⊕sim), using
+/// the value as the MS2 centroid merge tolerance in ppm.
 #[cfg(feature = "thermo")]
 #[pyfunction]
-#[pyo3(signature = (db_path, template_path, out_path, num_threads=4, quad_k=15.0, max_ms1_peaks=400, max_ms2_peaks=120, precursor_noise_ppm=0.0, fragment_noise_ppm=0.0))]
+#[pyo3(signature = (db_path, template_path, out_path, num_threads=4, quad_k=15.0, max_ms1_peaks=400, max_ms2_peaks=120, precursor_noise_ppm=0.0, fragment_noise_ppm=0.0, superimpose_ppm=0.0))]
 pub fn write_astral_raw(
     py: Python<'_>,
     db_path: &str,
@@ -617,10 +620,15 @@ pub fn write_astral_raw(
     max_ms2_peaks: usize,
     precursor_noise_ppm: f64,
     fragment_noise_ppm: f64,
+    superimpose_ppm: f64,
 ) -> PyResult<(usize, usize, usize, usize, usize, bool)> {
     use rustdf::sim::astral_dispatch::{write_astral_raw as run, AstralWriteOptions};
     use std::path::Path;
-    for (name, v) in [("precursor_noise_ppm", precursor_noise_ppm), ("fragment_noise_ppm", fragment_noise_ppm)] {
+    for (name, v) in [
+        ("precursor_noise_ppm", precursor_noise_ppm),
+        ("fragment_noise_ppm", fragment_noise_ppm),
+        ("superimpose_ppm", superimpose_ppm),
+    ] {
         if !v.is_finite() || v < 0.0 {
             return Err(PyValueError::new_err(format!("{name} must be finite and >= 0, got {v}")));
         }
@@ -632,6 +640,7 @@ pub fn write_astral_raw(
         max_ms2_peaks,
         precursor_noise_ppm,
         fragment_noise_ppm,
+        superimpose_ppm,
     };
     let s = py
         .allow_threads(|| {

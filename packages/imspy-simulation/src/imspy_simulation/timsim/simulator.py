@@ -1,5 +1,6 @@
 import os
 import sys
+import math
 
 # Silence verbose package outputs before importing them
 os.environ["WANDB_SILENT"] = "true"
@@ -405,6 +406,10 @@ def get_default_settings() -> dict:
         'mz_noise_uniform': False,
         'add_real_data_noise': False,
         'superimpose_on_reference': False,
+        # MS2 centroid merge tolerance (ppm) used when superimposing simulated peaks
+        # onto a Thermo .raw template's real signal (Astral/Orbitrap Overlay mode).
+        # Ignored for the Bruker path and when superimpose_on_reference is False.
+        'superimpose_merge_ppm': 15.0,
         'reference_noise_intensity_max': 30,
         'down_sample_factor': 0.5,
 
@@ -568,6 +573,28 @@ class SimulationConfig:
         # Validate superimpose_on_reference is DIA-only
         if self._config.get('superimpose_on_reference', False) and self._config.get('acquisition_type') == 'DDA':
             raise ValueError("superimpose_on_reference is only supported for DIA acquisition mode")
+
+        # For a Thermo build-from-template run, superimposition uses an MS2 centroid
+        # merge tolerance (ppm). A 0/negative tolerance would silently fall back to
+        # Replace (overwrite, destroying the reference signal the user asked to keep),
+        # so require a strictly-positive, finite tolerance when superimposing onto a
+        # Thermo template. (The Bruker path ignores this key.)
+        if self._config.get('superimpose_on_reference', False) and is_thermo:
+            raw_ppm = self._config.get('superimpose_merge_ppm')
+            # Coerce ONCE; reject bool (float(True)==1.0 would slip through) and any
+            # non-numeric value with the contextual error, not a bare float() exception.
+            merge_ppm = None
+            if not isinstance(raw_ppm, bool):
+                try:
+                    merge_ppm = float(raw_ppm)
+                except (TypeError, ValueError):
+                    merge_ppm = None
+            if merge_ppm is None or not math.isfinite(merge_ppm) or merge_ppm <= 0.0:
+                raise ValueError(
+                    "superimpose_on_reference on a Thermo template requires "
+                    f"superimpose_merge_ppm > 0 (got {raw_ppm!r}); a 0/negative tolerance "
+                    "would overwrite the reference signal instead of overlaying onto it"
+                )
 
         # Validate p_charge
         p_charge = self._config.get('p_charge', 0.8)
@@ -1621,10 +1648,20 @@ def main():
             logger.info(
                 f"  m/z noise: precursor {prec_noise_ppm} ppm, fragment {frag_noise_ppm} ppm (Gaussian)"
             )
+        # Superimpose simulated peaks onto the template's real signal (real⊕sim)
+        # instead of replacing it. 0 ppm = Replace (default, pure simulated output);
+        # >0 ppm = Overlay with that MS2 centroid merge tolerance.
+        superimpose_ppm = float(config.superimpose_merge_ppm) if config.superimpose_on_reference else 0.0
+        if superimpose_ppm:
+            logger.info(
+                f"  superimpose: overlaying simulated peaks on the template's real "
+                f"signal (merge tolerance {superimpose_ppm} ppm)"
+            )
         scans, n_ms1, n_ms2, n_ms2_nz, n_cleared, ok = (
             imspy_connector.py_acquisition.write_astral_raw(
                 db_path, thermo_template_path(config), out_raw, num_threads,
                 precursor_noise_ppm=prec_noise_ppm, fragment_noise_ppm=frag_noise_ppm,
+                superimpose_ppm=superimpose_ppm,
             )
         )
         logger.info(

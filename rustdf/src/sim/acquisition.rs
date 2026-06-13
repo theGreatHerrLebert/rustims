@@ -267,6 +267,18 @@ mod thermo {
                     ),
                 ));
             }
+            // Overlay with no simulated peaks is a true no-op: leave the template
+            // slot's REAL signal byte-identical. Don't round-trip it through
+            // overlay_profile/overlay_centroids, which re-canonicalize the packet
+            // (and could merge near-coincident real centroids within merge_tol_ppm).
+            // Replace with no peaks still clears the slot (pure-simulated, zero-
+            // residual) — that path falls through below.
+            if scan.peaks.is_empty() {
+                if let WriteMode::Overlay { .. } = self.mode {
+                    self.cursor += 1;
+                    return Ok(());
+                }
+            }
             if is_profile {
                 // Advance the cursor only after authoring succeeds, so a failed
                 // write doesn't permanently consume the slot.
@@ -534,5 +546,94 @@ mod tests {
         assert!(cents.len() >= base_cents + 1, "MS2 real centroids not retained / sim not added");
         eprintln!("thermo_overlay OK: MS1 {}->{} pts (+sim), MS2 {}->{} centroids",
             base_pts, prof.point_count(), base_cents, cents.len());
+    }
+
+    // Gated: an EMPTY overlay must be a true no-op — the template's real signal is
+    // left untouched. The short-circuit returns before `self.raw` is mutated, so the
+    // packet bytes are never round-tripped through overlay/author (which would
+    // re-canonicalize and could merge near-coincident real centroids). We assert the
+    // DECODED signal is bit-identical (exact equality: nothing is recomputed, so the
+    // decode of an untouched packet is deterministic). This is the contract the
+    // dispatch's overflow fallback relies on in Overlay mode (an overflowing slot is
+    // re-authored empty and must keep its real signal).
+    #[test]
+    fn overlay_empty_is_noop() {
+        let template = match std::env::var("TIMSIM_ASTRAL_TEMPLATE") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP overlay_empty_is_noop: set TIMSIM_ASTRAL_TEMPLATE=<astral .raw>");
+                return;
+            }
+        };
+        let out = std::env::temp_dir().join("rustdf_overlay_empty_noop.raw");
+
+        // Baseline: decoded MS1 profile + MS2 centroids of the first NON-EMPTY
+        // profile/centroid scans (a vacuous empty scan would make the invariant
+        // trivially hold), straight from the untouched template.
+        let base = thermorawfile::RawFile::open(&template).unwrap();
+        let (mut prof_scan, mut cent_scan) = (None, None);
+        for i in 0..base.index.len() {
+            let scan = base.first_scan + i as u32;
+            let pkt = (base.data_addr + base.index[i].offset) as usize;
+            let psize = u32::from_le_bytes(base.bytes[pkt + 4..pkt + 8].try_into().unwrap());
+            if psize > 0 && prof_scan.is_none()
+                && base.profile(scan).map(|p| p.point_count() > 0).unwrap_or(false)
+            {
+                prof_scan = Some(scan);
+            }
+            if psize == 0 && cent_scan.is_none() && !base.centroid_peaks(scan).is_empty() {
+                cent_scan = Some(scan);
+            }
+            if prof_scan.is_some() && cent_scan.is_some() { break; }
+        }
+        let prof_scan = prof_scan.expect("template has no non-empty MS1 profile scan");
+        let cent_scan = cent_scan.expect("template has no non-empty MS2 centroid scan");
+        let cal = base.calibration_at_event(base.scantrailer_addr as usize + 4).unwrap();
+        let profile_points = |rf: &thermorawfile::RawFile, scan: u32| -> Vec<(f64, f32)> {
+            let p = rf.profile(scan).unwrap();
+            let mut v = Vec::with_capacity(p.point_count());
+            for c in &p.chunks {
+                for j in 0..c.signal.len() {
+                    v.push((p.mz_of_bin(c.first_bin + j as u32, &cal), c.signal[j]));
+                }
+            }
+            v
+        };
+        let base_prof = profile_points(&base, prof_scan);
+        let base_cents: Vec<(f64, f32)> =
+            base.centroid_peaks(cent_scan).iter().map(|p| (p.mz, p.intensity)).collect();
+        assert!(!base_prof.is_empty(), "picked an empty MS1 profile — test would be vacuous");
+        assert!(!base_cents.is_empty(), "picked an empty MS2 centroid — test would be vacuous");
+
+        // Walk every slot in order, authoring an EMPTY descriptor in Overlay mode.
+        // A complete pass exercises the finalize path; Overlay is exempt from the
+        // zero-residual check, and every empty author short-circuits.
+        let mut w = ThermoRawWriter::from_template(&template, &out)
+            .expect("open")
+            .with_mode(WriteMode::Overlay { merge_tol_ppm: 20.0 });
+        for &(_, is_profile) in w.manifest().to_vec().iter() {
+            w.write_scan(&ScanDescriptor {
+                ms_level: if is_profile { 1 } else { 2 },
+                retention_time: 0.0,
+                isolation: None,
+                peaks: Vec::new(),
+            })
+            .expect("empty overlay author");
+        }
+        w.finalize().expect("finalize");
+
+        let rf = thermorawfile::RawFile::open(&out).unwrap();
+        assert!(rf.checksum_valid(), "checksum invalid");
+        let out_prof = profile_points(&rf, prof_scan);
+        let out_cents: Vec<(f64, f32)> =
+            rf.centroid_peaks(cent_scan).iter().map(|p| (p.mz, p.intensity)).collect();
+        // Real signal bit-identical — empty overlay touched nothing (exact equality:
+        // the packet is never mutated, so the decode is deterministic).
+        assert_eq!(out_prof, base_prof, "MS1 profile changed under empty overlay");
+        assert_eq!(out_cents, base_cents, "MS2 centroids changed under empty overlay");
+        eprintln!(
+            "overlay_empty_is_noop OK: MS1 {} pts + MS2 {} centroids unchanged across full empty pass",
+            base_prof.len(), base_cents.len()
+        );
     }
 }
