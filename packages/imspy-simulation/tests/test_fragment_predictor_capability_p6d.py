@@ -282,3 +282,50 @@ def test_prosit_hcd_live_koina_contract():
     assert iv.shape == (1, 174)
     # A real Prosit HCD spectrum has several non-zero fragments.
     assert (iv > 0).sum() >= 3
+
+
+def test_orbitrap_exploris_uses_thermo_template_path():
+    """ORBI production config: orbitrap_exploris routes through the SAME
+    build-from-template path as Astral (no-IMS, HCD-NCE), via the generic
+    `template_path` (with `astral_template_path` as alias)."""
+    from imspy_simulation.timsim.jobs.register_prediction_set import (
+        resolve_instrument_activation,
+        is_thermo_template_instrument,
+    )
+    from imspy_simulation.timsim.simulator import thermo_template_path, astral_nce_override
+
+    # registry: exploris shares the Astral activation/unit + the thermo-template family
+    assert resolve_instrument_activation("orbitrap_exploris") == ("hcd", "nce")
+    assert is_thermo_template_instrument("orbitrap_exploris")
+    assert is_thermo_template_instrument("orbitrap_astral")
+    assert not is_thermo_template_instrument("bruker_timstof")
+
+    # template path resolves from either the generic key or the historical alias
+    assert thermo_template_path({"template_path": "/b.raw"}) == "/b.raw"
+    assert thermo_template_path({"astral_template_path": "/a.raw"}) == "/a.raw"
+    # alias wins when both set (back-compat precedence)
+    assert thermo_template_path({"template_path": "/b.raw", "astral_template_path": "/a.raw"}) == "/a.raw"
+
+    # NCE override applies to exploris (a Thermo run), ignored for Bruker
+    assert astral_nce_override(
+        _config_with(instrument="orbitrap_exploris", collision_energy_nce=28.0)
+    ) == 28.0
+    assert astral_nce_override(
+        _config_with(instrument="bruker_timstof", collision_energy_nce=28.0)
+    ) is None
+
+
+def test_orbitrap_exploris_validate_requires_template(tmp_path):
+    """An exploris run requires a template_path and is DIA-only, like Astral."""
+    import pytest
+
+    def exploris(**o):
+        o.setdefault("acquisition_type", "DIA")
+        return _config_with(instrument="orbitrap_exploris", **o)
+
+    # missing template -> error mentioning template_path
+    with pytest.raises(ValueError, match="template_path"):
+        exploris(template_path=None)._validate()
+    # DDA rejected
+    with pytest.raises(ValueError, match="does not support DDA"):
+        exploris(acquisition_type="DDA", template_path=__file__)._validate()
