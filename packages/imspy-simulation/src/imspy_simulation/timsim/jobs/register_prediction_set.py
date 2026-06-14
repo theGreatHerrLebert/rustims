@@ -38,6 +38,9 @@ INSTRUMENT_ACTIVATION = {
     "bruker_timstof": {"activation_method": "hcd", "energy_unit": "ev"},
     "orbitrap_astral": {"activation_method": "hcd", "energy_unit": "nce"},
     "orbitrap_exploris": {"activation_method": "hcd", "energy_unit": "nce"},
+    # SCIEX ZenoTOF SWATH: beam-type CID (HCD-like); rolling CE is modelled and fed to the
+    # prosit_hcd NCE predictor as NCE for now (true SCIEX CE is in volts — a refinement).
+    "sciex_zenotof": {"activation_method": "hcd", "energy_unit": "nce"},
 }
 
 #: Thermo instruments simulated via the build-from-template path (a Thermo ``.raw``
@@ -53,6 +56,18 @@ THERMO_TEMPLATE_INSTRUMENTS = frozenset({"orbitrap_astral", "orbitrap_exploris"}
 def is_thermo_template_instrument(instrument) -> bool:
     """True if ``instrument`` uses the Thermo build-from-template path (Astral/Orbitrap)."""
     return str(instrument or "").lower() in THERMO_TEMPLATE_INSTRUMENTS
+
+
+#: SCIEX instruments simulated via the build-from-.wiff path: the .wiff SWATH method
+#: (windows + TOF cal) becomes the acquisition, the schedule is SYNTHESIZED (the .wiff
+#: has no timing), and the render output is open mzML (the proprietary .wiff.scan is not
+#: authored). No ion mobility; HCD-like (beam-type CID) physics.
+SCIEX_INSTRUMENTS = frozenset({"sciex_zenotof"})
+
+
+def is_sciex_instrument(instrument) -> bool:
+    """True if ``instrument`` uses the SCIEX build-from-.wiff path (ZenoTOF SWATH -> mzML)."""
+    return str(instrument or "").lower() in SCIEX_INSTRUMENTS
 
 
 def resolve_instrument_activation(instrument: str) -> tuple[str, str]:

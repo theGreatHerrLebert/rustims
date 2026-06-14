@@ -421,6 +421,13 @@ def get_default_settings() -> dict:
         'provenance_embed': False,        # False = JSON sidecar; True = embed in analysis.tdf
         'provenance_key_path': None,      # None = default ~/.config/timsim/keys/ (auto-gen)
 
+        # SCIEX ZenoTOF SWATH build-from-.wiff (instrument=sciex_zenotof; template_path = .wiff).
+        # The .wiff method has no per-scan timing, so the SWATH schedule is synthesized from
+        # these + gradient_length. Rolling CE = ce_intercept + ce_slope_per_mz * precursor_mz.
+        'sciex_cycle_time_s': 3.5,
+        'sciex_ce_intercept': 5.0,
+        'sciex_ce_slope_per_mz': 0.045,
+
         # Fragment intensity model
         'fragment_intensity_model': None,  # None/"prosit" or "peptdeep"
 
@@ -550,16 +557,20 @@ class SimulationConfig:
         # A Thermo build-from-template run (Astral/Orbitrap) is built from a Thermo .raw
         # template, NOT a Bruker reference .d — so it requires a template path in place
         # of reference_path (the lean, Bruker-independent build-from-template path).
-        from .jobs.register_prediction_set import is_thermo_template_instrument
+        from .jobs.register_prediction_set import (
+            is_thermo_template_instrument, is_sciex_instrument,
+        )
         instrument = str(self._config.get('instrument', 'bruker_timstof')).lower()
         is_thermo = is_thermo_template_instrument(instrument)
-        # For a Thermo run the template path may be given as `template_path` or the
-        # `astral_template_path` alias; require at least one (validated below).
+        # Template-based runs (Thermo .raw OR SCIEX .wiff) build from a vendor template
+        # instead of a Bruker reference .d, so they need a `template_path` (or the
+        # `astral_template_path` alias) rather than `reference_path`.
+        is_template_based = is_thermo or is_sciex_instrument(instrument)
         ref_key = 'reference_path'
         if self._config.get('from_findings'):
-            required = ['save_path', 'findings_path'] if is_thermo else ['save_path', ref_key, 'findings_path']
+            required = ['save_path', 'findings_path'] if is_template_based else ['save_path', ref_key, 'findings_path']
         else:
-            required = ['save_path', 'fasta_path'] if is_thermo else ['save_path', ref_key, 'fasta_path']
+            required = ['save_path', 'fasta_path'] if is_template_based else ['save_path', ref_key, 'fasta_path']
         missing = [key for key in required if not self._config.get(key)]
 
         if missing:
@@ -1083,7 +1094,7 @@ def main():
         logger.info(f"  Output path: {save_path}")
         logger.info("")
 
-    from .jobs.register_prediction_set import is_thermo_template_instrument
+    from .jobs.register_prediction_set import is_thermo_template_instrument, is_sciex_instrument
     instrument = str(getattr(config, 'instrument', 'bruker_timstof')).lower()
     if is_thermo_template_instrument(instrument):
         # Build-from-template (P6e option b): NO Bruker reference. The Thermo template's
@@ -1101,6 +1112,25 @@ def main():
             # Optional override: if set, forces a single NCE across all windows;
             # otherwise the template's genuine per-window NCE is used.
             collision_energy_nce=astral_nce_override(config),
+            verbose=not config.silent_mode,
+        )
+    elif is_sciex_instrument(instrument):
+        # Build-from-.wiff (SCIEX ZenoTOF SWATH): the .wiff SWATH method (windows + TOF
+        # cal) becomes the acquisition; the schedule is SYNTHESIZED (the .wiff has no
+        # timing) from gradient_length + sciex_cycle_time_s + a rolling-CE model. Output
+        # is open mzML (the proprietary .wiff.scan is not authored).
+        from .jobs.sciex_acquisition import SciexAcquisitionBuilder
+        _wiff = thermo_template_path(config)
+        logger.info(f"  SCIEX build-from-.wiff ({instrument}): {_wiff}")
+        acquisition_builder = SciexAcquisitionBuilder(
+            str(Path(save_path) / name),
+            _wiff,
+            cycle_time_s=config.sciex_cycle_time_s,
+            gradient_length_s=config.gradient_length,
+            ce_intercept=config.sciex_ce_intercept,
+            ce_slope_per_mz=config.sciex_ce_slope_per_mz,
+            round_collision_energy=config.round_collision_energy,
+            collision_energy_decimals=config.collision_energy_decimals,
             verbose=not config.silent_mode,
         )
     else:
@@ -1628,6 +1658,7 @@ def main():
     from .jobs.register_prediction_set import (
         register_prediction_set,
         resolve_instrument_activation,
+        is_sciex_instrument,
     )
     # Normalize once (lower-case) so the later exact dispatch comparison can't be
     # fooled by a case variant like 'ORBITRAP_ASTRAL'.
@@ -1717,6 +1748,26 @@ def main():
             raise RuntimeError(
                 f"authored Astral .raw failed checksum validation: {out_raw}"
             )
+    elif is_sciex_instrument(instrument):
+        # SCIEX ZenoTOF SWATH: render the synthesized DIA frames to open mzML (the
+        # proprietary .wiff.scan spectra are not authored). mzML is readable by
+        # DiaNN/alphaDIA and mzprov-signable.
+        import imspy_connector
+        logger.info(section_header(f"Rendering mzML ({instrument})", use_unicode))
+        db_path = acquisition_builder.synthetics_handle.database_path
+        out_mzml = str(Path(save_path) / f"{name}.mzML")
+        if not imspy_connector.py_acquisition.has_mzml():
+            raise RuntimeError(
+                "connector built without the `mzml` feature — rebuild with "
+                "`maturin build --features mzml` to render SCIEX mzML output"
+            )
+        scans, n_ms1, n_ms2, n_ms2_nz = imspy_connector.py_acquisition.render_dia_mzml(
+            db_path, out_mzml, num_threads
+        )
+        logger.info(
+            f"  SCIEX mzML -> {out_mzml}: {scans} scans | {n_ms1} MS1 | "
+            f"{n_ms2} MS2 ({n_ms2_nz} non-empty)"
+        )
     else:
         logger.info(section_header("Assembling Frames", use_unicode))
         assemble_frames(
