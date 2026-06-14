@@ -23,3 +23,5 @@ rustc-hash = "2.1.0"
 # time). Off by default: the core connector + Bruker scheme path stay unaffected.
 thermo = ["rustdf/thermo"]
 sciex = ["rustdf/sciex"]
+# Open mzML output writer (mzdata); no private repo needed.
+mzml = ["rustdf/mzml"]

@@ -650,6 +650,40 @@ pub fn write_astral_raw(
     Ok((s.scans, s.ms1, s.ms2, s.ms2_nonempty, s.overflow_cleared, s.checksum_valid))
 }
 
+/// Render a no-IM DIA `synthetic_data.db` to open **mzML** (the SCIEX / vendor-neutral
+/// output). Walks the DB frames, renders MS1 (precursor marginal) + MS2 (per-window
+/// fragments), and writes mzML via mzdata. Returns `(scans, ms1, ms2, ms2_nonempty)`.
+/// Requires the `mzml` feature.
+#[cfg(feature = "mzml")]
+#[pyfunction]
+#[pyo3(signature = (db_path, out_path, num_threads=4, quad_k=15.0))]
+pub fn render_dia_mzml(
+    py: Python<'_>,
+    db_path: &str,
+    out_path: &str,
+    num_threads: usize,
+    quad_k: f64,
+) -> PyResult<(usize, usize, usize, usize)> {
+    use std::path::Path;
+    let s = py
+        .allow_threads(|| {
+            rustdf::sim::mzml::render_db_to_mzml(
+                Path::new(db_path),
+                Path::new(out_path),
+                num_threads,
+                quad_k,
+            )
+        })
+        .map_err(PyValueError::new_err)?;
+    Ok((s.scans, s.ms1, s.ms2, s.ms2_nonempty))
+}
+
+/// Whether the connector was built with the `mzml` feature (open mzML writer).
+#[pyfunction]
+pub fn has_mzml() -> bool {
+    cfg!(feature = "mzml")
+}
+
 #[pymodule]
 pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAcquisitionScheme>()?;
@@ -665,5 +699,8 @@ pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(accurate_scan_projection, m)?)?;
     m.add_function(wrap_pyfunction!(has_thermo, m)?)?;
     m.add_function(wrap_pyfunction!(has_sciex, m)?)?;
+    #[cfg(feature = "mzml")]
+    m.add_function(wrap_pyfunction!(render_dia_mzml, m)?)?;
+    m.add_function(wrap_pyfunction!(has_mzml, m)?)?;
     Ok(())
 }
