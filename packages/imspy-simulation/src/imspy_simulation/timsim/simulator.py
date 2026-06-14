@@ -715,6 +715,51 @@ class SimulationConfig:
                     "writer dependency is private."
                 )
 
+        if is_sciex_instrument(instrument):
+            # SCIEX ZenoTOF SWATH is build-from-.wiff: DIA-only (the schedule is a
+            # synthesized SWATH cycle), no IMS. DDA has no meaning on this path.
+            if self._config.get('acquisition_type') == 'DDA':
+                raise ValueError(
+                    f"instrument '{instrument}' does not support DDA acquisition "
+                    "(SCIEX SWATH is a DIA cycle). Use DIA."
+                )
+            # Build-from-.wiff: the run is built from a SCIEX .wiff SWATH method (its
+            # windows + TOF cal become the acquisition; the schedule is synthesized).
+            # Accept either `template_path` or the `astral_template_path` alias.
+            template = thermo_template_path(self._config)
+            if not template:
+                raise ValueError(
+                    f"instrument '{instrument}' requires 'template_path' (or the "
+                    "'astral_template_path' alias): a SCIEX .wiff whose SWATH windows "
+                    "the run is built from."
+                )
+            if not os.path.exists(template):
+                raise FileNotFoundError(f"template_path does not exist: {template}")
+            # The rolling-CE model must be finite/positive: CE = intercept + slope*mz
+            # conditions fragment-intensity prediction, and a non-finite/negative value
+            # would silently yield empty or unphysical MS2.
+            for key in ('sciex_cycle_time_s', 'sciex_ce_intercept', 'sciex_ce_slope_per_mz'):
+                val = self._config.get(key)
+                if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(val):
+                    raise ValueError(f"{key} must be a finite number, got {val!r}")
+            if self._config.get('sciex_cycle_time_s') <= 0.0:
+                raise ValueError(
+                    f"sciex_cycle_time_s must be > 0, got {self._config.get('sciex_cycle_time_s')!r}"
+                )
+            # The mzML renderer lives behind the connector's 'mzml' feature; fail fast at
+            # config load instead of an AttributeError after a full simulation.
+            try:
+                import imspy_connector
+                mzml_ok = bool(imspy_connector.py_acquisition.has_mzml())
+            except Exception:
+                mzml_ok = False
+            if not mzml_ok:
+                raise ValueError(
+                    f"instrument '{instrument}' requires imspy-connector built with the "
+                    "'mzml' feature (maturin build --release --features mzml, then "
+                    "reinstall) to render SCIEX SWATH output to open mzML."
+                )
+
     def __getattr__(self, name: str):
         """Allow attribute-style access to configuration values."""
         if name.startswith('_'):
