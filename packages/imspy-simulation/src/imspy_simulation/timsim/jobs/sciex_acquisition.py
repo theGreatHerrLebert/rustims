@@ -6,7 +6,7 @@ per-scan timing, so — unlike the Thermo build-from-template path which reads t
 template's real schedule — we SYNTHESIZE a SWATH frame schedule from the windows plus a
 caller-supplied cycle time + gradient (and a rolling-CE model). The Rust scheme layer does
 the expansion (``PyAcquisitionScheme.sciex_frame_schedule``); from there the acquisition
-tables are built by the SAME ``build_astral_frame_tables`` transform the Astral path uses,
+tables are built by the SAME ``build_frame_tables_from_schedule`` transform the Astral path uses,
 so the trunk renders identically. Output is open mzML (``render_dia_mzml``), since the
 proprietary ``.wiff.scan`` spectra are not authored.
 """
@@ -17,10 +17,10 @@ from typing import Optional
 
 import numpy as np
 
-from .astral_acquisition import (
-    _AstralHelperHandle,
-    _AstralTdfWriterStub,
-    build_astral_frame_tables,
+from .template_acquisition_common import (
+    TemplateHelperHandle,
+    TemplateTdfWriterStub,
+    build_frame_tables_from_schedule,
     build_synthetic_scan_table,
 )
 
@@ -92,7 +92,7 @@ class SciexAcquisitionBuilder:
             )
 
         ce_decimals = collision_energy_decimals if round_collision_energy else 6
-        ft, win, f2g, f2scan = build_astral_frame_tables(
+        ft, win, f2g, f2scan = build_frame_tables_from_schedule(
             schedule, num_scans=num_scans, ce_decimals=ce_decimals
         )
 
@@ -111,8 +111,8 @@ class SciexAcquisitionBuilder:
             mz_lower = float(win["isolation_mz"].min() - win["isolation_width"].max())
         if mz_upper is None:
             mz_upper = float(win["isolation_mz"].max() + win["isolation_width"].max())
-        self.tdf_writer = _AstralTdfWriterStub(
-            _AstralHelperHandle(mz_lower, mz_upper, im_lower, im_upper, num_scans)
+        self.tdf_writer = TemplateTdfWriterStub(
+            TemplateHelperHandle(mz_lower, mz_upper, im_lower, im_upper, num_scans)
         )
 
         for name, tbl in (
