@@ -24,6 +24,27 @@ pub const LIBRARY_HEADER: &str = "ProteinId\tGenes\tModifiedPeptide\tPeptideSequ
 PrecursorCharge\tPrecursorMz\tTr_recalibrated\tFragmentType\tFragmentCharge\t\
 FragmentSeriesNumber\tProductMz\tLibraryIntensity";
 
+/// Prosit's fragment array holds 29 positions = a 30-residue peptide's b/y ions; a
+/// longer peptide overruns it and the decode kernel panics.
+const PROSIT_MAX_RESIDUES: usize = 30;
+
+/// Count backbone residues in a UNIMOD-bracket modified sequence, ignoring the
+/// `[UNIMOD:n]` tokens (and any other bracketed annotation). Cheap, allocation-free —
+/// used to skip over-length peptides before the panic-prone decode kernel.
+fn stripped_residue_count(modified_sequence: &str) -> usize {
+    let mut count = 0usize;
+    let mut in_bracket = false;
+    for c in modified_sequence.bytes() {
+        match c {
+            b'[' => in_bracket = true,
+            b']' => in_bracket = false,
+            b'A'..=b'Z' if !in_bracket => count += 1,
+            _ => {}
+        }
+    }
+    count
+}
+
 /// Decode one batch of peptides (parallel) and write/append their transitions to
 /// `out_path` as a DiaNN-style `.tsv`.
 ///
@@ -92,13 +113,18 @@ pub fn build_spectral_library_tsv(
 
     // Decode each peptide independently; emit a String block of tsv rows (empty if the
     // precursor is skipped). Pure per-item work -> embarrassingly parallel. The decode
-    // kernel PANICS on edge cases (peptides >30 residues overrun Prosit's 29-position
-    // array; malformed sequences fail to parse); an uncaught panic in a rayon worker
-    // would abort the whole process, so each peptide's work is caught and skipped.
+    // kernel PANICS on peptides >30 residues (they overrun Prosit's fixed 29-position
+    // fragment array). The workspace builds with panic="abort", so catch_unwind cannot
+    // recover — we PREVENT the panic by skipping over-length (and empty) peptides up
+    // front. (Inputs are validated UNIMOD sequences from the DB/digest, so malformed
+    // sequences are not expected here.)
     let blocks: Vec<String> = (0..n)
         .into_par_iter()
         .map(|i| {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let n_res = stripped_residue_count(&modified_sequences[i]);
+            if n_res == 0 || n_res > PROSIT_MAX_RESIDUES {
+                return String::new();
+            }
             let intensities = prosit_flat[i * n_cols..(i + 1) * n_cols].to_vec();
             let pep = PeptideSequence::new(modified_sequences[i].clone(), None);
             let coll = pep.associate_with_predicted_intensities(
@@ -150,8 +176,6 @@ pub fn build_spectral_library_tsv(
                 ));
             }
             block
-            }))
-            .unwrap_or_else(|_| String::new())
         })
         .collect();
 
@@ -184,6 +208,30 @@ mod tests {
 
     fn one(s: &str) -> Vec<String> {
         vec![s.to_string()]
+    }
+
+    #[test]
+    fn stripped_residue_count_ignores_mods() {
+        assert_eq!(stripped_residue_count("PEPTIDEK"), 8);
+        assert_eq!(stripped_residue_count("M[UNIMOD:35]PEPK"), 5);
+        assert_eq!(stripped_residue_count("[UNIMOD:1]ACDEK"), 5);
+        assert_eq!(stripped_residue_count("C[UNIMOD:4]C[UNIMOD:4]K"), 3);
+    }
+
+    #[test]
+    fn over_length_peptide_is_skipped_not_panicked() {
+        // A 35-residue peptide overruns Prosit's 29-position array; the decode kernel
+        // would panic (and panic=abort kills the process), so it must be skipped BEFORE
+        // the kernel. Build with one over-length peptide -> header only, no crash.
+        let out = std::env::temp_dir().join("rustdf_lib_overlen.tsv");
+        let long = "ACDEFGHIKLMNPQRSTVWYACDEFGHIKLMNPQR"; // 35 residues
+        assert_eq!(stripped_residue_count(long), 35);
+        let (n_trans, n_prec) = build_spectral_library_tsv(
+            &out, &one(long), &one(long), &one(long), &[2],
+            &vec![0.1; 174], 174, &[700.0], &[10.0], &one("P"), &one("G"), 3, false,
+        )
+        .expect("must not panic on over-length peptide");
+        assert_eq!((n_trans, n_prec), (0, 0), "over-length peptide skipped");
     }
 
     #[test]

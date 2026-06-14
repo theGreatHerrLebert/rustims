@@ -181,15 +181,27 @@ pub fn render_db_to_mzml(
     let wg = handle
         .read_window_group_settings()
         .map_err(|e| format!("read windows: {e}"))?;
-    let by_group: HashMap<u32, (f64, f64, f64)> = wg
-        .iter()
-        .map(|w| {
-            (
-                w.window_group,
-                (w.isolation_mz as f64, w.isolation_width as f64, w.collision_energy as f64),
-            )
-        })
-        .collect();
+    // One window per group is the no-IM DIA invariant; reject conflicting duplicate rows
+    // (silently keeping the last would mis-render) and non-positive widths.
+    let mut by_group: HashMap<u32, (f64, f64, f64)> = HashMap::new();
+    for w in &wg {
+        let v = (w.isolation_mz as f64, w.isolation_width as f64, w.collision_energy as f64);
+        if v.1 <= 0.0 {
+            return Err(format!(
+                "window_group {} has non-positive isolation width {}",
+                w.window_group, v.1
+            ));
+        }
+        if let Some(prev) = by_group.insert(w.window_group, v) {
+            if prev != v {
+                return Err(format!(
+                    "conflicting dia_ms_ms_windows rows for window_group {}: {prev:?} vs {v:?} \
+                     (render_db_to_mzml expects one window per group, no-IM DIA)",
+                    w.window_group
+                ));
+            }
+        }
+    }
     let f2g = handle
         .read_frame_to_window_group()
         .map_err(|e| format!("read frame->group: {e}"))?;
