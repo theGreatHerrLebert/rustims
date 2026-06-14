@@ -13,6 +13,7 @@ use std::io;
 use std::path::Path;
 
 use mzdata::io::MzMLWriter;
+use mzdata::meta::DissociationMethodTerm;
 use mzdata::prelude::*;
 use mzdata::spectrum::bindata::{ArrayType, BinaryDataArrayType, DataArray};
 use mzdata::spectrum::{
@@ -63,52 +64,83 @@ pub fn write_scans_mzml(scans: &[MzMlScan], out_path: &Path) -> io::Result<usize
     let file = File::create(out_path)?;
     let mut writer = MzMLWriter::new(file);
     for (i, s) in scans.iter().enumerate() {
-        let mut arrays = BinaryArrayMap::new();
-        arrays.add(DataArray::wrap(
-            &ArrayType::MZArray,
-            BinaryDataArrayType::Float64,
-            f64_le_bytes(&s.mz),
-        ));
-        arrays.add(DataArray::wrap(
-            &ArrayType::IntensityArray,
-            BinaryDataArrayType::Float32,
-            f32_le_bytes(&s.intensity),
-        ));
-
-        let mut desc = SpectrumDescription::default();
-        desc.id = format!("scan={}", i + 1);
-        desc.index = i;
-        desc.ms_level = s.ms_level;
-        desc.polarity = ScanPolarity::Positive;
-        desc.signal_continuity = SignalContinuity::Centroid;
-
-        // Scan start time: mzML stores it in minutes.
-        let mut scan_event = ScanEvent::default();
-        scan_event.start_time = s.retention_time_s / 60.0;
-        desc.acquisition.scans.push(scan_event);
-
-        if let Some(iso) = &s.isolation {
-            let mut prec = Precursor::default();
-            prec.isolation_window = IsolationWindow {
-                target: iso.center_mz as f32,
-                lower_bound: iso.lower_mz as f32,
-                upper_bound: iso.upper_mz as f32,
-                ..Default::default()
-            };
-            let mut ion = SelectedIon::default();
-            ion.mz = iso.center_mz;
-            prec.ions.push(ion);
-            let mut activation = Activation::default();
-            activation.energy = iso.collision_energy as f32;
-            prec.activation = activation;
-            desc.precursor.push(prec);
-        }
-
-        let spectrum = RawSpectrum::new(desc, arrays);
-        writer.write(&spectrum)?;
+        write_one_scan(&mut writer, i, s)?;
     }
     writer.close()?;
     Ok(scans.len())
+}
+
+/// Build the mzML spectrum for one scan and write it to an open writer. Shared by the
+/// in-memory `write_scans_mzml` and the streaming `render_db_to_mzml` (which writes each
+/// frame as it is rendered rather than buffering them all).
+fn write_one_scan<W: io::Write>(
+    writer: &mut MzMLWriter<W>,
+    index: usize,
+    s: &MzMlScan,
+) -> io::Result<()> {
+    if s.mz.len() != s.intensity.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "scan {index}: m/z ({}) and intensity ({}) length mismatch",
+                s.mz.len(),
+                s.intensity.len()
+            ),
+        ));
+    }
+    let mut arrays = BinaryArrayMap::new();
+    arrays.add(DataArray::wrap(
+        &ArrayType::MZArray,
+        BinaryDataArrayType::Float64,
+        f64_le_bytes(&s.mz),
+    ));
+    arrays.add(DataArray::wrap(
+        &ArrayType::IntensityArray,
+        BinaryDataArrayType::Float32,
+        f32_le_bytes(&s.intensity),
+    ));
+
+    let mut desc = SpectrumDescription::default();
+    desc.id = format!("scan={}", index + 1);
+    desc.index = index;
+    desc.ms_level = s.ms_level;
+    desc.polarity = ScanPolarity::Positive;
+    desc.signal_continuity = SignalContinuity::Centroid;
+
+    // Scan start time: mzML stores it in minutes.
+    let mut scan_event = ScanEvent::default();
+    scan_event.start_time = s.retention_time_s / 60.0;
+    desc.acquisition.scans.push(scan_event);
+
+    if let Some(iso) = &s.isolation {
+        let mut prec = Precursor::default();
+        // mzdata stores isolation bounds as ABSOLUTE m/z (its writer converts to mzML
+        // lower/upper OFFSETS); pass absolute lower/upper.
+        prec.isolation_window = IsolationWindow {
+            target: iso.center_mz as f32,
+            lower_bound: iso.lower_mz as f32,
+            upper_bound: iso.upper_mz as f32,
+            ..Default::default()
+        };
+        let mut ion = SelectedIon::default();
+        ion.mz = iso.center_mz;
+        prec.ions.push(ion);
+        let mut activation = Activation::default();
+        // Declare the dissociation method (HCD / beam-type CID) so the <activation> is
+        // not just a bare energy. NOTE: mzdata serialises `energy` as PSI-MS "collision
+        // energy" (eV); our value is the model's NCE/CE as supplied — downstream search
+        // engines key on fragments, not this field, but the unit caveat stands.
+        activation
+            .methods_mut()
+            .push(DissociationMethodTerm::BeamTypeCollisionInducedDissociation);
+        activation.energy = iso.collision_energy as f32;
+        prec.activation = activation;
+        desc.precursor.push(prec);
+    }
+
+    let spectrum = RawSpectrum::new(desc, arrays);
+    writer.write(&spectrum)?;
+    Ok(())
 }
 
 /// Outcome of a DB → mzML render.
@@ -177,8 +209,11 @@ pub fn render_db_to_mzml(
         .collect();
     frame_ids.sort_unstable();
 
-    let (mut ms1, mut ms2, mut ms2_nonempty) = (0usize, 0usize, 0usize);
-    let mut scans: Vec<MzMlScan> = Vec::with_capacity(frame_ids.len());
+    // Stream: open the writer and emit each frame as it is rendered, so peak memory is
+    // one scan, not the whole run (a 28k-frame run is a ~1.5 GB mzML).
+    let file = std::fs::File::create(out_path).map_err(|e| format!("create {out_path:?}: {e}"))?;
+    let mut writer = MzMLWriter::new(file);
+    let (mut ms1, mut ms2, mut ms2_nonempty, mut total) = (0usize, 0usize, 0usize, 0usize);
     for frame_id in frame_ids {
         let desc = if prec_set.contains(&frame_id) {
             let ev = builder
@@ -204,17 +239,18 @@ pub fn render_db_to_mzml(
         if isolation.is_some() && !desc.peaks.is_empty() {
             ms2_nonempty += 1;
         }
-        scans.push(MzMlScan {
+        let scan = MzMlScan {
             ms_level: desc.ms_level,
             retention_time_s: desc.retention_time,
             mz: desc.peaks.iter().map(|(m, _)| *m).collect(),
             intensity: desc.peaks.iter().map(|(_, i)| *i).collect(),
             isolation,
-        });
+        };
+        write_one_scan(&mut writer, total, &scan).map_err(|e| format!("write scan {total}: {e}"))?;
+        total += 1;
     }
-
-    write_scans_mzml(&scans, out_path).map_err(|e| format!("write mzML: {e}"))?;
-    Ok(MzMlWriteSummary { scans: scans.len(), ms1, ms2, ms2_nonempty })
+    writer.close().map_err(|e| format!("close mzML: {e}"))?;
+    Ok(MzMlWriteSummary { scans: total, ms1, ms2, ms2_nonempty })
 }
 
 #[cfg(test)]

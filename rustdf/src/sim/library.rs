@@ -69,6 +69,15 @@ pub fn build_spectral_library_tsv(
             ));
         }
     }
+    // The Prosit intensity vector reshapes to 29 fragment positions x 2 termini x 3
+    // charges = 174; any other width makes `reshape_prosit_array` panic.
+    const PROSIT_VEC_LEN: usize = 174;
+    if n_cols != PROSIT_VEC_LEN {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("n_cols must be {PROSIT_VEC_LEN} (Prosit vector width), got {n_cols}"),
+        ));
+    }
     if prosit_flat.len() != n * n_cols {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -82,10 +91,14 @@ pub fn build_spectral_library_tsv(
     }
 
     // Decode each peptide independently; emit a String block of tsv rows (empty if the
-    // precursor is skipped). Pure per-item work -> embarrassingly parallel.
+    // precursor is skipped). Pure per-item work -> embarrassingly parallel. The decode
+    // kernel PANICS on edge cases (peptides >30 residues overrun Prosit's 29-position
+    // array; malformed sequences fail to parse); an uncaught panic in a rayon worker
+    // would abort the whole process, so each peptide's work is caught and skipped.
     let blocks: Vec<String> = (0..n)
         .into_par_iter()
         .map(|i| {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let intensities = prosit_flat[i * n_cols..(i + 1) * n_cols].to_vec();
             let pep = PeptideSequence::new(modified_sequences[i].clone(), None);
             let coll = pep.associate_with_predicted_intensities(
@@ -137,6 +150,8 @@ pub fn build_spectral_library_tsv(
                 ));
             }
             block
+            }))
+            .unwrap_or_else(|_| String::new())
         })
         .collect();
 
