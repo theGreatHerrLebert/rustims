@@ -413,6 +413,14 @@ def get_default_settings() -> dict:
         'reference_noise_intensity_max': 30,
         'down_sample_factor': 0.5,
 
+        # mzPROV provenance sidecar (Ed25519-signed self-disclosure: "this IS TimSim
+        # simulated data", binds the output to the config + a signing key). Emitted for
+        # the Bruker .d path; mzprov v0 canonicalizes .d/mzML, not vendor .raw, so Thermo
+        # .raw runs skip it. Requires the optional `mzprov` package (import-guarded).
+        'emit_provenance': True,
+        'provenance_embed': False,        # False = JSON sidecar; True = embed in analysis.tdf
+        'provenance_key_path': None,      # None = default ~/.config/timsim/keys/ (auto-gen)
+
         # Fragment intensity model
         'fragment_intensity_model': None,  # None/"prosit" or "peptdeep"
 
@@ -919,6 +927,42 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
              "'accurate' uses the improved projection."
     )
     return parser
+
+
+def emit_provenance_sidecar(d_path, db_path, config_path, experiment_name,
+                            embed, key_path, logger) -> None:
+    """Write an mzPROV Ed25519-signed provenance sidecar for a Bruker .d output —
+    tamper-evident self-disclosure that this is TimSim-simulated data, bound to the
+    config and a signing key. Import-guarded: a missing `mzprov` package or any signing
+    error is logged as a warning and never fails the run. mzprov v0 canonicalizes
+    .d/mzML only (not vendor .raw), so callers gate this to the Bruker path."""
+    try:
+        from mzprov.sign import sign_simulation_output
+    except ImportError:
+        logger.warning(
+            "  provenance: `mzprov` not installed — skipping sidecar "
+            "(pip install the mzprov python implementation to enable)"
+        )
+        return
+    try:
+        from imspy_simulation import __version__ as _sim_version
+    except Exception:
+        _sim_version = "unknown"
+    try:
+        gt = db_path if (db_path and os.path.exists(db_path)) else None
+        out = sign_simulation_output(
+            d_path=d_path,
+            ground_truth_path=gt,
+            config_path=config_path,
+            experiment_name=experiment_name,
+            simulator_version=_sim_version,
+            private_key_path=key_path,
+            embed=embed,
+        )
+        logger.info(f"  provenance: mzPROV sidecar -> {out}"
+                    + (" (embedded in .d)" if embed else ""))
+    except Exception as e:
+        logger.warning(f"  provenance: mzPROV signing failed (non-fatal): {e}")
 
 
 # ----------------------------------------------------------------------
@@ -1701,6 +1745,19 @@ def main():
             quad_transmission_max_isotopes=config.quad_transmission_max_isotopes,
             superimpose_on_reference=config.superimpose_on_reference,
         )
+        # mzPROV provenance: sign the authored Bruker .d (self-disclosure that this is
+        # TimSim-simulated data). Bruker-only — mzprov v0 doesn't canonicalize vendor
+        # .raw, so the Thermo build-from-template branch above is intentionally skipped.
+        if config.emit_provenance:
+            emit_provenance_sidecar(
+                d_path=os.path.join(save_path, name, f"{name}.d"),
+                db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+                config_path=cli_args.config,
+                experiment_name=name,
+                embed=config.provenance_embed,
+                key_path=config.provenance_key_path,
+                logger=logger,
+            )
 
     # Collect final statistics
     stats.n_proteins = len(proteins) if proteins is not None else 0
