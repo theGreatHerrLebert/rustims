@@ -111,6 +111,112 @@ pub fn write_scans_mzml(scans: &[MzMlScan], out_path: &Path) -> io::Result<usize
     Ok(scans.len())
 }
 
+/// Outcome of a DB → mzML render.
+#[derive(Debug, Clone)]
+pub struct MzMlWriteSummary {
+    pub scans: usize,
+    pub ms1: usize,
+    pub ms2: usize,
+    pub ms2_nonempty: usize,
+}
+
+/// Render a no-IM DIA `synthetic_data.db` to mzML — the vendor-neutral output used for
+/// SCIEX SWATH (and any no-IM DIA scheme). MS1 frames are rendered via the precursor
+/// marginal; MS2 frames via the per-window fragment kernel (gated by the DB window's m/z
+/// + CE). This is the open-format analogue of `astral_dispatch::write_astral_raw`: same
+/// render kernels, mzML out instead of a vendor `.raw`. Returns counts.
+pub fn render_db_to_mzml(
+    db_path: &Path,
+    out_path: &Path,
+    num_threads: usize,
+    quad_k: f64,
+) -> Result<MzMlWriteSummary, String> {
+    use std::collections::HashMap;
+
+    use mscore::timstof::quadrupole::WindowTransmission;
+
+    use crate::sim::acquisition::ScanDescriptor;
+    use crate::sim::dia::TimsTofSyntheticsFrameBuilderDIA;
+    use crate::sim::handle::TimsTofSyntheticsDataHandle;
+    use crate::sim::scheme::DataMode;
+
+    let builder = TimsTofSyntheticsFrameBuilderDIA::new(db_path, false, num_threads)
+        .map_err(|e| format!("open DB: {e}"))?;
+    let handle =
+        TimsTofSyntheticsDataHandle::new(db_path).map_err(|e| format!("open DB handle: {e}"))?;
+
+    // frame -> (center, width, ce) for MS2 frames, via the DB window tables.
+    let wg = handle
+        .read_window_group_settings()
+        .map_err(|e| format!("read windows: {e}"))?;
+    let by_group: HashMap<u32, (f64, f64, f64)> = wg
+        .iter()
+        .map(|w| {
+            (
+                w.window_group,
+                (w.isolation_mz as f64, w.isolation_width as f64, w.collision_energy as f64),
+            )
+        })
+        .collect();
+    let f2g = handle
+        .read_frame_to_window_group()
+        .map_err(|e| format!("read frame->group: {e}"))?;
+    let mut frame_window: HashMap<u32, (f64, f64, f64)> = HashMap::new();
+    for r in &f2g {
+        if let Some(&w) = by_group.get(&r.window_group) {
+            frame_window.insert(r.frame_id, w);
+        }
+    }
+
+    let prec_set = &builder.precursor_frame_builder.precursor_frame_id_set;
+    let mut frame_ids: Vec<u32> = builder
+        .precursor_frame_builder
+        .frames
+        .iter()
+        .map(|f| f.frame_id)
+        .collect();
+    frame_ids.sort_unstable();
+
+    let (mut ms1, mut ms2, mut ms2_nonempty) = (0usize, 0usize, 0usize);
+    let mut scans: Vec<MzMlScan> = Vec::with_capacity(frame_ids.len());
+    for frame_id in frame_ids {
+        let desc = if prec_set.contains(&frame_id) {
+            let ev = builder
+                .precursor_frame_builder
+                .render_precursor_scan(frame_id, DataMode::Centroid);
+            ms1 += 1;
+            ScanDescriptor::from_rendered_event(&ev, 0.0)?
+        } else {
+            let (center, width, ce) = *frame_window
+                .get(&frame_id)
+                .ok_or_else(|| format!("MS2 frame {frame_id} has no window in the DB tables"))?;
+            let wt = WindowTransmission::new(center, width, quad_k);
+            let ev = builder.render_fragment_scan(frame_id, &wt, ce, DataMode::Centroid);
+            ms2 += 1;
+            ScanDescriptor::from_rendered_event(&ev, ce)?
+        };
+        let isolation = desc.isolation.map(|w| MzMlIsolation {
+            center_mz: w.center_mz,
+            lower_mz: w.center_mz - w.width_mz / 2.0,
+            upper_mz: w.center_mz + w.width_mz / 2.0,
+            collision_energy: w.collision_energy,
+        });
+        if isolation.is_some() && !desc.peaks.is_empty() {
+            ms2_nonempty += 1;
+        }
+        scans.push(MzMlScan {
+            ms_level: desc.ms_level,
+            retention_time_s: desc.retention_time,
+            mz: desc.peaks.iter().map(|(m, _)| *m).collect(),
+            intensity: desc.peaks.iter().map(|(_, i)| *i).collect(),
+            isolation,
+        });
+    }
+
+    write_scans_mzml(&scans, out_path).map_err(|e| format!("write mzML: {e}"))?;
+    Ok(MzMlWriteSummary { scans: scans.len(), ms1, ms2, ms2_nonempty })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +266,31 @@ mod tests {
         assert!((prec.isolation_window.target - 500.0).abs() < 1e-3, "isolation target");
         assert!((prec.isolation_window.lower_bound - 495.0).abs() < 1e-3);
         assert_eq!(ms2.peaks().len(), 3, "MS2 peak count");
+    }
+
+    // Gated: set TIMSIM_DIA_DB to a no-IM DIA synthetic_data.db (e.g. an Orbitrap/SCIEX
+    // run) to render it to mzML and confirm it reads back.
+    #[test]
+    fn render_db_to_mzml_roundtrip() {
+        let db = match std::env::var("TIMSIM_DIA_DB") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP render_db_to_mzml_roundtrip: set TIMSIM_DIA_DB=<synthetic_data.db>");
+                return;
+            }
+        };
+        let out = std::env::temp_dir().join("rustdf_render_db.mzML");
+        let s = render_db_to_mzml(std::path::Path::new(&db), &out, 4, 15.0).expect("render mzML");
+        assert!(s.ms1 > 0 && s.ms2 > 0, "expected MS1 + MS2 scans, got {s:?}");
+        let mut reader = MzMLReader::open_path(&out).expect("reopen mzML");
+        let n_ms1 = (&mut reader).filter(|sp| sp.ms_level() == 1).count();
+        let mut reader2 = MzMLReader::open_path(&out).expect("reopen mzML 2");
+        let n_total = (&mut reader2).count();
+        assert_eq!(n_total, s.scans, "round-trip scan count");
+        assert_eq!(n_ms1, s.ms1, "round-trip MS1 count");
+        eprintln!(
+            "render_db_to_mzml OK: {} scans ({} MS1, {} MS2, {} non-empty MS2) -> mzML reads back {}",
+            s.scans, s.ms1, s.ms2, s.ms2_nonempty, n_total
+        );
     }
 }
