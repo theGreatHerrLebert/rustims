@@ -409,6 +409,52 @@ impl AcquisitionScheme {
         }
     }
 
+    /// Expand a `FixedCycleTime` DIA scheme into a per-frame schedule over the whole
+    /// gradient — the synthesized analogue of `thermo_frame_schedule` for schemes that
+    /// carry no per-scan timing (e.g. a SCIEX `.wiff` SWATH method). Each cycle emits its
+    /// events (MS1 then one MS2 frame per window) at evenly-spaced times within the
+    /// cycle. Rows are `(scan, retention_time_s, ms_level, isolation_center_mz,
+    /// isolation_width_mz, collision_energy)`; the MS1 row's isolation/CE are `None`, and
+    /// a window's CE is resolved from its `CollisionEnergyPolicy` at the window center
+    /// (`None` if the policy is `Unknown`). Empty unless `repeat` is `FixedCycleTime`.
+    pub fn dia_frame_schedule(
+        &self,
+    ) -> Vec<(u32, f64, u8, Option<f64>, Option<f64>, Option<f64>)> {
+        let (cycle_time_s, start_time_s) = match self.repeat {
+            RepeatPolicy::FixedCycleTime { cycle_time_s, start_time_s, .. } => {
+                (cycle_time_s, start_time_s)
+            }
+            _ => return Vec::new(),
+        };
+        let n_cycles = self.num_cycles().unwrap_or(0);
+        let n_events = self.cycle.len();
+        if n_cycles == 0 || n_events == 0 {
+            return Vec::new();
+        }
+        let per_event_dt = cycle_time_s / n_events as f64;
+        let mut out = Vec::with_capacity(n_cycles as usize * n_events);
+        let mut scan: u32 = 1;
+        for c in 0..n_cycles {
+            let cycle_start = start_time_s + c as f64 * cycle_time_s;
+            for (j, ev) in self.cycle.iter().enumerate() {
+                let rt = cycle_start + j as f64 * per_event_dt;
+                match ev {
+                    AcquisitionEvent::Ms1(_) => out.push((scan, rt, 1u8, None, None, None)),
+                    AcquisitionEvent::DiaMs2Frame(f) => {
+                        // SCIEX from_sciex_wiff builds one window per MS2 frame.
+                        if let Some(w) = f.windows.first() {
+                            let center = w.isolation.center_mz;
+                            let ce = w.collision_energy.at(center);
+                            out.push((scan, rt, 2u8, Some(center), Some(w.isolation.width_mz), ce));
+                        }
+                    }
+                }
+                scan += 1;
+            }
+        }
+        out
+    }
+
     /// Build a scheme from an explicit window list (injected / CSV). One MS1
     /// followed by one single-window MS2 frame per window.
     pub fn from_window_table(
@@ -1220,6 +1266,73 @@ pub struct TemplateScan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn swath_scheme(cycle_time_s: f64, gradient_length_s: f64) -> AcquisitionScheme {
+        let ms1 = Ms1Event {
+            analyzer: Analyzer::Tof,
+            data_mode: DataMode::Centroid,
+            mz_range: None,
+            duration_s: None,
+        };
+        let mk = |center: f64, width: f64| DiaWindow {
+            isolation: IsolationWindow { center_mz: center, width_mz: width },
+            collision_energy: CollisionEnergyPolicy::Linear { intercept: 5.0, slope_per_mz: 0.045 },
+            geometry: DiaGeometry::MzOnly,
+        };
+        AcquisitionScheme::from_window_table(
+            InstrumentKind::SciexZenoTof,
+            ms1,
+            vec![mk(420.0, 40.0), mk(480.0, 20.0)],
+            RepeatPolicy::FixedCycleTime { cycle_time_s, gradient_length_s, start_time_s: 0.0 },
+            (400.0, 500.0),
+        )
+    }
+
+    #[test]
+    fn dia_frame_schedule_expands_cycles() {
+        // 3 cycles of [MS1, MS2(420), MS2(480)] over a 9 s gradient at 3 s cycles.
+        let sched = swath_scheme(3.0, 9.0).dia_frame_schedule();
+        assert_eq!(sched.len(), 9, "3 cycles x 3 events");
+        // Contiguous 1-based scan ids.
+        assert_eq!(
+            sched.iter().map(|r| r.0).collect::<Vec<_>>(),
+            (1u32..=9).collect::<Vec<_>>()
+        );
+        // RT strictly increasing.
+        for w in sched.windows(2) {
+            assert!(w[1].1 > w[0].1, "RT must increase: {:?} !> {:?}", w[1].1, w[0].1);
+        }
+        // Cycle starts: rows 0,3,6 at t = 0,3,6.
+        for (k, &i) in [0usize, 3, 6].iter().enumerate() {
+            assert!((sched[i].1 - (k as f64) * 3.0).abs() < 1e-9);
+            assert_eq!(sched[i].2, 1, "cycle starts with MS1");
+            assert!(sched[i].3.is_none() && sched[i].5.is_none(), "MS1 has no iso/CE");
+        }
+        // First MS2: center 420, width 40, CE resolved by the linear model (>0).
+        assert_eq!(sched[1].2, 2);
+        assert!((sched[1].3.unwrap() - 420.0).abs() < 1e-9);
+        assert!((sched[1].4.unwrap() - 40.0).abs() < 1e-9);
+        assert!(sched[1].5.unwrap() > 0.0, "rolling CE resolved for MS2");
+    }
+
+    #[test]
+    fn dia_frame_schedule_unknown_ce_is_none() {
+        let mut s = swath_scheme(3.0, 6.0);
+        // Force all window CE policies to Unknown.
+        for e in &mut s.cycle {
+            if let AcquisitionEvent::DiaMs2Frame(f) = e {
+                for w in &mut f.windows {
+                    w.collision_energy = CollisionEnergyPolicy::Unknown;
+                }
+            }
+        }
+        let sched = s.dia_frame_schedule();
+        for r in &sched {
+            if r.2 == 2 {
+                assert!(r.5.is_none(), "Unknown CE -> None (caller must supply a model)");
+            }
+        }
+    }
 
     #[test]
     fn activation_condition_carries_typed_unit() {

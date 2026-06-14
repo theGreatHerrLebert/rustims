@@ -111,6 +111,48 @@ impl PyAcquisitionScheme {
         Ok(Self { inner })
     }
 
+    /// Synthesize the per-frame SWATH schedule for a SCIEX `.wiff` over the gradient —
+    /// the SCIEX analogue of `thermo_frame_schedule`. Reads the `.wiff` SWATH method,
+    /// then expands the cycle (MS1 + one MS2 frame per window) over `num_cycles`. Returns
+    /// rows `(scan, retention_time_s, ms_level, isolation_center_mz, isolation_width_mz,
+    /// collision_energy)`; MS1 rows have `None` isolation/CE.
+    #[cfg(feature = "sciex")]
+    #[staticmethod]
+    #[pyo3(signature = (path, cycle_time_s, gradient_length_s, *, ce_intercept=None, ce_slope_per_mz=None))]
+    pub fn sciex_frame_schedule(
+        py: Python<'_>,
+        path: &str,
+        cycle_time_s: f64,
+        gradient_length_s: f64,
+        ce_intercept: Option<f64>,
+        ce_slope_per_mz: Option<f64>,
+    ) -> PyResult<Vec<(u32, f64, u8, Option<f64>, Option<f64>, Option<f64>)>> {
+        use rustdf::sim::scheme::CollisionEnergyPolicy;
+        let ce = match (ce_intercept, ce_slope_per_mz) {
+            (Some(intercept), Some(slope_per_mz)) => {
+                CollisionEnergyPolicy::Linear { intercept, slope_per_mz }
+            }
+            (None, None) => CollisionEnergyPolicy::Unknown,
+            _ => {
+                return Err(PyValueError::new_err(
+                    "supply both ce_intercept and ce_slope_per_mz, or neither",
+                ))
+            }
+        };
+        let rows = py
+            .allow_threads(|| {
+                AcquisitionScheme::from_sciex_wiff(path, cycle_time_s, gradient_length_s, ce)
+                    .map(|s| s.dia_frame_schedule())
+            })
+            .map_err(PyErr::from)?;
+        if rows.is_empty() {
+            return Err(PyValueError::new_err(
+                "empty SWATH schedule (check cycle_time_s/gradient_length_s)",
+            ));
+        }
+        Ok(rows)
+    }
+
     /// Instrument kind (canonical enum variant name, e.g. `"TimsTofDia"`).
     #[getter]
     pub fn instrument(&self) -> String {
