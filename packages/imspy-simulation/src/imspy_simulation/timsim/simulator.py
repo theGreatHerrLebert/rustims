@@ -414,10 +414,11 @@ def get_default_settings() -> dict:
         'down_sample_factor': 0.5,
 
         # mzPROV provenance (Ed25519-signed self-disclosure: "this IS TimSim simulated
-        # data", binds the output to the config + a signing key). Emitted for the Bruker .d
-        # path (structural canonicalization) AND the SCIEX/Waters mzML paths (mzML content
-        # canonicalization). Thermo .raw is not yet signed (mzprov v0 has no vendor-.raw
-        # canonicalization). Requires the optional `mzprov` package (import-guarded).
+        # data", binds the output to the config + a signing key). Emitted for ALL four
+        # vendors: Bruker .d (structural canonicalization), SCIEX/Waters mzML (mzML content
+        # canonicalization), and Thermo .raw (opaque whole-file content hash, sidecar-only —
+        # a vendor binary can't be embedded). Requires the optional `mzprov` package
+        # (with .raw support); import-guarded.
         'emit_provenance': True,
         # True (default): EMBED the signed envelope INTO the output itself — the .d's
         # analysis.tdf (a provenance table) or the mzML's fileContent — so provenance
@@ -1159,6 +1160,39 @@ def emit_provenance_sidecar_mzml(mzml_path, config_path, experiment_name,
                     + (" (embedded in mzML)" if embed else ""))
     except Exception as e:
         logger.warning(f"  provenance: mzPROV mzML signing failed (non-fatal): {e}")
+
+
+def emit_provenance_sidecar_raw(raw_path, config_path, experiment_name, key_path, logger) -> None:
+    """Write an mzPROV Ed25519-signed provenance sidecar for a Thermo .raw output. A vendor
+    .raw is an opaque proprietary binary with no safe injection point, so this is ALWAYS a
+    JSON sidecar (regardless of the run's embed preference) and the attestation is an opaque
+    whole-file content hash (sensitive to any byte change). Uses mzprov's ``sign_raw_output``.
+    Import-guarded (covers both a missing ``mzprov`` and an older ``mzprov`` without raw
+    support): any failure is logged as a warning and never fails the run."""
+    try:
+        from mzprov.sign import sign_raw_output
+    except ImportError:
+        logger.warning(
+            "  provenance: `mzprov` (with .raw support) not available — skipping .raw "
+            "sidecar (pip install/upgrade the mzprov python implementation to enable)"
+        )
+        return
+    try:
+        from imspy_simulation import __version__ as _sim_version
+    except Exception:
+        _sim_version = "unknown"
+    try:
+        out = sign_raw_output(
+            raw_path=raw_path,
+            config_path=config_path,
+            experiment_name=experiment_name,
+            tool_name="TimSim",
+            tool_version=_sim_version,
+            private_key_path=key_path,
+        )
+        logger.info(f"  provenance: mzPROV .raw sidecar -> {out}")
+    except Exception as e:
+        logger.warning(f"  provenance: mzPROV .raw signing failed (non-fatal): {e}")
 
 
 # ----------------------------------------------------------------------
@@ -1956,6 +1990,16 @@ def main():
         if not ok:
             raise RuntimeError(
                 f"authored Astral .raw failed checksum validation: {out_raw}"
+            )
+        # mzPROV provenance: sign the authored .raw. Always a JSON sidecar (a vendor
+        # .raw can't be embedded into), so the run's embed preference does not apply here.
+        if config.emit_provenance:
+            emit_provenance_sidecar_raw(
+                raw_path=out_raw,
+                config_path=cli_args.config,
+                experiment_name=name,
+                key_path=config.provenance_key_path,
+                logger=logger,
             )
     elif is_sciex_instrument(instrument):
         # SCIEX ZenoTOF SWATH: render the synthesized DIA frames to open mzML (the
