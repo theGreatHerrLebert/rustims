@@ -799,22 +799,50 @@ class SimulationConfig:
                 raise ValueError(
                     f"waters_mz_end must be > waters_mz_start (got {mz_start}..{mz_end})"
                 )
-            if self._config.get('waters_window_width') <= 0.0:
+            width = self._config.get('waters_window_width')
+            if width <= 0.0:
+                raise ValueError(f"waters_window_width must be > 0, got {width!r}")
+            # A window wider than the scanned span is not a valid SONAR geometry.
+            if width > (mz_end - mz_start):
                 raise ValueError(
-                    f"waters_window_width must be > 0, got {self._config.get('waters_window_width')!r}"
+                    f"waters_window_width ({width}) must be <= the m/z span "
+                    f"({mz_end - mz_start}); a window wider than the scanned range "
+                    "is not a valid SONAR geometry"
                 )
             if self._config.get('waters_cycle_time_s') <= 0.0:
                 raise ValueError(
                     f"waters_cycle_time_s must be > 0, got {self._config.get('waters_cycle_time_s')!r}"
                 )
-            # window_step is optional (None -> contiguous); if set it must be finite/positive.
+            # gradient_length drives the cycle count; a non-finite/non-positive value would
+            # silently collapse to a single cycle (or crash mid-build). Fail fast.
+            grad = self._config.get('gradient_length')
+            if isinstance(grad, bool) or not isinstance(grad, (int, float)) or not math.isfinite(grad) or grad <= 0.0:
+                raise ValueError(f"gradient_length must be a finite number > 0, got {grad!r}")
+            # window_step is optional (None -> contiguous); if set it must be finite, positive,
+            # and <= window_width (a larger step would leave uncovered gaps between windows).
             step = self._config.get('waters_window_step')
-            if step is not None and (
-                isinstance(step, bool) or not isinstance(step, (int, float))
-                or not math.isfinite(step) or step <= 0.0
-            ):
+            if step is not None:
+                if (isinstance(step, bool) or not isinstance(step, (int, float))
+                        or not math.isfinite(step) or step <= 0.0):
+                    raise ValueError(
+                        f"waters_window_step, if set, must be a finite number > 0, got {step!r}"
+                    )
+                if step > width:
+                    raise ValueError(
+                        f"waters_window_step ({step}) must be <= waters_window_width ({width}); "
+                        "a larger step would leave uncovered gaps between windows"
+                    )
+            # Rolling CE must stay strictly positive across the scanned range, else fragment
+            # prediction is conditioned on a non-positive NCE (empty/unphysical MS2). Check the
+            # range ends (CE is linear in m/z, so the minimum is at one end).
+            ce_b = self._config.get('waters_ce_intercept')
+            ce_m = self._config.get('waters_ce_slope_per_mz')
+            ce_ends = (ce_b + ce_m * mz_start, ce_b + ce_m * mz_end)
+            if min(ce_ends) <= 0.0:
                 raise ValueError(
-                    f"waters_window_step, if set, must be a finite number > 0, got {step!r}"
+                    f"waters rolling-CE model (intercept={ce_b}, slope={ce_m}) yields a "
+                    f"non-positive collision energy over {mz_start}..{mz_end} m/z "
+                    f"(ends {ce_ends[0]:.3f}, {ce_ends[1]:.3f}); use a positive CE model"
                 )
             # The mzML renderer lives behind the connector's 'mzml' feature; fail fast.
             try:

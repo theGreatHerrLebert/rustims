@@ -63,6 +63,18 @@ def test_each_cycle_is_ms1_then_windows_with_rolling_ce():
     assert times == sorted(times)
 
 
+def test_non_divisible_span_is_fully_covered_via_ceil():
+    # span 510 (400-910) is NOT divisible by 20: ceil must add a window so the last
+    # window's upper edge reaches/exceeds mz_end (full coverage, slight overshoot allowed).
+    _, centers, _ = _schedule(mz_end=910.0)  # span 510, width/step 20
+    last_upper = centers[-1] + 20.0 / 2.0
+    assert last_upper >= 910.0  # no gap at the top of the range
+    # exactly-divisible span must NOT overshoot (float-noise epsilon guards this).
+    _, centers2, _ = _schedule()  # span 500
+    assert centers2[-1] + 10.0 == 900.0
+    assert len(centers2) == 25
+
+
 def test_invalid_geometry_raises():
     with pytest.raises(ValueError):
         _schedule(mz_end=300.0)  # end <= start
@@ -70,6 +82,26 @@ def test_invalid_geometry_raises():
         _schedule(window_width=0.0)
     with pytest.raises(ValueError):
         _schedule(cycle_time_s=0.0)
+
+
+def test_degenerate_geometry_rejected():
+    # window wider than the scanned span.
+    with pytest.raises(ValueError, match="span"):
+        _schedule(window_width=600.0)  # span is 500
+    # step larger than width would leave gaps.
+    with pytest.raises(ValueError, match="gap"):
+        _schedule(window_width=20.0, window_step=25.0)
+    # non-positive / non-finite gradient.
+    with pytest.raises(ValueError):
+        _schedule(gradient_length_s=0.0)
+    with pytest.raises(ValueError):
+        _schedule(gradient_length_s=float("inf"))
+
+
+def test_non_positive_rolling_ce_rejected():
+    # intercept/slope that drive CE <= 0 over the window range must be rejected.
+    with pytest.raises(ValueError, match="collision energy"):
+        _schedule(ce_intercept=-100.0, ce_slope_per_mz=0.0)
 
 
 def test_instrument_registered_as_waters_hcd_nce():

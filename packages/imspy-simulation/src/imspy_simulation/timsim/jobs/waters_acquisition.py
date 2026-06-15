@@ -20,6 +20,7 @@ marginalises mobility away; Waters TWIMS drift-time/CCS is out of scope for v0).
 
 from __future__ import annotations
 
+import math
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -48,13 +49,16 @@ def build_sonar_schedule(
     """Synthesize a SONAR DIA schedule: 1 MS1 + N quad windows per cycle.
 
     Windows are laid from ``mz_start``: center ``i`` = ``mz_start + window_width/2
-    + i*window_step``, count chosen so the last window's upper edge reaches
-    ``mz_end``. ``window_step == window_width`` gives contiguous (non-overlapping)
-    windows; a smaller step gives the overlapping SONAR scan. Each cycle is 1 MS1
-    survey followed by the windows, evenly spaced across ``cycle_time_s``, repeated
-    over the gradient. Collision energy is the rolling-CE linear model
-    ``ce_intercept + ce_slope_per_mz * center`` (modelled as NCE for the
-    HCD-like beam-type CID, as for SCIEX).
+    + i*window_step``. Endpoint policy: the window count is chosen with ``ceil`` so
+    the windows FULLY COVER ``[mz_start, mz_end]`` (no gap); the last window may
+    extend slightly past ``mz_end`` rather than leave the top of the range
+    uncovered. ``window_step == window_width`` gives contiguous (non-overlapping)
+    windows; a smaller step gives the overlapping SONAR scan (``window_step >
+    window_width`` would leave gaps and is rejected). Each cycle is 1 MS1 survey
+    followed by the windows, evenly spaced across ``cycle_time_s``, repeated over
+    the gradient. Collision energy is the rolling-CE linear model
+    ``ce_intercept + ce_slope_per_mz * center`` (modelled as NCE for the HCD-like
+    beam-type CID, as for SCIEX).
 
     Returns ``(schedule_rows, window_centers, n_cycles)``.
     """
@@ -64,10 +68,35 @@ def build_sonar_schedule(
         raise ValueError("window_width and window_step must be > 0")
     if cycle_time_s <= 0.0:
         raise ValueError("cycle_time_s must be > 0")
+    if not math.isfinite(gradient_length_s) or gradient_length_s <= 0.0:
+        raise ValueError(f"gradient_length_s must be finite and > 0, got {gradient_length_s!r}")
 
     span = mz_end - mz_start
-    n_windows = max(1, int(round((span - window_width) / window_step)) + 1)
+    if window_width > span:
+        raise ValueError(
+            f"window_width ({window_width}) must be <= the m/z span ({span}); a window "
+            f"wider than the scanned range is not a valid SONAR geometry"
+        )
+    if window_step > window_width:
+        raise ValueError(
+            f"window_step ({window_step}) must be <= window_width ({window_width}); a "
+            f"larger step would leave uncovered gaps between windows"
+        )
+
+    # ceil (with a float-noise epsilon) so windows fully cover [mz_start, mz_end];
+    # the last window may overshoot mz_end slightly rather than leave a gap.
+    n_steps = max(0, math.ceil((span - window_width) / window_step - 1e-9))
+    n_windows = n_steps + 1
     centers = [round(mz_start + window_width / 2.0 + i * window_step, 4) for i in range(n_windows)]
+
+    # Rolling CE must stay strictly positive across all windows (a non-positive NCE
+    # would condition fragment-intensity prediction to empty/unphysical MS2).
+    min_ce = min(ce_intercept + ce_slope_per_mz * c for c in centers)
+    if min_ce <= 0.0:
+        raise ValueError(
+            f"rolling-CE model yields non-positive collision energy (min {min_ce:.4f}) over "
+            f"windows {centers[0]}..{centers[-1]}; supply a CE model positive across the range"
+        )
 
     n_events = 1 + n_windows  # MS1 + windows
     n_cycles = max(1, int(gradient_length_s / cycle_time_s))
@@ -149,6 +178,8 @@ class WatersSonarAcquisitionBuilder:
             ce_slope_per_mz=ce_slope_per_mz,
         )
         if verbose:
+            # window_step > window_width is rejected in build_sonar_schedule, so
+            # step == width is contiguous and step < width is overlapping.
             overlap = "contiguous" if window_step >= window_width else f"overlapping step {window_step}"
             print(
                 f"Waters SONAR build-from-parameters: {len(centers)} windows "
