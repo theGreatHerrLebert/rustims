@@ -413,13 +413,18 @@ def get_default_settings() -> dict:
         'reference_noise_intensity_max': 30,
         'down_sample_factor': 0.5,
 
-        # mzPROV provenance sidecar (Ed25519-signed self-disclosure: "this IS TimSim
-        # simulated data", binds the output to the config + a signing key). Emitted for
-        # the Bruker .d path (structural canonicalization) AND the SCIEX/Waters mzML paths
-        # (mzML content canonicalization). Thermo .raw is not yet signed (mzprov v0 has no
-        # vendor-.raw canonicalization). Requires the optional `mzprov` package (import-guarded).
+        # mzPROV provenance (Ed25519-signed self-disclosure: "this IS TimSim simulated
+        # data", binds the output to the config + a signing key). Emitted for the Bruker .d
+        # path (structural canonicalization) AND the SCIEX/Waters mzML paths (mzML content
+        # canonicalization). Thermo .raw is not yet signed (mzprov v0 has no vendor-.raw
+        # canonicalization). Requires the optional `mzprov` package (import-guarded).
         'emit_provenance': True,
-        'provenance_embed': False,        # False = JSON sidecar; True = embed in analysis.tdf
+        # True (default): EMBED the signed envelope INTO the output itself — the .d's
+        # analysis.tdf (a provenance table) or the mzML's fileContent — so provenance
+        # travels with the file and no extra file is produced. False: write a sibling
+        # `<name>.provenance.json` sidecar instead. (A vendor .raw can't be embedded; that
+        # path would fall back to a sidecar.)
+        'provenance_embed': True,
         'provenance_key_path': None,      # None = default ~/.config/timsim/keys/ (auto-gen)
 
         # SCIEX ZenoTOF SWATH build-from-.wiff (instrument=sciex_zenotof; template_path = .wiff).
