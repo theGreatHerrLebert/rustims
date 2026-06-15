@@ -6,6 +6,9 @@ pub mod dda;
 pub mod dia;
 pub mod handle;
 pub mod lazy_builder;
+pub mod library;
+#[cfg(feature = "mzml")]
+pub mod mzml;
 pub mod precursor;
 pub mod projector;
 pub mod scheme;

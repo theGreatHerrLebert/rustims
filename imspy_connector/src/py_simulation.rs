@@ -605,6 +605,54 @@ impl PyTimsTofLazyFrameBuilderDDA {
     }
 }
 
+/// Decode a batch of Prosit intensity vectors into DiaNN/Spectronaut transitions and
+/// write/append them to a `.tsv` — the fast (rayon-parallel, Rust) replacement for a
+/// per-peptide Python decode loop. `prosit_flat` is row-major (peptide `i` is
+/// `prosit_flat[i*n_cols..(i+1)*n_cols]`). The caller supplies the cheap string columns
+/// (`modpep_diann` in `(UniMod:n)` form, the stripped `PeptideSequence`). With
+/// `append=False` the file is truncated and a header written; `append=True` appends rows
+/// (for chunked builds). Returns `(transitions_written, precursors_written)`.
+#[pyfunction]
+#[pyo3(signature = (out_path, modified_sequences, modpep_diann, stripped, charges, prosit_flat, n_cols, precursor_mz, retention_time, protein_ids, genes, min_fragments=3, append=false))]
+#[allow(clippy::too_many_arguments)]
+pub fn write_spectral_library_tsv(
+    py: Python<'_>,
+    out_path: &str,
+    modified_sequences: Vec<String>,
+    modpep_diann: Vec<String>,
+    stripped: Vec<String>,
+    charges: Vec<i32>,
+    prosit_flat: Vec<f64>,
+    n_cols: usize,
+    precursor_mz: Vec<f64>,
+    retention_time: Vec<f64>,
+    protein_ids: Vec<String>,
+    genes: Vec<String>,
+    min_fragments: usize,
+    append: bool,
+) -> PyResult<(usize, usize)> {
+    use pyo3::exceptions::PyValueError;
+    use std::path::Path;
+    py.allow_threads(|| {
+        rustdf::sim::library::build_spectral_library_tsv(
+            Path::new(out_path),
+            &modified_sequences,
+            &modpep_diann,
+            &stripped,
+            &charges,
+            &prosit_flat,
+            n_cols,
+            &precursor_mz,
+            &retention_time,
+            &protein_ids,
+            &genes,
+            min_fragments,
+            append,
+        )
+    })
+    .map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
 #[pymodule]
 pub fn py_simulation(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyIsotopeTransmissionConfig>()?;
@@ -614,5 +662,6 @@ pub fn py_simulation(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTimsTofSyntheticsFrameBuilderDDA>()?;
     m.add_class::<PyTimsTofLazyFrameBuilderDIA>()?;
     m.add_class::<PyTimsTofLazyFrameBuilderDDA>()?;
+    m.add_function(wrap_pyfunction!(write_spectral_library_tsv, m)?)?;
     Ok(())
 }

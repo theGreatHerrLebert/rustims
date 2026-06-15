@@ -111,6 +111,48 @@ impl PyAcquisitionScheme {
         Ok(Self { inner })
     }
 
+    /// Synthesize the per-frame SWATH schedule for a SCIEX `.wiff` over the gradient —
+    /// the SCIEX analogue of `thermo_frame_schedule`. Reads the `.wiff` SWATH method,
+    /// then expands the cycle (MS1 + one MS2 frame per window) over `num_cycles`. Returns
+    /// rows `(scan, retention_time_s, ms_level, isolation_center_mz, isolation_width_mz,
+    /// collision_energy)`; MS1 rows have `None` isolation/CE.
+    #[cfg(feature = "sciex")]
+    #[staticmethod]
+    #[pyo3(signature = (path, cycle_time_s, gradient_length_s, *, ce_intercept=None, ce_slope_per_mz=None))]
+    pub fn sciex_frame_schedule(
+        py: Python<'_>,
+        path: &str,
+        cycle_time_s: f64,
+        gradient_length_s: f64,
+        ce_intercept: Option<f64>,
+        ce_slope_per_mz: Option<f64>,
+    ) -> PyResult<Vec<(u32, f64, u8, Option<f64>, Option<f64>, Option<f64>)>> {
+        use rustdf::sim::scheme::CollisionEnergyPolicy;
+        let ce = match (ce_intercept, ce_slope_per_mz) {
+            (Some(intercept), Some(slope_per_mz)) => {
+                CollisionEnergyPolicy::Linear { intercept, slope_per_mz }
+            }
+            (None, None) => CollisionEnergyPolicy::Unknown,
+            _ => {
+                return Err(PyValueError::new_err(
+                    "supply both ce_intercept and ce_slope_per_mz, or neither",
+                ))
+            }
+        };
+        let rows = py
+            .allow_threads(|| {
+                AcquisitionScheme::from_sciex_wiff(path, cycle_time_s, gradient_length_s, ce)
+                    .map(|s| s.dia_frame_schedule())
+            })
+            .map_err(PyErr::from)?;
+        if rows.is_empty() {
+            return Err(PyValueError::new_err(
+                "empty SWATH schedule (check cycle_time_s/gradient_length_s)",
+            ));
+        }
+        Ok(rows)
+    }
+
     /// Instrument kind (canonical enum variant name, e.g. `"TimsTofDia"`).
     #[getter]
     pub fn instrument(&self) -> String {
@@ -650,6 +692,40 @@ pub fn write_astral_raw(
     Ok((s.scans, s.ms1, s.ms2, s.ms2_nonempty, s.overflow_cleared, s.checksum_valid))
 }
 
+/// Render a no-IM DIA `synthetic_data.db` to open **mzML** (the SCIEX / vendor-neutral
+/// output). Walks the DB frames, renders MS1 (precursor marginal) + MS2 (per-window
+/// fragments), and writes mzML via mzdata. Returns `(scans, ms1, ms2, ms2_nonempty)`.
+/// Requires the `mzml` feature.
+#[cfg(feature = "mzml")]
+#[pyfunction]
+#[pyo3(signature = (db_path, out_path, num_threads=4, quad_k=15.0))]
+pub fn render_dia_mzml(
+    py: Python<'_>,
+    db_path: &str,
+    out_path: &str,
+    num_threads: usize,
+    quad_k: f64,
+) -> PyResult<(usize, usize, usize, usize)> {
+    use std::path::Path;
+    let s = py
+        .allow_threads(|| {
+            rustdf::sim::mzml::render_db_to_mzml(
+                Path::new(db_path),
+                Path::new(out_path),
+                num_threads,
+                quad_k,
+            )
+        })
+        .map_err(PyValueError::new_err)?;
+    Ok((s.scans, s.ms1, s.ms2, s.ms2_nonempty))
+}
+
+/// Whether the connector was built with the `mzml` feature (open mzML writer).
+#[pyfunction]
+pub fn has_mzml() -> bool {
+    cfg!(feature = "mzml")
+}
+
 #[pymodule]
 pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAcquisitionScheme>()?;
@@ -665,5 +741,8 @@ pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(accurate_scan_projection, m)?)?;
     m.add_function(wrap_pyfunction!(has_thermo, m)?)?;
     m.add_function(wrap_pyfunction!(has_sciex, m)?)?;
+    #[cfg(feature = "mzml")]
+    m.add_function(wrap_pyfunction!(render_dia_mzml, m)?)?;
+    m.add_function(wrap_pyfunction!(has_mzml, m)?)?;
     Ok(())
 }

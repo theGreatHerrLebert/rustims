@@ -43,12 +43,17 @@ polars = { version = "0.43.1", features = ["ndarray", "parquet", "dtype-u8"] }
 thermorawfile = { git = "https://github.com/theGreatHerrLebert/thermorawfile", rev = "9f4c0affe60a639759883fb569d3c9f5f7601856", optional = true }
 # SCIEX .wiff method reader (private repo; only built with the `sciex` feature)
 sciexwiff = { git = "https://github.com/theGreatHerrLebert/sciexwiff", rev = "ef7c0cd7e59d3b51160e446cbe3af240d230668d", optional = true }
+# Open mzML writer (Joshua Klein's mzdata); only built with the `mzml` feature. The
+# vendor-neutral output path: render -> mzML (readable by DiaNN/alphaDIA, mzprov-signable).
+# Used for SCIEX, whose proprietary .wiff.scan spectra are not authored.
+mzdata = { version = "0.63", optional = true }
 
 [features]
-# Off by default: enable the Thermo .raw / SCIEX .wiff extractors + writers.
-# Each requires build-time access to its private repo.
+# Off by default: enable the Thermo .raw / SCIEX .wiff extractors + writers, or the
+# open mzML writer. Each vendor extractor needs build-time access to its private repo.
 thermo = ["dep:thermorawfile"]
 sciex = ["dep:sciexwiff"]
+mzml = ["dep:mzdata"]
 
 [package.metadata.docs.rs]
 features = ["all"]

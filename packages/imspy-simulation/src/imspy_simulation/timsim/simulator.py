@@ -413,6 +413,41 @@ def get_default_settings() -> dict:
         'reference_noise_intensity_max': 30,
         'down_sample_factor': 0.5,
 
+        # mzPROV provenance (Ed25519-signed self-disclosure: "this IS TimSim simulated
+        # data", binds the output to the config + a signing key). Emitted for ALL four
+        # vendors: Bruker .d (structural canonicalization), SCIEX/Waters mzML (mzML content
+        # canonicalization), and Thermo .raw (opaque whole-file content hash, sidecar-only —
+        # a vendor binary can't be embedded). Requires the optional `mzprov` package
+        # (with .raw support); import-guarded.
+        'emit_provenance': True,
+        # True (default): EMBED the signed envelope INTO the output itself — the .d's
+        # analysis.tdf (a provenance table) or the mzML's fileContent — so provenance
+        # travels with the file and no extra file is produced. False: write a sibling
+        # `<name>.provenance.json` sidecar instead. (A vendor .raw can't be embedded; that
+        # path would fall back to a sidecar.)
+        'provenance_embed': True,
+        'provenance_key_path': None,      # None = default ~/.config/timsim/keys/ (auto-gen)
+
+        # SCIEX ZenoTOF SWATH build-from-.wiff (instrument=sciex_zenotof; template_path = .wiff).
+        # The .wiff method has no per-scan timing, so the SWATH schedule is synthesized from
+        # these + gradient_length. Rolling CE = ce_intercept + ce_slope_per_mz * precursor_mz.
+        'sciex_cycle_time_s': 3.5,
+        'sciex_ce_intercept': 5.0,
+        'sciex_ce_slope_per_mz': 0.045,
+
+        # Waters SONAR build-from-parameters (instrument=waters_synapt_xs; NO template file).
+        # SONAR is a scanning-quadrupole DIA fully described by these; the schedule is
+        # synthesized from them + gradient_length. window_step=None -> contiguous windows
+        # (set < window_width for the faithful overlapping quad scan). Rolling CE = intercept
+        # + slope_per_mz * window_center_mz.
+        'waters_mz_start': 400.0,
+        'waters_mz_end': 900.0,
+        'waters_window_width': 20.0,
+        'waters_window_step': None,
+        'waters_cycle_time_s': 0.5,
+        'waters_ce_intercept': 5.0,
+        'waters_ce_slope_per_mz': 0.04,
+
         # Fragment intensity model
         'fragment_intensity_model': None,  # None/"prosit" or "peptdeep"
 
@@ -542,16 +577,22 @@ class SimulationConfig:
         # A Thermo build-from-template run (Astral/Orbitrap) is built from a Thermo .raw
         # template, NOT a Bruker reference .d — so it requires a template path in place
         # of reference_path (the lean, Bruker-independent build-from-template path).
-        from .jobs.register_prediction_set import is_thermo_template_instrument
+        from .jobs.register_prediction_set import (
+            is_thermo_template_instrument, is_sciex_instrument, is_waters_instrument,
+        )
         instrument = str(self._config.get('instrument', 'bruker_timstof')).lower()
         is_thermo = is_thermo_template_instrument(instrument)
-        # For a Thermo run the template path may be given as `template_path` or the
-        # `astral_template_path` alias; require at least one (validated below).
+        # Reference-free runs build WITHOUT a Bruker reference .d: Thermo .raw and SCIEX
+        # .wiff build from a vendor template, Waters SONAR is fully synthesized from
+        # parameters. None of them require `reference_path`. (Thermo/SCIEX still require a
+        # `template_path`/`astral_template_path` file, validated per-instrument below;
+        # Waters requires no file at all.)
+        is_template_based = is_thermo or is_sciex_instrument(instrument) or is_waters_instrument(instrument)
         ref_key = 'reference_path'
         if self._config.get('from_findings'):
-            required = ['save_path', 'findings_path'] if is_thermo else ['save_path', ref_key, 'findings_path']
+            required = ['save_path', 'findings_path'] if is_template_based else ['save_path', ref_key, 'findings_path']
         else:
-            required = ['save_path', 'fasta_path'] if is_thermo else ['save_path', ref_key, 'fasta_path']
+            required = ['save_path', 'fasta_path'] if is_template_based else ['save_path', ref_key, 'fasta_path']
         missing = [key for key in required if not self._config.get(key)]
 
         if missing:
@@ -694,6 +735,133 @@ class SimulationConfig:
                     "'thermo' feature (maturin build --release --features thermo, then "
                     "reinstall). The published wheels disable it because the Thermo .raw "
                     "writer dependency is private."
+                )
+
+        if is_sciex_instrument(instrument):
+            # SCIEX ZenoTOF SWATH is build-from-.wiff: DIA-only (the schedule is a
+            # synthesized SWATH cycle), no IMS. DDA has no meaning on this path.
+            if self._config.get('acquisition_type') == 'DDA':
+                raise ValueError(
+                    f"instrument '{instrument}' does not support DDA acquisition "
+                    "(SCIEX SWATH is a DIA cycle). Use DIA."
+                )
+            # Build-from-.wiff: the run is built from a SCIEX .wiff SWATH method (its
+            # windows + TOF cal become the acquisition; the schedule is synthesized).
+            # Accept either `template_path` or the `astral_template_path` alias.
+            template = thermo_template_path(self._config)
+            if not template:
+                raise ValueError(
+                    f"instrument '{instrument}' requires 'template_path' (or the "
+                    "'astral_template_path' alias): a SCIEX .wiff whose SWATH windows "
+                    "the run is built from."
+                )
+            if not os.path.exists(template):
+                raise FileNotFoundError(f"template_path does not exist: {template}")
+            # The rolling-CE model must be finite/positive: CE = intercept + slope*mz
+            # conditions fragment-intensity prediction, and a non-finite/negative value
+            # would silently yield empty or unphysical MS2.
+            for key in ('sciex_cycle_time_s', 'sciex_ce_intercept', 'sciex_ce_slope_per_mz'):
+                val = self._config.get(key)
+                if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(val):
+                    raise ValueError(f"{key} must be a finite number, got {val!r}")
+            if self._config.get('sciex_cycle_time_s') <= 0.0:
+                raise ValueError(
+                    f"sciex_cycle_time_s must be > 0, got {self._config.get('sciex_cycle_time_s')!r}"
+                )
+            # The mzML renderer lives behind the connector's 'mzml' feature; fail fast at
+            # config load instead of an AttributeError after a full simulation.
+            try:
+                import imspy_connector
+                mzml_ok = bool(imspy_connector.py_acquisition.has_mzml())
+            except Exception:
+                mzml_ok = False
+            if not mzml_ok:
+                raise ValueError(
+                    f"instrument '{instrument}' requires imspy-connector built with the "
+                    "'mzml' feature (maturin build --release --features mzml, then "
+                    "reinstall) to render SCIEX SWATH output to open mzML."
+                )
+
+        if is_waters_instrument(instrument):
+            # Waters SONAR is build-from-parameters: DIA-only (scanning-quadrupole cycle),
+            # no IMS, no vendor file required. DDA has no meaning on this path.
+            if self._config.get('acquisition_type') == 'DDA':
+                raise ValueError(
+                    f"instrument '{instrument}' does not support DDA acquisition "
+                    "(SONAR is a scanning-quadrupole DIA cycle). Use DIA."
+                )
+            # The SONAR scan geometry + rolling-CE model must be finite/positive: a
+            # non-finite/degenerate value would yield an empty or unphysical window scheme
+            # or condition fragment-intensity prediction to empty MS2.
+            mz_start = self._config.get('waters_mz_start')
+            mz_end = self._config.get('waters_mz_end')
+            for key in (
+                'waters_mz_start', 'waters_mz_end', 'waters_window_width',
+                'waters_cycle_time_s', 'waters_ce_intercept', 'waters_ce_slope_per_mz',
+            ):
+                val = self._config.get(key)
+                if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(val):
+                    raise ValueError(f"{key} must be a finite number, got {val!r}")
+            if not (mz_end > mz_start):
+                raise ValueError(
+                    f"waters_mz_end must be > waters_mz_start (got {mz_start}..{mz_end})"
+                )
+            width = self._config.get('waters_window_width')
+            if width <= 0.0:
+                raise ValueError(f"waters_window_width must be > 0, got {width!r}")
+            # A window wider than the scanned span is not a valid SONAR geometry.
+            if width > (mz_end - mz_start):
+                raise ValueError(
+                    f"waters_window_width ({width}) must be <= the m/z span "
+                    f"({mz_end - mz_start}); a window wider than the scanned range "
+                    "is not a valid SONAR geometry"
+                )
+            if self._config.get('waters_cycle_time_s') <= 0.0:
+                raise ValueError(
+                    f"waters_cycle_time_s must be > 0, got {self._config.get('waters_cycle_time_s')!r}"
+                )
+            # gradient_length drives the cycle count; a non-finite/non-positive value would
+            # silently collapse to a single cycle (or crash mid-build). Fail fast.
+            grad = self._config.get('gradient_length')
+            if isinstance(grad, bool) or not isinstance(grad, (int, float)) or not math.isfinite(grad) or grad <= 0.0:
+                raise ValueError(f"gradient_length must be a finite number > 0, got {grad!r}")
+            # window_step is optional (None -> contiguous); if set it must be finite, positive,
+            # and <= window_width (a larger step would leave uncovered gaps between windows).
+            step = self._config.get('waters_window_step')
+            if step is not None:
+                if (isinstance(step, bool) or not isinstance(step, (int, float))
+                        or not math.isfinite(step) or step <= 0.0):
+                    raise ValueError(
+                        f"waters_window_step, if set, must be a finite number > 0, got {step!r}"
+                    )
+                if step > width:
+                    raise ValueError(
+                        f"waters_window_step ({step}) must be <= waters_window_width ({width}); "
+                        "a larger step would leave uncovered gaps between windows"
+                    )
+            # Rolling CE must stay strictly positive across the scanned range, else fragment
+            # prediction is conditioned on a non-positive NCE (empty/unphysical MS2). Check the
+            # range ends (CE is linear in m/z, so the minimum is at one end).
+            ce_b = self._config.get('waters_ce_intercept')
+            ce_m = self._config.get('waters_ce_slope_per_mz')
+            ce_ends = (ce_b + ce_m * mz_start, ce_b + ce_m * mz_end)
+            if min(ce_ends) <= 0.0:
+                raise ValueError(
+                    f"waters rolling-CE model (intercept={ce_b}, slope={ce_m}) yields a "
+                    f"non-positive collision energy over {mz_start}..{mz_end} m/z "
+                    f"(ends {ce_ends[0]:.3f}, {ce_ends[1]:.3f}); use a positive CE model"
+                )
+            # The mzML renderer lives behind the connector's 'mzml' feature; fail fast.
+            try:
+                import imspy_connector
+                mzml_ok = bool(imspy_connector.py_acquisition.has_mzml())
+            except Exception:
+                mzml_ok = False
+            if not mzml_ok:
+                raise ValueError(
+                    f"instrument '{instrument}' requires imspy-connector built with the "
+                    "'mzml' feature (maturin build --release --features mzml, then "
+                    "reinstall) to render Waters SONAR output to open mzML."
                 )
 
     def __getattr__(self, name: str):
@@ -921,6 +1089,112 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
     return parser
 
 
+def emit_provenance_sidecar(d_path, db_path, config_path, experiment_name,
+                            embed, key_path, logger) -> None:
+    """Write an mzPROV Ed25519-signed provenance sidecar for a Bruker .d output —
+    tamper-evident self-disclosure that this is TimSim-simulated data, bound to the
+    config and a signing key. Import-guarded: a missing `mzprov` package or any signing
+    error is logged as a warning and never fails the run. mzprov v0 canonicalizes
+    .d/mzML only (not vendor .raw), so callers gate this to the Bruker path."""
+    try:
+        from mzprov.sign import sign_simulation_output
+    except ImportError:
+        logger.warning(
+            "  provenance: `mzprov` not installed — skipping sidecar "
+            "(pip install the mzprov python implementation to enable)"
+        )
+        return
+    try:
+        from imspy_simulation import __version__ as _sim_version
+    except Exception:
+        _sim_version = "unknown"
+    try:
+        gt = db_path if (db_path and os.path.exists(db_path)) else None
+        out = sign_simulation_output(
+            d_path=d_path,
+            ground_truth_path=gt,
+            config_path=config_path,
+            experiment_name=experiment_name,
+            simulator_version=_sim_version,
+            private_key_path=key_path,
+            embed=embed,
+        )
+        logger.info(f"  provenance: mzPROV sidecar -> {out}"
+                    + (" (embedded in .d)" if embed else ""))
+    except Exception as e:
+        logger.warning(f"  provenance: mzPROV signing failed (non-fatal): {e}")
+
+
+def emit_provenance_sidecar_mzml(mzml_path, config_path, experiment_name,
+                                 embed, key_path, logger) -> None:
+    """Write an mzPROV Ed25519-signed provenance sidecar for an mzML output (the SCIEX
+    and Waters open-format paths) — tamper-evident self-disclosure that this is TimSim-
+    simulated data, bound to the config + a signing key. Uses mzprov's first-class mzML
+    signer (``sign_mzml_output``), which canonicalizes the mzML content (config + mzML
+    content hash; note v0 does not bind the ground-truth DB the way the .d path does).
+    Import-guarded: a missing ``mzprov`` package or any signing error is logged as a
+    warning and never fails the run."""
+    try:
+        from mzprov.sign import sign_mzml_output
+    except ImportError:
+        logger.warning(
+            "  provenance: `mzprov` not installed — skipping mzML sidecar "
+            "(pip install the mzprov python implementation to enable)"
+        )
+        return
+    try:
+        from imspy_simulation import __version__ as _sim_version
+    except Exception:
+        _sim_version = "unknown"
+    try:
+        out = sign_mzml_output(
+            mzml_path=mzml_path,
+            config_path=config_path,
+            experiment_name=experiment_name,
+            tool_name="TimSim",
+            tool_version=_sim_version,
+            private_key_path=key_path,
+            embed=embed,
+        )
+        logger.info(f"  provenance: mzPROV mzML sidecar -> {out}"
+                    + (" (embedded in mzML)" if embed else ""))
+    except Exception as e:
+        logger.warning(f"  provenance: mzPROV mzML signing failed (non-fatal): {e}")
+
+
+def emit_provenance_sidecar_raw(raw_path, config_path, experiment_name, key_path, logger) -> None:
+    """Write an mzPROV Ed25519-signed provenance sidecar for a Thermo .raw output. A vendor
+    .raw is an opaque proprietary binary with no safe injection point, so this is ALWAYS a
+    JSON sidecar (regardless of the run's embed preference) and the attestation is an opaque
+    whole-file content hash (sensitive to any byte change). Uses mzprov's ``sign_raw_output``.
+    Import-guarded (covers both a missing ``mzprov`` and an older ``mzprov`` without raw
+    support): any failure is logged as a warning and never fails the run."""
+    try:
+        from mzprov.sign import sign_raw_output
+    except ImportError:
+        logger.warning(
+            "  provenance: `mzprov` (with .raw support) not available — skipping .raw "
+            "sidecar (pip install/upgrade the mzprov python implementation to enable)"
+        )
+        return
+    try:
+        from imspy_simulation import __version__ as _sim_version
+    except Exception:
+        _sim_version = "unknown"
+    try:
+        out = sign_raw_output(
+            raw_path=raw_path,
+            config_path=config_path,
+            experiment_name=experiment_name,
+            tool_name="TimSim",
+            tool_version=_sim_version,
+            private_key_path=key_path,
+        )
+        logger.info(f"  provenance: mzPROV .raw sidecar -> {out}")
+    except Exception as e:
+        logger.warning(f"  provenance: mzPROV .raw signing failed (non-fatal): {e}")
+
+
 # ----------------------------------------------------------------------
 # Main Execution
 # ----------------------------------------------------------------------
@@ -1039,7 +1313,9 @@ def main():
         logger.info(f"  Output path: {save_path}")
         logger.info("")
 
-    from .jobs.register_prediction_set import is_thermo_template_instrument
+    from .jobs.register_prediction_set import (
+        is_thermo_template_instrument, is_sciex_instrument, is_waters_instrument,
+    )
     instrument = str(getattr(config, 'instrument', 'bruker_timstof')).lower()
     if is_thermo_template_instrument(instrument):
         # Build-from-template (P6e option b): NO Bruker reference. The Thermo template's
@@ -1057,6 +1333,46 @@ def main():
             # Optional override: if set, forces a single NCE across all windows;
             # otherwise the template's genuine per-window NCE is used.
             collision_energy_nce=astral_nce_override(config),
+            verbose=not config.silent_mode,
+        )
+    elif is_sciex_instrument(instrument):
+        # Build-from-.wiff (SCIEX ZenoTOF SWATH): the .wiff SWATH method (windows + TOF
+        # cal) becomes the acquisition; the schedule is SYNTHESIZED (the .wiff has no
+        # timing) from gradient_length + sciex_cycle_time_s + a rolling-CE model. Output
+        # is open mzML (the proprietary .wiff.scan is not authored).
+        from .jobs.sciex_acquisition import SciexAcquisitionBuilder
+        _wiff = thermo_template_path(config)
+        logger.info(f"  SCIEX build-from-.wiff ({instrument}): {_wiff}")
+        acquisition_builder = SciexAcquisitionBuilder(
+            str(Path(save_path) / name),
+            _wiff,
+            cycle_time_s=config.sciex_cycle_time_s,
+            gradient_length_s=config.gradient_length,
+            ce_intercept=config.sciex_ce_intercept,
+            ce_slope_per_mz=config.sciex_ce_slope_per_mz,
+            round_collision_energy=config.round_collision_energy,
+            collision_energy_decimals=config.collision_energy_decimals,
+            verbose=not config.silent_mode,
+        )
+    elif is_waters_instrument(instrument):
+        # Build-from-parameters (Waters SONAR): NO vendor file. SONAR is a scanning-
+        # quadrupole DIA fully described by its scan range + window + cycle, so the
+        # schedule is SYNTHESIZED from those + gradient_length + a rolling-CE model.
+        # Output is open mzML.
+        from .jobs.waters_acquisition import WatersSonarAcquisitionBuilder
+        logger.info(f"  Waters SONAR build-from-parameters ({instrument})")
+        acquisition_builder = WatersSonarAcquisitionBuilder(
+            str(Path(save_path) / name),
+            mz_start=config.waters_mz_start,
+            mz_end=config.waters_mz_end,
+            window_width=config.waters_window_width,
+            window_step=config.waters_window_step,
+            cycle_time_s=config.waters_cycle_time_s,
+            gradient_length_s=config.gradient_length,
+            ce_intercept=config.waters_ce_intercept,
+            ce_slope_per_mz=config.waters_ce_slope_per_mz,
+            round_collision_energy=config.round_collision_energy,
+            collision_energy_decimals=config.collision_energy_decimals,
             verbose=not config.silent_mode,
         )
     else:
@@ -1584,6 +1900,8 @@ def main():
     from .jobs.register_prediction_set import (
         register_prediction_set,
         resolve_instrument_activation,
+        is_sciex_instrument,
+        is_waters_instrument,
     )
     # Normalize once (lower-case) so the later exact dispatch comparison can't be
     # fooled by a case variant like 'ORBITRAP_ASTRAL'.
@@ -1673,6 +1991,79 @@ def main():
             raise RuntimeError(
                 f"authored Astral .raw failed checksum validation: {out_raw}"
             )
+        # mzPROV provenance: sign the authored .raw. Always a JSON sidecar (a vendor
+        # .raw can't be embedded into), so the run's embed preference does not apply here.
+        if config.emit_provenance:
+            emit_provenance_sidecar_raw(
+                raw_path=out_raw,
+                config_path=cli_args.config,
+                experiment_name=name,
+                key_path=config.provenance_key_path,
+                logger=logger,
+            )
+    elif is_sciex_instrument(instrument):
+        # SCIEX ZenoTOF SWATH: render the synthesized DIA frames to open mzML (the
+        # proprietary .wiff.scan spectra are not authored). mzML is readable by
+        # DiaNN/alphaDIA and mzprov-signable.
+        import imspy_connector
+        logger.info(section_header(f"Rendering mzML ({instrument})", use_unicode))
+        db_path = acquisition_builder.synthetics_handle.database_path
+        out_mzml = str(Path(save_path) / f"{name}.mzML")
+        if not imspy_connector.py_acquisition.has_mzml():
+            raise RuntimeError(
+                "connector built without the `mzml` feature — rebuild with "
+                "`maturin build --features mzml` to render SCIEX mzML output"
+            )
+        scans, n_ms1, n_ms2, n_ms2_nz = imspy_connector.py_acquisition.render_dia_mzml(
+            db_path, out_mzml, num_threads
+        )
+        logger.info(
+            f"  SCIEX mzML -> {out_mzml}: {scans} scans | {n_ms1} MS1 | "
+            f"{n_ms2} MS2 ({n_ms2_nz} non-empty)"
+        )
+        # mzPROV provenance: sign the rendered mzML (self-disclosure that this is
+        # TimSim-simulated data) via mzprov's mzML signer.
+        if config.emit_provenance:
+            emit_provenance_sidecar_mzml(
+                mzml_path=out_mzml,
+                config_path=cli_args.config,
+                experiment_name=name,
+                embed=config.provenance_embed,
+                key_path=config.provenance_key_path,
+                logger=logger,
+            )
+    elif is_waters_instrument(instrument):
+        # Waters SONAR: render the synthesized scanning-quadrupole DIA frames to open mzML
+        # (no proprietary Waters .raw is authored). Unlike a real SONAR->mzML conversion
+        # (whose isolation windows ProteoWizard leaves full-range), we write correct per-
+        # window isolation, so the output is proper "normal DIA" mzML for DiaNN.
+        import imspy_connector
+        logger.info(section_header(f"Rendering mzML ({instrument})", use_unicode))
+        db_path = acquisition_builder.synthetics_handle.database_path
+        out_mzml = str(Path(save_path) / f"{name}.mzML")
+        if not imspy_connector.py_acquisition.has_mzml():
+            raise RuntimeError(
+                "connector built without the `mzml` feature — rebuild with "
+                "`maturin build --features mzml` to render Waters SONAR mzML output"
+            )
+        scans, n_ms1, n_ms2, n_ms2_nz = imspy_connector.py_acquisition.render_dia_mzml(
+            db_path, out_mzml, num_threads
+        )
+        logger.info(
+            f"  Waters SONAR mzML -> {out_mzml}: {scans} scans | {n_ms1} MS1 | "
+            f"{n_ms2} MS2 ({n_ms2_nz} non-empty)"
+        )
+        # mzPROV provenance: sign the rendered mzML (self-disclosure that this is
+        # TimSim-simulated data) via mzprov's mzML signer.
+        if config.emit_provenance:
+            emit_provenance_sidecar_mzml(
+                mzml_path=out_mzml,
+                config_path=cli_args.config,
+                experiment_name=name,
+                embed=config.provenance_embed,
+                key_path=config.provenance_key_path,
+                logger=logger,
+            )
     else:
         logger.info(section_header("Assembling Frames", use_unicode))
         assemble_frames(
@@ -1701,6 +2092,19 @@ def main():
             quad_transmission_max_isotopes=config.quad_transmission_max_isotopes,
             superimpose_on_reference=config.superimpose_on_reference,
         )
+        # mzPROV provenance: sign the authored Bruker .d (self-disclosure that this is
+        # TimSim-simulated data). Bruker-only — mzprov v0 doesn't canonicalize vendor
+        # .raw, so the Thermo build-from-template branch above is intentionally skipped.
+        if config.emit_provenance:
+            emit_provenance_sidecar(
+                d_path=os.path.join(save_path, name, f"{name}.d"),
+                db_path=str(Path(acquisition_builder.path) / 'synthetic_data.db'),
+                config_path=cli_args.config,
+                experiment_name=name,
+                embed=config.provenance_embed,
+                key_path=config.provenance_key_path,
+                logger=logger,
+            )
 
     # Collect final statistics
     stats.n_proteins = len(proteins) if proteins is not None else 0
