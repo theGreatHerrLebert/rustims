@@ -83,6 +83,27 @@ class SciexAcquisitionBuilder:
             ce_slope_per_mz=ce_slope_per_mz,
         )
         schedule = list(sched)
+
+        # Rolling CE must stay strictly positive (and known) across the synthesized
+        # windows: a None CE silently becomes 0, and a non-positive NCE conditions
+        # fragment-intensity prediction to empty/unphysical MS2. The .wiff windows +
+        # rolling-CE model are resolved in Rust; verify the result here (parity with
+        # the Waters SONAR builder). MS2 rows are ms_level != 1.
+        ms2_ce = [r[5] for r in schedule if r[2] != 1]
+        if ms2_ce:
+            if any(c is None for c in ms2_ce):
+                raise ValueError(
+                    "SCIEX schedule has windows with unknown collision energy (some .wiff "
+                    "window centers fell outside the rolling-CE model); supply a CE model "
+                    "covering the full SWATH precursor m/z range"
+                )
+            if min(ms2_ce) <= 0.0:
+                raise ValueError(
+                    f"SCIEX rolling-CE model (intercept={ce_intercept}, slope={ce_slope_per_mz}) "
+                    f"yields non-positive collision energy (min {min(ms2_ce):.4f}) over the SWATH "
+                    "windows; supply a CE model positive across the precursor m/z range"
+                )
+
         if verbose:
             n_ms1 = sum(1 for r in schedule if r[2] == 1)
             print(
