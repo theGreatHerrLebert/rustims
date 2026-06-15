@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["acquisition","containers","dda","dia","handle","lazy_builder","precursor","projector","scheme","utility"]};
+window.SIDEBAR_ITEMS = {"mod":["acquisition","containers","dda","dia","handle","lazy_builder","library","precursor","projector","scheme","utility"]};
