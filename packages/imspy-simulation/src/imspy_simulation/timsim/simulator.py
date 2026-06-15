@@ -428,6 +428,19 @@ def get_default_settings() -> dict:
         'sciex_ce_intercept': 5.0,
         'sciex_ce_slope_per_mz': 0.045,
 
+        # Waters SONAR build-from-parameters (instrument=waters_synapt_xs; NO template file).
+        # SONAR is a scanning-quadrupole DIA fully described by these; the schedule is
+        # synthesized from them + gradient_length. window_step=None -> contiguous windows
+        # (set < window_width for the faithful overlapping quad scan). Rolling CE = intercept
+        # + slope_per_mz * window_center_mz.
+        'waters_mz_start': 400.0,
+        'waters_mz_end': 900.0,
+        'waters_window_width': 20.0,
+        'waters_window_step': None,
+        'waters_cycle_time_s': 0.5,
+        'waters_ce_intercept': 5.0,
+        'waters_ce_slope_per_mz': 0.04,
+
         # Fragment intensity model
         'fragment_intensity_model': None,  # None/"prosit" or "peptdeep"
 
@@ -558,14 +571,16 @@ class SimulationConfig:
         # template, NOT a Bruker reference .d — so it requires a template path in place
         # of reference_path (the lean, Bruker-independent build-from-template path).
         from .jobs.register_prediction_set import (
-            is_thermo_template_instrument, is_sciex_instrument,
+            is_thermo_template_instrument, is_sciex_instrument, is_waters_instrument,
         )
         instrument = str(self._config.get('instrument', 'bruker_timstof')).lower()
         is_thermo = is_thermo_template_instrument(instrument)
-        # Template-based runs (Thermo .raw OR SCIEX .wiff) build from a vendor template
-        # instead of a Bruker reference .d, so they need a `template_path` (or the
-        # `astral_template_path` alias) rather than `reference_path`.
-        is_template_based = is_thermo or is_sciex_instrument(instrument)
+        # Reference-free runs build WITHOUT a Bruker reference .d: Thermo .raw and SCIEX
+        # .wiff build from a vendor template, Waters SONAR is fully synthesized from
+        # parameters. None of them require `reference_path`. (Thermo/SCIEX still require a
+        # `template_path`/`astral_template_path` file, validated per-instrument below;
+        # Waters requires no file at all.)
+        is_template_based = is_thermo or is_sciex_instrument(instrument) or is_waters_instrument(instrument)
         ref_key = 'reference_path'
         if self._config.get('from_findings'):
             required = ['save_path', 'findings_path'] if is_template_based else ['save_path', ref_key, 'findings_path']
@@ -758,6 +773,60 @@ class SimulationConfig:
                     f"instrument '{instrument}' requires imspy-connector built with the "
                     "'mzml' feature (maturin build --release --features mzml, then "
                     "reinstall) to render SCIEX SWATH output to open mzML."
+                )
+
+        if is_waters_instrument(instrument):
+            # Waters SONAR is build-from-parameters: DIA-only (scanning-quadrupole cycle),
+            # no IMS, no vendor file required. DDA has no meaning on this path.
+            if self._config.get('acquisition_type') == 'DDA':
+                raise ValueError(
+                    f"instrument '{instrument}' does not support DDA acquisition "
+                    "(SONAR is a scanning-quadrupole DIA cycle). Use DIA."
+                )
+            # The SONAR scan geometry + rolling-CE model must be finite/positive: a
+            # non-finite/degenerate value would yield an empty or unphysical window scheme
+            # or condition fragment-intensity prediction to empty MS2.
+            mz_start = self._config.get('waters_mz_start')
+            mz_end = self._config.get('waters_mz_end')
+            for key in (
+                'waters_mz_start', 'waters_mz_end', 'waters_window_width',
+                'waters_cycle_time_s', 'waters_ce_intercept', 'waters_ce_slope_per_mz',
+            ):
+                val = self._config.get(key)
+                if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(val):
+                    raise ValueError(f"{key} must be a finite number, got {val!r}")
+            if not (mz_end > mz_start):
+                raise ValueError(
+                    f"waters_mz_end must be > waters_mz_start (got {mz_start}..{mz_end})"
+                )
+            if self._config.get('waters_window_width') <= 0.0:
+                raise ValueError(
+                    f"waters_window_width must be > 0, got {self._config.get('waters_window_width')!r}"
+                )
+            if self._config.get('waters_cycle_time_s') <= 0.0:
+                raise ValueError(
+                    f"waters_cycle_time_s must be > 0, got {self._config.get('waters_cycle_time_s')!r}"
+                )
+            # window_step is optional (None -> contiguous); if set it must be finite/positive.
+            step = self._config.get('waters_window_step')
+            if step is not None and (
+                isinstance(step, bool) or not isinstance(step, (int, float))
+                or not math.isfinite(step) or step <= 0.0
+            ):
+                raise ValueError(
+                    f"waters_window_step, if set, must be a finite number > 0, got {step!r}"
+                )
+            # The mzML renderer lives behind the connector's 'mzml' feature; fail fast.
+            try:
+                import imspy_connector
+                mzml_ok = bool(imspy_connector.py_acquisition.has_mzml())
+            except Exception:
+                mzml_ok = False
+            if not mzml_ok:
+                raise ValueError(
+                    f"instrument '{instrument}' requires imspy-connector built with the "
+                    "'mzml' feature (maturin build --release --features mzml, then "
+                    "reinstall) to render Waters SONAR output to open mzML."
                 )
 
     def __getattr__(self, name: str):
@@ -1139,7 +1208,9 @@ def main():
         logger.info(f"  Output path: {save_path}")
         logger.info("")
 
-    from .jobs.register_prediction_set import is_thermo_template_instrument, is_sciex_instrument
+    from .jobs.register_prediction_set import (
+        is_thermo_template_instrument, is_sciex_instrument, is_waters_instrument,
+    )
     instrument = str(getattr(config, 'instrument', 'bruker_timstof')).lower()
     if is_thermo_template_instrument(instrument):
         # Build-from-template (P6e option b): NO Bruker reference. The Thermo template's
@@ -1174,6 +1245,27 @@ def main():
             gradient_length_s=config.gradient_length,
             ce_intercept=config.sciex_ce_intercept,
             ce_slope_per_mz=config.sciex_ce_slope_per_mz,
+            round_collision_energy=config.round_collision_energy,
+            collision_energy_decimals=config.collision_energy_decimals,
+            verbose=not config.silent_mode,
+        )
+    elif is_waters_instrument(instrument):
+        # Build-from-parameters (Waters SONAR): NO vendor file. SONAR is a scanning-
+        # quadrupole DIA fully described by its scan range + window + cycle, so the
+        # schedule is SYNTHESIZED from those + gradient_length + a rolling-CE model.
+        # Output is open mzML.
+        from .jobs.waters_acquisition import WatersSonarAcquisitionBuilder
+        logger.info(f"  Waters SONAR build-from-parameters ({instrument})")
+        acquisition_builder = WatersSonarAcquisitionBuilder(
+            str(Path(save_path) / name),
+            mz_start=config.waters_mz_start,
+            mz_end=config.waters_mz_end,
+            window_width=config.waters_window_width,
+            window_step=config.waters_window_step,
+            cycle_time_s=config.waters_cycle_time_s,
+            gradient_length_s=config.gradient_length,
+            ce_intercept=config.waters_ce_intercept,
+            ce_slope_per_mz=config.waters_ce_slope_per_mz,
             round_collision_energy=config.round_collision_energy,
             collision_energy_decimals=config.collision_energy_decimals,
             verbose=not config.silent_mode,
@@ -1704,6 +1796,7 @@ def main():
         register_prediction_set,
         resolve_instrument_activation,
         is_sciex_instrument,
+        is_waters_instrument,
     )
     # Normalize once (lower-case) so the later exact dispatch comparison can't be
     # fooled by a case variant like 'ORBITRAP_ASTRAL'.
@@ -1811,6 +1904,27 @@ def main():
         )
         logger.info(
             f"  SCIEX mzML -> {out_mzml}: {scans} scans | {n_ms1} MS1 | "
+            f"{n_ms2} MS2 ({n_ms2_nz} non-empty)"
+        )
+    elif is_waters_instrument(instrument):
+        # Waters SONAR: render the synthesized scanning-quadrupole DIA frames to open mzML
+        # (no proprietary Waters .raw is authored). Unlike a real SONAR->mzML conversion
+        # (whose isolation windows ProteoWizard leaves full-range), we write correct per-
+        # window isolation, so the output is proper "normal DIA" mzML for DiaNN.
+        import imspy_connector
+        logger.info(section_header(f"Rendering mzML ({instrument})", use_unicode))
+        db_path = acquisition_builder.synthetics_handle.database_path
+        out_mzml = str(Path(save_path) / f"{name}.mzML")
+        if not imspy_connector.py_acquisition.has_mzml():
+            raise RuntimeError(
+                "connector built without the `mzml` feature — rebuild with "
+                "`maturin build --features mzml` to render Waters SONAR mzML output"
+            )
+        scans, n_ms1, n_ms2, n_ms2_nz = imspy_connector.py_acquisition.render_dia_mzml(
+            db_path, out_mzml, num_threads
+        )
+        logger.info(
+            f"  Waters SONAR mzML -> {out_mzml}: {scans} scans | {n_ms1} MS1 | "
             f"{n_ms2} MS2 ({n_ms2_nz} non-empty)"
         )
     else:
