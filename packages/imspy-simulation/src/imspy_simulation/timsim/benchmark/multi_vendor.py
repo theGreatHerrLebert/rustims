@@ -74,15 +74,22 @@ class VendorRow:
 def summarize_eval(eval_json_path: str, q: float = 0.01) -> dict:
     """Extract the recall / FDP summary at q-threshold ``q`` from a groundtruth_eval JSON.
 
-    Picks the curve point whose ``q`` is closest to the requested threshold (the eval
-    samples a fixed grid; an exact match is used when present).
+    FDR-threshold semantics: report the curve point with the LARGEST ``q`` that is still
+    ``<= q`` (i.e. the most IDs that pass at or below the requested FDR) — never a point
+    above the threshold, which would overstate IDs/recall. If the curve starts above
+    ``q`` (no point qualifies), fall back to the smallest-``q`` point; the returned ``q``
+    reflects which point was actually used.
     """
     with open(eval_json_path) as fh:
         data = json.load(fh)
     curve = data.get("curve") or []
     if not curve:
         raise ValueError(f"{eval_json_path}: no 'curve' in eval JSON")
-    point = min(curve, key=lambda r: abs(float(r["q"]) - q))
+    at_or_below = [r for r in curve if float(r["q"]) <= q + 1e-12]
+    if at_or_below:
+        point = max(at_or_below, key=lambda r: float(r["q"]))
+    else:
+        point = min(curve, key=lambda r: float(r["q"]))
     observable = data.get("rendered_observable_precursors")
     ids = point.get("n_precursors")
     recall = (100.0 * ids / observable) if (observable and ids is not None) else None
@@ -103,7 +110,7 @@ def build_rows(manifest: dict) -> list[VendorRow]:
     for v in manifest.get("vendors", []):
         instrument = v["instrument"]
         display, output = VENDOR_META.get(instrument, (instrument, "?"))
-        engine = v.get("engine", "?")
+        engine = v.get("engine")  # may be None -> fall back to the eval JSON's engine
         if v.get("eval_json"):
             s = summarize_eval(v["eval_json"], q=q)
             rows.append(VendorRow(
@@ -116,7 +123,7 @@ def build_rows(manifest: dict) -> list[VendorRow]:
         elif v.get("recorded"):
             r = v["recorded"]
             rows.append(VendorRow(
-                instrument=instrument, display=display, output=output, engine=engine,
+                instrument=instrument, display=display, output=output, engine=engine or "?",
                 observable=r.get("observable"), ids=r.get("ids"),
                 recall_pct=r.get("recall_pct"),
                 fdp_backbone=r.get("fdp_backbone"), fdp_peptidoform=r.get("fdp_peptidoform"),
@@ -125,6 +132,11 @@ def build_rows(manifest: dict) -> list[VendorRow]:
         else:
             raise ValueError(f"vendor {instrument!r} has neither 'eval_json' nor 'recorded'")
     return rows
+
+
+def _cell(s) -> str:
+    """Sanitize a string for a Markdown table cell (escape pipes, flatten newlines)."""
+    return str(s).replace("|", "\\|").replace("\n", " ").replace("\r", " ")
 
 
 def _fmt_pct(x: Optional[float]) -> str:
@@ -142,13 +154,13 @@ def render_markdown(rows: list[VendorRow], q: float = 0.01) -> str:
         "|---|---|---|---:|---:|---:|---:|---:|---|\n"
     )
     body = "".join(
-        f"| {r.display} | {r.output} | {r.engine} | "
+        f"| {_cell(r.display)} | {_cell(r.output)} | {_cell(r.engine)} | "
         f"{'—' if r.observable is None else r.observable} | "
         f"{'—' if r.ids is None else r.ids} | {_fmt_pct(r.recall_pct)} | "
-        f"{_fmt_fdp(r.fdp_backbone)} | {_fmt_fdp(r.fdp_peptidoform)} | {r.source} |\n"
+        f"{_fmt_fdp(r.fdp_backbone)} | {_fmt_fdp(r.fdp_peptidoform)} | {_cell(r.source)} |\n"
         for r in rows
     )
-    notes = [f"- **{r.display}**: {r.note}" for r in rows if r.note]
+    notes = [f"- **{_cell(r.display)}**: {_cell(r.note)}" for r in rows if r.note]
     tail = ("\n" + "\n".join(notes) + "\n") if notes else ""
     return head + body + tail
 

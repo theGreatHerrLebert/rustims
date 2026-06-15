@@ -30,14 +30,36 @@ def test_summarize_eval_picks_the_requested_q_and_computes_recall(tmp_path):
     assert s["fdp_backbone"] == 0.0
 
 
-def test_summarize_eval_nearest_q_when_no_exact_match(tmp_path):
+def test_summarize_eval_picks_largest_q_at_or_below_target(tmp_path):
+    # FDR semantics: never report a point ABOVE the requested threshold. With points
+    # below (0.001, 0.005) and above (0.02) the target 0.01, pick 0.005 (largest <= 0.01),
+    # NOT the numerically-nearest 0.02.
     path = _write_eval(tmp_path, "w.json", 100, [
+        {"q": 0.001, "n_precursors": 30, "fdp_backbone": 0.0, "fdp_peptidoform_genuine": 0.0},
         {"q": 0.005, "n_precursors": 40, "fdp_backbone": 0.0, "fdp_peptidoform_genuine": 0.0},
-        {"q": 0.02, "n_precursors": 60, "fdp_backbone": 0.0, "fdp_peptidoform_genuine": 0.0},
+        {"q": 0.02, "n_precursors": 90, "fdp_backbone": 0.0, "fdp_peptidoform_genuine": 0.0},
     ])
-    # request 0.01 -> nearest grid point is 0.005 (|.005|<|.01|) ... actually 0.005 dist .005, 0.02 dist .01
     s = summarize_eval(path, q=0.01)
-    assert s["q"] == 0.005
+    assert s["q"] == 0.005 and s["ids"] == 40
+
+
+def test_summarize_eval_falls_back_when_curve_starts_above_target(tmp_path):
+    # No point at/below 0.01 -> fall back to the smallest q (best available), and report it.
+    path = _write_eval(tmp_path, "w.json", 100, [
+        {"q": 0.02, "n_precursors": 60, "fdp_backbone": 0.0, "fdp_peptidoform_genuine": 0.0},
+        {"q": 0.05, "n_precursors": 80, "fdp_backbone": 0.0, "fdp_peptidoform_genuine": 0.0},
+    ])
+    s = summarize_eval(path, q=0.01)
+    assert s["q"] == 0.02
+
+
+def test_build_rows_engine_falls_back_to_eval_json(tmp_path):
+    # Manifest omits 'engine' -> use the engine recorded in the eval JSON ('diann').
+    path = _write_eval(tmp_path, "w.json", 100, [
+        {"q": 0.01, "n_precursors": 50, "fdp_backbone": 0.0, "fdp_peptidoform_genuine": 0.0},
+    ])
+    rows = build_rows({"vendors": [{"instrument": "waters_synapt_xs", "eval_json": path}]})
+    assert rows[0].engine == "diann"
 
 
 def test_build_rows_handles_live_and_recorded(tmp_path):

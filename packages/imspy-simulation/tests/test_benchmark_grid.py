@@ -66,3 +66,31 @@ def test_manifest_points_eval_jsons_under_save_root():
     assert by_instr["bruker_timstof"]["eval_json"] == "/tmp/grid/bruker/eval.json"
     assert by_instr["bruker_timstof"]["engine"] == "diann"
     assert by_instr["waters_synapt_xs"]["eval_json"] == "/tmp/grid/waters/eval.json"
+
+
+def test_manifest_follows_an_overridden_save_path():
+    # An explicit save_path must be honoured by the manifest (no drift from the run).
+    spec = {"save_root": "/tmp/grid", "cells": [
+        {"label": "w", "engine": "diann",
+         "config": {"instrument": "waters_synapt_xs", "save_path": "/custom/out"}},
+    ]}
+    m = manifest_for(spec)
+    assert m["vendors"][0]["eval_json"] == "/custom/out/eval.json"
+
+
+def test_expand_rejects_colliding_save_paths():
+    spec = {"save_root": "/tmp/grid", "cells": [
+        {"label": "a", "config": {"instrument": "x", "save_path": "/same"}},
+        {"label": "b", "config": {"instrument": "y", "save_path": "/same"}},
+    ]}
+    with pytest.raises(ValueError, match="save_path"):
+        expand(spec)
+
+
+def test_drop_none_is_recursive():
+    spec = {"save_root": "/tmp/g", "cells": [
+        {"label": "w", "config": {"instrument": "waters_synapt_xs",
+                                  "models": {"a": 1, "b": None}}},
+    ]}
+    cfg = expand(spec)["w"]
+    assert cfg["models"] == {"a": 1}  # nested None dropped

@@ -58,8 +58,14 @@ import toml
 
 
 def _drop_none(d: dict) -> dict:
-    """TOML has no null; drop keys whose value is None (e.g. an unset window_step)."""
-    return {k: v for k, v in d.items() if v is not None}
+    """TOML has no null; drop keys whose value is None (e.g. an unset window_step),
+    recursing into nested tables so a None buried in a sub-table can't reach toml.dump."""
+    out = {}
+    for k, v in d.items():
+        if v is None:
+            continue
+        out[k] = _drop_none(v) if isinstance(v, dict) else v
+    return out
 
 
 def expand(spec: dict) -> dict[str, dict]:
@@ -89,6 +95,17 @@ def expand(spec: dict) -> dict[str, dict]:
         cfg.setdefault("save_path", os.path.join(save_root, label))
         cfg.setdefault("experiment_name", label.upper().replace("_", "-"))
         out[label] = _drop_none(cfg)
+    # Two cells writing to the same save_path would clobber each other's output (can
+    # happen if cells set/override save_path, or labels collide post-normalisation).
+    by_save_path: dict[str, str] = {}
+    for label, cfg in out.items():
+        sp = cfg["save_path"]
+        if sp in by_save_path:
+            raise ValueError(
+                f"cells {by_save_path[sp]!r} and {label!r} resolve to the same "
+                f"save_path {sp!r}; give them distinct save_path / labels"
+            )
+        by_save_path[sp] = label
     return out
 
 
@@ -107,18 +124,21 @@ def write_configs(expanded: dict[str, dict], out_dir: str) -> dict[str, str]:
 def manifest_for(spec: dict, eval_filename: str = "eval.json") -> dict:
     """Build the ``multi_vendor`` manifest for this grid.
 
-    Each cell's ``eval_json`` points at ``<save_root>/<label>/<eval_filename>`` (where the
-    per-cell ``groundtruth_eval`` JSON is expected). ``q`` carries through from the spec.
+    Derived from ``expand(spec)`` so it shares the same validation (missing instrument,
+    duplicate labels, save_path collisions) and the SAME resolved ``save_path`` as the
+    written configs — each cell's ``eval_json`` is ``<resolved save_path>/<eval_filename>``,
+    so the manifest can't drift from where the run actually wrote its output. ``q`` carries
+    through from the spec.
     """
-    save_root = spec.get("save_root", "grid")
+    expanded = expand(spec)
+    cell_by_label = {c["label"]: c for c in spec.get("cells", [])}
     vendors = []
-    for cell in spec.get("cells", []):
-        label = cell["label"]
-        cfg = {**spec.get("base", {}), **cell.get("config", {})}
+    for label, cfg in expanded.items():
+        cell = cell_by_label[label]
         vendors.append({
-            "instrument": cfg.get("instrument", label),
+            "instrument": cfg["instrument"],
             "engine": cell.get("engine", "?"),
-            "eval_json": os.path.join(save_root, label, eval_filename),
+            "eval_json": os.path.join(cfg["save_path"], eval_filename),
             "source": cell.get("source", "live"),
         })
     return {"q": spec.get("q", 0.01), "vendors": vendors}
