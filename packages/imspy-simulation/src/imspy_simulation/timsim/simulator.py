@@ -415,8 +415,9 @@ def get_default_settings() -> dict:
 
         # mzPROV provenance sidecar (Ed25519-signed self-disclosure: "this IS TimSim
         # simulated data", binds the output to the config + a signing key). Emitted for
-        # the Bruker .d path; mzprov v0 canonicalizes .d/mzML, not vendor .raw, so Thermo
-        # .raw runs skip it. Requires the optional `mzprov` package (import-guarded).
+        # the Bruker .d path (structural canonicalization) AND the SCIEX/Waters mzML paths
+        # (mzML content canonicalization). Thermo .raw is not yet signed (mzprov v0 has no
+        # vendor-.raw canonicalization). Requires the optional `mzprov` package (import-guarded).
         'emit_provenance': True,
         'provenance_embed': False,        # False = JSON sidecar; True = embed in analysis.tdf
         'provenance_key_path': None,      # None = default ~/.config/timsim/keys/ (auto-gen)
@@ -1116,6 +1117,43 @@ def emit_provenance_sidecar(d_path, db_path, config_path, experiment_name,
                     + (" (embedded in .d)" if embed else ""))
     except Exception as e:
         logger.warning(f"  provenance: mzPROV signing failed (non-fatal): {e}")
+
+
+def emit_provenance_sidecar_mzml(mzml_path, config_path, experiment_name,
+                                 embed, key_path, logger) -> None:
+    """Write an mzPROV Ed25519-signed provenance sidecar for an mzML output (the SCIEX
+    and Waters open-format paths) — tamper-evident self-disclosure that this is TimSim-
+    simulated data, bound to the config + a signing key. Uses mzprov's first-class mzML
+    signer (``sign_mzml_output``), which canonicalizes the mzML content (config + mzML
+    content hash; note v0 does not bind the ground-truth DB the way the .d path does).
+    Import-guarded: a missing ``mzprov`` package or any signing error is logged as a
+    warning and never fails the run."""
+    try:
+        from mzprov.sign import sign_mzml_output
+    except ImportError:
+        logger.warning(
+            "  provenance: `mzprov` not installed — skipping mzML sidecar "
+            "(pip install the mzprov python implementation to enable)"
+        )
+        return
+    try:
+        from imspy_simulation import __version__ as _sim_version
+    except Exception:
+        _sim_version = "unknown"
+    try:
+        out = sign_mzml_output(
+            mzml_path=mzml_path,
+            config_path=config_path,
+            experiment_name=experiment_name,
+            tool_name="TimSim",
+            tool_version=_sim_version,
+            private_key_path=key_path,
+            embed=embed,
+        )
+        logger.info(f"  provenance: mzPROV mzML sidecar -> {out}"
+                    + (" (embedded in mzML)" if embed else ""))
+    except Exception as e:
+        logger.warning(f"  provenance: mzPROV mzML signing failed (non-fatal): {e}")
 
 
 # ----------------------------------------------------------------------
@@ -1934,6 +1972,17 @@ def main():
             f"  SCIEX mzML -> {out_mzml}: {scans} scans | {n_ms1} MS1 | "
             f"{n_ms2} MS2 ({n_ms2_nz} non-empty)"
         )
+        # mzPROV provenance: sign the rendered mzML (self-disclosure that this is
+        # TimSim-simulated data) via mzprov's mzML signer.
+        if config.emit_provenance:
+            emit_provenance_sidecar_mzml(
+                mzml_path=out_mzml,
+                config_path=cli_args.config,
+                experiment_name=name,
+                embed=config.provenance_embed,
+                key_path=config.provenance_key_path,
+                logger=logger,
+            )
     elif is_waters_instrument(instrument):
         # Waters SONAR: render the synthesized scanning-quadrupole DIA frames to open mzML
         # (no proprietary Waters .raw is authored). Unlike a real SONAR->mzML conversion
@@ -1955,6 +2004,17 @@ def main():
             f"  Waters SONAR mzML -> {out_mzml}: {scans} scans | {n_ms1} MS1 | "
             f"{n_ms2} MS2 ({n_ms2_nz} non-empty)"
         )
+        # mzPROV provenance: sign the rendered mzML (self-disclosure that this is
+        # TimSim-simulated data) via mzprov's mzML signer.
+        if config.emit_provenance:
+            emit_provenance_sidecar_mzml(
+                mzml_path=out_mzml,
+                config_path=cli_args.config,
+                experiment_name=name,
+                embed=config.provenance_embed,
+                key_path=config.provenance_key_path,
+                logger=logger,
+            )
     else:
         logger.info(section_header("Assembling Frames", use_unicode))
         assemble_frames(
