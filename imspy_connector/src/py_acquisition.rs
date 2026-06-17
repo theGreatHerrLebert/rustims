@@ -1,5 +1,7 @@
 use numpy::IntoPyArray;
-use pyo3::exceptions::{PyRuntimeError, PyValueError};
+#[cfg(feature = "thermo")]
+use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rustdf::sim::scheme::AcquisitionScheme;

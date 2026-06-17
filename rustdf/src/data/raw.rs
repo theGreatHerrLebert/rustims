@@ -1,4 +1,5 @@
 use libloading::{Library, Symbol};
+use std::cell::RefCell;
 use std::os::raw::{c_char, c_double, c_float};
 use std::sync::Mutex;
 
@@ -245,7 +246,7 @@ impl BrukerTimsDataLibrary {
         let _guard = EXTRACT_BUF
             .lock()
             .map_err(|_| "EXTRACT_BUF poisoned")?;
-        unsafe { EXTRACT_BUF_DATA = Some((Vec::new(), Vec::new())); }
+        EXTRACT_BUF_DATA.with(|buf| *buf.borrow_mut() = Some((Vec::new(), Vec::new())));
         unsafe {
             let func: Symbol<
                 unsafe extern "C" fn(
@@ -266,7 +267,7 @@ impl BrukerTimsDataLibrary {
                 return Err("tims_extract_centroided_spectrum_for_frame_v2 returned 0".into());
             }
         }
-        if let Some((mz, intens)) = unsafe { EXTRACT_BUF_DATA.take() } {
+        if let Some((mz, intens)) = EXTRACT_BUF_DATA.with(|buf| buf.borrow_mut().take()) {
             result_mz = mz;
             result_int = intens;
         }
@@ -282,7 +283,7 @@ impl BrukerTimsDataLibrary {
         frame_id: i64,
     ) -> Result<Vec<(i64, Vec<f64>, Vec<f32>)>, Box<dyn std::error::Error>> {
         let _guard = PASEF_BUF.lock().map_err(|_| "PASEF_BUF poisoned")?;
-        unsafe { PASEF_BUF_DATA = Some(Vec::new()); }
+        PASEF_BUF_DATA.with(|buf| *buf.borrow_mut() = Some(Vec::new()));
         unsafe {
             let func: Symbol<
                 unsafe extern "C" fn(
@@ -301,7 +302,7 @@ impl BrukerTimsDataLibrary {
                 return Err("tims_read_pasef_msms_for_frame_v2 returned 0".into());
             }
         }
-        let out = unsafe { PASEF_BUF_DATA.take() }.unwrap_or_default();
+        let out = PASEF_BUF_DATA.with(|buf| buf.borrow_mut().take()).unwrap_or_default();
         Ok(out)
     }
 }
@@ -310,7 +311,9 @@ impl BrukerTimsDataLibrary {
 // only one thread runs the SDK at a time per process — same restriction
 // pyTDFSDK + alphatims live with.
 static EXTRACT_BUF: Mutex<()> = Mutex::new(());
-static mut EXTRACT_BUF_DATA: Option<(Vec<f64>, Vec<f32>)> = None;
+thread_local! {
+    static EXTRACT_BUF_DATA: RefCell<Option<(Vec<f64>, Vec<f32>)>> = const { RefCell::new(None) };
+}
 
 extern "C" fn centroid_trampoline(
     _precursor_id: i64,
@@ -321,16 +324,18 @@ extern "C" fn centroid_trampoline(
     if n_peaks == 0 || mzs.is_null() || intensities.is_null() { return; }
     let mz_slice = unsafe { std::slice::from_raw_parts(mzs, n_peaks as usize) };
     let in_slice = unsafe { std::slice::from_raw_parts(intensities, n_peaks as usize) };
-    unsafe {
-        if let Some((ref mut mz_acc, ref mut in_acc)) = EXTRACT_BUF_DATA {
+    EXTRACT_BUF_DATA.with(|buf| {
+        if let Some((ref mut mz_acc, ref mut in_acc)) = *buf.borrow_mut() {
             mz_acc.extend_from_slice(mz_slice);
             in_acc.extend_from_slice(in_slice);
         }
-    }
+    });
 }
 
 static PASEF_BUF: Mutex<()> = Mutex::new(());
-static mut PASEF_BUF_DATA: Option<Vec<(i64, Vec<f64>, Vec<f32>)>> = None;
+thread_local! {
+    static PASEF_BUF_DATA: RefCell<Option<Vec<(i64, Vec<f64>, Vec<f32>)>>> = const { RefCell::new(None) };
+}
 
 extern "C" fn pasef_trampoline(
     precursor_id: i64,
@@ -342,11 +347,11 @@ extern "C" fn pasef_trampoline(
     if n_peaks == 0 || mzs.is_null() || intensities.is_null() { return; }
     let mz_slice = unsafe { std::slice::from_raw_parts(mzs, n_peaks as usize) };
     let in_slice = unsafe { std::slice::from_raw_parts(intensities, n_peaks as usize) };
-    unsafe {
-        if let Some(ref mut acc) = PASEF_BUF_DATA {
+    PASEF_BUF_DATA.with(|buf| {
+        if let Some(ref mut acc) = *buf.borrow_mut() {
             acc.push((precursor_id, mz_slice.to_vec(), in_slice.to_vec()));
         }
-    }
+    });
 }
 
 // Silence the unused `c_float` warning on platforms where it's only

@@ -556,7 +556,6 @@ mod tests {
             LoaderHandle::spawn(LoaderMode::Demo(demo), demo_bounds(), total, budget);
 
         let mut points = 0usize;
-        let mut saw_done = false;
         let mut saw_stats = false;
         loop {
             match handle.rx.recv_timeout(Duration::from_secs(15)) {
@@ -572,10 +571,8 @@ mod tests {
                     assert!(i_min > 0.0 && i_max > i_min);
                     saw_stats = true;
                 }
-                Ok(LoadMsg::Done { .. }) => {
-                    saw_done = true;
-                    break;
-                }
+                // The only non-panic exit: reaching past the loop proves Done arrived.
+                Ok(LoadMsg::Done { .. }) => break,
                 Ok(LoadMsg::PeakChunk { points: p }) => {
                     points += p.len();
                 }
@@ -584,7 +581,6 @@ mod tests {
                 Err(e) => panic!("loader timed out / disconnected: {e}"),
             }
         }
-        assert!(saw_done, "loader never signaled Done");
         assert!(saw_stats, "loader never sent intensity Stats");
         assert!(points > 0, "loader produced no points");
         // ~budget points (stride=2 over 100k); allow generous slack.
