@@ -556,39 +556,35 @@
 <a href=#556 id=556 data-nosnippet>556</a>            LoaderHandle::spawn(LoaderMode::Demo(demo), demo_bounds(), total, budget);
 <a href=#557 id=557 data-nosnippet>557</a>
 <a href=#558 id=558 data-nosnippet>558</a>        <span class="kw">let </span><span class="kw-2">mut </span>points = <span class="number">0usize</span>;
-<a href=#559 id=559 data-nosnippet>559</a>        <span class="kw">let </span><span class="kw-2">mut </span>saw_done = <span class="bool-val">false</span>;
-<a href=#560 id=560 data-nosnippet>560</a>        <span class="kw">let </span><span class="kw-2">mut </span>saw_stats = <span class="bool-val">false</span>;
-<a href=#561 id=561 data-nosnippet>561</a>        <span class="kw">loop </span>{
-<a href=#562 id=562 data-nosnippet>562</a>            <span class="kw">match </span>handle.rx.recv_timeout(Duration::from_secs(<span class="number">15</span>)) {
-<a href=#563 id=563 data-nosnippet>563</a>                <span class="prelude-val">Ok</span>(LoadMsg::Chunk { points: p, .. }) =&gt; {
-<a href=#564 id=564 data-nosnippet>564</a>                    <span class="comment">// Every packed point must be finite and inside the cube.
-<a href=#565 id=565 data-nosnippet>565</a>                    </span><span class="kw">for </span>gp <span class="kw">in </span><span class="kw-2">&amp;</span>p {
-<a href=#566 id=566 data-nosnippet>566</a>                        <span class="macro">assert!</span>(gp.pos.iter().all(|c| c.is_finite()));
-<a href=#567 id=567 data-nosnippet>567</a>                        <span class="macro">assert!</span>(gp.weight &gt;= <span class="number">1.0</span>);
-<a href=#568 id=568 data-nosnippet>568</a>                    }
-<a href=#569 id=569 data-nosnippet>569</a>                    points += p.len();
-<a href=#570 id=570 data-nosnippet>570</a>                }
-<a href=#571 id=571 data-nosnippet>571</a>                <span class="prelude-val">Ok</span>(LoadMsg::Stats { i_min, i_max }) =&gt; {
-<a href=#572 id=572 data-nosnippet>572</a>                    <span class="macro">assert!</span>(i_min &gt; <span class="number">0.0 </span>&amp;&amp; i_max &gt; i_min);
-<a href=#573 id=573 data-nosnippet>573</a>                    saw_stats = <span class="bool-val">true</span>;
-<a href=#574 id=574 data-nosnippet>574</a>                }
-<a href=#575 id=575 data-nosnippet>575</a>                <span class="prelude-val">Ok</span>(LoadMsg::Done { .. }) =&gt; {
-<a href=#576 id=576 data-nosnippet>576</a>                    saw_done = <span class="bool-val">true</span>;
-<a href=#577 id=577 data-nosnippet>577</a>                    <span class="kw">break</span>;
+<a href=#559 id=559 data-nosnippet>559</a>        <span class="kw">let </span><span class="kw-2">mut </span>saw_stats = <span class="bool-val">false</span>;
+<a href=#560 id=560 data-nosnippet>560</a>        <span class="kw">loop </span>{
+<a href=#561 id=561 data-nosnippet>561</a>            <span class="kw">match </span>handle.rx.recv_timeout(Duration::from_secs(<span class="number">15</span>)) {
+<a href=#562 id=562 data-nosnippet>562</a>                <span class="prelude-val">Ok</span>(LoadMsg::Chunk { points: p, .. }) =&gt; {
+<a href=#563 id=563 data-nosnippet>563</a>                    <span class="comment">// Every packed point must be finite and inside the cube.
+<a href=#564 id=564 data-nosnippet>564</a>                    </span><span class="kw">for </span>gp <span class="kw">in </span><span class="kw-2">&amp;</span>p {
+<a href=#565 id=565 data-nosnippet>565</a>                        <span class="macro">assert!</span>(gp.pos.iter().all(|c| c.is_finite()));
+<a href=#566 id=566 data-nosnippet>566</a>                        <span class="macro">assert!</span>(gp.weight &gt;= <span class="number">1.0</span>);
+<a href=#567 id=567 data-nosnippet>567</a>                    }
+<a href=#568 id=568 data-nosnippet>568</a>                    points += p.len();
+<a href=#569 id=569 data-nosnippet>569</a>                }
+<a href=#570 id=570 data-nosnippet>570</a>                <span class="prelude-val">Ok</span>(LoadMsg::Stats { i_min, i_max }) =&gt; {
+<a href=#571 id=571 data-nosnippet>571</a>                    <span class="macro">assert!</span>(i_min &gt; <span class="number">0.0 </span>&amp;&amp; i_max &gt; i_min);
+<a href=#572 id=572 data-nosnippet>572</a>                    saw_stats = <span class="bool-val">true</span>;
+<a href=#573 id=573 data-nosnippet>573</a>                }
+<a href=#574 id=574 data-nosnippet>574</a>                <span class="comment">// The only non-panic exit: reaching past the loop proves Done arrived.
+<a href=#575 id=575 data-nosnippet>575</a>                </span><span class="prelude-val">Ok</span>(LoadMsg::Done { .. }) =&gt; <span class="kw">break</span>,
+<a href=#576 id=576 data-nosnippet>576</a>                <span class="prelude-val">Ok</span>(LoadMsg::PeakChunk { points: p }) =&gt; {
+<a href=#577 id=577 data-nosnippet>577</a>                    points += p.len();
 <a href=#578 id=578 data-nosnippet>578</a>                }
-<a href=#579 id=579 data-nosnippet>579</a>                <span class="prelude-val">Ok</span>(LoadMsg::PeakChunk { points: p }) =&gt; {
-<a href=#580 id=580 data-nosnippet>580</a>                    points += p.len();
-<a href=#581 id=581 data-nosnippet>581</a>                }
-<a href=#582 id=582 data-nosnippet>582</a>                <span class="prelude-val">Ok</span>(LoadMsg::Error(e)) =&gt; <span class="macro">panic!</span>(<span class="string">"loader error: {e}"</span>),
-<a href=#583 id=583 data-nosnippet>583</a>                <span class="prelude-val">Ok</span>(LoadMsg::Progress(<span class="kw">_</span>)) | <span class="prelude-val">Ok</span>(LoadMsg::Annotations { .. }) =&gt; {}
-<a href=#584 id=584 data-nosnippet>584</a>                <span class="prelude-val">Err</span>(e) =&gt; <span class="macro">panic!</span>(<span class="string">"loader timed out / disconnected: {e}"</span>),
-<a href=#585 id=585 data-nosnippet>585</a>            }
-<a href=#586 id=586 data-nosnippet>586</a>        }
-<a href=#587 id=587 data-nosnippet>587</a>        <span class="macro">assert!</span>(saw_done, <span class="string">"loader never signaled Done"</span>);
-<a href=#588 id=588 data-nosnippet>588</a>        <span class="macro">assert!</span>(saw_stats, <span class="string">"loader never sent intensity Stats"</span>);
-<a href=#589 id=589 data-nosnippet>589</a>        <span class="macro">assert!</span>(points &gt; <span class="number">0</span>, <span class="string">"loader produced no points"</span>);
-<a href=#590 id=590 data-nosnippet>590</a>        <span class="comment">// ~budget points (stride=2 over 100k); allow generous slack.
-<a href=#591 id=591 data-nosnippet>591</a>        </span><span class="macro">assert!</span>(points &lt;= <span class="number">70_000</span>, <span class="string">"downsample exceeded budget: {points}"</span>);
-<a href=#592 id=592 data-nosnippet>592</a>    }
-<a href=#593 id=593 data-nosnippet>593</a>}
+<a href=#579 id=579 data-nosnippet>579</a>                <span class="prelude-val">Ok</span>(LoadMsg::Error(e)) =&gt; <span class="macro">panic!</span>(<span class="string">"loader error: {e}"</span>),
+<a href=#580 id=580 data-nosnippet>580</a>                <span class="prelude-val">Ok</span>(LoadMsg::Progress(<span class="kw">_</span>)) | <span class="prelude-val">Ok</span>(LoadMsg::Annotations { .. }) =&gt; {}
+<a href=#581 id=581 data-nosnippet>581</a>                <span class="prelude-val">Err</span>(e) =&gt; <span class="macro">panic!</span>(<span class="string">"loader timed out / disconnected: {e}"</span>),
+<a href=#582 id=582 data-nosnippet>582</a>            }
+<a href=#583 id=583 data-nosnippet>583</a>        }
+<a href=#584 id=584 data-nosnippet>584</a>        <span class="macro">assert!</span>(saw_stats, <span class="string">"loader never sent intensity Stats"</span>);
+<a href=#585 id=585 data-nosnippet>585</a>        <span class="macro">assert!</span>(points &gt; <span class="number">0</span>, <span class="string">"loader produced no points"</span>);
+<a href=#586 id=586 data-nosnippet>586</a>        <span class="comment">// ~budget points (stride=2 over 100k); allow generous slack.
+<a href=#587 id=587 data-nosnippet>587</a>        </span><span class="macro">assert!</span>(points &lt;= <span class="number">70_000</span>, <span class="string">"downsample exceeded budget: {points}"</span>);
+<a href=#588 id=588 data-nosnippet>588</a>    }
+<a href=#589 id=589 data-nosnippet>589</a>}
 </code></pre></div></section></main></body></html>
