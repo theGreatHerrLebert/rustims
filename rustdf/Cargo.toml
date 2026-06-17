@@ -39,9 +39,9 @@ rand = "0.8.5"
 rustc-hash = "2.1.0"
 bincode = "1.3.3"
 polars = { version = "0.43.1", features = ["ndarray", "parquet", "dtype-u8"] }
-# Thermo .raw writer (private repo; only built with the `thermo` feature)
-thermorawfile = { git = "https://github.com/theGreatHerrLebert/thermorawfile", rev = "9f4c0affe60a639759883fb569d3c9f5f7601856", optional = true }
-# SCIEX .wiff method reader (private repo; only built with the `sciex` feature)
+# Thermo .raw writer (public repo; only built with the `thermo` feature)
+thermorawfile = { git = "https://github.com/theGreatHerrLebert/thermorawfile", rev = "61bf4724bc35cd7bc916b6acebc49319a0f9bbbc", optional = true }
+# SCIEX .wiff method reader (public repo; only built with the `sciex` feature)
 sciexwiff = { git = "https://github.com/theGreatHerrLebert/sciexwiff", rev = "ef7c0cd7e59d3b51160e446cbe3af240d230668d", optional = true }
 # Open mzML writer (Joshua Klein's mzdata); only built with the `mzml` feature. The
 # vendor-neutral output path: render -> mzML (readable by DiaNN/alphaDIA, mzprov-signable).

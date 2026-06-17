@@ -469,7 +469,7 @@ fn build_compute_stage(
 mod tests {
     use super::*;
     use crate::data::point::GpuPoint;
-    use crate::render::uniforms::{CameraUniform, ParamsUniform};
+    use crate::render::uniforms::ParamsUniform;
 
     /// Build the pipelines (forcing WGSL compilation for both the draw and, when
     /// supported, the compaction compute shader), upload points, run prepare() +

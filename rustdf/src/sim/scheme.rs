@@ -420,12 +420,7 @@ impl AcquisitionScheme {
     pub fn dia_frame_schedule(
         &self,
     ) -> Vec<(u32, f64, u8, Option<f64>, Option<f64>, Option<f64>)> {
-        let (cycle_time_s, start_time_s) = match self.repeat {
-            RepeatPolicy::FixedCycleTime { cycle_time_s, start_time_s, .. } => {
-                (cycle_time_s, start_time_s)
-            }
-            _ => return Vec::new(),
-        };
+        let RepeatPolicy::FixedCycleTime { cycle_time_s, start_time_s, .. } = self.repeat;
         let n_cycles = self.num_cycles().unwrap_or(0);
         let n_events = self.cycle.len();
         if n_cycles == 0 || n_events == 0 {
