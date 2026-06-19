@@ -1,11 +1,28 @@
 use std::collections::{HashMap};
 use pyo3::prelude::*;
+use pyo3::exceptions::PyValueError;
 
 use mscore::data::peptide::{FragmentType, PeptideSequence, PeptideProductIon,
-                            PeptideProductIonSeries, PeptideProductIonSeriesCollection, PeptideIon};
+                            PeptideProductIonSeries, PeptideProductIonSeriesCollection, PeptideIon,
+                            NeutralLoss};
 use crate::py_annotation::PyMzSpectrumAnnotated;
 
 use crate::py_mz_spectrum::PyMzSpectrum;
+
+/// Map loss names from Python to mscore NeutralLoss. Recognises the default losses
+/// (with or without a leading "-"); an unknown name raises a Python ValueError rather
+/// than unwinding as a panic across the PyO3 boundary.
+fn parse_neutral_losses(names: &[String]) -> PyResult<Vec<NeutralLoss>> {
+    names.iter().map(|name| {
+        match name.trim_start_matches('-') {
+            "H2O" | "water" => Ok(NeutralLoss::water()),
+            "NH3" | "ammonia" => Ok(NeutralLoss::ammonia()),
+            "H3PO4" | "phospho" => Ok(NeutralLoss::phospho()),
+            other => Err(PyValueError::new_err(format!(
+                "Unknown neutral loss '{}'; expected one of H2O/water, NH3/ammonia, H3PO4/phospho", other))),
+        }
+    }).collect()
+}
 
 #[pyclass]
 pub struct PyPeptideIon {
@@ -215,6 +232,49 @@ impl PyPeptideSequence {
         PyMzSpectrum::from_inner(spectrum)
     }
 
+    /// Monoisotopic product-ion spectrum including neutral-loss peaks. `neutral_losses`
+    /// is a list of loss names; each is applied to every backbone ion. Recognised names:
+    /// "H2O"/"water", "NH3"/"ammonia", "H3PO4"/"phospho" (leading "-" optional).
+    pub fn calculate_mono_isotopic_product_ion_spectrum_with_losses(&self, charge: i32, fragment_type: String, neutral_losses: Vec<String>) -> PyResult<PyMzSpectrum> {
+        let f_type = match fragment_type.as_str() {
+            "a" => FragmentType::A,
+            "b" => FragmentType::B,
+            "c" => FragmentType::C,
+            "x" => FragmentType::X,
+            "y" => FragmentType::Y,
+            "z" => FragmentType::Z,
+            _ => return Err(PyValueError::new_err(format!("Invalid fragment type '{}'", fragment_type))),
+        };
+
+        let losses = parse_neutral_losses(&neutral_losses)?;
+        let spectrum = self.inner.calculate_mono_isotopic_product_ion_spectrum_with_losses(charge, f_type, losses);
+        Ok(PyMzSpectrum::from_inner(spectrum))
+    }
+
+    /// Immonium ions for the distinct residues (including modified residues) in the peptide,
+    /// as (residue_token, m/z) pairs. Charge 1.
+    pub fn calculate_immonium_ions(&self) -> Vec<(String, f64)> {
+        self.inner.calculate_immonium_ions().into_iter().map(|i| (i.residue, i.mz)).collect()
+    }
+
+    /// Monoisotopic immonium spectrum (charge-1 peaks, unit intensity).
+    pub fn calculate_immonium_spectrum(&self) -> PyMzSpectrum {
+        PyMzSpectrum::from_inner(self.inner.calculate_immonium_spectrum())
+    }
+
+    /// Internal fragment ions as (label, m/z) pairs, e.g. ("m2:4", 227.10263). b-type ions
+    /// over interior subsequences; `max_length` optionally caps the subsequence length.
+    #[pyo3(signature = (charge, max_length=None))]
+    pub fn calculate_internal_ions(&self, charge: i32, max_length: Option<usize>) -> Vec<(String, f64)> {
+        self.inner.calculate_internal_ions(charge, max_length).into_iter().map(|i| (i.label(), i.mz())).collect()
+    }
+
+    /// Monoisotopic internal-fragment spectrum (unit intensity).
+    #[pyo3(signature = (charge, max_length=None))]
+    pub fn calculate_internal_ion_spectrum(&self, charge: i32, max_length: Option<usize>) -> PyMzSpectrum {
+        PyMzSpectrum::from_inner(self.inner.calculate_internal_ion_spectrum(charge, max_length))
+    }
+
     pub fn calculate_mono_isotopic_product_ion_spectrum_annotated(&self, charge: i32, fragment_type: String) -> PyMzSpectrumAnnotated {
         let f_type = match fragment_type.as_str() {
             "a" => FragmentType::A,
@@ -326,6 +386,10 @@ impl PyPeptideProductIon {
     #[getter]
     pub fn intensity(&self) -> f64 {
         self.inner.ion.intensity
+    }
+    #[getter]
+    pub fn neutral_loss(&self) -> Option<String> {
+        self.inner.neutral_loss.as_ref().map(|nl| nl.name.clone())
     }
     #[getter]
     pub fn mono_isotopic_mass(&self) -> f64 {
