@@ -125,18 +125,23 @@ class AstralAcquisitionBuilder:
         # the elution weight -> rendered peaks come out ~100x too faint and DIA-NN finds
         # ~nothing. Derive it from the MS1 (precursor, ms_type==0) frames so each cycle's
         # elution weight is correct, matching the Bruker cycle-frame path.
+        # Sort by time before diffing (the schedule is chronological, but don't rely on it).
         if "ms_type" in ft.columns:
-            cycle_times = ft["time"].values[ft["ms_type"].values == 0]
+            cycle_times = np.sort(ft["time"].values[ft["ms_type"].values == 0])
         else:
-            cycle_times = ft["time"].values
+            cycle_times = np.sort(ft["time"].values)
         cyc_diffs = np.diff(cycle_times)
         cyc_pos = cyc_diffs[cyc_diffs > 0]
         if cyc_pos.size:
             self.rt_cycle_length = float(np.median(cyc_pos))
         else:
-            diffs = np.diff(ft["time"].values)
-            positive = diffs[diffs > 0]
-            self.rt_cycle_length = float(np.median(positive)) if positive.size else 0.0
+            # Fail loud rather than silently fall back to the per-scan spacing (which is the
+            # exact bug this derivation fixes): a valid DIA template has multiple MS1 surveys.
+            raise ValueError(
+                "cannot determine rt_cycle_length: template has <2 MS1 (ms_type==0) frames, so "
+                "the per-cycle (MS1->MS1) interval is undefined. A valid DIA acquisition must "
+                "have multiple MS1 survey scans."
+            )
 
         if mz_lower is None:
             mz_lower = float(win["isolation_mz"].min() - win["isolation_width"].max())
