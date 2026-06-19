@@ -117,9 +117,26 @@ class AstralAcquisitionBuilder:
         self.frame_to_template_scan = f2scan
         self.num_frames = len(ft)
         self.gradient_length = float(ft["time"].max())
-        diffs = np.diff(ft["time"].values)
-        positive = diffs[diffs > 0]
-        self.rt_cycle_length = float(np.median(positive)) if positive.size else 0.0
+        # rt_cycle_length is the per-CYCLE interval (MS1->MS1 time), NOT the per-scan
+        # interval. These are per-scan frames (~hundreds of MS2 windows per cycle), so the
+        # median diff over ALL frames is the scan spacing; using it under-scales the EMG
+        # frame-abundance per cycle by ~scans-per-cycle. Each cycle's single MS1 (and the
+        # single MS2 window matching a precursor) then carries only ~1/scans-per-cycle of
+        # the elution weight -> rendered peaks come out ~100x too faint and DIA-NN finds
+        # ~nothing. Derive it from the MS1 (precursor, ms_type==0) frames so each cycle's
+        # elution weight is correct, matching the Bruker cycle-frame path.
+        if "ms_type" in ft.columns:
+            cycle_times = ft["time"].values[ft["ms_type"].values == 0]
+        else:
+            cycle_times = ft["time"].values
+        cyc_diffs = np.diff(cycle_times)
+        cyc_pos = cyc_diffs[cyc_diffs > 0]
+        if cyc_pos.size:
+            self.rt_cycle_length = float(np.median(cyc_pos))
+        else:
+            diffs = np.diff(ft["time"].values)
+            positive = diffs[diffs > 0]
+            self.rt_cycle_length = float(np.median(positive)) if positive.size else 0.0
 
         if mz_lower is None:
             mz_lower = float(win["isolation_mz"].min() - win["isolation_width"].max())

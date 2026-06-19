@@ -200,9 +200,12 @@ class WatersSonarAcquisitionBuilder:
         self.frame_to_template_scan = f2scan  # synthetic (1..N); no real vendor slots
         self.num_frames = len(ft)
         self.gradient_length = float(ft["time"].max())
-        diffs = np.diff(ft["time"].values)
-        positive = diffs[diffs > 0]
-        self.rt_cycle_length = float(np.median(positive)) if positive.size else 0.0
+        # rt_cycle_length is the per-CYCLE interval (one full SONAR quad sweep), NOT the
+        # per-scan frame spacing. These are per-scan frames (many scanning-quad windows per
+        # cycle), so median(diff(all frame times)) is the scan spacing — using it under-scales
+        # the EMG frame-abundance per cycle by ~windows-per-cycle and collapses rendered peak
+        # intensities. Use the authoritative SONAR cycle time.
+        self.rt_cycle_length = float(cycle_time_s)
 
         if mz_lower is None:
             mz_lower = float(win["isolation_mz"].min() - win["isolation_width"].max())
