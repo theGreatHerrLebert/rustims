@@ -28,6 +28,7 @@ from .template_acquisition_common import (
     TemplateTdfWriterStub,
     build_frame_tables_from_schedule,
     build_synthetic_scan_table,
+    rt_cycle_length_from_ms1,
 )
 
 # Backward-compatible aliases (the function/classes moved to template_acquisition_common).
@@ -117,31 +118,10 @@ class AstralAcquisitionBuilder:
         self.frame_to_template_scan = f2scan
         self.num_frames = len(ft)
         self.gradient_length = float(ft["time"].max())
-        # rt_cycle_length is the per-CYCLE interval (MS1->MS1 time), NOT the per-scan
-        # interval. These are per-scan frames (~hundreds of MS2 windows per cycle), so the
-        # median diff over ALL frames is the scan spacing; using it under-scales the EMG
-        # frame-abundance per cycle by ~scans-per-cycle. Each cycle's single MS1 (and the
-        # single MS2 window matching a precursor) then carries only ~1/scans-per-cycle of
-        # the elution weight -> rendered peaks come out ~100x too faint and DIA-NN finds
-        # ~nothing. Derive it from the MS1 (precursor, ms_type==0) frames so each cycle's
-        # elution weight is correct, matching the Bruker cycle-frame path.
-        # Sort by time before diffing (the schedule is chronological, but don't rely on it).
-        if "ms_type" in ft.columns:
-            cycle_times = np.sort(ft["time"].values[ft["ms_type"].values == 0])
-        else:
-            cycle_times = np.sort(ft["time"].values)
-        cyc_diffs = np.diff(cycle_times)
-        cyc_pos = cyc_diffs[cyc_diffs > 0]
-        if cyc_pos.size:
-            self.rt_cycle_length = float(np.median(cyc_pos))
-        else:
-            # Fail loud rather than silently fall back to the per-scan spacing (which is the
-            # exact bug this derivation fixes): a valid DIA template has multiple MS1 surveys.
-            raise ValueError(
-                "cannot determine rt_cycle_length: template has <2 MS1 (ms_type==0) frames, so "
-                "the per-cycle (MS1->MS1) interval is undefined. A valid DIA acquisition must "
-                "have multiple MS1 survey scans."
-            )
+        # Per-cycle (MS1->MS1) interval, NOT the per-scan frame spacing — see
+        # rt_cycle_length_from_ms1. Using the scan spacing here under-scales the EMG
+        # frame-abundance per cycle by ~scans-per-cycle and collapses rendered peak intensities.
+        self.rt_cycle_length = rt_cycle_length_from_ms1(ft)
 
         if mz_lower is None:
             mz_lower = float(win["isolation_mz"].min() - win["isolation_width"].max())
