@@ -212,7 +212,12 @@ def _koina_result_to_prosit_vectors(
                 charge_idx = int(match.group(3)) - 1  # 0-indexed
                 if 0 <= frag_idx < max_frags and 0 <= charge_idx < 3:
                     tensor[frag_idx, 0 if ion_type == 'y' else 1, charge_idx] = inten
-            vec = tensor.flatten()
+            # Serialize charge-major (Y1..29@z1, B1..29@z1, @z2, @z3) to match the
+            # render-time decode (reshape_prosit_array) and the local-model path's
+            # flatten_prosit_array. numpy's default tensor.flatten() is C-order
+            # (ordinal-major), which maps every intensity onto the WRONG fragment —
+            # scrambling every Koina-predicted spectrum while staying self-consistent.
+            vec = flatten_prosit_array(tensor)
         else:
             vals = np.asarray(group[intensity_col].values, dtype=np.float32)
             vec = np.full(174, fill_value, dtype=np.float32)
