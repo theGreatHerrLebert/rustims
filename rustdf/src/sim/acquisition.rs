@@ -137,7 +137,7 @@ mod thermo {
         /// slot). A SINGLE cursor walks this in order, so the caller must feed scans
         /// in the template's schedule — a level mismatch is rejected (independent
         /// MS1/MS2 cursors could not catch a reordered stream).
-        slots: Vec<(u32, bool)>,
+        slots: Vec<(u32, u8, bool)>,   // (scan, ms_level, is_profile): level & encoding decoupled
         cursor: usize,
         mode: WriteMode,
         /// Opt out of the zero-residual completeness check at `finalize` (e.g. a
@@ -150,8 +150,8 @@ mod thermo {
     /// Whether a descriptor's ms-level fits the next template slot type (MS1 ⇒
     /// profile slot, MS2+ ⇒ centroid slot). Free fn so the ordering contract is
     /// unit-testable without a template.
-    pub(crate) fn slot_level_matches(is_profile: bool, ms_level: u8) -> bool {
-        (ms_level <= 1) == is_profile
+    pub(crate) fn slot_level_matches(slot_ms_level: u8, scan_ms_level: u8) -> bool {
+        slot_ms_level == scan_ms_level
     }
 
     impl ThermoRawWriter {
@@ -179,7 +179,26 @@ mod thermo {
                 let profile_size =
                     u32::from_le_bytes(raw.bytes[pkt + 4..pkt + 8].try_into().unwrap());
                 let scan = raw.first_scan + i as u32;
-                slots.push((scan, profile_size > 0));
+                let is_profile = profile_size > 0;
+                // Real ms-level from the scan event, decoupled from profile/centroid (a Q Exactive
+                // HF-X DIA template has profile MS2; profile⇒MS1 is only an Astral coincidence).
+                let ms_level = raw
+                    .scan_event(scan)
+                    .map(|e| e.ms_order)
+                    .unwrap_or(if is_profile { 1 } else { 2 });
+                // GUARD (codex review): decoupling must not silently enable centroid-MS1 overlay,
+                // whose isotope-envelope/calibration semantics differ. Keep profile-MS1 explicit.
+                if ms_level <= 1 && !is_profile {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "centroid-MS1 template not supported for overlay (scan {}); \
+                             profile-MS1 required",
+                            scan
+                        ),
+                    ));
+                }
+                slots.push((scan, ms_level, is_profile));
             }
             Ok(Self {
                 raw,
@@ -210,7 +229,7 @@ mod thermo {
 
         /// Template MS1/MS2 capacity, so callers can check a run fits.
         pub fn capacity(&self) -> (usize, usize) {
-            let ms1 = self.slots.iter().filter(|s| s.1).count();
+            let ms1 = self.slots.iter().filter(|s| s.1 <= 1).count();
             (ms1, self.slots.len() - ms1)
         }
 
@@ -234,14 +253,14 @@ mod thermo {
 
         /// The ordered slot manifest `(scan_number, is_profile)` — for preflight
         /// (matching the run's MS-level sequence to the template before writing).
-        pub fn manifest(&self) -> &[(u32, bool)] {
+        pub fn manifest(&self) -> &[(u32, u8, bool)] {
             &self.slots
         }
     }
 
     impl AcquisitionWriter for ThermoRawWriter {
         fn write_scan(&mut self, scan: &ScanDescriptor) -> io::Result<()> {
-            let (t, is_profile) = *self.slots.get(self.cursor).ok_or_else(|| {
+            let (t, slot_ms_level, is_profile) = *self.slots.get(self.cursor).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!(
@@ -254,15 +273,16 @@ mod thermo {
             // Enforce the template's GLOBAL scan order: the descriptor's level must
             // match the next slot's type. A single cursor catches a reordered stream
             // (MS1,MS2,MS1,MS2 vs MS1,MS1,MS2,MS2) that independent cursors could not.
-            if !slot_level_matches(is_profile, scan.ms_level) {
+            if !slot_level_matches(slot_ms_level, scan.ms_level) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     format!(
-                        "scan-order mismatch at slot {} (template scan {}): template \
-                         expects {} but got ms_level {}",
+                        "scan-order mismatch at slot {} (template scan {}): template slot \
+                         ms_level {} (is_profile {}) but got ms_level {}",
                         self.cursor,
                         t,
-                        if is_profile { "MS1/profile" } else { "MS2/centroid" },
+                        slot_ms_level,
+                        is_profile,
                         scan.ms_level
                     ),
                 ));
@@ -397,14 +417,13 @@ mod tests {
     #[test]
     fn slot_level_matches_enforces_ordering_contract() {
         use super::thermo::slot_level_matches;
-        // MS1 (ms_level 0/1) belongs in a profile slot; MS2+ in a centroid slot.
-        assert!(slot_level_matches(true, 1));
-        assert!(slot_level_matches(true, 0));
-        assert!(slot_level_matches(false, 2));
-        assert!(slot_level_matches(false, 3));
-        // Mismatches the single-cursor writer rejects.
-        assert!(!slot_level_matches(true, 2)); // MS2 into a profile slot
-        assert!(!slot_level_matches(false, 1)); // MS1 into a centroid slot
+        // slot_level_matches now compares ACTUAL ms-levels (template slot vs simulated scan),
+        // decoupled from profile/centroid encoding.
+        assert!(slot_level_matches(1, 1));
+        assert!(slot_level_matches(2, 2));
+        // Mismatches the single-cursor writer rejects (reordered MS1/MS2 stream).
+        assert!(!slot_level_matches(1, 2)); // MS2 scan into an MS1 slot
+        assert!(!slot_level_matches(2, 1)); // MS1 scan into an MS2 slot
     }
 
     // Gated: set TIMSIM_ASTRAL_TEMPLATE to a real Orbitrap Astral .raw to run.
@@ -611,7 +630,7 @@ mod tests {
         let mut w = ThermoRawWriter::from_template(&template, &out)
             .expect("open")
             .with_mode(WriteMode::Overlay { merge_tol_ppm: 20.0 });
-        for &(_, is_profile) in w.manifest().to_vec().iter() {
+        for &(_, _, is_profile) in w.manifest().to_vec().iter() {
             w.write_scan(&ScanDescriptor {
                 ms_level: if is_profile { 1 } else { 2 },
                 retention_time: 0.0,
