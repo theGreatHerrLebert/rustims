@@ -28,6 +28,7 @@ from .template_acquisition_common import (
     TemplateTdfWriterStub,
     build_frame_tables_from_schedule,
     build_synthetic_scan_table,
+    rt_cycle_length_from_ms1,
 )
 
 # Backward-compatible aliases (the function/classes moved to template_acquisition_common).
@@ -117,9 +118,10 @@ class AstralAcquisitionBuilder:
         self.frame_to_template_scan = f2scan
         self.num_frames = len(ft)
         self.gradient_length = float(ft["time"].max())
-        diffs = np.diff(ft["time"].values)
-        positive = diffs[diffs > 0]
-        self.rt_cycle_length = float(np.median(positive)) if positive.size else 0.0
+        # Per-cycle (MS1->MS1) interval, NOT the per-scan frame spacing — see
+        # rt_cycle_length_from_ms1. Using the scan spacing here under-scales the EMG
+        # frame-abundance per cycle by ~scans-per-cycle and collapses rendered peak intensities.
+        self.rt_cycle_length = rt_cycle_length_from_ms1(ft)
 
         if mz_lower is None:
             mz_lower = float(win["isolation_mz"].min() - win["isolation_width"].max())

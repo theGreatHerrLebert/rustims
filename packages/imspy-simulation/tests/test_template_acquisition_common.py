@@ -38,3 +38,43 @@ def test_stub_handles_carry_the_ranges_jobs_read():
     assert writer.helper_handle is handle
     assert (handle.mz_lower, handle.mz_upper) == (100.0, 1700.0)
     assert (handle.im_lower, handle.im_upper, handle.num_scans) == (0.6, 1.6, 451)
+
+
+# --- rt_cycle_length: per-cycle (MS1->MS1), not per-scan spacing (the fix) ---
+
+def _astral_like_schedule():
+    """3 cycles of MS1 + 2 MS2 windows; MS1 surveys 1.0 s apart, scans ~0.33 s apart."""
+    rows, scan = [], 0
+    for c in range(3):
+        t0 = float(c)
+        scan += 1; rows.append((scan, t0, 1, None, None, None))
+        scan += 1; rows.append((scan, t0 + 0.33, 2, 500.0, 20.0, 25.0))
+        scan += 1; rows.append((scan, t0 + 0.66, 2, 520.0, 20.0, 27.0))
+    return rows
+
+
+def test_rt_cycle_length_uses_ms1_spacing_not_scan_spacing():
+    ft, *_ = C.build_frame_tables_from_schedule(_astral_like_schedule(), num_scans=10)
+    # per-scan spacing is ~0.33 s; the true cycle (MS1->MS1) is 1.0 s
+    assert abs(C.rt_cycle_length_from_ms1(ft) - 1.0) < 1e-9
+
+
+def test_rt_cycle_length_raises_on_single_ms1():
+    import pytest
+    ft, *_ = C.build_frame_tables_from_schedule(
+        [(1, 0.0, 1, None, None, None), (2, 0.33, 2, 500.0, 20.0, 25.0)], num_scans=10
+    )
+    with pytest.raises(ValueError):
+        C.rt_cycle_length_from_ms1(ft)
+
+
+def test_rt_cycle_length_matches_sonar_cycle_time():
+    # Waters/SCIEX builders use the authoritative cycle_time_s; confirm it equals the MS1->MS1
+    # spacing the helper derives (i.e. the per-cycle interval, not the per-scan window spacing).
+    from imspy_simulation.timsim.jobs.waters_acquisition import build_sonar_schedule
+    schedule, _c, _n = build_sonar_schedule(
+        mz_start=400.0, mz_end=900.0, window_width=20.0, window_step=20.0,
+        cycle_time_s=0.5, gradient_length_s=5.0, ce_intercept=5.0, ce_slope_per_mz=0.04,
+    )
+    ft, *_ = C.build_frame_tables_from_schedule(schedule, num_scans=10)
+    assert abs(C.rt_cycle_length_from_ms1(ft) - 0.5) < 1e-6

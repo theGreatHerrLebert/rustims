@@ -149,3 +149,31 @@ class TemplateTdfWriterStub:
 
     def __init__(self, helper_handle):
         self.helper_handle = helper_handle
+
+
+def rt_cycle_length_from_ms1(frame_table: pd.DataFrame) -> float:
+    """Per-cycle (MS1->MS1) interval from a per-scan-frame table.
+
+    Build-from-template/parameters acquisitions use per-SCAN frames (one MS1 + many
+    MS2/SWATH/SONAR windows per cycle), so ``median(diff(all frame times))`` is the per-scan
+    spacing, NOT the cycle length. Feeding the scan spacing to the EMG frame-abundance
+    integration spreads a peptide's elution weight across every window's frame instead of
+    carrying it per cycle, under-scaling rendered peak intensities by ~windows-per-cycle.
+    Derive the cycle length from the MS1 (``ms_type == 0``) survey spacing instead.
+
+    Raises ``ValueError`` if there are <2 MS1 frames: a valid DIA acquisition has multiple MS1
+    surveys, and silently falling back to the scan spacing would re-introduce the exact bug
+    this fixes.
+    """
+    if "ms_type" in frame_table.columns:
+        times = np.sort(frame_table["time"].values[frame_table["ms_type"].values == 0])
+    else:
+        times = np.sort(frame_table["time"].values)
+    diffs = np.diff(times)
+    positive = diffs[diffs > 0]
+    if positive.size == 0:
+        raise ValueError(
+            "cannot determine rt_cycle_length: <2 MS1 (ms_type==0) frames, so the per-cycle "
+            "(MS1->MS1) interval is undefined; a valid DIA acquisition has multiple MS1 surveys."
+        )
+    return float(np.median(positive))
