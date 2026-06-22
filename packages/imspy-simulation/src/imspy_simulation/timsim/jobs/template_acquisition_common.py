@@ -15,10 +15,14 @@ transform (no connector / no DB), so it is unit-testable on its own.
 
 from __future__ import annotations
 
+import logging
+import math
 from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 # A schedule row: (scan, rt_s, ms_level, center_mz|None, width_mz|None, ce|None)
 ScheduleRow = Tuple[int, float, int, Optional[float], Optional[float], Optional[float]]
@@ -49,11 +53,132 @@ def build_synthetic_scan_table(
     return pd.DataFrame({"scan": scans, "mobility": mobilities})
 
 
+def validate_template_schedule(
+    schedule: Sequence[ScheduleRow],
+    *,
+    strict_fixed_dia: bool = False,
+) -> List[str]:
+    """Method-aware sanity gate for a build-from-template scan schedule.
+
+    A build-from-template run reads a vendor ``.raw`` / ``.wiff`` and turns its
+    per-scan schedule into acquisition tables. When the reader mis-decodes a file's
+    scan-event layout it returns plausible-but-wrong scan levels (e.g. a run read as
+    all-MS1), and the error otherwise surfaces cryptically deep in the render. This
+    gate refuses such a schedule at ingestion with an actionable message.
+
+    Hard failures (raise ``ValueError`` — unambiguous corruption / mis-parsed levels):
+      - empty schedule;
+      - any non-finite / negative RT, or non-monotonic (decreasing) RT;
+      - an MS2 row whose isolation center/width is missing, non-finite, or non-positive
+        (the scan level / isolation was mis-parsed);
+      - fewer than 2 MS1 surveys, or zero MS2 scans.
+
+    Soft (returned + logged as warnings; the irregular-cycle one raises only under
+    ``strict_fixed_dia``):
+      - MS1 rows carrying an isolation window — real MS1 events can carry a non-zero
+        center, so this warns rather than failing (hard-failing over-rejects valid files);
+      - irregular windows-per-cycle — legitimate for variable-window / scheduled /
+        GPF / CE-ramp DIA.
+
+    Returns the list of warning strings (empty when clean).
+    """
+    if not schedule:
+        raise ValueError("empty template schedule")
+
+    warnings: List[str] = []
+    n_ms1 = 0
+    n_ms2 = 0
+    prev_rt: Optional[float] = None
+    windows_per_cycle: List[int] = []
+    cur_cycle_ms2 = 0
+    seen_first_ms1 = False
+    n_ms1_with_iso = 0
+
+    for row in schedule:
+        scan, rt, ms_level, center, width, _ce = row
+        if rt is None or not math.isfinite(float(rt)) or rt < 0:
+            raise ValueError(f"scan {scan}: invalid retention time {rt!r}")
+        if prev_rt is not None and rt < prev_rt:
+            raise ValueError(
+                f"scan {scan}: retention time {rt} < previous {prev_rt} — the schedule "
+                f"is not monotonic; scan order or the RT field looks mis-parsed"
+            )
+        prev_rt = rt
+
+        if ms_level <= 1:  # MS1 survey
+            # Real MS1 events can carry a non-zero isolation center; a normalized
+            # schedule usually nulls it. Treat a surviving MS1 window as a WARNING, not
+            # a hard failure — hard-failing here would over-reject legitimate files.
+            if center is not None or width is not None:
+                n_ms1_with_iso += 1
+            n_ms1 += 1
+            if seen_first_ms1:
+                windows_per_cycle.append(cur_cycle_ms2)
+            seen_first_ms1 = True
+            cur_cycle_ms2 = 0
+        else:  # MS2 fragment
+            if center is None or width is None:
+                raise ValueError(
+                    f"scan {scan}: parsed as MS2 (ms_level={ms_level}) but isolation is "
+                    f"missing (center={center}, width={width}) — the scan-event levels "
+                    f"look mis-parsed for this file's layout"
+                )
+            cw, ww = float(center), float(width)
+            if not (math.isfinite(cw) and cw > 0.0 and math.isfinite(ww) and ww > 0.0):
+                raise ValueError(
+                    f"scan {scan}: MS2 isolation center/width is non-finite or non-positive "
+                    f"(center={center}, width={width}) — the scan-event fields look mis-parsed"
+                )
+            n_ms2 += 1
+            cur_cycle_ms2 += 1
+
+    if n_ms1 < 2:
+        raise ValueError(
+            f"template schedule has {n_ms1} MS1 survey(s); a valid DIA acquisition has "
+            f">= 2 — the reader may not support this file's scan-event layout"
+        )
+    if n_ms2 == 0:
+        raise ValueError(
+            "template schedule has no MS2 scans — the reader may not support this "
+            "file's scan-event layout"
+        )
+
+    if n_ms1_with_iso > 0:
+        msg = (
+            f"{n_ms1_with_iso} MS1 survey(s) carry an isolation window — normally a "
+            f"normalized schedule nulls these; non-fatal, but worth checking the extractor"
+        )
+        warnings.append(msg)
+        logger.warning("template schedule: %s", msg)
+
+    # Windows-per-cycle regularity over INTERIOR cycles (the trailing partial cycle in
+    # `cur_cycle_ms2` is excluded). Drop zero-MS2 "cycles" (consecutive MS1 surveys:
+    # lock-mass / system scans / method transitions) — they are not real DIA cycles and
+    # would otherwise spuriously read as irregular. Varies legitimately for non-fixed
+    # methods, so it warns rather than failing unless strict_fixed_dia.
+    interior = [w for w in windows_per_cycle if w > 0]
+    if len(interior) >= 2:
+        lo, hi = min(interior), max(interior)
+        if lo != hi:
+            msg = (
+                f"irregular DIA cycle: windows-per-cycle varies in [{lo}, {hi}] across "
+                f"{len(interior)} interior cycles (legitimate for variable-window / "
+                f"scheduled / GPF methods; unusual for fixed-window DIA)"
+            )
+            if strict_fixed_dia:
+                raise ValueError(msg + " — rejected under strict_fixed_dia")
+            warnings.append(msg)
+            logger.warning("template schedule: %s", msg)
+
+    return warnings
+
+
 def build_frame_tables_from_schedule(
     schedule: Sequence[ScheduleRow],
     *,
     num_scans: int = 1,
     ce_decimals: int = 2,
+    strict_fixed_dia: bool = False,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, List[int]]:
     """Build the DIA acquisition tables from a per-scan template schedule.
 
@@ -69,8 +194,9 @@ def build_frame_tables_from_schedule(
     frame_to_template_scan)`` where the last is a list mapping ``frame_id-1`` ->
     the template scan number (so the writer can author each frame into its slot).
     """
-    if not schedule:
-        raise ValueError("empty template schedule")
+    # Reject a mis-parsed / degenerate schedule at ingestion with an actionable
+    # message, instead of failing cryptically deep in the render.
+    validate_template_schedule(schedule, strict_fixed_dia=strict_fixed_dia)
 
     frames = []
     fragment_rows = []  # (frame_id, window_key)
