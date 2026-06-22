@@ -174,7 +174,7 @@ pub fn write_astral_raw(
     if opts.superimpose_ppm > 0.0 {
         writer = writer.with_mode(WriteMode::Overlay { merge_tol_ppm: opts.superimpose_ppm });
     }
-    let manifest: Vec<(u32, bool)> = writer.manifest().to_vec();
+    let manifest: Vec<(u32, u8, bool)> = writer.manifest().to_vec();
 
     // Frames are 1:1 with template slots, in scan order (the Astral builder built
     // them that way). Sort by frame id to align with the manifest order.
@@ -193,15 +193,16 @@ pub fn write_astral_raw(
     let prec_set = &builder.precursor_frame_builder.precursor_frame_id_set;
     let (mut ms1, mut ms2, mut ms2_nonempty, mut overflow_cleared) = (0usize, 0usize, 0usize, 0usize);
 
-    for (i, &(slot_scan, is_profile)) in manifest.iter().enumerate() {
+    for (i, &(slot_scan, slot_ms_level, is_profile)) in manifest.iter().enumerate() {
         let frame_id = frame_ids[i];
         let is_ms1 = prec_set.contains(&frame_id);
-        if is_ms1 != is_profile {
+        if is_ms1 != (slot_ms_level <= 1) {
             return Err(format!(
                 "level mismatch at slot {i} (template scan {slot_scan}): DB frame {frame_id} \
-                 is {} but the template slot is {}",
+                 is {} but the template slot is ms_level {} ({})",
                 if is_ms1 { "MS1" } else { "MS2" },
-                if is_profile { "profile/MS1" } else { "centroid/MS2" }
+                slot_ms_level,
+                if is_profile { "profile" } else { "centroid" }
             ));
         }
 
