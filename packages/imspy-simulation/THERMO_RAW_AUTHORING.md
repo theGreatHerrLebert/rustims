@@ -59,10 +59,29 @@ A Codex code review of the diff produced fixes now landed:
    cross-check (Velos 100% identical; Astral 5-controller, 18,909 scans, 0 diffs). See
    `REPACK_GAP_VALIDATION.md` in the crate.
 
+**Generality test → variable-length scan events (DONE).** Validating on a *second*,
+independent template (a real Orbitrap **Fusion** narrow-window DIA file, PXD026600)
+exposed that the Astral/Velos success relied on a **fixed-stride** scan-event table.
+Fusion-class instruments use **variable-length** scan events (MS1 events lack the
+reaction record, so they're shorter than MS2 → `scan_event_size == 0`), which the
+fixed-stride decoder couldn't read — silently mislabeling every scan MS2 with no
+isolation. Fixed by `thermorawfile::walk_variable_scan_events` (PR #5): a self-
+validating walk of the RE'd v66 grammar
+`preamble[136] + nprec + nprec·56(reaction) + nranges + nranges·16(range) + calib(44+4·nparam)`,
+building a per-scan offset table that must consume the event region *exactly* or
+return `None`. Validated against RawFileReader on the Fusion file: 1910 MS1 / 143250
+MS2, isolation `354/362/370 @ 8 Th` — exact. `has_scan_events()` reports decode
+success; rustdf's `thermo_frame_schedule` guard should switch to it from
+`scan_event_size == 0` so Fusion DIA templates are accepted.
+
+> **This is the Tier-2 prerequisite.** We can now *read* the full scan-event grammar
+> (preamble, reactions, ranges, calibration) for both fixed- and variable-length
+> layouts — which is exactly what authoring *new* scan events (Tier 2) requires.
+
 **Still open:** multi-controller byte-level proof (covered at reader level on Astral);
-cross-reader validation (ProteoWizard/Sage/DIA-NN on a repacked file); and landing in
-rustims, which needs the `thermorawfile` changes pushed and the `rev` pin bumped (a
-local-path `[patch]` is the dev stand-in today).
+cross-reader validation (ProteoWizard/Sage/DIA-NN on a repacked file); landing the
+parsing chain (merge PR #5 → bump `rev` pin → swap the rustdf guard to
+`!has_scan_events()` so Fusion templates simulate); and **Tier 2 itself** (§5).
 
 ## 1. Where we are today
 
@@ -230,19 +249,20 @@ window schemes, different MS1/MS2 cadence, different scan count).
 
 1. ScanIndex: add/remove entries; set RunHeader `first_scan` / `last_scan`
    (`+8` / `+12` in the run header).
-2. Scan-event array (`[scantrailer_addr+4, scanparams_addr)`, fixed stride
-   `scan_event_size`): author a **complete** event record per new scan.
+2. Scan-event array (`[scantrailer_addr+4, scanparams_addr)`): author a **complete**
+   event record per new scan. The grammar is now **fully decoded** (see §0 /
+   `walk_variable_scan_events`): `preamble[136] + nprec + reactions·56 + nranges +
+   ranges·16 + calib(44+4·nparam)`, for both fixed-stride and variable-length layouts.
 3. Scan-params (`GenericRecord` stream, v64+): author per-scan trailer params.
 4. Re-run the Tier-1 section-graph rebuild for the resized arrays + data.
 
-**This is materially riskier than a "fill in the fields" tone suggests.** A
-scan-event is not just filter-text ingredients. RawFileReader (and ProteoWizard,
-the vendor DLL chromatogram path, and downstream search engines) may validate or
-derive behaviour from: analyzer type, scan mode, dependent-scan relationships,
-precursor metadata, activation, polarity, detector class, resolution,
-AGC/injection-time-like fields, centroid/profile flags, mass ranges, method-segment
-IDs, trailer-extra keys, and controller/run consistency. **Fields our reader skips
-may still be required by theirs** — that's the unknown-stride trap.
+**De-risked by the variable-length work, but still real.** The "unknown-stride trap"
+(item §0) is now largely closed: we read every block (preamble, reactions, ranges,
+calibration) byte-exactly and match RawFileReader. Authoring is the inverse — emit the
+same blocks. The residual risk is the *within-block* fields our reader doesn't yet
+interpret (analyzer/scan-mode/dependent-scan flags, detector class, method-segment IDs,
+trailer-extra keys) — RawFileReader may require values there it currently tolerates as
+copied-through bytes.
 
 **Mitigation:** author against a real template as a **reference skeleton** — copy a
 real event of the right MS level, then patch only the known fields — rather than
