@@ -154,11 +154,11 @@ mod thermo {
         slot_ms_level == scan_ms_level
     }
 
-    /// True iff `e` is the thermorawfile "authored …exceed the scan's packet budget"
-    /// overflow — the one error the writer recovers from (by repacking to grow the
-    /// packet) rather than propagating.
+    /// True iff `e` is the thermorawfile over-budget overflow — the one error the writer
+    /// recovers from (by repacking to grow the packet) rather than propagating. Delegates
+    /// to the crate's typed predicate so it can't drift from the error's wording.
     fn is_over_budget(e: &io::Error) -> bool {
-        e.to_string().contains("packet budget")
+        thermorawfile::is_over_budget(e)
     }
 
     impl ThermoRawWriter {
