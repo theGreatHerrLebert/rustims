@@ -32,12 +32,26 @@ RawFileReader **without** patching the run-header 32-bit mirror addresses — th
 reader uses the 64-bit pointers. Mirrors are still worth patching for older revs /
 safety, but they are not a blocker.
 
-**Still open (Tier 1 hardening):** patch the 32-bit mirrors; a *batch*
-finalize-with-resize (one rebuild, not a splice per overflow scan) if overflow turns
-out common; and validation of chromatogram/XIC + full trailer-extra readback (the
-oracle so far exercised open + file header + instrument + scan stats + scan events +
-segmented scans for every scan). Landing in rustims also needs the `thermorawfile`
-changes pushed and the `rev` pin bumped (a local-path `[patch]` is the dev stand-in).
+**Code-review hardening (done, see `THERMO_RAW_AUTHORING.codex.md` in the crate).**
+A Codex code review of the diff produced fixes now landed:
+- checked relocation arithmetic, `splice_packet_and_relocate` returns `Result`
+  (fail loud, never a silent wrap);
+- `Offset32` written via checked `u32::try_from` — a >4 GB data section errors
+  instead of truncating;
+- scan-index relocation keyed on **physical packet address**, not scan-number order;
+- **every controller's** run-header section pointers relocated (not just MS),
+  bounds-checked — re-validated on the **5-controller** Astral file;
+- packet-within-data-section invariants; run-header offsets as named `RH_*` consts;
+- `thermorawfile::is_over_budget` typed predicate replaces the rustdf substring match.
+
+**Still open (Tier 1 hardening):** patch the run-header 32-bit *mirror* block (rev-66
+reader doesn't need it; older revs might); a *batch* finalize-with-resize (one rebuild,
+not a splice per overflow scan) if overflow turns out common; relocate internal
+pointers inside moved method/log/tune sections **or** prove they're not consulted
+(RawFileReader read clean on the Astral file *which contains* those sections — good
+evidence, not yet a guarantee); and validation of chromatogram/XIC + full trailer-extra
+readback. Landing in rustims also needs the `thermorawfile` changes pushed and the
+`rev` pin bumped (a local-path `[patch]` is the dev stand-in).
 
 ## 1. Where we are today
 
