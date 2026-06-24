@@ -30,6 +30,18 @@ build/
 
 # Jupyter
 .ipynb_checkpoints/
+.pytest_cache/
+
+# Python virtual environments
+.venv/
+**/.venv/
+venv/
+
+# Training/run artifacts
+*.log
+checkpoints/
+results/
+*.tdf
 
 # Test/example data (large files)
 imspy/examples/T*/
