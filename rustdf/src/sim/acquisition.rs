@@ -382,27 +382,18 @@ mod thermo {
         }
 
         fn finalize(&mut self) -> io::Result<()> {
-            // Zero-residual contract: in Replace mode every template slot must have
-            // been authored, else the saved file keeps the template's REAL signal in
-            // the unconsumed slots (a partial/cancelled run masquerading as valid
-            // output). Overlay mode intentionally retains template signal, so it is
-            // exempt; `allow_partial` opts out for partial-write smoke tests.
-            if matches!(self.mode, WriteMode::Replace) && !self.allow_partial && !self.is_complete() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!(
-                        "incomplete Replace run: {}/{} template slots authored — the \
-                         remaining {} slots still hold the template's real signal. \
-                         Author every slot, or use with_allow_partial(true).",
-                        self.cursor,
-                        self.slots.len(),
-                        self.slots.len() - self.cursor
-                    ),
-                ));
-            }
-            // Apply all deferred over-budget scans in a SINGLE data-section rebuild
-            // (O(file size), vs one splice per scan). The in-place author_* writes have
-            // already landed; this grows only the scans that overflowed their slot.
+            // Apply all deferred over-budget scans FIRST, in a SINGLE data-section
+            // rebuild (O(file size), vs one splice per scan). The in-place author_*
+            // writes have already landed; this grows only the scans that overflowed
+            // their slot. Done before the residual check so the file is fully authored
+            // by the time any validation runs (the check below is cursor-based today,
+            // but applying first keeps it correct even if it ever inspects bytes).
+            //
+            // Note: each deferred scan's peaks are held cloned until here, and
+            // repack_many transiently allocates a second copy of the data section. For a
+            // run where MOST scans overflow on a multi-GB template, peak memory is
+            // roughly file + rebuilt-data-section + deferred payloads; acceptable for now
+            // but the ceiling to watch if this is pushed to huge inputs.
             if !self.deferred.is_empty() {
                 let edits: Vec<thermorawfile::ScanEdit> = self
                     .deferred
@@ -420,6 +411,26 @@ mod thermo {
                     })
                     .collect();
                 self.raw.repack_many(&edits)?;
+            }
+
+            // Zero-residual contract: in Replace mode every template slot must have
+            // been authored (deferred overflow scans counted — their cursor advanced and
+            // they were just rebuilt above), else the saved file keeps the template's
+            // REAL signal in the unconsumed slots (a partial/cancelled run masquerading
+            // as valid output). Overlay mode intentionally retains template signal, so it
+            // is exempt; `allow_partial` opts out for partial-write smoke tests.
+            if matches!(self.mode, WriteMode::Replace) && !self.allow_partial && !self.is_complete() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!(
+                        "incomplete Replace run: {}/{} template slots authored — the \
+                         remaining {} slots still hold the template's real signal. \
+                         Author every slot, or use with_allow_partial(true).",
+                        self.cursor,
+                        self.slots.len(),
+                        self.slots.len() - self.cursor
+                    ),
+                ));
             }
             let path = self.out_path.clone();
             self.raw.save(path)
