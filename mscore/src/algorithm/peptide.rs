@@ -297,6 +297,7 @@ pub fn atomic_product_ion_composition(product_ion: &PeptideProductIon) -> Vec<(&
 ///         charge: 1,
 ///         intensity: 1.0,
 ///     },
+///     neutral_loss: None,
 /// };
 /// let fragment_comp: Vec<(&str, i32)> = atomic_product_ion_composition(&b3_ion);
 /// let fragment_map: std::collections::HashMap<&str, i32> = fragment_comp.into_iter().collect();
