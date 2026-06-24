@@ -145,6 +145,18 @@ mod thermo {
         /// so a real Replace run that does not fill every slot fails loudly rather
         /// than saving a file with untouched template signal in the gaps.
         allow_partial: bool,
+        /// Over-budget scans deferred during `write_scan` and applied in a SINGLE
+        /// `repack_many` rebuild at `finalize` — so growing many scans past the
+        /// template budget costs one data-section rebuild, not one splice per scan.
+        deferred: Vec<DeferredEdit>,
+    }
+
+    /// A scan whose authored payload overflowed its template packet, deferred for the
+    /// batch rebuild at finalize.
+    struct DeferredEdit {
+        scan: u32,
+        peaks: Vec<(f64, f32)>,
+        is_profile: bool,
     }
 
     /// Whether a descriptor's ms-level fits the next template slot type (MS1 ⇒
@@ -152,6 +164,13 @@ mod thermo {
     /// unit-testable without a template.
     pub(crate) fn slot_level_matches(slot_ms_level: u8, scan_ms_level: u8) -> bool {
         slot_ms_level == scan_ms_level
+    }
+
+    /// True iff `e` is the thermorawfile over-budget overflow — the one error the writer
+    /// recovers from (by repacking to grow the packet) rather than propagating. Delegates
+    /// to the crate's typed predicate so it can't drift from the error's wording.
+    fn is_over_budget(e: &io::Error) -> bool {
+        thermorawfile::is_over_budget(e)
     }
 
     impl ThermoRawWriter {
@@ -208,6 +227,7 @@ mod thermo {
                 cursor: 0,
                 mode: WriteMode::Replace,
                 allow_partial: false,
+                deferred: Vec::new(),
             })
         }
 
@@ -303,18 +323,43 @@ mod thermo {
                 // Advance the cursor only after authoring succeeds, so a failed
                 // write doesn't permanently consume the slot.
                 match self.mode {
-                    WriteMode::Replace => self.raw.author_profile(t, &scan.peaks, &self.calib),
-                    WriteMode::Overlay { .. } => {
-                        self.raw.overlay_profile(t, &scan.peaks, &self.calib)
+                    WriteMode::Replace => {
+                        // Fast path: author in place. On (and only on) an over-budget
+                        // overflow, DEFER the scan — it can hold MORE peaks than the
+                        // template slot, but growing it relocates the file tail, so we
+                        // batch all overflows into one `repack_many` rebuild at finalize
+                        // instead of a splice per scan. The common in-budget write stays
+                        // in place; nothing is cleared (the old lossy behaviour).
+                        match self.raw.author_profile(t, &scan.peaks, &self.calib) {
+                            Ok(()) => {}
+                            Err(e) if is_over_budget(&e) => self.deferred.push(DeferredEdit {
+                                scan: t,
+                                peaks: scan.peaks.clone(),
+                                is_profile: true,
+                            }),
+                            Err(e) => return Err(e),
+                        }
                     }
-                }?;
+                    WriteMode::Overlay { .. } => {
+                        self.raw.overlay_profile(t, &scan.peaks, &self.calib)?
+                    }
+                }
             } else {
                 match self.mode {
                     WriteMode::Replace => {
-                        self.raw.author_centroids(t, &scan.peaks)?;
-                        // Author the descriptor's isolation window + CE into the
-                        // scan event so the output's MS2 metadata reflects the
-                        // intended scheme, not just the template's.
+                        match self.raw.author_centroids(t, &scan.peaks) {
+                            Ok(()) => {}
+                            Err(e) if is_over_budget(&e) => self.deferred.push(DeferredEdit {
+                                scan: t,
+                                peaks: scan.peaks.clone(),
+                                is_profile: false,
+                            }),
+                            Err(e) => return Err(e),
+                        }
+                        // Author the descriptor's isolation window + CE into the scan
+                        // event. Independent of the data-packet size, and the scan-event
+                        // bytes are preserved (relocated) by a later batch rebuild, so it
+                        // is correct to set here for both in-place and deferred scans.
                         if let Some(iso) = scan.isolation {
                             self.raw.set_isolation(
                                 t,
@@ -337,11 +382,43 @@ mod thermo {
         }
 
         fn finalize(&mut self) -> io::Result<()> {
+            // Apply all deferred over-budget scans FIRST, in a SINGLE data-section
+            // rebuild (O(file size), vs one splice per scan). The in-place author_*
+            // writes have already landed; this grows only the scans that overflowed
+            // their slot. Done before the residual check so the file is fully authored
+            // by the time any validation runs (the check below is cursor-based today,
+            // but applying first keeps it correct even if it ever inspects bytes).
+            //
+            // Note: each deferred scan's peaks are held cloned until here, and
+            // repack_many transiently allocates a second copy of the data section. For a
+            // run where MOST scans overflow on a multi-GB template, peak memory is
+            // roughly file + rebuilt-data-section + deferred payloads; acceptable for now
+            // but the ceiling to watch if this is pushed to huge inputs.
+            if !self.deferred.is_empty() {
+                let edits: Vec<thermorawfile::ScanEdit> = self
+                    .deferred
+                    .iter()
+                    .map(|d| {
+                        if d.is_profile {
+                            thermorawfile::ScanEdit::Profile {
+                                scan: d.scan,
+                                peaks: &d.peaks,
+                                calib: &self.calib,
+                            }
+                        } else {
+                            thermorawfile::ScanEdit::Centroids { scan: d.scan, peaks: &d.peaks }
+                        }
+                    })
+                    .collect();
+                self.raw.repack_many(&edits)?;
+            }
+
             // Zero-residual contract: in Replace mode every template slot must have
-            // been authored, else the saved file keeps the template's REAL signal in
-            // the unconsumed slots (a partial/cancelled run masquerading as valid
-            // output). Overlay mode intentionally retains template signal, so it is
-            // exempt; `allow_partial` opts out for partial-write smoke tests.
+            // been authored (deferred overflow scans counted — their cursor advanced and
+            // they were just rebuilt above), else the saved file keeps the template's
+            // REAL signal in the unconsumed slots (a partial/cancelled run masquerading
+            // as valid output). Overlay mode intentionally retains template signal, so it
+            // is exempt; `allow_partial` opts out for partial-write smoke tests.
             if matches!(self.mode, WriteMode::Replace) && !self.allow_partial && !self.is_complete() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -511,6 +588,128 @@ mod tests {
             "thermo_roundtrip OK: MS1 {:?}, MS2 {} peaks, MS2 iso {:.2}±{:.2} CE {:.1}",
             ms1_mz, cents.len(), ev.isolation_center, ev.isolation_width, ev.collision_energy
         );
+    }
+
+    // Gated: an over-budget MS2 must GROW via the repack fallback, not be cleared.
+    #[test]
+    fn thermo_overflow_repack() {
+        let template = match std::env::var("TIMSIM_ASTRAL_TEMPLATE") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP thermo_overflow_repack: set TIMSIM_ASTRAL_TEMPLATE=<astral .raw>");
+                return;
+            }
+        };
+        let out = std::env::temp_dir().join("rustdf_thermo_overflow.raw");
+        let mut w = ThermoRawWriter::from_template(&template, &out)
+            .expect("open template")
+            .with_allow_partial(true);
+
+        let ms1 = ScanDescriptor {
+            ms_level: 1,
+            retention_time: 0.0,
+            isolation: None,
+            peaks: vec![(500.0, 1.0e6), (700.0, 5.0e5)],
+        };
+        // Far more peaks than any realistic centroid packet budget → forces the repack.
+        let big: Vec<(f64, f32)> = (0..6000)
+            .map(|i| (200.0 + i as f64 * 0.1, 100.0 + i as f32))
+            .collect();
+        let ms2 = ScanDescriptor {
+            ms_level: 2,
+            retention_time: 0.01,
+            isolation: Some(IsolationWindow {
+                center_mz: 500.0,
+                width_mz: 2.0,
+                collision_energy: 25.0,
+            }),
+            peaks: big.clone(),
+        };
+
+        w.write_scan(&ms1).expect("write MS1");
+        // The assertion that matters: an over-budget MS2 now SUCCEEDS (grows via repack)
+        // instead of erroring / being cleared to empty.
+        w.write_scan(&ms2)
+            .expect("over-budget MS2 must grow via the repack fallback");
+        w.finalize().expect("finalize");
+
+        let rf = thermorawfile::RawFile::open(&out).expect("reopen");
+        assert!(rf.checksum_valid(), "checksum after in-sim repack");
+        let mut cent = None;
+        for i in 0..rf.index.len() {
+            let scan = rf.first_scan + i as u32;
+            let pkt = (rf.data_addr + rf.index[i].offset) as usize;
+            let psize = u32::from_le_bytes(rf.bytes[pkt + 4..pkt + 8].try_into().unwrap());
+            if psize == 0 {
+                cent = Some(scan);
+                break;
+            }
+        }
+        let n = rf.centroid_peaks(cent.unwrap()).len();
+        assert_eq!(n, big.len(), "repacked MS2 must keep ALL peaks, not be cleared");
+        eprintln!("thermo_overflow_repack OK: MS2 grown to {n} peaks via the repack fallback");
+    }
+
+    // Gated: MANY over-budget MS2 scans must all grow via ONE batch rebuild at finalize.
+    #[test]
+    fn thermo_overflow_batch() {
+        let template = match std::env::var("TIMSIM_ASTRAL_TEMPLATE") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP thermo_overflow_batch: set TIMSIM_ASTRAL_TEMPLATE=<astral .raw>");
+                return;
+            }
+        };
+        let out = std::env::temp_dir().join("rustdf_thermo_overflow_batch.raw");
+        let mut w = ThermoRawWriter::from_template(&template, &out)
+            .expect("open template")
+            .with_allow_partial(true);
+
+        // One MS1, then several over-budget MS2 (the Astral schedule has many MS2 per
+        // MS1, so consecutive MS2 slots follow the survey). Each is deferred and applied
+        // in a single repack_many at finalize.
+        w.write_scan(&ScanDescriptor {
+            ms_level: 1,
+            retention_time: 0.0,
+            isolation: None,
+            peaks: vec![(500.0, 1.0e6), (700.0, 5.0e5)],
+        })
+        .expect("write MS1");
+
+        let sizes = [3000usize, 4000, 5000, 3500, 4500];
+        for (k, &sz) in sizes.iter().enumerate() {
+            let big: Vec<(f64, f32)> = (0..sz)
+                .map(|i| (200.0 + i as f64 * 0.05, 100.0 + i as f32))
+                .collect();
+            w.write_scan(&ScanDescriptor {
+                ms_level: 2,
+                retention_time: 0.01 * (k + 1) as f64,
+                isolation: Some(IsolationWindow {
+                    center_mz: 400.0 + k as f64,
+                    width_mz: 2.0,
+                    collision_energy: 25.0,
+                }),
+                peaks: big,
+            })
+            .unwrap_or_else(|e| panic!("write over-budget MS2 #{k}: {e}"));
+        }
+        w.finalize().expect("finalize (batch rebuild)");
+
+        let rf = thermorawfile::RawFile::open(&out).expect("reopen");
+        assert!(rf.checksum_valid(), "checksum after batch rebuild");
+        // The first 5 centroid scans (the authored MS2) must carry the grown counts.
+        let cent_scans: Vec<u32> = (rf.first_scan..=rf.last_scan)
+            .filter(|&s| {
+                let i = (s - rf.first_scan) as usize;
+                let pkt = (rf.data_addr + rf.index[i].offset) as usize;
+                u32::from_le_bytes(rf.bytes[pkt + 4..pkt + 8].try_into().unwrap()) == 0
+            })
+            .take(sizes.len())
+            .collect();
+        for (k, &s) in cent_scans.iter().enumerate() {
+            assert_eq!(rf.centroid_peaks(s).len(), sizes[k], "MS2 scan {s} grown count");
+        }
+        eprintln!("thermo_overflow_batch OK: {} MS2 grown via one repack_many {:?}", sizes.len(), sizes);
     }
 
     // Gated: overlay (real⊕sim) — sim peaks added onto the template's real signal.
