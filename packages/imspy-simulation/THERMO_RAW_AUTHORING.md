@@ -1,10 +1,43 @@
 # THERMO_RAW_AUTHORING — lifting the Thermo `.raw` writer from template-overlay to arbitrary authoring
 
-> Status: **design / roadmap.** Captured after a full read of the `thermorawfile`
-> crate (pinned `rev 3773aa3`) and the rustims write path, then revised against an
-> independent Codex review (see `THERMO_RAW_AUTHORING.codex-review.md`). Goal:
+> Status: **Tier 1 IMPLEMENTED + oracle-validated** (centroid *and* profile);
+> Tier 2 still design. Captured after a full read of the `thermorawfile` crate and
+> the rustims write path, revised against an independent Codex review (see
+> `THERMO_RAW_AUTHORING.codex-review.md`), then updated after building Tier 1. Goal:
 > write `.raw` the way we write `.d` — arbitrary acquisition layout, arbitrary
 > peaks per scan — rather than repainting a real template within its limits.
+
+## 0. Implementation status (2026-06-24)
+
+**Tier 1 is built and validated against the official Thermo RawFileReader (.NET 8).**
+
+- `thermorawfile`: `RawFile::repack_centroids` + `repack_profile` grow/shrink a scan
+  past the template packet budget by splicing the data section and relocating the
+  file tail, via a shared `splice_packet_and_relocate` (controller directory →
+  run-header 64-bit section pointers → every scan-index `Offset`/`Offset32`).
+  Checksum recomputed once at `save`.
+- **Validated** by reading the output back with the official `RawFileReader`:
+  - Orbitrap **Velos Pro** fixture: centroid scan grown 196→588; MS1 profile grown
+    3032→4000; **all 95 scans read, 0 failures**.
+  - Orbitrap **Astral** target (1 GB): centroid scan grown 867→3468; neighbors +
+    MS1 intact.
+- **rustims wiring**: the sim writer (`rustdf/src/sim/acquisition.rs`) now falls back
+  from in-place `author_*` to `repack_*` **only on the over-budget error** — the
+  common in-budget write stays in place; rare overflow grows instead of the old lossy
+  `overflow_cleared`. Validated end-to-end (`thermo_overflow_repack`: a 6000-peak MS2
+  on a real Astral template grows and reads back in full).
+
+**Empirical finding that de-risks the rest:** rev-66 files round-trip through
+RawFileReader **without** patching the run-header 32-bit mirror addresses — the
+reader uses the 64-bit pointers. Mirrors are still worth patching for older revs /
+safety, but they are not a blocker.
+
+**Still open (Tier 1 hardening):** patch the 32-bit mirrors; a *batch*
+finalize-with-resize (one rebuild, not a splice per overflow scan) if overflow turns
+out common; and validation of chromatogram/XIC + full trailer-extra readback (the
+oracle so far exercised open + file header + instrument + scan stats + scan events +
+segmented scans for every scan). Landing in rustims also needs the `thermorawfile`
+changes pushed and the `rev` pin bumped (a local-path `[patch]` is the dev stand-in).
 
 ## 1. Where we are today
 
@@ -228,12 +261,14 @@ in CI.
 
 ## 8. Recommendation
 
-1. **Prototype Tier 0 (padding) first** — one padded scan through
-   RawFileReader/ProteoWizard/Sage/DIA-NN. If it passes, it's a cheap production
-   bridge to arbitrary peaks while Tier 1 lands.
-2. **Build Tier 1** as a section-graph rebuild (§4). High-value, removes the lossy
-   overflow + template peak ceiling, and produces the machinery Tier 2 needs anyway.
-   It also mints the padded templates Tier 0 relies on.
-3. **Defer Tier 2** until a target acquisition genuinely can't be expressed by an
-   existing template's method; build it template-skeleton-first and gate on
-   RawFileReader round-trip tests.
+1. **Tier 1 — DONE** (§0): `repack_centroids`/`repack_profile` implemented and
+   RawFileReader-validated; wired into the sim writer as the over-budget fallback.
+   Tier 0 (padding) is now moot for *correctness* — kept only as an optional perf
+   bridge (amortize one rebuild into a padded template for hot in-place writes).
+2. **Harden Tier 1**: patch the 32-bit mirrors; add a batch finalize-with-resize if
+   overflow is common; validate chromatogram/trailer-extra readback; push
+   `thermorawfile` + bump the `rev` pin so the rustims wiring can land off the local
+   `[patch]`.
+3. **Then Tier 2** (arbitrary layout) — build on the same relocation machinery,
+   template-skeleton-first, gated on RawFileReader round-trip tests, only once a
+   target acquisition genuinely can't be expressed by an existing template's method.
