@@ -50,3 +50,8 @@ imspy/examples/T*/
 # generated documentation
 imspy/docs/build
 
+# local design/plan/review docs — kept out of the repo (live locally only)
+*.codex-review.md
+packages/imspy-simulation/TIER2_REWINDOW.md
+packages/imspy-simulation/THERMO_RAW_AUTHORING.md
+
