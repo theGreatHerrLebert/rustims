@@ -555,18 +555,36 @@ def maybe_rewindow_thermo_template(config, save_path: str, name: str, logger) ->
     """Tier-2 3a: if ``dia_rewindow_isolation_width`` is set on a Thermo run, re-window the
     template to a copy (every MS2 window set to that width; centers + cadence kept) and
     point the run at the copy — so the schedule read AND authoring both use the new windows.
-    No-op otherwise. Same-cardinality (window count unchanged)."""
-    width = getattr(config, 'dia_rewindow_isolation_width', None)
-    if width is None or float(width) <= 0:
+    No-op otherwise.
+
+    SAME-CARDINALITY: the window count/centers are unchanged, only the width — so this
+    changes selectivity, it is NOT a re-tile. Narrowing leaves gaps between adjacent
+    windows; widening overlaps them. (Changing the window *count* to retile coverage is
+    Tier-2 3b, not yet implemented.)"""
+    get = config.get if isinstance(config, dict) else (lambda k, d=None: getattr(config, k, d))
+    raw_width = get('dia_rewindow_isolation_width', None)
+    if raw_width is None:
         return
+    try:
+        width = float(raw_width)
+    except (TypeError, ValueError):
+        raise ValueError(f"dia_rewindow_isolation_width must be a number, got {raw_width!r}")
+    if not (width == width and width > 0.0):  # reject NaN / <= 0
+        if width <= 0.0:
+            return  # 0 / negative = off
+        raise ValueError(f"dia_rewindow_isolation_width must be finite and > 0, got {raw_width!r}")
     src = thermo_template_path(config)
     if src is None:
         return
     import imspy_connector
-    dst = str(Path(save_path) / name / f"_rewindowed_w{float(width):g}Th.raw")
+    dst = str(Path(save_path) / name / f"_rewindowed_w{width:g}Th.raw")
     Path(dst).parent.mkdir(parents=True, exist_ok=True)
-    n = imspy_connector.py_acquisition.rewindow_thermo_template(src, dst, float(width))
-    logger.info(f"  DIA re-window (Tier-2 3a): {n} MS2 windows -> {float(width)} Th  ({dst})")
+    n = imspy_connector.py_acquisition.rewindow_thermo_template(src, dst, width)
+    logger.info(
+        f"  DIA re-window (Tier-2 3a): {n} MS2 windows -> {width} Th, centers kept "
+        f"(same-cardinality — changes selectivity, NOT a re-tile; narrowing leaves gaps, "
+        f"widening overlaps)  ({dst})"
+    )
     _set_template_path(config, dst)
 
 

@@ -131,7 +131,12 @@ mod thermo {
         let n = raw.rewindow_in_place(|_scan, ev| {
             Some((ev.isolation_center, isolation_width, ev.collision_energy))
         })?;
-        raw.save(dst)?;
+        // Atomic publish: write to a sibling temp then rename, so a partial/failed write
+        // can never leave a corrupt file at `dst` that a later run might trust.
+        let dst = dst.as_ref();
+        let tmp = dst.with_extension("raw.rewindow.tmp");
+        raw.save(&tmp)?;
+        std::fs::rename(&tmp, dst)?;
         Ok(n)
     }
 
