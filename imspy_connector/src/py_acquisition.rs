@@ -694,6 +694,24 @@ pub fn write_astral_raw(
     Ok((s.scans, s.ms1, s.ms2, s.ms2_nonempty, s.overflow_cleared, s.checksum_valid))
 }
 
+/// Re-window a Thermo DIA template (Tier-2 3a): write `src` → `dst` with every MS2
+/// isolation window set to `isolation_width` (centers + CE kept; same window count).
+/// Use as a pre-authoring step, then point the run's template at `dst`. Returns the
+/// number of MS2 scans re-windowed.
+#[cfg(feature = "thermo")]
+#[pyfunction]
+pub fn rewindow_thermo_template(
+    py: Python<'_>,
+    src_path: &str,
+    dst_path: &str,
+    isolation_width: f64,
+) -> PyResult<usize> {
+    use rustdf::sim::acquisition::rewindow_thermo_template as run;
+    use std::path::Path;
+    py.allow_threads(|| run(Path::new(src_path), Path::new(dst_path), isolation_width))
+        .map_err(PyValueError::new_err)
+}
+
 /// Render a no-IM DIA `synthetic_data.db` to open **mzML** (the SCIEX / vendor-neutral
 /// output). Walks the DB frames, renders MS1 (precursor marginal) + MS2 (per-window
 /// fragments), and writes mzML via mzdata. Returns `(scans, ms1, ms2, ms2_nonempty)`.
@@ -736,6 +754,8 @@ pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyThermoRawWriter>()?;
     #[cfg(feature = "thermo")]
     m.add_function(wrap_pyfunction!(write_astral_raw, m)?)?;
+    #[cfg(feature = "thermo")]
+    m.add_function(wrap_pyfunction!(rewindow_thermo_template, m)?)?;
     m.add_function(wrap_pyfunction!(legacy_frame_projection, m)?)?;
     m.add_function(wrap_pyfunction!(legacy_scan_projection, m)?)?;
     m.add_function(wrap_pyfunction!(legacy_scan_projection_par, m)?)?;

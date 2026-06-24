@@ -378,6 +378,13 @@ def get_default_settings() -> dict:
         # for an Astral run). Ignored for Bruker timsTOF.
         'collision_energy_nce': None,
 
+        # Tier-2 3a: for a Thermo build-from-template DIA run, re-window the template to
+        # this isolation width (Th) before authoring — every MS2 window's width is set to
+        # this value (centers + cadence kept; same window count). None/0 = use the
+        # template's real windows. Lets a sim request a custom DIA selectivity without a
+        # matching real template. Ignored off the Thermo path.
+        'dia_rewindow_isolation_width': None,
+
         # Variation settings
         're_scale_rt': False,
         'rt_variation_std': None,
@@ -532,6 +539,35 @@ def astral_nce_override(config) -> "float | None":
     if is_thermo_template_instrument(instrument):
         return getattr(config, 'collision_energy_nce', None)
     return None
+
+
+def _set_template_path(config, path: str) -> None:
+    """Point the run's Thermo template at ``path`` (both keys; astral takes precedence)."""
+    if isinstance(config, dict):
+        config['template_path'] = path
+        config['astral_template_path'] = path
+    else:
+        setattr(config, 'template_path', path)
+        setattr(config, 'astral_template_path', path)
+
+
+def maybe_rewindow_thermo_template(config, save_path: str, name: str, logger) -> None:
+    """Tier-2 3a: if ``dia_rewindow_isolation_width`` is set on a Thermo run, re-window the
+    template to a copy (every MS2 window set to that width; centers + cadence kept) and
+    point the run at the copy — so the schedule read AND authoring both use the new windows.
+    No-op otherwise. Same-cardinality (window count unchanged)."""
+    width = getattr(config, 'dia_rewindow_isolation_width', None)
+    if width is None or float(width) <= 0:
+        return
+    src = thermo_template_path(config)
+    if src is None:
+        return
+    import imspy_connector
+    dst = str(Path(save_path) / name / f"_rewindowed_w{float(width):g}Th.raw")
+    Path(dst).parent.mkdir(parents=True, exist_ok=True)
+    n = imspy_connector.py_acquisition.rewindow_thermo_template(src, dst, float(width))
+    logger.info(f"  DIA re-window (Tier-2 3a): {n} MS2 windows -> {float(width)} Th  ({dst})")
+    _set_template_path(config, dst)
 
 
 class SimulationConfig:
@@ -1323,6 +1359,9 @@ def main():
         # simulated on the template's true non-uniform timeline. Same path for Astral
         # and classic Orbitrap — the .raw writer handles the MS2 detector format.
         from .jobs.astral_acquisition import AstralAcquisitionBuilder
+        # Tier-2 3a: optionally re-window the template (custom DIA isolation width) before
+        # the schedule is read, so schedule + authoring stay consistent on the new windows.
+        maybe_rewindow_thermo_template(config, save_path, name, logger)
         _template = thermo_template_path(config)
         logger.info(f"  Thermo build-from-template ({instrument}): {_template}")
         acquisition_builder = AstralAcquisitionBuilder(

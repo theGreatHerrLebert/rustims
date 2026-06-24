@@ -94,13 +94,46 @@ pub trait AcquisitionWriter {
 }
 
 #[cfg(feature = "thermo")]
-pub use thermo::{ThermoRawWriter, WriteMode};
+pub use thermo::{rewindow_thermo_template, ThermoRawWriter, WriteMode};
 
 #[cfg(feature = "thermo")]
 mod thermo {
     use super::*;
     use std::path::{Path, PathBuf};
     use thermorawfile::{Calibration, RawFile};
+
+    /// Re-window a Thermo DIA template (Tier-2 3a): copy `src` to `dst` with every MS2
+    /// isolation window set to `isolation_width` (centers + CE kept — same cardinality).
+    /// Used as a pre-authoring step so a sim can request a custom DIA window width without
+    /// a matching real template. Returns the number of MS2 scans re-windowed.
+    ///
+    /// The new windows must then drive BOTH the schedule read and authoring — so callers
+    /// point `template_path` at `dst` for the rest of the run, keeping the acquisition DB
+    /// and the authored `.raw` consistent.
+    pub fn rewindow_thermo_template<P: AsRef<Path>, Q: AsRef<Path>>(
+        src: P,
+        dst: Q,
+        isolation_width: f64,
+    ) -> io::Result<usize> {
+        if !(isolation_width.is_finite() && isolation_width > 0.0) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("rewindow isolation_width must be finite and > 0, got {isolation_width}"),
+            ));
+        }
+        let mut raw = RawFile::open(src)?;
+        if !raw.has_scan_events() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "template scan events could not be decoded; cannot re-window",
+            ));
+        }
+        let n = raw.rewindow_in_place(|_scan, ev| {
+            Some((ev.isolation_center, isolation_width, ev.collision_energy))
+        })?;
+        raw.save(dst)?;
+        Ok(n)
+    }
 
     /// How `ThermoRawWriter` combines simulated peaks with the template scan.
     #[derive(Clone, Copy, Debug)]
@@ -710,6 +743,32 @@ mod tests {
             assert_eq!(rf.centroid_peaks(s).len(), sizes[k], "MS2 scan {s} grown count");
         }
         eprintln!("thermo_overflow_batch OK: {} MS2 grown via one repack_many {:?}", sizes.len(), sizes);
+    }
+
+    // Gated (Tier-2 3a): rewindow_thermo_template sets every MS2 window to a new width.
+    // Gate on a DIA template: `TIMSIM_VARLEN_DIA_TEMPLATE=<dia .raw>`.
+    #[test]
+    fn rewindow_thermo_template_sets_width() {
+        let src = match std::env::var("TIMSIM_VARLEN_DIA_TEMPLATE") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP rewindow_thermo_template_sets_width: set TIMSIM_VARLEN_DIA_TEMPLATE=<dia .raw>");
+                return;
+            }
+        };
+        let dst = std::env::temp_dir().join("rustdf_rewindow_5th.raw");
+        let n = super::rewindow_thermo_template(&src, &dst, 5.0).expect("rewindow");
+        assert!(n > 0, "expected MS2 scans re-windowed");
+        let rf = thermorawfile::RawFile::open(&dst).expect("reopen");
+        assert!(rf.checksum_valid());
+        let widths_ok = (rf.first_scan..=rf.last_scan)
+            .filter_map(|s| rf.scan_event(s))
+            .filter(|e| e.ms_order >= 2)
+            .all(|e| (e.isolation_width - 5.0).abs() < 1e-6);
+        assert!(widths_ok, "every MS2 window must now be 5.0 Th");
+        // bad width rejected
+        assert!(super::rewindow_thermo_template(&src, &dst, 0.0).is_err());
+        eprintln!("rewindow_thermo_template OK: {n} MS2 windows -> 5.0 Th");
     }
 
     // Gated: overlay (real⊕sim) — sim peaks added onto the template's real signal.
