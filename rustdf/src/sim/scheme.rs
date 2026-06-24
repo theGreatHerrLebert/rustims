@@ -1202,6 +1202,22 @@ impl AcquisitionScheme {
     ) -> io::Result<Vec<TemplateScan>> {
         use thermorawfile::RawFile;
         let raw = RawFile::open(path)?;
+        // Fail loud on a template whose scan events are not fixed-stride. The crate
+        // derives the per-scan ms-level / isolation from a fixed-stride scan-event table
+        // (the DIA norm: every event the same size). A DDA acquisition has
+        // variable-length events (MS1 ≠ MS2), so the stride can't be derived
+        // (scan_event_size == 0) and the per-scan event is undecodable — the packet-type
+        // fallback below then mislabels centroid-MS1 scans as MS2, silently producing a
+        // wrong schedule (observed on an Orbitrap Fusion DDA file: all 59k scans → MS2).
+        // Reject it rather than build a corrupt acquisition.
+        if raw.scan_event_size == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "template scan events are not fixed-stride (variable-length, e.g. a DDA \
+                 acquisition): per-scan ms-level/isolation can't be decoded, so the schedule \
+                 would be unreliable. Build-from-template needs a fixed-stride (DIA) template.",
+            ));
+        }
         let mut out = Vec::with_capacity(raw.index.len());
         for scan in raw.first_scan..=raw.last_scan {
             let i = (scan - raw.first_scan) as usize;
@@ -1927,5 +1943,27 @@ mod tests {
             "thermo_frame_schedule OK: {} scans ({} MS1, {} MS2), RT {:.2}..{:.2}s",
             sched.len(), n_ms1, n_ms2, sched.first().unwrap().retention_time_s, last_rt
         );
+    }
+
+    // A DDA template (variable-length scan events → scan_event_size == 0) must be
+    // REJECTED, not silently mislabeled (centroid-MS1 → MS2). Gate on a real DDA .raw,
+    // e.g. an Orbitrap Fusion file: `TIMSIM_DDA_TEMPLATE=<dda .raw>`.
+    #[cfg(feature = "thermo")]
+    #[test]
+    fn thermo_frame_schedule_rejects_variable_length_events() {
+        let template = match std::env::var("TIMSIM_DDA_TEMPLATE") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP thermo_frame_schedule_rejects_variable_length_events: set TIMSIM_DDA_TEMPLATE=<dda .raw>");
+                return;
+            }
+        };
+        let r = AcquisitionScheme::thermo_frame_schedule(&template);
+        let e = r.err().expect("a variable-length-event (DDA) template must be rejected");
+        assert!(
+            e.to_string().contains("not fixed-stride"),
+            "unexpected error: {e}"
+        );
+        eprintln!("thermo_frame_schedule correctly rejected DDA template: {e}");
     }
 }
