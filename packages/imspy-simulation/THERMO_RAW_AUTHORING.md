@@ -44,14 +44,25 @@ A Codex code review of the diff produced fixes now landed:
 - packet-within-data-section invariants; run-header offsets as named `RH_*` consts;
 - `thermorawfile::is_over_budget` typed predicate replaces the rustdf substring match.
 
-**Still open (Tier 1 hardening):** patch the run-header 32-bit *mirror* block (rev-66
-reader doesn't need it; older revs might); a *batch* finalize-with-resize (one rebuild,
-not a splice per overflow scan) if overflow turns out common; relocate internal
-pointers inside moved method/log/tune sections **or** prove they're not consulted
-(RawFileReader read clean on the Astral file *which contains* those sections — good
-evidence, not yet a guarantee); and validation of chromatogram/XIC + full trailer-extra
-readback. Landing in rustims also needs the `thermorawfile` changes pushed and the
-`rev` pin bumped (a local-path `[patch]` is the dev stand-in).
+**Tier 1 hardening — DONE (3 items, each implement → Codex review → fix):**
+1. **32-bit mirrors** — investigated: rev≥64 *zeroes* both the run-header `*Addr32`
+   slots and the scan-index `Offset32` (64-bit is authoritative). So there's nothing to
+   relocate; the earlier "checked Offset32 write" was *fabricating* a value and was
+   corrected to preserve the file's zero convention (guardrail test enforces it).
+2. **Batch finalize-with-resize** — `RawFile::repack_many`: one O(total-bytes) rebuild
+   instead of a splice per overflow; **byte-identical to N sequential repacks** (test).
+   The sim writer now defers over-budget scans and applies them in one rebuild at
+   finalize. Validated: 200 Astral scans grown in one ~4 s rebuild.
+3. **Method/log/tune internal pointers** — proven preserved two ways: a direct
+   **byte-range** proof (gap payload + scan-trailer/params are byte-identical after a
+   repack; only the run-header section pointers change) and a **RawFileReader digest**
+   cross-check (Velos 100% identical; Astral 5-controller, 18,909 scans, 0 diffs). See
+   `REPACK_GAP_VALIDATION.md` in the crate.
+
+**Still open:** multi-controller byte-level proof (covered at reader level on Astral);
+cross-reader validation (ProteoWizard/Sage/DIA-NN on a repacked file); and landing in
+rustims, which needs the `thermorawfile` changes pushed and the `rev` pin bumped (a
+local-path `[patch]` is the dev stand-in today).
 
 ## 1. Where we are today
 
