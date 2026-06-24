@@ -1202,6 +1202,17 @@ impl AcquisitionScheme {
     ) -> io::Result<Vec<TemplateScan>> {
         use thermorawfile::RawFile;
         let raw = RawFile::open(path)?;
+        // Reject a template whose per-scan scan events can't be decoded at all — without
+        // them the ms-level/isolation are unknown and the schedule would be unreliable.
+        // (Both fixed-stride (Astral/Velos) and variable-length (Fusion-class) layouts
+        // decode; this guards a layout whose event grammar we can't walk.)
+        if !raw.has_scan_events() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "template scan events could not be decoded (unsupported scan-event layout); \
+                 build-from-template needs per-scan ms-level/isolation.",
+            ));
+        }
         let mut out = Vec::with_capacity(raw.index.len());
         for scan in raw.first_scan..=raw.last_scan {
             let i = (scan - raw.first_scan) as usize;
@@ -1238,6 +1249,38 @@ impl AcquisitionScheme {
         }
         if out.is_empty() {
             return Err(io::Error::new(io::ErrorKind::InvalidData, "template has no scans"));
+        }
+        // DIA-suitability: a DIA template tiles the m/z range with a SMALL set of windows
+        // that REPEAT across cycles; a DDA acquisition has a (near-)unique precursor per
+        // MS2 scan — no tiling. Building a DIA simulation from DDA precursors is degenerate
+        // (simulated peptides almost never fall in an arbitrary one-off window), so reject
+        // a DDA-shaped schedule with a clear message instead of producing an empty run.
+        let n_ms2 = out.iter().filter(|s| s.ms_level > 1).count();
+        if n_ms2 > 0 {
+            let distinct: std::collections::HashSet<i64> = out
+                .iter()
+                .filter_map(|s| s.isolation.map(|w| (w.center_mz * 100.0).round() as i64))
+                .collect();
+            // DIA tiles with a small, fixed window set that repeats every cycle — even
+            // ultra-narrow DIA stays in the low hundreds and repeats heavily. DDA has
+            // thousands of distinct precursors, each seen only a handful of times.
+            // Require BOTH a large absolute window count (run-length-independent) AND a
+            // high distinct/MS2 ratio, so neither a short DIA run nor an extreme-narrow
+            // DIA scheme is misjudged. Measured: DIA ~75 windows @ ratio 0.0005;
+            // DDA ~20909 @ ratio 0.40.
+            let ratio = distinct.len() as f64 / n_ms2 as f64;
+            if distinct.len() > 2000 && ratio > 0.1 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "template looks like DDA, not DIA: {} distinct isolation centers \
+                         across {} MS2 scans (DIA windows repeat across cycles; DDA has a \
+                         unique precursor per scan). Build-from-template needs a DIA scheme.",
+                        distinct.len(),
+                        n_ms2
+                    ),
+                ));
+            }
         }
         Ok(out)
     }
@@ -1927,5 +1970,49 @@ mod tests {
             "thermo_frame_schedule OK: {} scans ({} MS1, {} MS2), RT {:.2}..{:.2}s",
             sched.len(), n_ms1, n_ms2, sched.first().unwrap().retention_time_s, last_rt
         );
+    }
+
+    // A DDA template must be REJECTED — its scan events now decode (variable-length
+    // support), but it has a unique precursor per MS2 (no DIA tiling), so the
+    // DIA-suitability check rejects it. Gate on a real DDA .raw (e.g. Orbitrap Fusion):
+    // `TIMSIM_DDA_TEMPLATE=<dda .raw>`.
+    #[cfg(feature = "thermo")]
+    #[test]
+    fn thermo_frame_schedule_rejects_dda_template() {
+        let template = match std::env::var("TIMSIM_DDA_TEMPLATE") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP thermo_frame_schedule_rejects_dda_template: set TIMSIM_DDA_TEMPLATE=<dda .raw>");
+                return;
+            }
+        };
+        let r = AcquisitionScheme::thermo_frame_schedule(&template);
+        let e = r.err().expect("a DDA template must be rejected (no DIA tiling)");
+        assert!(e.to_string().contains("looks like DDA"), "unexpected error: {e}");
+        eprintln!("thermo_frame_schedule correctly rejected DDA template: {e}");
+    }
+
+    // A variable-length-event DIA template (Orbitrap Fusion-class) must be ACCEPTED and
+    // decode real ms-level + isolation windows. Gate: `TIMSIM_VARLEN_DIA_TEMPLATE=<fusion dia .raw>`.
+    #[cfg(feature = "thermo")]
+    #[test]
+    fn thermo_frame_schedule_accepts_variable_length_dia() {
+        let template = match std::env::var("TIMSIM_VARLEN_DIA_TEMPLATE") {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("SKIP thermo_frame_schedule_accepts_variable_length_dia: set TIMSIM_VARLEN_DIA_TEMPLATE=<fusion dia .raw>");
+                return;
+            }
+        };
+        let sched = AcquisitionScheme::thermo_frame_schedule(&template)
+            .expect("variable-length DIA template must be accepted");
+        let n_ms1 = sched.iter().filter(|s| s.ms_level <= 1).count();
+        let n_ms2_iso = sched
+            .iter()
+            .filter(|s| s.ms_level > 1 && s.isolation.is_some_and(|w| w.center_mz > 0.0 && w.width_mz > 0.0))
+            .count();
+        assert!(n_ms1 > 0, "expected decoded MS1 scans");
+        assert!(n_ms2_iso > 0, "expected MS2 scans with decoded isolation windows");
+        eprintln!("variable-length DIA accepted: {n_ms1} MS1, {n_ms2_iso} MS2 with isolation");
     }
 }
