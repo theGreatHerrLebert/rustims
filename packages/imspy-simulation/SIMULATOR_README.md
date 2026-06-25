@@ -114,6 +114,11 @@ output_dir/
 
 ## Configuration Reference
 
+> **Full argument list:** the sections below cover the essential, most-used
+> options. For the **complete** reference — every TOML key with its type,
+> default, and description, plus CLI overrides and instrument-specific blocks —
+> see [`CONFIGURATION.md`](./CONFIGURATION.md).
+
 ### Essential Sections
 
 #### `[paths]`
