@@ -82,15 +82,24 @@ pub struct MzSpectrumAnnotated {
 impl MzSpectrumAnnotated {
     pub fn new(mz: Vec<f64>, intensity: Vec<f64>, annotations: Vec<PeakAnnotation>) -> Self {
         assert!(mz.len() == intensity.len() && intensity.len() == annotations.len());
-        // zip and sort by mz
-        let mut mz_intensity_annotations: Vec<(f64, f64, PeakAnnotation)> = izip!(mz.iter(), intensity.iter(), annotations.iter()).map(|(mz, intensity, annotation)| (*mz, *intensity, annotation.clone())).collect();
-        mz_intensity_annotations.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        // Zip by value (moving the annotations) and sort by mz. The previous
+        // implementation cloned every PeakAnnotation twice here (once into the
+        // sort buffer, once back out); moving avoids both clones, which matters
+        // for the annotated frame builder that constructs millions of these.
+        // `sort_by` is stable, so the ordering of equal-mz peaks is unchanged.
+        let mut triples: Vec<(f64, f64, PeakAnnotation)> = izip!(mz, intensity, annotations).collect();
+        triples.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
-        MzSpectrumAnnotated {
-            mz: mz_intensity_annotations.iter().map(|(mz, _, _)| *mz).collect(),
-            intensity: mz_intensity_annotations.iter().map(|(_, intensity, _)| *intensity).collect(),
-            annotations: mz_intensity_annotations.iter().map(|(_, _, annotation)| annotation.clone()).collect(),
+        let mut mz = Vec::with_capacity(triples.len());
+        let mut intensity = Vec::with_capacity(triples.len());
+        let mut annotations = Vec::with_capacity(triples.len());
+        for (m, i, a) in triples {
+            mz.push(m);
+            intensity.push(i);
+            annotations.push(a);
         }
+
+        MzSpectrumAnnotated { mz, intensity, annotations }
     }
 
     pub fn filter_ranged(&self, mz_min: f64, mz_max: f64, intensity_min: f64, intensity_max: f64) -> Self {
@@ -1008,5 +1017,64 @@ impl std::ops::Add for TimsFrameAnnotated {
             intensity: intensity_vec,
             annotations: annotations_vec,
         }
+    }
+}
+
+#[cfg(test)]
+mod new_sort_tests {
+    use super::*;
+
+    // Tag a peak's annotation with a distinct peptide_id so we can verify the
+    // sort permutation keeps each annotation attached to its original peak.
+    fn ann(peptide_id: i32) -> PeakAnnotation {
+        PeakAnnotation {
+            contributions: vec![ContributionSource {
+                intensity_contribution: 1.0,
+                source_type: SourceType::Signal,
+                signal_attributes: Some(SignalAttributes {
+                    charge_state: 1,
+                    peptide_id,
+                    isotope_peak: 0,
+                    description: None,
+                }),
+            }],
+        }
+    }
+
+    fn pids(spec: &MzSpectrumAnnotated) -> Vec<i32> {
+        spec.annotations
+            .iter()
+            .map(|a| a.contributions[0].signal_attributes.as_ref().unwrap().peptide_id)
+            .collect()
+    }
+
+    // Guards optimization "D": MzSpectrumAnnotated::new now moves annotations
+    // instead of cloning them twice. Behavior (sort by mz, annotation stays
+    // attached to its peak) must be identical.
+    #[test]
+    fn new_sorts_by_mz_and_keeps_annotation_attached() {
+        // peptide_id == mz * 10 so we can detect any mis-permutation
+        let spec = MzSpectrumAnnotated::new(
+            vec![300.0, 100.0, 200.0],
+            vec![3.0, 1.0, 2.0],
+            vec![ann(3000), ann(1000), ann(2000)],
+        );
+
+        assert_eq!(spec.mz, vec![100.0, 200.0, 300.0]);
+        assert_eq!(spec.intensity, vec![1.0, 2.0, 3.0]);
+        assert_eq!(pids(&spec), vec![1000, 2000, 3000]);
+    }
+
+    // The sort must be stable for equal mz (matters for merge order / which
+    // contribution ends up "first" downstream).
+    #[test]
+    fn new_is_stable_for_equal_mz() {
+        let spec = MzSpectrumAnnotated::new(
+            vec![150.0, 150.0],
+            vec![10.0, 20.0],
+            vec![ann(111), ann(222)],
+        );
+        assert_eq!(spec.intensity, vec![10.0, 20.0]);
+        assert_eq!(pids(&spec), vec![111, 222]);
     }
 }

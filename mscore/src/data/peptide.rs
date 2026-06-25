@@ -447,8 +447,7 @@ impl PeptideProductIonSeries {
         let mut mz_values = Vec::with_capacity(self.n_ions.len() + self.c_ions.len());
         let mut intensity_values = Vec::with_capacity(self.n_ions.len() + self.c_ions.len());
 
-        for (index, n_ion) in self.n_ions.iter().enumerate() {
-            let kind = n_ion.kind;
+        for n_ion in self.n_ions.iter() {
             let charge = n_ion.ion.charge;
             let mz = n_ion.mz();
             let intensity = n_ion.ion.intensity;
@@ -456,7 +455,7 @@ impl PeptideProductIonSeries {
                 charge_state: charge,
                 peptide_id: n_ion.ion.sequence.peptide_id.unwrap_or(-1),
                 isotope_peak: 0,
-                description: Some(format!("{}_{}_{}", kind, index + 1, 0)),
+                description: None, // (perf) per-peak label string dropped; see note in generate_isotopic_spectrum_annotated
             };
             let contribution_source = ContributionSource {
                 intensity_contribution: intensity,
@@ -471,8 +470,7 @@ impl PeptideProductIonSeries {
             intensity_values.push(intensity);
         }
 
-        for (index, c_ion) in self.c_ions.iter().enumerate() {
-            let kind = c_ion.kind;
+        for c_ion in self.c_ions.iter() {
             let charge = c_ion.ion.charge;
             let mz = c_ion.mz();
             let intensity = c_ion.ion.intensity;
@@ -480,7 +478,7 @@ impl PeptideProductIonSeries {
                 charge_state: charge,
                 peptide_id: c_ion.ion.sequence.peptide_id.unwrap_or(-1),
                 isotope_peak: 0,
-                description: Some(format!("{}_{}_{}", kind, index + 1, 0)),
+                description: None, // (perf) per-peak label string dropped; see note in generate_isotopic_spectrum_annotated
             };
             let contribution_source = ContributionSource {
                 intensity_contribution: intensity,
@@ -521,7 +519,7 @@ impl PeptideProductIonSeries {
         let mut mz_values = Vec::new();
         let mut intensity_values = Vec::new();
 
-        for (index, ion) in self.n_ions.iter().enumerate() {
+        for ion in self.n_ions.iter() {
             let n_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
             let mut isotope_counter = 0;
             let mut previous_mz = n_isotopes[0].0;
@@ -538,8 +536,13 @@ impl PeptideProductIonSeries {
                     charge_state: ion.ion.charge,
                     peptide_id: ion.ion.sequence.peptide_id.unwrap_or(-1),
                     isotope_peak: isotope_counter,
-                    // use convention of 1-based indexing for fragment ion enumeration
-                    description: Some(format!("{}_{}_{}", ion.kind, index + 1, isotope_counter)),
+                    // (perf) description left unset: building "{kind}_{ordinal}_{isotope}"
+                    // per peak meant a String allocation + format! for every fragment
+                    // peak in the whole simulation, which dominated the annotated
+                    // builder's construction cost and RAM. No consumer reads it
+                    // (charge/peptide_id/isotope_peak carry the labels). The b/y kind +
+                    // ordinal could be promoted to structured fields later if needed.
+                    description: None,
                 };
 
                 let contribution_source = ContributionSource {
@@ -556,7 +559,7 @@ impl PeptideProductIonSeries {
             }
         }
 
-        for (index, ion) in self.c_ions.iter().enumerate() {
+        for ion in self.c_ions.iter() {
             let c_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
             let mut isotope_counter = 0;
             let mut previous_mz = c_isotopes[0].0;
@@ -573,7 +576,7 @@ impl PeptideProductIonSeries {
                     charge_state: ion.ion.charge,
                     peptide_id: ion.ion.sequence.peptide_id.unwrap_or(-1),
                     isotope_peak: isotope_counter,
-                    description: Some(format!("{}_{}_{}", ion.kind, index + 1, isotope_counter)),
+                    description: None, // (perf) see note in the n-ion loop above
                 };
 
                 let contribution_source = ContributionSource {
@@ -635,5 +638,62 @@ impl PeptideProductIonSeriesCollection {
         }
 
         MzSpectrumAnnotated::new(mz_values, intensity_values, annotations)
+    }
+}
+
+#[cfg(test)]
+mod annotated_perf_tests {
+    use super::*;
+
+    // Guards optimization "A": the annotated spectrum generators no longer build
+    // a per-peak `description` String, but the structured labels
+    // (peptide_id / charge_state / isotope_peak) and the spectrum itself must be
+    // unchanged. These are exactly the fields the Python `.df` / `*_first_only` /
+    // dense-label consumers read.
+
+    #[test]
+    fn isotopic_annotated_drops_description_but_keeps_labels_and_spectrum() {
+        let seq = PeptideSequence::new("PEPTIDEK".to_string(), Some(7));
+        let series = seq.calculate_product_ion_series(1, FragmentType::B);
+        let spec = series.generate_isotopic_spectrum_annotated(1e-2, 1e-3, 100, 1e-5);
+
+        // vectors stay consistent and non-empty
+        assert!(!spec.mz.is_empty());
+        assert_eq!(spec.mz.len(), spec.intensity.len());
+        assert_eq!(spec.mz.len(), spec.annotations.len());
+
+        // MzSpectrumAnnotated::new invariant: peaks sorted ascending by mz
+        assert!(spec.mz.windows(2).all(|w| w[0] <= w[1]));
+
+        let mut max_isotope = 0;
+        for ann in &spec.annotations {
+            assert_eq!(ann.contributions.len(), 1);
+            let c = &ann.contributions[0];
+            assert_eq!(c.source_type, SourceType::Signal);
+            let sa = c.signal_attributes.as_ref().expect("signal attributes present");
+            assert_eq!(sa.peptide_id, 7);        // label preserved
+            assert!(sa.charge_state >= 1);        // label preserved
+            assert!(sa.isotope_peak >= 0);        // label preserved
+            assert!(sa.description.is_none());    // (A) no longer eagerly built
+            max_isotope = max_isotope.max(sa.isotope_peak);
+        }
+        // sanity: an isotope envelope was actually generated (counter advanced)
+        assert!(max_isotope >= 1);
+    }
+
+    #[test]
+    fn mono_annotated_drops_description_but_keeps_labels() {
+        let seq = PeptideSequence::new("PEPTIDEK".to_string(), Some(3));
+        let series = seq.calculate_product_ion_series(1, FragmentType::B);
+        let spec = series.generate_mono_isotopic_spectrum_annotated();
+
+        assert!(!spec.mz.is_empty());
+        assert_eq!(spec.mz.len(), spec.annotations.len());
+        for ann in &spec.annotations {
+            let sa = ann.contributions[0].signal_attributes.as_ref().unwrap();
+            assert_eq!(sa.peptide_id, 3);
+            assert_eq!(sa.isotope_peak, 0);       // mono-isotopic: always 0
+            assert!(sa.description.is_none());    // (A)
+        }
     }
 }
