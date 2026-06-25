@@ -417,13 +417,33 @@ can build **annotated frames** that carry per-peak labels — peptide id, charge
 state, and isotope-peak index — down to individual peak overlays. This is **not
 written into the raw output file**; there is no annotated-raw writer. Instead you
 **stream** annotated frames in Python, on demand, straight from
-`synthetic_data.db`:
+`synthetic_data.db`.
+
+> **Package layout note (latest `main`).** The monolithic `imspy` package has
+> been split into modular packages, so imports differ from older notebooks/the
+> paper's examples. In particular `from imspy.simulation…` → `from
+> imspy_simulation…` and `from imspy.timstof…` → `from imspy_core.timstof…`. The
+> snippets below use the current layout.
+
+**Where do the labels come from?** Two annotated builders:
+
+- **Precursor-only** — `TimsTofSyntheticPrecursorFrameBuilder`
+  (`imspy_simulation.experiment`). A lightweight path that renders **MS1 frames
+  only**; it cannot produce fragment frames. This is what the feature-finder
+  example below uses.
+- **Full builder (precursor + fragment)** — the DIA/DDA frame builder from
+  `imspy_simulation.builders.create_frame_builder(..., with_annotations=True)`.
+  This is **not** a fragment-only builder: its `build_frames_annotated(frame_ids)`
+  inspects each frame id's `ms_type` and renders precursor (MS1) *or* fragment
+  (MS2) accordingly, so it produces both. The per-peak fragment labels come from
+  the annotated fragment-ion build path in the Rust backend. Use this whenever
+  you need fragment annotations.
 
 ```python
 import numpy as np
 from imspy_simulation.experiment import TimsTofSyntheticPrecursorFrameBuilder
 
-# Build directly from the simulation blueprint
+# --- Precursor (MS1) annotations -----------------------------------------
 fb = TimsTofSyntheticPrecursorFrameBuilder("out/EXP/synthetic_data.db")
 
 # Per-peak labels as a DataFrame (peptide_id / charge_state / isotope_peak)
@@ -436,14 +456,20 @@ scan_idx, win_idx, mz, mobility, X, iso_labels, charge_labels, pep_labels = \
         window_length=10, resolution=2, min_num_peaks=3, min_intensity=5.0,
         overlapping=False,
     )
+
+# --- Fragment (MS2) annotations, or full-frame streaming -----------------
+from imspy_simulation.builders import create_frame_builder, AcquisitionMode
+
+builder = create_frame_builder(
+    "out/EXP/synthetic_data.db", AcquisitionMode.DIA, with_annotations=True,
+)
+fragment_frames = builder.build_frames_annotated(frame_ids=[...])
 ```
 
-For DIA full-frame streaming (precursor + fragment frames), create an
-annotation-capable builder with
-`imspy_simulation.builders.create_frame_builder(..., with_annotations=True)` and
-iterate it — e.g. with the `iter_frame_batches` helper in
-`imspy_simulation.utility`, which consumes any builder that exposes
-`build_frames_annotated`. Note: annotation is **only available with the standard
+To stream batches end-to-end, the `iter_frame_batches` helper in
+`imspy_simulation.utility` consumes any annotation-capable builder and yields
+labelled `frame.df` rows; pass `level="precursor"` or `level="fragment"` to pick
+the frame type. Note: annotation is **only available with the standard
 (non-lazy) loading strategy** (lazy + annotations is rejected).
 
 > **Worked DL example.** A complete training + inference walkthrough — streaming
