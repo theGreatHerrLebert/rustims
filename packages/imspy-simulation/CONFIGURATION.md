@@ -439,6 +439,13 @@ written into the raw output file**; there is no annotated-raw writer. Instead yo
   the annotated fragment-ion build path in the Rust backend. Use this whenever
   you need fragment annotations.
 
+> **Heads-up — the full annotated builder is heavy.** Because annotation requires
+> the standard (non-lazy) loading strategy, `create_frame_builder(...,
+> with_annotations=True)` loads the full fragment-ion annotation data up front:
+> expect a **long construction time and high RAM usage** on large simulations.
+> The precursor-only builder is much lighter. Optimization of the annotated
+> fragment path is pending.
+
 ```python
 import numpy as np
 from imspy_simulation.experiment import TimsTofSyntheticPrecursorFrameBuilder
