@@ -91,7 +91,9 @@ impl PeptideIon {
                 charge_state: self.charge,
                 peptide_id: self.sequence.peptide_id.unwrap_or(-1),
                 isotope_peak: isotope_counter,
-                description: None,
+                // precursor ion peaks: no fragment kind/ordinal
+                fragment_kind: None,
+                fragment_ordinal: None,
             };
 
             let contribution_source = ContributionSource {
@@ -447,7 +449,7 @@ impl PeptideProductIonSeries {
         let mut mz_values = Vec::with_capacity(self.n_ions.len() + self.c_ions.len());
         let mut intensity_values = Vec::with_capacity(self.n_ions.len() + self.c_ions.len());
 
-        for n_ion in self.n_ions.iter() {
+        for (index, n_ion) in self.n_ions.iter().enumerate() {
             let charge = n_ion.ion.charge;
             let mz = n_ion.mz();
             let intensity = n_ion.ion.intensity;
@@ -455,7 +457,10 @@ impl PeptideProductIonSeries {
                 charge_state: charge,
                 peptide_id: n_ion.ion.sequence.peptide_id.unwrap_or(-1),
                 isotope_peak: 0,
-                description: None, // (perf) per-peak label string dropped; see note in generate_isotopic_spectrum_annotated
+                // (perf) keep the fragment identity as structured fields instead of
+                // an eagerly-formatted per-peak String; `description` is derived on demand.
+                fragment_kind: Some(n_ion.kind),
+                fragment_ordinal: Some((index + 1) as i32),
             };
             let contribution_source = ContributionSource {
                 intensity_contribution: intensity,
@@ -470,7 +475,7 @@ impl PeptideProductIonSeries {
             intensity_values.push(intensity);
         }
 
-        for c_ion in self.c_ions.iter() {
+        for (index, c_ion) in self.c_ions.iter().enumerate() {
             let charge = c_ion.ion.charge;
             let mz = c_ion.mz();
             let intensity = c_ion.ion.intensity;
@@ -478,7 +483,8 @@ impl PeptideProductIonSeries {
                 charge_state: charge,
                 peptide_id: c_ion.ion.sequence.peptide_id.unwrap_or(-1),
                 isotope_peak: 0,
-                description: None, // (perf) per-peak label string dropped; see note in generate_isotopic_spectrum_annotated
+                fragment_kind: Some(c_ion.kind),
+                fragment_ordinal: Some((index + 1) as i32),
             };
             let contribution_source = ContributionSource {
                 intensity_contribution: intensity,
@@ -519,7 +525,7 @@ impl PeptideProductIonSeries {
         let mut mz_values = Vec::new();
         let mut intensity_values = Vec::new();
 
-        for ion in self.n_ions.iter() {
+        for (index, ion) in self.n_ions.iter().enumerate() {
             let n_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
             let mut isotope_counter = 0;
             let mut previous_mz = n_isotopes[0].0;
@@ -536,13 +542,12 @@ impl PeptideProductIonSeries {
                     charge_state: ion.ion.charge,
                     peptide_id: ion.ion.sequence.peptide_id.unwrap_or(-1),
                     isotope_peak: isotope_counter,
-                    // (perf) description left unset: building "{kind}_{ordinal}_{isotope}"
-                    // per peak meant a String allocation + format! for every fragment
-                    // peak in the whole simulation, which dominated the annotated
-                    // builder's construction cost and RAM. No consumer reads it
-                    // (charge/peptide_id/isotope_peak carry the labels). The b/y kind +
-                    // ordinal could be promoted to structured fields later if needed.
-                    description: None,
+                    // (perf) keep the full fragment identity (kind + 1-based ordinal)
+                    // as structured fields instead of allocating + formatting a
+                    // "{kind}_{ordinal}_{isotope}" String for every fragment peak in
+                    // the whole simulation. `description` is derived from these on demand.
+                    fragment_kind: Some(ion.kind),
+                    fragment_ordinal: Some((index + 1) as i32),
                 };
 
                 let contribution_source = ContributionSource {
@@ -559,7 +564,7 @@ impl PeptideProductIonSeries {
             }
         }
 
-        for ion in self.c_ions.iter() {
+        for (index, ion) in self.c_ions.iter().enumerate() {
             let c_isotopes = ion.isotope_distribution(mass_tolerance, abundance_threshold, max_result, intensity_min);
             let mut isotope_counter = 0;
             let mut previous_mz = c_isotopes[0].0;
@@ -576,7 +581,8 @@ impl PeptideProductIonSeries {
                     charge_state: ion.ion.charge,
                     peptide_id: ion.ion.sequence.peptide_id.unwrap_or(-1),
                     isotope_peak: isotope_counter,
-                    description: None, // (perf) see note in the n-ion loop above
+                    fragment_kind: Some(ion.kind), // (perf) see note in the n-ion loop above
+                    fragment_ordinal: Some((index + 1) as i32),
                 };
 
                 let contribution_source = ContributionSource {
@@ -645,14 +651,15 @@ impl PeptideProductIonSeriesCollection {
 mod annotated_perf_tests {
     use super::*;
 
-    // Guards optimization "A": the annotated spectrum generators no longer build
-    // a per-peak `description` String, but the structured labels
-    // (peptide_id / charge_state / isotope_peak) and the spectrum itself must be
-    // unchanged. These are exactly the fields the Python `.df` / `*_first_only` /
-    // dense-label consumers read.
+    // Guards optimization "A2": the annotated spectrum generators no longer build
+    // a per-peak `description` String, but the full fragment identity is preserved
+    // as structured fields (fragment_kind + fragment_ordinal) alongside the existing
+    // labels (peptide_id / charge_state / isotope_peak). The human-readable
+    // description is derived on demand and must match the old
+    // "{kind}_{ordinal}_{isotope}" format exactly.
 
     #[test]
-    fn isotopic_annotated_drops_description_but_keeps_labels_and_spectrum() {
+    fn isotopic_annotated_keeps_full_fragment_identity_and_spectrum() {
         let seq = PeptideSequence::new("PEPTIDEK".to_string(), Some(7));
         let series = seq.calculate_product_ion_series(1, FragmentType::B);
         let spec = series.generate_isotopic_spectrum_annotated(1e-2, 1e-3, 100, 1e-5);
@@ -671,10 +678,18 @@ mod annotated_perf_tests {
             let c = &ann.contributions[0];
             assert_eq!(c.source_type, SourceType::Signal);
             let sa = c.signal_attributes.as_ref().expect("signal attributes present");
-            assert_eq!(sa.peptide_id, 7);        // label preserved
-            assert!(sa.charge_state >= 1);        // label preserved
-            assert!(sa.isotope_peak >= 0);        // label preserved
-            assert!(sa.description.is_none());    // (A) no longer eagerly built
+            assert_eq!(sa.peptide_id, 7);                 // label preserved
+            assert!(sa.charge_state >= 1);                 // label preserved
+            assert!(sa.isotope_peak >= 0);                 // label preserved
+            // fragment identity preserved as structured fields
+            let kind = sa.fragment_kind.expect("fragment kind present");
+            let ordinal = sa.fragment_ordinal.expect("fragment ordinal present");
+            assert!(ordinal >= 1);                         // 1-based
+            // derived description reproduces the old "{kind}_{ordinal}_{isotope}" string
+            assert_eq!(
+                sa.description(),
+                Some(format!("{}_{}_{}", kind, ordinal, sa.isotope_peak)),
+            );
             max_isotope = max_isotope.max(sa.isotope_peak);
         }
         // sanity: an isotope envelope was actually generated (counter advanced)
@@ -682,7 +697,7 @@ mod annotated_perf_tests {
     }
 
     #[test]
-    fn mono_annotated_drops_description_but_keeps_labels() {
+    fn mono_annotated_keeps_full_fragment_identity() {
         let seq = PeptideSequence::new("PEPTIDEK".to_string(), Some(3));
         let series = seq.calculate_product_ion_series(1, FragmentType::B);
         let spec = series.generate_mono_isotopic_spectrum_annotated();
@@ -692,8 +707,11 @@ mod annotated_perf_tests {
         for ann in &spec.annotations {
             let sa = ann.contributions[0].signal_attributes.as_ref().unwrap();
             assert_eq!(sa.peptide_id, 3);
-            assert_eq!(sa.isotope_peak, 0);       // mono-isotopic: always 0
-            assert!(sa.description.is_none());    // (A)
+            assert_eq!(sa.isotope_peak, 0);                // mono-isotopic: always 0
+            assert!(sa.fragment_kind.is_some());
+            assert!(sa.fragment_ordinal.unwrap() >= 1);
+            // mono description always ends in "_0"
+            assert!(sa.description().unwrap().ends_with("_0"));
         }
     }
 }

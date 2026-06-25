@@ -5,6 +5,7 @@ use rand::distributions::{Uniform, Distribution};
 use rand::rngs::ThreadRng;
 use statrs::distribution::Normal;
 use crate::data::spectrum::{MsType, ToResolution, Vectorized};
+use crate::data::peptide::FragmentType;
 
 #[derive(Clone, Debug)]
 pub struct PeakAnnotation {
@@ -69,7 +70,28 @@ pub struct SignalAttributes {
     pub charge_state: i32,
     pub peptide_id: i32,
     pub isotope_peak: i32,
-    pub description: Option<String>,
+    /// Fragment-ion kind (b/y/...) this peak originates from, when known.
+    /// Stored as a small `Copy` enum rather than baked into a per-peak string,
+    /// which is what makes the annotated builder cheap while keeping the peak's
+    /// full fragment identity (see `description`).
+    pub fragment_kind: Option<FragmentType>,
+    /// 1-based fragment-ion ordinal (the ion number, e.g. 5 for b5/y5), when known.
+    pub fragment_ordinal: Option<i32>,
+}
+
+impl SignalAttributes {
+    /// Human-readable fragment label `"{kind}_{ordinal}_{isotope}"` (e.g. `b_5_1`),
+    /// derived on demand from the structured fields. Returns `None` unless both the
+    /// fragment kind and ordinal are known. This reproduces the string that used to
+    /// be eagerly allocated per peak, without paying for it during frame building.
+    pub fn description(&self) -> Option<String> {
+        match (self.fragment_kind, self.fragment_ordinal) {
+            (Some(kind), Some(ordinal)) => {
+                Some(format!("{}_{}_{}", kind, ordinal, self.isotope_peak))
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1035,7 +1057,8 @@ mod new_sort_tests {
                     charge_state: 1,
                     peptide_id,
                     isotope_peak: 0,
-                    description: None,
+                    fragment_kind: None,
+                    fragment_ordinal: None,
                 }),
             }],
         }

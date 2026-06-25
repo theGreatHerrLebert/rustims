@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use mscore::data::spectrum::MsType;
 use pyo3::prelude::*;
 use mscore::simulation::annotation::{SourceType, SignalAttributes, ContributionSource, MzSpectrumAnnotated, PeakAnnotation, TimsFrameAnnotated, TimsSpectrumAnnotated};
+use mscore::data::peptide::FragmentType;
 use numpy::{IntoPyArray, PyArray1, PyArrayMethods};
 
 #[pyclass]
@@ -361,6 +362,18 @@ impl PySourceType {
     pub fn source_type(&self) -> String { self.inner.to_string() }
 }
 
+fn fragment_type_from_str(s: &str) -> Option<FragmentType> {
+    match s.to_ascii_lowercase().as_str() {
+        "a" => Some(FragmentType::A),
+        "b" => Some(FragmentType::B),
+        "c" => Some(FragmentType::C),
+        "x" => Some(FragmentType::X),
+        "y" => Some(FragmentType::Y),
+        "z" => Some(FragmentType::Z),
+        _ => None,
+    }
+}
+
 #[pyclass]
 #[derive(Clone)]
 pub struct PySignalAttributes {
@@ -369,14 +382,15 @@ pub struct PySignalAttributes {
 #[pymethods]
 impl PySignalAttributes {
     #[new]
-    #[pyo3(signature = (charge_state, peptide_id, isotope_peak, description=None))]
-    pub fn new(charge_state: i32, peptide_id: i32, isotope_peak: i32, description: Option<String>) -> PyResult<Self> {
+    #[pyo3(signature = (charge_state, peptide_id, isotope_peak, fragment_kind=None, fragment_ordinal=None))]
+    pub fn new(charge_state: i32, peptide_id: i32, isotope_peak: i32, fragment_kind: Option<String>, fragment_ordinal: Option<i32>) -> PyResult<Self> {
         Ok(PySignalAttributes {
             inner: SignalAttributes {
                 charge_state,
                 peptide_id,
                 isotope_peak,
-                description,
+                fragment_kind: fragment_kind.as_deref().and_then(fragment_type_from_str),
+                fragment_ordinal,
             },
         })
     }
@@ -386,8 +400,16 @@ impl PySignalAttributes {
     pub fn peptide_id(&self) -> i32 { self.inner.peptide_id }
     #[getter]
     pub fn isotope_peak(&self) -> i32 { self.inner.isotope_peak }
+    /// Fragment-ion kind ("a"/"b"/"c"/"x"/"y"/"z") this peak came from, if known.
     #[getter]
-    pub fn description(&self) -> Option<String> { self.inner.description.clone() }
+    pub fn fragment_kind(&self) -> Option<String> { self.inner.fragment_kind.map(|k| k.to_string()) }
+    /// 1-based fragment-ion ordinal (ion number), if known.
+    #[getter]
+    pub fn fragment_ordinal(&self) -> Option<i32> { self.inner.fragment_ordinal }
+    /// Human-readable label "{kind}_{ordinal}_{isotope}" (e.g. "b_5_1"), derived
+    /// on demand from the structured fields; None unless kind+ordinal are known.
+    #[getter]
+    pub fn description(&self) -> Option<String> { self.inner.description() }
 }
 
 #[pyclass]
