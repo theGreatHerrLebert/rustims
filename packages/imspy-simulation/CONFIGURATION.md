@@ -425,17 +425,19 @@ written into the raw output file**; there is no annotated-raw writer. Instead yo
 > imspy_simulation…` and `from imspy.timstof…` → `from imspy_core.timstof…`. The
 > snippets below use the current layout.
 
-**Where do the labels come from?** There are two annotated builders, one per
-frame type:
+**Where do the labels come from?** Two annotated builders:
 
-- **Precursor (MS1) frames** — `TimsTofSyntheticPrecursorFrameBuilder`
-  (`imspy_simulation.experiment`). Lightweight, MS1 only; this is what the
-  feature-finder example below uses.
-- **Fragment (MS2) frames** *(and full precursor+fragment)* — the full DIA/DDA
-  frame builder from `imspy_simulation.builders.create_frame_builder(...,
-  with_annotations=True)`. Its `build_frames_annotated(frame_ids)` annotates
-  whichever frame type each id is, with the per-peak fragment labels coming from
-  the annotated fragment-ion build path in the Rust backend.
+- **Precursor-only** — `TimsTofSyntheticPrecursorFrameBuilder`
+  (`imspy_simulation.experiment`). A lightweight path that renders **MS1 frames
+  only**; it cannot produce fragment frames. This is what the feature-finder
+  example below uses.
+- **Full builder (precursor + fragment)** — the DIA/DDA frame builder from
+  `imspy_simulation.builders.create_frame_builder(..., with_annotations=True)`.
+  This is **not** a fragment-only builder: its `build_frames_annotated(frame_ids)`
+  inspects each frame id's `ms_type` and renders precursor (MS1) *or* fragment
+  (MS2) accordingly, so it produces both. The per-peak fragment labels come from
+  the annotated fragment-ion build path in the Rust backend. Use this whenever
+  you need fragment annotations.
 
 ```python
 import numpy as np
