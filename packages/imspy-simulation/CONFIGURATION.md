@@ -17,8 +17,9 @@ A TimSim config is a single TOML file. A few things are worth knowing up front:
 - **Section headers (`[paths]`, `[experiment]`, ...) are organizational only.**
   The loader flattens every section into one flat namespace before use, so a key
   works regardless of which `[section]` it lives under (or none at all). The
-  sections in this document follow the layout produced by the GUI and are the
-  recommended convention, but they are not enforced. See
+  sections in this document are a logical grouping for readability and roughly
+  track the GUI's panels; because the loader flattens everything, the exact
+  section a key sits under has no effect on parsing. See
   `simulator.translate_legacy_config` for the flattening logic.
 - **Every key is optional.** Any key you omit falls back to the default listed
   here (the canonical source of truth is `get_default_settings()` in
@@ -112,7 +113,7 @@ overridden on the command line (the override wins over the file):
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `modifications` | table | _none_ | UNIMOD modification specification. `none` = unmodified peptides. |
+| `modifications` | str (path) | _none_ | Path to a TOML file specifying variable/static UNIMOD modifications (SAGE-style). **When unset/empty, TimSim loads its bundled default `timsim/configs/modifications.toml`** — variable Oxidation (M) `[UNIMOD:35]` and N-terminal Acetylation `[UNIMOD:1]`, static Carbamidomethylation (C) `[UNIMOD:4]`. So the default run is **not** unmodified; to simulate unmodified peptides, point this at a file with empty `[variable_modifications]`/`[static_modifications]` tables. |
 
 ## `[isotopic_pattern]` — isotope envelope
 
@@ -182,7 +183,7 @@ EMG-like RT peak-shape parameters (sigma controls width, k controls tailing).
 |-----|------|---------|-------------|
 | `round_collision_energy` | bool | `true` | Round collision energy values. |
 | `collision_energy_decimals` | int | `0` | Decimal places when rounding CE. |
-| `collision_energy_nce` | float | _none_ | For `instrument = orbitrap_astral`, the normalized collision energy (NCE) that replaces the reference-derived eV window CE (required for an Astral run). Ignored for Bruker. |
+| `collision_energy_nce` | float | _none_ | **Optional** override for Thermo build-from-template runs (`orbitrap_astral`, `orbitrap_exploris`). The template already supplies a genuine per-window NCE, used by default; if set, this single NCE (must be positive) overrides every window. Ignored for Bruker. |
 | `dia_rewindow_isolation_width` | float (Th) | _none_ | Thermo build-from-template DIA only: re-window the template to this isolation width before authoring (centers + cadence + window count preserved). `none`/`0` = use the template's real windows. Ignored off the Thermo path. |
 
 ## `[noise]` — noise model
@@ -337,8 +338,10 @@ quad scan. Rolling CE = `ce_intercept + ce_slope_per_mz * window_center_mz`.
 
 Build-from-`.raw`-template: set `models.template_path` (or
 `astral_template_path`) to a real Thermo `.raw`; its per-scan schedule + windows
-become the acquisition. Set `acquisition.collision_energy_nce` (NCE replaces the
-Bruker eV CE). Optionally re-window via `acquisition.dia_rewindow_isolation_width`.
+(including a genuine per-window NCE) become the acquisition. Optionally override
+that NCE for every window with a single value via
+`acquisition.collision_energy_nce`, and/or re-window via
+`acquisition.dia_rewindow_isolation_width`.
 
 ### Bruker timsTOF (`instrument = bruker_timstof`, default)
 
@@ -435,11 +438,13 @@ scan_idx, win_idx, mz, mobility, X, iso_labels, charge_labels, pep_labels = \
     )
 ```
 
-For DIA full-frame streaming (precursor + fragment frames), pass
-`with_annotations=True` to a frame builder via
-`imspy_simulation.builders.create_frame_builder(...)` (or the
-`iter_frame_batches` helper in `imspy_simulation.utility`). Note: annotation is
-**only available with the standard (non-lazy) loading strategy**.
+For DIA full-frame streaming (precursor + fragment frames), create an
+annotation-capable builder with
+`imspy_simulation.builders.create_frame_builder(..., with_annotations=True)` and
+iterate it — e.g. with the `iter_frame_batches` helper in
+`imspy_simulation.utility`, which consumes any builder that exposes
+`build_frames_annotated`. Note: annotation is **only available with the standard
+(non-lazy) loading strategy** (lazy + annotations is rejected).
 
 > **Worked DL example.** A complete training + inference walkthrough — streaming
 > annotated frames into a PyTorch segmentation model — lives in the companion
