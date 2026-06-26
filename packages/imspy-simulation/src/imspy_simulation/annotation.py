@@ -36,10 +36,12 @@ class SourceType(RustWrapperObject):
         return self.__py_ptr
 
 
-# charge_state: i32, peptide_id: i32, isotope_peak: i32
+# charge_state: i32, peptide_id: i32, isotope_peak: i32,
+# fragment_kind: Optional[str] ("a"/"b"/"c"/"x"/"y"/"z"), fragment_ordinal: Optional[int]
 class SignalAttributes(RustWrapperObject):
-    def __init__(self, charge_state: int, peptide_id: int, isotope_peak: int, description: Union[None, str] = None):
-        self.__py_ptr = ims.PySignalAttributes(charge_state, peptide_id, isotope_peak, description)
+    def __init__(self, charge_state: int, peptide_id: int, isotope_peak: int,
+                 fragment_kind: Union[None, str] = None, fragment_ordinal: Union[None, int] = None):
+        self.__py_ptr = ims.PySignalAttributes(charge_state, peptide_id, isotope_peak, fragment_kind, fragment_ordinal)
 
     @property
     def charge_state(self):
@@ -54,12 +56,24 @@ class SignalAttributes(RustWrapperObject):
         return self.__py_ptr.isotope_peak
 
     @property
+    def fragment_kind(self) -> Union[None, str]:
+        """Fragment-ion kind ('a'/'b'/'c'/'x'/'y'/'z') this peak came from, if known."""
+        return self.__py_ptr.fragment_kind
+
+    @property
+    def fragment_ordinal(self) -> Union[None, int]:
+        """1-based fragment-ion ordinal (ion number), if known."""
+        return self.__py_ptr.fragment_ordinal
+
+    @property
     def description(self) -> Union[None, str]:
+        """Derived label '{kind}_{ordinal}_{isotope}' (e.g. 'b_5_1'); None unless kind+ordinal known."""
         return self.__py_ptr.description
 
     def __repr__(self):
         return (f"SignalAnnotation(charge_state={self.charge_state}, peptide_id={self.peptide_id}, "
-                f"isotope_peak={self.isotope_peak}, description={self.description})")
+                f"isotope_peak={self.isotope_peak}, fragment_kind={self.fragment_kind}, "
+                f"fragment_ordinal={self.fragment_ordinal})")
 
     @classmethod
     def from_py_ptr(cls, signal_attributes: ims.PySignalAttributes) -> 'SignalAttributes':
