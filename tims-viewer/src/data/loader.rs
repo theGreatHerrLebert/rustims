@@ -396,6 +396,18 @@ fn run_loader(
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
         peak_pts.truncate(peak_room);
+        // Fold peaks into the distributions + intensity range too: they are displayed points
+        // and are often the brightest in the run, so excluding them would make the default
+        // intensity filter (which uses i_lo/i_hi) cull the very peaks preservation kept.
+        for gp in &peak_pts {
+            hist_mz[hbin(gp.pos[0])] += 1;
+            hist_im[hbin(gp.pos[1])] += 1;
+            hist_rt[hbin(gp.pos[2])] += 1;
+            logi_fine[((gp.intensity.max(1.0).log10() / LOGI_HI) * LOGI_FINE as f32)
+                .clamp(0.0, (LOGI_FINE - 1) as f32) as usize] += 1;
+            i_lo_seen = i_lo_seen.min(gp.intensity);
+            i_hi_seen = i_hi_seen.max(gp.intensity);
+        }
         for batch in peak_pts.chunks(CHUNK_POINTS) {
             send_cancellable!(LoadMsg::PeakChunk {
                 points: batch.to_vec(),
@@ -533,10 +545,14 @@ fn build_annotations(
                 let (rt_lo, rt_hi) = (bounds.rt.min, bounds.rt.max);
                 for w in windows.iter().step_by(stride) {
                     let fid = grp_frame.get(&w.window_group).copied().unwrap_or(1);
-                    // Widen across the skipped scans so the rect stays a visible window;
-                    // clamp to the largest real scan so the last window can't overshoot.
-                    let scan_hi = (w.scan_num_end + stride as u32 / 2).min(max_scan.max(w.scan_num_end));
-                    let ims = ds.scan_to_inverse_mobility(fid, &vec![w.scan_num_begin, scan_hi]);
+                    // Widen SYMMETRICALLY across the skipped scans so the rect stays a visible
+                    // window AND stays centered on the real window's mobility: widening only the
+                    // high-scan end would shift the box's 1/K0 center toward lower mobility for a
+                    // subsampled MIDIA scheme. stride == 1 (conventional DIA) leaves it exact.
+                    let half = stride as u32 / 2;
+                    let scan_lo = w.scan_num_begin.saturating_sub(half);
+                    let scan_hi = (w.scan_num_end + half).min(max_scan.max(w.scan_num_end));
+                    let ims = ds.scan_to_inverse_mobility(fid, &vec![scan_lo, scan_hi]);
                     let im0 = ims.first().copied().unwrap_or(0.0);
                     let im1 = ims.get(1).copied().unwrap_or(im0);
                     let mz0 = w.isolation_mz - w.isolation_width * 0.5;

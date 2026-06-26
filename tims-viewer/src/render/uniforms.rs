@@ -110,7 +110,9 @@ impl Default for ParamsUniform {
     fn default() -> Self {
         ParamsUniform {
             filter_min: [-1.0, -1.0, -1.0, 0.0],
-            filter_max: [1.0, 1.0, 1.0, 0.0],
+            // .w = intensity range; default to pass-through (max = +inf) so the shader's
+            // intensity cull never rejects everything before state.params() sets a real range.
+            filter_max: [1.0, 1.0, 1.0, f32::INFINITY],
             transfer: [2.0, 1.0, 1e5, 1.0],
             point_size: 2.5,
             opacity: 0.6,
