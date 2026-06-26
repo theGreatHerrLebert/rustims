@@ -125,6 +125,12 @@ def cluster_midia_hdbscan(points: pd.DataFrame,
     else:
         mc = np.nan_to_num(mc, nan=0.0)  # unused in 3D mode; keep the returned column finite
 
+    if len(cycle) == 0:
+        # No fragments survived the window filter; HDBSCAN.fit would raise on 0 samples.
+        return pd.DataFrame(
+            columns=["cycle", "step", "mc_dim", "scan", "mz", "intensity", "label", "probability"]
+        )
+
     rt = cycle / np.power(2, cycle_scaling)
     mc_scaled = mc / extraction_scaling
     dt = scan / np.power(2, scan_scaling)

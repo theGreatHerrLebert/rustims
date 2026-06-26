@@ -432,7 +432,9 @@ impl Gfx {
     /// in `state.group_mask` (ungrouped vertices, u32::MAX, are always kept).
     fn reupload_annotations(&mut self) {
         let mask = self.state.group_mask;
-        let visible = |g: u32| g == u32::MAX || g > 32 || (mask & (1u32 << g.saturating_sub(1))) != 0;
+        // Ungrouped (u32::MAX), an out-of-range group id (0, or > 32 for the 32-bit mask)
+        // are always shown; otherwise gate on the group's bit (groups are 1-based).
+        let visible = |g: u32| g == u32::MAX || g == 0 || g > 32 || (mask & (1u32 << (g - 1))) != 0;
         let filtered: Vec<LineVertex> = self
             .anno_lines
             .iter()
