@@ -24,8 +24,8 @@ struct Params {
     transfer   : vec4<f32>,
     point_size : f32,
     opacity    : f32,
-    _pad0      : f32,
-    _pad1      : f32,
+    focus      : f32,      // mirrors ParamsUniform; unused here
+    color_mode : u32,      // mirrors ParamsUniform; unused here
     ms_mask     : u32,
     colormap_id : u32,
     render_mode : u32,

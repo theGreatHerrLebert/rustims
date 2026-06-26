@@ -307,12 +307,15 @@ fn clustering_section(ui: &mut egui::Ui, state: &mut AppState) {
             );
             ui.add(egui::Slider::new(&mut state.cluster_min_pts, 2..=50).text("min pts"));
             let too_many = state.resident_points > CLUSTER_CAP;
-            ui.add_enabled_ui(!too_many, |ui| {
+            let loading = state.load_progress < 1.0;
+            ui.add_enabled_ui(!too_many && !loading, |ui| {
                 if ui.button("Cluster (DBSCAN)").clicked() {
                     state.cluster_request = true;
                 }
             });
-            if too_many {
+            if loading {
+                ui.label("loading…");
+            } else if too_many {
                 ui.colored_label(
                     egui::Color32::from_rgb(230, 180, 80),
                     format!(

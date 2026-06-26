@@ -510,9 +510,12 @@ impl Gfx {
                         g.deposit(p.pos, p.intensity * p.weight);
                     }
                     self.points.append(&self.queue, &points);
-                    // Retain a CPU copy (bounded) for DBSCAN clustering.
-                    if (self.cpu_points.len() as u32) < crate::state::CLUSTER_CAP {
-                        let room = crate::state::CLUSTER_CAP as usize - self.cpu_points.len();
+                    // Retain a CPU copy for DBSCAN, bounded by the cluster cap AND the GPU
+                    // residency so cpu_points never exceeds the displayed set (keeps the
+                    // run_clustering equality guard reachable on small-capacity GPUs too).
+                    let cap = crate::state::CLUSTER_CAP.min(self.state.capacity) as usize;
+                    if self.cpu_points.len() < cap {
+                        let room = cap - self.cpu_points.len();
                         self.cpu_points.extend(points.iter().take(room).copied());
                     }
                 }
@@ -520,9 +523,12 @@ impl Gfx {
                     // Peaks are display-only enrichment; append to the cloud but do NOT
                     // add to the volume density (would double-count dense cells).
                     self.points.append(&self.queue, &points);
-                    // Retain a CPU copy (bounded) for DBSCAN clustering.
-                    if (self.cpu_points.len() as u32) < crate::state::CLUSTER_CAP {
-                        let room = crate::state::CLUSTER_CAP as usize - self.cpu_points.len();
+                    // Retain a CPU copy for DBSCAN, bounded by the cluster cap AND the GPU
+                    // residency so cpu_points never exceeds the displayed set (keeps the
+                    // run_clustering equality guard reachable on small-capacity GPUs too).
+                    let cap = crate::state::CLUSTER_CAP.min(self.state.capacity) as usize;
+                    if self.cpu_points.len() < cap {
+                        let room = cap - self.cpu_points.len();
                         self.cpu_points.extend(points.iter().take(room).copied());
                     }
                 }
@@ -716,6 +722,10 @@ impl Gfx {
         let (rt0, rt1) = (self.state.rt_window.min, self.state.rt_window.max);
         let (mz0, mz1) = (self.state.mz_window.min, self.state.mz_window.max);
         let (im0, im1) = (self.state.im_window.min, self.state.im_window.max);
+        // A zero-width axis would make the new AxisTransform divide by zero (NaN positions).
+        if rt1 <= rt0 || mz1 <= mz0 || im1 <= im0 {
+            return;
+        }
         let mut frame_ids = Vec::new();
         let mut total: u64 = 0;
         for f in &self.full_meta.frames {
@@ -727,6 +737,14 @@ impl Gfx {
         if frame_ids.is_empty() {
             return;
         }
+        // num_peaks counts every m/z·1/K0 in each in-RT frame, but the loader culls to the
+        // m/z·1/K0 window. Scale the estimate by the window's fraction of the full run so the
+        // stride is sized to the surviving points — otherwise it is far too coarse and the
+        // region streams sparse instead of the intended (often stride-1) detail.
+        let b = &self.full_meta.bounds;
+        let mz_frac = ((mz1 - mz0) / (b.mz.max - b.mz.min).max(1e-9)).clamp(0.0, 1.0);
+        let im_frac = ((im1 - im0) / (b.im.max - b.im.min).max(1e-9)).clamp(0.0, 1.0);
+        let total = (((total as f64) * mz_frac * im_frac).ceil() as u64).max(1);
         let bounds = AxisBounds {
             mz: AxisTransform::new(mz0, mz1),
             im: AxisTransform::new(im0, im1),
@@ -742,12 +760,13 @@ impl Gfx {
 
     /// Run DBSCAN on the resident points (only when the full resident set is retained on the
     /// CPU, i.e. within CLUSTER_CAP), write per-point cluster ids back into the GPU buffer, and
-    /// switch to cluster coloring (opaque points for clarity). No-op if too many points.
+    /// switch to cluster coloring. No-op while still streaming or if too many points are resident.
     fn run_clustering(&mut self) {
-        if self.cpu_points.is_empty()
+        if self.state.load_progress < 1.0
+            || self.cpu_points.is_empty()
             || self.cpu_points.len() as u32 != self.state.resident_points
         {
-            return; // partial retention (too many points) — refine first
+            return; // still streaming, or partial retention (too many points) — refine first
         }
         let positions: Vec<[f32; 3]> = self.cpu_points.iter().map(|p| p.pos).collect();
         let (labels, k) = crate::cluster::dbscan(
@@ -766,11 +785,13 @@ impl Gfx {
         }
         self.points.reset();
         self.points.append(&self.queue, &self.cpu_points);
+        self.state.resident_points = self.points.resident();
         self.state.cluster_count = k;
         self.state.cluster_noise = noise;
         self.state.color_mode = crate::state::ColorMode::Cluster;
-        self.state.point_mode = crate::render::point_cloud::PointMode::StructuralOpaque;
         self.state.view_mode = ViewMode::Points;
+        // Cluster coloring renders opaque in the shader regardless of point_mode, so the
+        // user's additive/opaque choice is left untouched.
     }
 
     /// Revert a refinement: re-stream the whole run at the global downsample.
@@ -794,7 +815,19 @@ impl Gfx {
                     if self.state.refined {
                         self.refine_to_window();
                     } else {
+                        // In-place re-stream of the full run: preserve the user's window
+                        // narrowing and focus (load_full_run otherwise resets them).
+                        let (rt, mz, im, focus) = (
+                            self.state.rt_window,
+                            self.state.mz_window,
+                            self.state.im_window,
+                            self.state.focus,
+                        );
                         self.load_full_run();
+                        self.state.rt_window = rt;
+                        self.state.mz_window = mz;
+                        self.state.im_window = im;
+                        self.state.focus = focus;
                     }
                 }
             }

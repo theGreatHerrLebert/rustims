@@ -142,7 +142,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         color = textureSample(lut_tex, lut_smp, vec2<f32>(t, row)).rgb;
     }
 
-    if (params.render_mode == 1u) {
+    // Cluster coloring always renders opaque: additive blending would mix distinct cluster
+    // hues into mush and dim them by the 1/p weight, so cluster ids would read as noise.
+    if (params.render_mode == 1u || params.color_mode == 1u) {
         // Structural opaque: round point via alpha cutout, depth-written.
         if (falloff < 0.5) {
             discard;

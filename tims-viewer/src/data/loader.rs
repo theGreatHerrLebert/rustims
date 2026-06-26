@@ -156,7 +156,7 @@ const ZERO_POINT: GpuPoint = GpuPoint {
     intensity: 0.0,
     weight: 1.0,
     flags: 0,
-    _pad: [0, 0],
+    _pad: [GpuPoint::NO_CLUSTER, 0],
 };
 
 /// Map a normalized-cube position to a coarse peak-grid cell index.
@@ -292,11 +292,11 @@ fn run_loader(
             if intensity > slot.0 {
                 slot.0 = intensity;
                 slot.1 = global_i;
-                slot.2 = GpuPoint { pos, intensity, weight: 1.0, flags, _pad: [0, 0] };
+                slot.2 = GpuPoint { pos, intensity, weight: 1.0, flags, _pad: [GpuPoint::NO_CLUSTER, 0] };
             }
             // Systematic density base.
             if global_i % stride_u64 == 0 {
-                chunk.push(GpuPoint { pos, intensity, weight, flags, _pad: [0, 0] });
+                chunk.push(GpuPoint { pos, intensity, weight, flags, _pad: [GpuPoint::NO_CLUSTER, 0] });
                 systematic_count += 1;
                 reservoir_push(&mut reservoir, &mut kept_counter, sample_every, intensity);
                 if chunk.len() >= CHUNK_POINTS {
