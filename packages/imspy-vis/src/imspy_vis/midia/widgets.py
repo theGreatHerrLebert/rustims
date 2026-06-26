@@ -73,7 +73,7 @@ class DataPanel:
             widgets.HBox([self.load_button, self.status]),
         ])
 
-    def _on_load(self, _change):
+    def _on_load(self, _change: object) -> None:
         try:
             self.status.value = "<i>loading…</i>"
             if self.experiment is None or self._loaded_path != self.path.value:
@@ -131,7 +131,7 @@ class PointCloudPanel:
         return (self.data_panel.precursor_df if self.kind == "precursor"
                 else self.data_panel.fragment_df)
 
-    def _on_render(self, _change):
+    def _on_render(self, _change: object) -> None:
         try:
             df = self._source()
             n = len(df)
@@ -172,7 +172,7 @@ class _ClusterPanel:
         self.data_panel = data_panel
         self.title = title
 
-        self.min_cluster_size = widgets.IntSlider(value=13, min=1, max=100, step=1,
+        self.min_cluster_size = widgets.IntSlider(value=13, min=2, max=100, step=1,
                                                   description="min cluster size:", continuous_update=False)
         self.min_samples = widgets.IntSlider(value=5, min=1, max=50, step=1,
                                              description="min samples:", continuous_update=False)
@@ -211,7 +211,7 @@ class _ClusterPanel:
     def _extra_controls(self) -> widgets.Widget:
         return widgets.HBox([])
 
-    def _on_cluster(self, _change):
+    def _on_cluster(self, _change: object) -> None:
         try:
             clustered = self._run_clustering()
         except Exception as e:
@@ -229,7 +229,7 @@ class _ClusterPanel:
         self._update_histograms(signal)
         self._render(clustered)
 
-    def _render(self, clustered: pd.DataFrame):
+    def _render(self, clustered: pd.DataFrame) -> None:
         data = clustered[clustered.label != -1] if self.filter_noise.value else clustered
         fig = self._scatter_figure(data)
         with self.scatter_out:
@@ -261,7 +261,7 @@ class _ClusterPanel:
                                  "zaxis": {"title": "m/z", "dtick": tick}})
         return fig
 
-    def _update_histograms(self, signal: pd.DataFrame):
+    def _update_histograms(self, signal: pd.DataFrame) -> None:
         if signal.empty:
             return
         g = signal.groupby("label")
@@ -271,7 +271,7 @@ class _ClusterPanel:
             self.histograms.data[2].x = g["mz"].nunique().to_numpy()
             self.histograms.data[3].x = g.size().to_numpy()
 
-    def nudge_resize(self):
+    def nudge_resize(self) -> None:
         """Force the 2D histogram FigureWidget to redraw after its tab is revealed."""
         fig = self.histograms
         w = fig.layout.width
@@ -343,12 +343,12 @@ class MidiaVis:
             self.tab.set_title(i, t)
         self.tab.observe(self._on_tab_change, names="selected_index")
 
-    def _on_tab_change(self, change):
+    def _on_tab_change(self, change: object) -> None:
         # Redraw the clustering histogram FigureWidgets when their (hidden) tab is shown.
         panel = {3: self.precursor_panel, 4: self.midia_panel}.get(change["new"])
         if panel is not None:
             panel.nudge_resize()
 
-    def display(self):
+    def display(self) -> None:
         from IPython.display import display
         display(self.tab)

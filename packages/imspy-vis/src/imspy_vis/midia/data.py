@@ -53,7 +53,9 @@ class MidiaExperiment:
         # the next one; the precursor and all its fragment frames share that cycle index.
         is_precursor = meta.MsMsType.to_numpy() == 0
         ids = meta.Id.to_numpy()
-        cycle_of_id = np.cumsum(is_precursor) - 1  # 0-based, aligned to sorted ids
+        # 0-based, aligned to sorted ids. clamp at 0 so any fragment frames that precede the
+        # first MS1 frame fold into cycle 0 instead of getting a spurious -1.
+        cycle_of_id = np.maximum(np.cumsum(is_precursor) - 1, 0)
         self._cycle_of_frame = dict(zip(ids, cycle_of_id))
         self.precursor_frame_ids = ids[is_precursor]
         self.rt_of_frame = dict(zip(ids, meta.Time.to_numpy()))

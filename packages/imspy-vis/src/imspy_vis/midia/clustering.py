@@ -14,6 +14,8 @@ window (the "MIDIA dimension").
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 import pandas as pd
 
@@ -21,6 +23,10 @@ from sklearn.cluster import DBSCAN
 from hdbscan import HDBSCAN
 
 from .transforms import peak_width_preserving_mz_transform
+
+if TYPE_CHECKING:
+    from pandas.core.groupby import DataFrameGroupBy
+    from .data import MidiaExperiment
 
 
 def cluster_precursors_dbscan(points: pd.DataFrame,
@@ -106,9 +112,21 @@ def cluster_midia_hdbscan(points: pd.DataFrame,
     scan = points.scan.to_numpy()
     mz_raw = points.mz.to_numpy()
     intensity = points.intensity.to_numpy()
+    mc = _midia_dimension(experiment, step, scan)  # NaN where (step, scan) hits no window
+
+    if use_midia_dimension:
+        # Keep only fragments that fall inside an isolation window. Window-less points have
+        # no meaningful MIDIA coordinate; folding them in (as 0) collapses them onto a fake
+        # plane and lets HDBSCAN form a spurious cluster.
+        valid = np.isfinite(mc)
+        cycle, step, scan, mz_raw, intensity, mc = (
+            arr[valid] for arr in (cycle, step, scan, mz_raw, intensity, mc)
+        )
+    else:
+        mc = np.nan_to_num(mc, nan=0.0)  # unused in 3D mode; keep the returned column finite
 
     rt = cycle / np.power(2, cycle_scaling)
-    mc = _midia_dimension(experiment, step, scan) / extraction_scaling
+    mc_scaled = mc / extraction_scaling
     dt = scan / np.power(2, scan_scaling)
     mz = peak_width_preserving_mz_transform(mz_raw, resolution=resolution) / np.power(2, mz_scaling)
 
@@ -121,26 +139,28 @@ def cluster_midia_hdbscan(points: pd.DataFrame,
                        min_cluster_size=min_cluster_size,
                        min_samples=min_samples, p=p)
 
-    feats = np.vstack([rt, mc, dt, mz]).T if use_midia_dimension else np.vstack([rt, dt, mz]).T
+    feats = np.vstack([rt, mc_scaled, dt, mz]).T if use_midia_dimension else np.vstack([rt, dt, mz]).T
     clusters.fit(feats)
 
     return pd.DataFrame({
-        "cycle": cycle, "step": step, "mc_dim": mc, "scan": scan,
+        "cycle": cycle, "step": step, "mc_dim": mc_scaled, "scan": scan,
         "mz": mz_raw, "intensity": intensity,
         "label": clusters.labels_, "probability": clusters.probabilities_,
     })
 
 
-def _midia_dimension(experiment, step: np.ndarray, scan: np.ndarray) -> np.ndarray:
-    """Per-point precursor isolation m/z from (step, scan); 0 where no window applies."""
-    mc = np.zeros(step.shape, dtype=np.float64)
+def _midia_dimension(experiment: "MidiaExperiment", step: np.ndarray, scan: np.ndarray) -> np.ndarray:
+    """Per-point precursor isolation m/z from (step, scan); NaN where no window applies."""
+    mc = np.full(step.shape, np.nan, dtype=np.float64)
     for s in np.unique(step):
         m = step == s
         mc[m] = experiment.isolation_left_bound(int(s), scan[m])
-    return np.nan_to_num(mc, nan=0.0)
+    return mc
 
 
-def calculate_statistics(clusters: pd.DataFrame, noise: pd.DataFrame):
+def calculate_statistics(
+    clusters: pd.DataFrame, noise: pd.DataFrame
+) -> tuple[pd.DataFrame, DataFrameGroupBy]:
     """Summary table (points/intensity/clusters x total/cluster/noise/ratio) + per-label group."""
     sum_int_clusters = clusters.groupby(["label"])["intensity"].sum().sum()
     sum_int_noise = noise.groupby(["label"])["intensity"].sum().sum()
@@ -149,7 +169,8 @@ def calculate_statistics(clusters: pd.DataFrame, noise: pd.DataFrame):
     n_clusters_pts = clusters.shape[0]
     n_noise_pts = noise.shape[0]
     points_ratio = np.round(n_clusters_pts / n_noise_pts, 3) if n_noise_pts else np.inf
-    num_clusters = int(clusters.label.max()) if n_clusters_pts else 0
+    # Labels are 0-based and contiguous, so the count is max(label) + 1.
+    num_clusters = int(clusters.label.max()) + 1 if n_clusters_pts else 0
 
     summary_table = pd.DataFrame(
         {"Total": [n_clusters_pts + n_noise_pts, sum_int_clusters + sum_int_noise, num_clusters],
