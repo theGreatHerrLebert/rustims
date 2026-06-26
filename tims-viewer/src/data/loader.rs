@@ -356,43 +356,65 @@ fn run_loader(
         }};
     }
 
-    for idx in 0..n_frames {
-        if cancelled!() {
-            return;
-        }
-        match &mode {
-            LoaderMode::Real { frame_ids, filter, .. } => {
-                let ds = dataset.as_ref().unwrap();
-                let frame = ds.get_frame(frame_ids[idx]);
-                let rt = frame.ims_frame.retention_time;
-                let is_ms2 = !matches!(frame.ms_type, MsType::Precursor);
-                let mz = frame.ims_frame.mz.as_slice();
-                let im = frame.ims_frame.mobility.as_slice();
-                let it = frame.ims_frame.intensity.as_slice();
-                // Validate parallel arrays — never zip past the shortest.
-                let n = mz.len().min(im.len()).min(it.len());
-                for j in 0..n {
-                    // Region refinement: drop points outside the m/z·1/K0 window at the
-                    // source so the budget is spent only on the focused region.
-                    if let Some(f) = filter {
-                        if mz[j] < f.mz.0 || mz[j] > f.mz.1 || im[j] < f.im.0 || im[j] > f.im.1 {
-                            continue;
+    match &mode {
+        LoaderMode::Real { frame_ids, filter, .. } => {
+            use rayon::prelude::*;
+            let ds = dataset.as_ref().unwrap();
+            // Decode frames in parallel batches (the heavy, CPU-bound part — every core helps),
+            // then fold the decoded points in sequentially so the systematic sampler, peak grid
+            // and histograms stay exactly correct. One batch is in flight to bound memory.
+            const DECODE_BATCH: usize = 64;
+            let mut start = 0;
+            while start < n_frames {
+                if cancelled!() {
+                    return;
+                }
+                let end = (start + DECODE_BATCH).min(n_frames);
+                let frames: Vec<_> = frame_ids[start..end]
+                    .par_iter()
+                    .map(|&fid| ds.get_frame(fid))
+                    .collect();
+                for frame in &frames {
+                    let rt = frame.ims_frame.retention_time;
+                    let is_ms2 = !matches!(frame.ms_type, MsType::Precursor);
+                    let mz = frame.ims_frame.mz.as_slice();
+                    let im = frame.ims_frame.mobility.as_slice();
+                    let it = frame.ims_frame.intensity.as_slice();
+                    // Validate parallel arrays — never zip past the shortest.
+                    let n = mz.len().min(im.len()).min(it.len());
+                    for j in 0..n {
+                        // Region refinement: drop points outside the m/z·1/K0 window at the
+                        // source so the budget is spent only on the focused region.
+                        if let Some(f) = filter {
+                            if mz[j] < f.mz.0 || mz[j] > f.mz.1 || im[j] < f.im.0 || im[j] > f.im.1 {
+                                continue;
+                            }
                         }
+                        handle_point!(mz[j], im[j], rt, it[j] as f32, is_ms2);
                     }
-                    handle_point!(mz[j], im[j], rt, it[j] as f32, is_ms2);
+                }
+                start = end;
+                let progress = end as f32 / n_frames as f32;
+                if progress - last_progress >= 0.01 {
+                    let _ = tx.try_send(LoadMsg::Progress(progress));
+                    last_progress = progress;
                 }
             }
-            LoaderMode::Demo(d) => {
+        }
+        LoaderMode::Demo(d) => {
+            for idx in 0..n_frames {
+                if cancelled!() {
+                    return;
+                }
                 for p in d.frame(idx) {
                     handle_point!(p.mz, p.im, p.rt, p.intensity as f32, p.is_ms2);
                 }
+                let progress = (idx + 1) as f32 / n_frames as f32;
+                if progress - last_progress >= 0.01 {
+                    let _ = tx.try_send(LoadMsg::Progress(progress));
+                    last_progress = progress;
+                }
             }
-        }
-
-        let progress = (idx + 1) as f32 / n_frames as f32;
-        if progress - last_progress >= 0.01 {
-            let _ = tx.try_send(LoadMsg::Progress(progress));
-            last_progress = progress;
         }
     }
 
