@@ -40,7 +40,8 @@ pub struct ParamsUniform {
     pub opacity: f32,
     /// 1.0 = re-fit the window box to the full cube (zoom to selection); 0.0 = no remap.
     pub focus: f32,
-    pub _pad1: f32,
+    /// 0 = color by intensity colormap, 1 = color by DBSCAN cluster id.
+    pub color_mode: u32,
     /// Bit mask: bit0 show MS1, bit1 show MS2.
     pub ms_mask: u32,
     pub colormap_id: u32,
@@ -114,7 +115,7 @@ impl Default for ParamsUniform {
             point_size: 2.5,
             opacity: 0.6,
             focus: 0.0,
-            _pad1: 0.0,
+            color_mode: 0,
             ms_mask: 0b11,
             colormap_id: 0,
             render_mode: 0,

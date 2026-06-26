@@ -3,7 +3,9 @@
 use crate::camera::{AxisView, OrbitCamera, Projection};
 use crate::render::colormap::{sample, COLORMAP_NAMES};
 use crate::render::point_cloud::PointMode;
-use crate::state::{AppState, RefineAction, TransferMode, ViewMode, VolStyle};
+use crate::state::{
+    AppState, ColorMode, RefineAction, TransferMode, ViewMode, VolStyle, CLUSTER_CAP,
+};
 use crate::ticks::RT_MINUTES_SPAN;
 
 /// A numeric axis-tick label for the screen-space overlay: a world-space anchor (just
@@ -64,6 +66,7 @@ pub fn build(
                 filters_section(ui, state);
                 selection_section(ui, state);
                 rendering_section(ui, state, vol_range);
+                clustering_section(ui, state);
                 view_section(ui, state, camera);
             });
         });
@@ -284,6 +287,47 @@ fn rendering_section(
             ui.add(egui::Slider::new(&mut state.point_size, 0.5..=12.0).text("point size"));
             ui.add(egui::Slider::new(&mut state.opacity, 0.02..=1.0).text("opacity"));
             ui.checkbox(&mut state.show_colorbar, "Colorbar");
+        });
+}
+
+/// **Clustering**: color points by DBSCAN cluster id (refine to a small region first).
+fn clustering_section(ui: &mut egui::Ui, state: &mut AppState) {
+    egui::CollapsingHeader::new("Clustering")
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("color by:");
+                ui.radio_value(&mut state.color_mode, ColorMode::Intensity, "Intensity");
+                ui.radio_value(&mut state.color_mode, ColorMode::Cluster, "Cluster");
+            });
+            ui.add(
+                egui::Slider::new(&mut state.cluster_eps, 0.002..=0.1)
+                    .logarithmic(true)
+                    .text("eps"),
+            );
+            ui.add(egui::Slider::new(&mut state.cluster_min_pts, 2..=50).text("min pts"));
+            let too_many = state.resident_points > CLUSTER_CAP;
+            ui.add_enabled_ui(!too_many, |ui| {
+                if ui.button("Cluster (DBSCAN)").clicked() {
+                    state.cluster_request = true;
+                }
+            });
+            if too_many {
+                ui.colored_label(
+                    egui::Color32::from_rgb(230, 180, 80),
+                    format!(
+                        "Refine to ≤ {} pts to cluster ({} shown)",
+                        fmt_count(CLUSTER_CAP as u64),
+                        fmt_count(state.resident_points as u64)
+                    ),
+                );
+            } else if state.cluster_count > 0 || state.cluster_noise > 0 {
+                ui.label(format!(
+                    "{} clusters · {} noise",
+                    state.cluster_count,
+                    fmt_count(state.cluster_noise as u64)
+                ));
+            }
         });
 }
 

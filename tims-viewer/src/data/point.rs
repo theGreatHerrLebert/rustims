@@ -21,19 +21,24 @@ pub struct GpuPoint {
     pub weight: f32,
     /// Bit flags. bit0: 0 = MS1/precursor, 1 = MS2/fragment.
     pub flags: u32,
+    /// `_pad[0]` doubles as the DBSCAN cluster id for cluster coloring (`NO_CLUSTER` =
+    /// noise/unclustered); `_pad[1]` is reserved padding to keep the 32-byte layout.
     pub _pad: [u32; 2],
 }
 
 impl GpuPoint {
     pub const MS2_FLAG: u32 = 1;
+    /// Cluster-id sentinel for noise / not-yet-clustered points (rendered grey).
+    pub const NO_CLUSTER: u32 = u32::MAX;
 
     /// `wgpu` vertex-buffer layout describing the instance step-mode attributes.
     pub fn layout() -> wgpu::VertexBufferLayout<'static> {
-        const ATTRS: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+        const ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
             0 => Float32x3, // pos
             1 => Float32,   // intensity
             2 => Float32,   // weight
             3 => Uint32,    // flags
+            4 => Uint32,    // cluster id (_pad[0])
         ];
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<GpuPoint>() as wgpu::BufferAddress,

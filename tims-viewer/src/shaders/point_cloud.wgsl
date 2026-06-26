@@ -15,7 +15,7 @@ struct Params {
     point_size : f32,
     opacity    : f32,
     focus      : f32,
-    _pad1      : f32,
+    color_mode : u32,   // 0 = intensity colormap, 1 = cluster id
     ms_mask     : u32,
     colormap_id : u32,
     render_mode : u32,
@@ -33,7 +33,22 @@ struct VsOut {
     @location(1) intensity : f32,
     @location(2) weight : f32,
     @location(3) visible : f32,
+    @location(4) @interpolate(flat) cluster : u32,
 };
+
+fn hsv2rgb(h: f32, s: f32, v: f32) -> vec3<f32> {
+    let k = vec3<f32>(5.0, 3.0, 1.0) / 6.0;
+    let p = abs(fract(vec3<f32>(h) + k) * 6.0 - 3.0);
+    return v * mix(vec3<f32>(1.0), clamp(p - 1.0, vec3<f32>(0.0), vec3<f32>(1.0)), s);
+}
+
+// Cluster id -> color: golden-ratio hue spacing; the noise sentinel renders grey.
+fn cluster_color(id: u32) -> vec3<f32> {
+    if (id == 0xffffffffu) {
+        return vec3<f32>(0.32, 0.32, 0.38);
+    }
+    return hsv2rgb(fract(f32(id) * 0.6180339887), 0.65, 1.0);
+}
 
 fn transfer(i: f32) -> f32 {
     let mode = params.transfer.x;
@@ -61,8 +76,10 @@ fn vs_main(
     @location(1) intensity : f32,
     @location(2) weight : f32,
     @location(3) flags : u32,
+    @location(4) cluster : u32,
 ) -> VsOut {
     var out : VsOut;
+    out.cluster = cluster;
 
     // Window + MS-type filtering -> collapse off-screen if rejected.
     let in_window =
@@ -116,9 +133,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (falloff <= 0.0) {
         discard;
     }
-    let t = transfer(in.intensity);
-    let row = (f32(params.colormap_id) + 0.5) / f32(params.n_colormaps);
-    let color = textureSample(lut_tex, lut_smp, vec2<f32>(t, row)).rgb;
+    var color : vec3<f32>;
+    if (params.color_mode == 1u) {
+        color = cluster_color(in.cluster);
+    } else {
+        let t = transfer(in.intensity);
+        let row = (f32(params.colormap_id) + 0.5) / f32(params.n_colormaps);
+        color = textureSample(lut_tex, lut_smp, vec2<f32>(t, row)).rgb;
+    }
 
     if (params.render_mode == 1u) {
         // Structural opaque: round point via alpha cutout, depth-written.

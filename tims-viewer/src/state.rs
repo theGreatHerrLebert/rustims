@@ -25,6 +25,27 @@ pub enum TransferMode {
     Log,
 }
 
+/// How points are colored.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorMode {
+    /// Intensity through the active colormap.
+    Intensity,
+    /// DBSCAN cluster id (golden-ratio hues, noise grey).
+    Cluster,
+}
+
+impl ColorMode {
+    pub fn as_u32(self) -> u32 {
+        match self {
+            ColorMode::Intensity => 0,
+            ColorMode::Cluster => 1,
+        }
+    }
+}
+
+/// Max resident points DBSCAN will run on; above this, clustering is disabled (refine first).
+pub const CLUSTER_CAP: u32 = 600_000;
+
 impl TransferMode {
     fn as_f32(self) -> f32 {
         match self {
@@ -106,6 +127,18 @@ pub struct AppState {
     /// Bias the load toward high-intensity points (brightest fill the budget first) instead
     /// of density-faithful uniform sampling. Applied at load time; toggling re-streams.
     pub intensity_priority: bool,
+
+    // Clustering (color points by DBSCAN cluster id)
+    pub color_mode: ColorMode,
+    /// DBSCAN neighborhood radius in normalized-cube units.
+    pub cluster_eps: f32,
+    /// DBSCAN minimum points to form a dense region.
+    pub cluster_min_pts: u32,
+    /// Last clustering result: number of clusters and noise points (0 until run).
+    pub cluster_count: usize,
+    pub cluster_noise: usize,
+    /// Set by the UI "Cluster" button; the app runs DBSCAN and consumes it.
+    pub cluster_request: bool,
     /// Pending level-of-detail request from the UI; the app consumes it each frame.
     pub refine_request: Option<RefineAction>,
 
@@ -163,6 +196,12 @@ impl AppState {
             focus: false,
             refined: false,
             intensity_priority: false,
+            color_mode: ColorMode::Intensity,
+            cluster_eps: 0.012,
+            cluster_min_pts: 8,
+            cluster_count: 0,
+            cluster_noise: 0,
+            cluster_request: false,
             refine_request: None,
             fps: 0.0,
             resident_points: 0,
@@ -270,7 +309,7 @@ impl AppState {
             point_size: self.point_size,
             opacity: self.opacity,
             focus: if self.focus { 1.0 } else { 0.0 },
-            _pad1: 0.0,
+            color_mode: self.color_mode.as_u32(),
             ms_mask,
             colormap_id: self.colormap_id,
             render_mode,

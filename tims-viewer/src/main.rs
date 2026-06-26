@@ -7,6 +7,7 @@
 
 mod app;
 mod camera;
+mod cluster;
 mod data;
 mod offscreen;
 mod render;

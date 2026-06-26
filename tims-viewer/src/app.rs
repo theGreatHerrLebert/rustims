@@ -84,6 +84,9 @@ struct Gfx {
     loader: LoaderHandle,
     /// The full run's metadata, retained so a refined region can revert to the whole run.
     full_meta: MetaIndex,
+    /// CPU copy of the resident points (bounded by CLUSTER_CAP) so DBSCAN can run on them
+    /// and write per-point cluster ids back into the GPU buffer.
+    cpu_points: Vec<crate::data::point::GpuPoint>,
 
     // interaction
     modifiers: ModifiersState,
@@ -463,6 +466,7 @@ impl App {
             state,
             loader,
             full_meta,
+            cpu_points: Vec::new(),
             modifiers: ModifiersState::empty(),
             left_down: false,
             right_down: false,
@@ -506,11 +510,21 @@ impl Gfx {
                         g.deposit(p.pos, p.intensity * p.weight);
                     }
                     self.points.append(&self.queue, &points);
+                    // Retain a CPU copy (bounded) for DBSCAN clustering.
+                    if (self.cpu_points.len() as u32) < crate::state::CLUSTER_CAP {
+                        let room = crate::state::CLUSTER_CAP as usize - self.cpu_points.len();
+                        self.cpu_points.extend(points.iter().take(room).copied());
+                    }
                 }
                 Ok(LoadMsg::PeakChunk { points }) => {
                     // Peaks are display-only enrichment; append to the cloud but do NOT
                     // add to the volume density (would double-count dense cells).
                     self.points.append(&self.queue, &points);
+                    // Retain a CPU copy (bounded) for DBSCAN clustering.
+                    if (self.cpu_points.len() as u32) < crate::state::CLUSTER_CAP {
+                        let room = crate::state::CLUSTER_CAP as usize - self.cpu_points.len();
+                        self.cpu_points.extend(points.iter().take(room).copied());
+                    }
                 }
                 Ok(LoadMsg::Progress(p)) => self.state.load_progress = p,
                 Ok(LoadMsg::Stats { i_min, i_max, i_med }) => {
@@ -666,6 +680,10 @@ impl Gfx {
         );
         // Reset GPU/CPU buffers for a fresh stream.
         self.points.reset();
+        self.cpu_points.clear();
+        self.state.color_mode = crate::state::ColorMode::Intensity;
+        self.state.cluster_count = 0;
+        self.state.cluster_noise = 0;
         self.grid_ms1.clear();
         self.grid_ms2.clear();
         self.grid.clear();
@@ -722,6 +740,39 @@ impl Gfx {
         self.state.refined = true;
     }
 
+    /// Run DBSCAN on the resident points (only when the full resident set is retained on the
+    /// CPU, i.e. within CLUSTER_CAP), write per-point cluster ids back into the GPU buffer, and
+    /// switch to cluster coloring (opaque points for clarity). No-op if too many points.
+    fn run_clustering(&mut self) {
+        if self.cpu_points.is_empty()
+            || self.cpu_points.len() as u32 != self.state.resident_points
+        {
+            return; // partial retention (too many points) — refine first
+        }
+        let positions: Vec<[f32; 3]> = self.cpu_points.iter().map(|p| p.pos).collect();
+        let (labels, k) = crate::cluster::dbscan(
+            &positions,
+            self.state.cluster_eps,
+            self.state.cluster_min_pts as usize,
+        );
+        let mut noise = 0usize;
+        for (p, &lab) in self.cpu_points.iter_mut().zip(labels.iter()) {
+            p._pad[0] = if lab < 0 {
+                noise += 1;
+                crate::data::point::GpuPoint::NO_CLUSTER
+            } else {
+                lab as u32
+            };
+        }
+        self.points.reset();
+        self.points.append(&self.queue, &self.cpu_points);
+        self.state.cluster_count = k;
+        self.state.cluster_noise = noise;
+        self.state.color_mode = crate::state::ColorMode::Cluster;
+        self.state.point_mode = crate::render::point_cloud::PointMode::StructuralOpaque;
+        self.state.view_mode = ViewMode::Points;
+    }
+
     /// Revert a refinement: re-stream the whole run at the global downsample.
     fn load_full_run(&mut self) {
         let frame_ids: Vec<u32> = self.full_meta.frames.iter().map(|f| f.id).collect();
@@ -747,6 +798,11 @@ impl Gfx {
                     }
                 }
             }
+        }
+        // Clustering: run DBSCAN on the resident points and color by cluster id.
+        if self.state.cluster_request {
+            self.state.cluster_request = false;
+            self.run_clustering();
         }
         // Re-range when switching Volume->Points. The two modes live in completely different
         // value ranges (per-point intensity vs summed density), so a transfer range pinned in
