@@ -49,6 +49,8 @@ pub enum RefineAction {
     Refine,
     /// Re-stream the whole run (revert a refinement).
     FullRun,
+    /// Re-stream the current scope (used when the intensity-priority sampling toggles).
+    Restream,
 }
 
 pub struct AppState {
@@ -101,6 +103,9 @@ pub struct AppState {
     pub focus: bool,
     /// True while showing a re-streamed sub-region (vs the full run).
     pub refined: bool,
+    /// Bias the load toward high-intensity points (brightest fill the budget first) instead
+    /// of density-faithful uniform sampling. Applied at load time; toggling re-streams.
+    pub intensity_priority: bool,
     /// Pending level-of-detail request from the UI; the app consumes it each frame.
     pub refine_request: Option<RefineAction>,
 
@@ -144,9 +149,7 @@ impl AppState {
             group_mask: u32::MAX,
             n_window_groups: 0,
             rt_window: Window {
-                // Skip the first ~15% of the run by default: the early gradient is usually
-                // near-empty (no peptides eluting yet). "Reset windows" restores the full range.
-                min: bounds.rt.min + 0.15 * (bounds.rt.max - bounds.rt.min),
+                min: bounds.rt.min,
                 max: bounds.rt.max,
             },
             mz_window: Window {
@@ -159,6 +162,7 @@ impl AppState {
             },
             focus: false,
             refined: false,
+            intensity_priority: false,
             refine_request: None,
             fps: 0.0,
             resident_points: 0,

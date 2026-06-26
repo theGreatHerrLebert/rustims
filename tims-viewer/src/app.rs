@@ -427,7 +427,13 @@ impl App {
                 filter: None,
             }
         };
-        let loader = LoaderHandle::spawn(mode, plan.meta.bounds, total, capacity as usize);
+        let loader = LoaderHandle::spawn(
+            mode,
+            plan.meta.bounds,
+            total,
+            capacity as usize,
+            state.intensity_priority,
+        );
 
         Ok(Gfx {
             window,
@@ -656,6 +662,7 @@ impl Gfx {
             bounds,
             total,
             capacity,
+            self.state.intensity_priority,
         );
         // Reset GPU/CPU buffers for a fresh stream.
         self.points.reset();
@@ -731,6 +738,14 @@ impl Gfx {
             match action {
                 crate::state::RefineAction::Refine => self.refine_to_window(),
                 crate::state::RefineAction::FullRun => self.load_full_run(),
+                // Re-stream the current scope (region or full run) with the new sampling.
+                crate::state::RefineAction::Restream => {
+                    if self.state.refined {
+                        self.refine_to_window();
+                    } else {
+                        self.load_full_run();
+                    }
+                }
             }
         }
         // Re-range when switching Volume->Points. The two modes live in completely different

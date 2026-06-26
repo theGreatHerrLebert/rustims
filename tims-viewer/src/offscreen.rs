@@ -121,7 +121,7 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
             filter: None,
         }
     };
-    let loader = LoaderHandle::spawn(mode, bounds, total, capacity as usize);
+    let loader = LoaderHandle::spawn(mode, bounds, total, capacity as usize, false);
     let keep = |p: &GpuPoint| match opts.ms {
         MsFilter::All => true,
         MsFilter::Ms1 => p.flags & GpuPoint::MS2_FLAG == 0,

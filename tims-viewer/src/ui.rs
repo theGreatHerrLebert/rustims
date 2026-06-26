@@ -119,6 +119,16 @@ fn filters_section(ui: &mut egui::Ui, state: &mut AppState) {
             {
                 state.refine_request = Some(RefineAction::Refine);
             }
+            if ui
+                .checkbox(&mut state.intensity_priority, "Intensity priority (brightest first)")
+                .on_hover_text(
+                    "Fill the budget with high-intensity points so the strongest features \
+                     survive; re-streams. Off = density-faithful uniform sampling.",
+                )
+                .changed()
+            {
+                state.refine_request = Some(RefineAction::Restream);
+            }
         });
 }
 

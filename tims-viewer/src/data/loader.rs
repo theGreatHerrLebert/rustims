@@ -91,13 +91,22 @@ impl LoaderHandle {
         bounds: AxisBounds,
         total_estimate: u64,
         budget: usize,
+        intensity_priority: bool,
     ) -> Self {
         let (msg_tx, msg_rx) = bounded::<LoadMsg>(8);
         let (cmd_tx, cmd_rx) = bounded::<LoadCmd>(4);
         let handle = std::thread::Builder::new()
             .name("tims-loader".into())
             .spawn(move || {
-                run_loader(mode, bounds, total_estimate, budget, &msg_tx, &cmd_rx);
+                run_loader(
+                    mode,
+                    bounds,
+                    total_estimate,
+                    budget,
+                    intensity_priority,
+                    &msg_tx,
+                    &cmd_rx,
+                );
             })
             .expect("failed to spawn loader thread");
         LoaderHandle {
@@ -140,7 +149,7 @@ pub fn stride_for(total_estimate: u64, budget: usize) -> usize {
 }
 
 /// Coarse spatial grid for peak preservation (m/z, 1/K0, RT cells).
-const PEAK_DIMS: [u32; 3] = [128, 64, 128];
+const PEAK_DIMS: [u32; 3] = [192, 96, 192];
 /// Placeholder point for the peak-grid HashMap entry API.
 const ZERO_POINT: GpuPoint = GpuPoint {
     pos: [0.0; 3],
@@ -168,13 +177,17 @@ fn run_loader(
     bounds: AxisBounds,
     total_estimate: u64,
     budget: usize,
+    intensity_priority: bool,
     tx: &Sender<LoadMsg>,
     cmd_rx: &Receiver<LoadCmd>,
 ) {
-    // Stratified sampling: spend ~85% of the budget on a systematic density base, and
-    // reserve the rest for per-cell intensity PEAKS so sparse high-intensity features
-    // always survive (pure systematic sampling can statistically miss them).
-    let systematic_budget = ((budget * 85) / 100).max(1);
+    // Stratified sampling: spend part of the budget on a systematic density base (faithful
+    // cloud shape), and reserve the rest for per-cell intensity PEAKS — the brightest point
+    // in each grid cell — so sparse high-intensity features always survive. In intensity-
+    // priority mode almost the whole budget goes to peaks, so the brightest features fill
+    // the buffer and low-intensity points drop first (at the cost of density fidelity).
+    let systematic_pct = if intensity_priority { 8 } else { 65 };
+    let systematic_budget = ((budget * systematic_pct) / 100).max(1);
     let stride = stride_for(total_estimate, systematic_budget);
     let weight = stride as f32;
     let mut systematic_count: u64 = 0;
@@ -640,7 +653,7 @@ mod tests {
         let budget = 50_000usize;
         let demo = DemoSource::new(20, total);
         let handle =
-            LoaderHandle::spawn(LoaderMode::Demo(demo), demo_bounds(), total, budget);
+            LoaderHandle::spawn(LoaderMode::Demo(demo), demo_bounds(), total, budget, false);
 
         let mut points = 0usize;
         let mut saw_stats = false;
