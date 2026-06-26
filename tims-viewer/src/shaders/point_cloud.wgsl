@@ -81,9 +81,11 @@ fn vs_main(
     var out : VsOut;
     out.cluster = cluster;
 
-    // Window + MS-type filtering -> collapse off-screen if rejected.
+    // Window + intensity-range + MS-type filtering -> collapse off-screen if rejected.
+    // The intensity range rides filter_min.w / filter_max.w (real intensity units).
     let in_window =
-        all(pos >= params.filter_min.xyz) && all(pos <= params.filter_max.xyz);
+        all(pos >= params.filter_min.xyz) && all(pos <= params.filter_max.xyz)
+        && intensity >= params.filter_min.w && intensity <= params.filter_max.w;
     let is_ms2 = (flags & 1u) != 0u;
     let show = select((params.ms_mask & 1u) != 0u, (params.ms_mask & 2u) != 0u, is_ms2);
     if (!in_window || !show) {

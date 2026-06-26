@@ -70,8 +70,6 @@ pub enum RefineAction {
     Refine,
     /// Re-stream the whole run (revert a refinement).
     FullRun,
-    /// Re-stream the current scope (used when the intensity-priority sampling toggles).
-    Restream,
 }
 
 pub struct AppState {
@@ -120,13 +118,20 @@ pub struct AppState {
     pub rt_window: Window,
     pub mz_window: Window,
     pub im_window: Window,
+    /// Intensity range filter (real units, log-scaled UI). Points outside are culled.
+    pub intensity_window: Window,
+    /// Data intensity range (kept-sample min/max), the slider bounds; set from Histograms.
+    pub i_data_lo: f32,
+    pub i_data_hi: f32,
+    /// Per-axis distribution histograms for the levels-style filters (empty until loaded).
+    pub hist_mz: Vec<u32>,
+    pub hist_im: Vec<u32>,
+    pub hist_rt: Vec<u32>,
+    pub hist_intensity: Vec<u32>,
     /// Re-fit the window box to the full cube (zoom to selection) instead of just culling.
     pub focus: bool,
     /// True while showing a re-streamed sub-region (vs the full run).
     pub refined: bool,
-    /// Bias the load toward high-intensity points (brightest fill the budget first) instead
-    /// of density-faithful uniform sampling. Applied at load time; toggling re-streams.
-    pub intensity_priority: bool,
 
     // Clustering (color points by DBSCAN cluster id)
     pub color_mode: ColorMode,
@@ -161,7 +166,7 @@ impl AppState {
             point_mode: PointMode::AdditiveDensity,
             vol_style: VolStyle::Composite,
             vol_steps: 256,
-            transfer: TransferMode::Log,
+            transfer: TransferMode::Sqrt,
             i_min: 1.0,
             i_max: 1e5,
             exposure: 1.0,
@@ -193,9 +198,19 @@ impl AppState {
                 min: bounds.im.min,
                 max: bounds.im.max,
             },
+            // Intensity range unknown until the first Histograms message; default pass-all.
+            intensity_window: Window {
+                min: 0.0,
+                max: f64::INFINITY,
+            },
+            i_data_lo: 1.0,
+            i_data_hi: 1.0e6,
+            hist_mz: Vec::new(),
+            hist_im: Vec::new(),
+            hist_rt: Vec::new(),
+            hist_intensity: Vec::new(),
             focus: false,
             refined: false,
-            intensity_priority: false,
             color_mode: ColorMode::Intensity,
             cluster_eps: 0.012,
             cluster_min_pts: 8,
@@ -226,6 +241,10 @@ impl AppState {
             min: self.bounds.im.min,
             max: self.bounds.im.max,
         };
+        self.intensity_window = Window {
+            min: self.i_data_lo as f64,
+            max: self.i_data_hi as f64,
+        };
     }
 
     /// Auto-set transfer mode + range + exposure for POINT mode from the stored intensity
@@ -247,8 +266,9 @@ impl AppState {
         // below 1.0. 4x ~= one extra decade for lognormal tails.
         self.i_max = (p99 * 4.0).max(p50 * 1.0001);
 
-        // timsTOF intensity is lognormal -> Log transfer puts the median mid-LUT.
-        self.transfer = TransferMode::Log;
+        // Sqrt transfer is the default for point intensity: gentler than log, it lifts the
+        // mid-range without flattening the bright peaks.
+        self.transfer = TransferMode::Sqrt;
 
         // Exposure controls additive COVERAGE (alpha), independent of the LUT index.
         // contrib = falloff(center=1) * opacity * exposure * weight, with weight == stride
@@ -302,9 +322,11 @@ impl AppState {
             PointMode::AdditiveDensity => 0,
             PointMode::StructuralOpaque => 1,
         };
+        // Intensity range filter rides the unused .w of the spatial filter vectors (real
+        // intensity units; the shader culls points outside).
         ParamsUniform {
-            filter_min: [fmin[0], fmin[1], fmin[2], 0.0],
-            filter_max: [fmax[0], fmax[1], fmax[2], 0.0],
+            filter_min: [fmin[0], fmin[1], fmin[2], self.intensity_window.min as f32],
+            filter_max: [fmax[0], fmax[1], fmax[2], self.intensity_window.max as f32],
             transfer: [self.transfer.as_f32(), self.i_min, self.i_max, self.exposure],
             point_size: self.point_size,
             opacity: self.opacity,

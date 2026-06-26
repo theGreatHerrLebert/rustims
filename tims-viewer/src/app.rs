@@ -433,13 +433,7 @@ impl App {
                 filter: None,
             }
         };
-        let loader = LoaderHandle::spawn(
-            mode,
-            plan.meta.bounds,
-            total,
-            capacity as usize,
-            state.intensity_priority,
-        );
+        let loader = LoaderHandle::spawn(mode, plan.meta.bounds, total, capacity as usize);
 
         Ok(Gfx {
             window,
@@ -549,6 +543,20 @@ impl Gfx {
                     {
                         self.state.auto_transfer_points();
                     }
+                }
+                Ok(LoadMsg::Histograms { mz, im, rt, intensity, i_lo, i_hi }) => {
+                    // Distribution strips for the levels-style filters; the intensity slider
+                    // spans the data range, default filter = full (no cull).
+                    self.state.hist_mz = mz;
+                    self.state.hist_im = im;
+                    self.state.hist_rt = rt;
+                    self.state.hist_intensity = intensity;
+                    self.state.i_data_lo = i_lo;
+                    self.state.i_data_hi = i_hi;
+                    self.state.intensity_window = crate::state::Window {
+                        min: i_lo as f64,
+                        max: i_hi as f64,
+                    };
                 }
                 Ok(LoadMsg::Annotations { lines, groups, n_groups }) => {
                     // Suppress the selection overlay in a refined region: it is normalized to
@@ -688,11 +696,19 @@ impl Gfx {
                 filter,
             }
         };
-        self.loader =
-            LoaderHandle::spawn(mode, bounds, total, capacity, self.state.intensity_priority);
+        self.loader = LoaderHandle::spawn(mode, bounds, total, capacity);
         // Reset GPU/CPU buffers for a fresh stream.
         self.points.reset();
         self.cpu_points.clear();
+        // Drop stale distributions; the new load re-sends them and resets the filter.
+        self.state.hist_mz.clear();
+        self.state.hist_im.clear();
+        self.state.hist_rt.clear();
+        self.state.hist_intensity.clear();
+        self.state.intensity_window = crate::state::Window {
+            min: 0.0,
+            max: f64::INFINITY,
+        };
         self.state.color_mode = crate::state::ColorMode::Intensity;
         self.state.cluster_count = 0;
         self.state.cluster_noise = 0;
@@ -816,26 +832,6 @@ impl Gfx {
             match action {
                 crate::state::RefineAction::Refine => self.refine_to_window(),
                 crate::state::RefineAction::FullRun => self.load_full_run(),
-                // Re-stream the current scope (region or full run) with the new sampling.
-                crate::state::RefineAction::Restream => {
-                    if self.state.refined {
-                        self.refine_to_window();
-                    } else {
-                        // In-place re-stream of the full run: preserve the user's window
-                        // narrowing and focus (load_full_run otherwise resets them).
-                        let (rt, mz, im, focus) = (
-                            self.state.rt_window,
-                            self.state.mz_window,
-                            self.state.im_window,
-                            self.state.focus,
-                        );
-                        self.load_full_run();
-                        self.state.rt_window = rt;
-                        self.state.mz_window = mz;
-                        self.state.im_window = im;
-                        self.state.focus = focus;
-                    }
-                }
             }
         }
         // Clustering: run DBSCAN on the resident points and color by cluster id.

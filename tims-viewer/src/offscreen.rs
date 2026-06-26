@@ -121,7 +121,7 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
             filter: None,
         }
     };
-    let loader = LoaderHandle::spawn(mode, bounds, total, capacity as usize, false);
+    let loader = LoaderHandle::spawn(mode, bounds, total, capacity as usize);
     let keep = |p: &GpuPoint| match opts.ms {
         MsFilter::All => true,
         MsFilter::Ms1 => p.flags & GpuPoint::MS2_FLAG == 0,
@@ -163,6 +163,7 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
                 points.append(&queue, &pts);
             }
             Ok(LoadMsg::Stats { .. }) => {} // recomputed below from retained points
+            Ok(LoadMsg::Histograms { .. }) => {} // UI-only; headless ignores
             Ok(LoadMsg::Annotations { lines, .. }) => {
                 if opts.annotations {
                     annotations.upload(&device, &lines);

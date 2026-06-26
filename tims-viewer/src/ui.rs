@@ -100,10 +100,21 @@ fn filters_section(ui: &mut egui::Ui, state: &mut AppState) {
                 ui.checkbox(&mut state.show_ms2, "MS2");
             });
             ui.separator();
-            ui.label("Windows (real units)");
-            axis_window(ui, "RT (s)", &mut state.rt_window, state.bounds.rt.min, state.bounds.rt.max);
-            axis_window(ui, "m/z (Th)", &mut state.mz_window, state.bounds.mz.min, state.bounds.mz.max);
-            axis_window(ui, "1/K0", &mut state.im_window, state.bounds.im.min, state.bounds.im.max);
+            ui.label("Windows (distribution + range)");
+            let (rb, mb, ib) = (state.bounds.rt, state.bounds.mz, state.bounds.im);
+            hist_filter(ui, "RT (s)", &mut state.rt_window, rb.min, rb.max, &state.hist_rt, false);
+            hist_filter(ui, "m/z (Th)", &mut state.mz_window, mb.min, mb.max, &state.hist_mz, false);
+            hist_filter(ui, "1/K0", &mut state.im_window, ib.min, ib.max, &state.hist_im, false);
+            let (idlo, idhi) = (state.i_data_lo as f64, state.i_data_hi as f64);
+            hist_filter(
+                ui,
+                "intensity (log)",
+                &mut state.intensity_window,
+                idlo,
+                idhi,
+                &state.hist_intensity,
+                true,
+            );
             ui.checkbox(&mut state.focus, "Focus to window (zoom in)");
             if ui.button("Reset windows").clicked() {
                 state.reset_windows();
@@ -121,16 +132,6 @@ fn filters_section(ui: &mut egui::Ui, state: &mut AppState) {
                 .clicked()
             {
                 state.refine_request = Some(RefineAction::Refine);
-            }
-            if ui
-                .checkbox(&mut state.intensity_priority, "Intensity priority (brightest first)")
-                .on_hover_text(
-                    "Fill the budget with high-intensity points so the strongest features \
-                     survive; re-streams. Off = density-faithful uniform sampling.",
-                )
-                .changed()
-            {
-                state.refine_request = Some(RefineAction::Restream);
             }
         });
 }
@@ -645,16 +646,64 @@ fn draw_group_legend(ctx: &egui::Context, state: &AppState) {
     }
 }
 
-fn axis_window(
+/// A range filter backed by a distribution histogram (image-"levels" style): a strip of bars
+/// with the selected range highlighted, above min/max sliders. `log` scales both the slider
+/// and the value→x mapping logarithmically (for the intensity axis). `hist` may be empty
+/// (before data lands) — then only the sliders show.
+fn hist_filter(
     ui: &mut egui::Ui,
     label: &str,
     win: &mut crate::state::Window,
     lo: f64,
     hi: f64,
+    hist: &[u32],
+    log: bool,
 ) {
     ui.label(label);
-    ui.add(egui::Slider::new(&mut win.min, lo..=hi).text("min"));
-    ui.add(egui::Slider::new(&mut win.max, lo..=hi).text("max"));
+    if !hist.is_empty() && hi > lo {
+        let height = 26.0;
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, egui::Rounding::same(2.0), egui::Color32::from_gray(22));
+        // Value -> x fraction in [0,1], honoring the log axis.
+        let to_frac = |v: f64| -> f32 {
+            let f = if log {
+                (v.max(lo).ln() - lo.ln()) / (hi.ln() - lo.ln())
+            } else {
+                (v - lo) / (hi - lo)
+            };
+            f.clamp(0.0, 1.0) as f32
+        };
+        let (wmin, wmax) = (to_frac(win.min), to_frac(win.max));
+        let maxc = hist.iter().copied().max().unwrap_or(1).max(1) as f32;
+        let n = hist.len();
+        let bw = rect.width() / n as f32;
+        for (i, &c) in hist.iter().enumerate() {
+            let frac = (i as f32 + 0.5) / n as f32;
+            // sqrt keeps low-count bins visible without flattening the peaks.
+            let bh = (c as f32 / maxc).sqrt() * (height - 2.0);
+            let x0 = rect.left() + i as f32 * bw;
+            let bar = egui::Rect::from_min_max(
+                egui::pos2(x0, rect.bottom() - bh),
+                egui::pos2(x0 + bw.max(1.0), rect.bottom()),
+            );
+            let color = if frac >= wmin && frac <= wmax {
+                egui::Color32::from_rgb(95, 170, 240)
+            } else {
+                egui::Color32::from_gray(72)
+            };
+            painter.rect_filled(bar, egui::Rounding::ZERO, color);
+        }
+    }
+    let mut smin = egui::Slider::new(&mut win.min, lo..=hi).text("min");
+    let mut smax = egui::Slider::new(&mut win.max, lo..=hi).text("max");
+    if log {
+        smin = smin.logarithmic(true);
+        smax = smax.logarithmic(true);
+    }
+    ui.add(smin);
+    ui.add(smax);
     // Keep the range ordered AND non-degenerate: a zero-width window would collapse the
     // focus (zoom-to-window) remap onto a single line via the shader's 1e-6 halfspan clamp.
     let eps = (hi - lo) * 1e-3;

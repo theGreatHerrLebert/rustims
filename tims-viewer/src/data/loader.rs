@@ -42,6 +42,17 @@ pub enum LoadMsg {
     Progress(f32),
     /// Robust intensity percentiles (p1/p50/p99) for transfer-function defaults.
     Stats { i_min: f32, i_max: f32, i_med: f32 },
+    /// Per-axis distribution histograms (each `HIST_BINS` long) for the levels-style filter
+    /// UI. m/z·1/K0·RT bin linearly over the cube bounds; `intensity` is data-tight log,
+    /// spanning `[i_lo, i_hi]` (the kept sample's min/max intensity).
+    Histograms {
+        mz: Vec<u32>,
+        im: Vec<u32>,
+        rt: Vec<u32>,
+        intensity: Vec<u32>,
+        i_lo: f32,
+        i_hi: f32,
+    },
     /// Annotation overlay geometry: colored line-list vertices (pairs = segments) in the
     /// normalized cube (DDA precursor crosses / DIA isolation-window footprints). `groups`
     /// is a parallel per-vertex window-group id (u32::MAX = ungrouped); `n_groups` is the
@@ -91,22 +102,13 @@ impl LoaderHandle {
         bounds: AxisBounds,
         total_estimate: u64,
         budget: usize,
-        intensity_priority: bool,
     ) -> Self {
         let (msg_tx, msg_rx) = bounded::<LoadMsg>(8);
         let (cmd_tx, cmd_rx) = bounded::<LoadCmd>(4);
         let handle = std::thread::Builder::new()
             .name("tims-loader".into())
             .spawn(move || {
-                run_loader(
-                    mode,
-                    bounds,
-                    total_estimate,
-                    budget,
-                    intensity_priority,
-                    &msg_tx,
-                    &cmd_rx,
-                );
+                run_loader(mode, bounds, total_estimate, budget, &msg_tx, &cmd_rx);
             })
             .expect("failed to spawn loader thread");
         LoaderHandle {
@@ -149,7 +151,7 @@ pub fn stride_for(total_estimate: u64, budget: usize) -> usize {
 }
 
 /// Coarse spatial grid for peak preservation (m/z, 1/K0, RT cells).
-const PEAK_DIMS: [u32; 3] = [192, 96, 192];
+const PEAK_DIMS: [u32; 3] = [128, 64, 128];
 /// Placeholder point for the peak-grid HashMap entry API.
 const ZERO_POINT: GpuPoint = GpuPoint {
     pos: [0.0; 3],
@@ -158,6 +160,19 @@ const ZERO_POINT: GpuPoint = GpuPoint {
     flags: 0,
     _pad: [GpuPoint::NO_CLUSTER, 0],
 };
+
+/// Number of bins in each per-axis distribution histogram (for the levels-style filter UI).
+pub const HIST_BINS: usize = 80;
+/// Fine intermediate bins for the intensity log histogram before rebinning to the data range.
+const LOGI_FINE: usize = 256;
+/// Upper bound of the fixed intensity log range (log10), generous for timsTOF intensities.
+const LOGI_HI: f32 = 8.0;
+
+/// Bin a normalized-cube coordinate in `[-1, 1]` into `[0, HIST_BINS)`.
+#[inline]
+fn hbin(n: f32) -> usize {
+    (((n * 0.5 + 0.5).clamp(0.0, 1.0)) * (HIST_BINS as f32 - 1.0)) as usize
+}
 
 /// Map a normalized-cube position to a coarse peak-grid cell index.
 #[inline]
@@ -177,17 +192,13 @@ fn run_loader(
     bounds: AxisBounds,
     total_estimate: u64,
     budget: usize,
-    intensity_priority: bool,
     tx: &Sender<LoadMsg>,
     cmd_rx: &Receiver<LoadCmd>,
 ) {
-    // Stratified sampling: spend part of the budget on a systematic density base (faithful
-    // cloud shape), and reserve the rest for per-cell intensity PEAKS — the brightest point
-    // in each grid cell — so sparse high-intensity features always survive. In intensity-
-    // priority mode almost the whole budget goes to peaks, so the brightest features fill
-    // the buffer and low-intensity points drop first (at the cost of density fidelity).
-    let systematic_pct = if intensity_priority { 8 } else { 65 };
-    let systematic_budget = ((budget * systematic_pct) / 100).max(1);
+    // Stratified sampling: spend ~85% of the budget on a systematic density base, and
+    // reserve the rest for per-cell intensity PEAKS so sparse high-intensity features
+    // always survive (pure systematic sampling can statistically miss them).
+    let systematic_budget = ((budget * 85) / 100).max(1);
     let stride = stride_for(total_estimate, systematic_budget);
     let weight = stride as f32;
     let mut systematic_count: u64 = 0;
@@ -202,6 +213,16 @@ fn run_loader(
     let mut reservoir: Vec<f32> = Vec::with_capacity(RESERVOIR_CAP);
     let mut kept_counter: u64 = 0;
     let sample_every = (budget / RESERVOIR_CAP).max(1) as u64;
+
+    // Distribution histograms (over the kept systematic sample) for the levels-style filter
+    // UI. m/z·1/K0·RT bin over the normalized cube; intensity accumulates into a fine fixed
+    // log range, then rebins to the data's actual range at the end (so it is data-tight).
+    let mut hist_mz = [0u32; HIST_BINS];
+    let mut hist_im = [0u32; HIST_BINS];
+    let mut hist_rt = [0u32; HIST_BINS];
+    let mut logi_fine = [0u32; LOGI_FINE];
+    let mut i_lo_seen = f32::MAX;
+    let mut i_hi_seen = 0.0f32;
 
     let mut chunk: Vec<GpuPoint> = Vec::with_capacity(CHUNK_POINTS);
 
@@ -299,6 +320,14 @@ fn run_loader(
                 chunk.push(GpuPoint { pos, intensity, weight, flags, _pad: [GpuPoint::NO_CLUSTER, 0] });
                 systematic_count += 1;
                 reservoir_push(&mut reservoir, &mut kept_counter, sample_every, intensity);
+                // Distribution histograms over the kept (representative) sample.
+                hist_mz[hbin(pos[0])] += 1;
+                hist_im[hbin(pos[1])] += 1;
+                hist_rt[hbin(pos[2])] += 1;
+                logi_fine[((intensity.max(1.0).log10() / LOGI_HI) * LOGI_FINE as f32)
+                    .clamp(0.0, (LOGI_FINE - 1) as f32) as usize] += 1;
+                i_lo_seen = i_lo_seen.min(intensity);
+                i_hi_seen = i_hi_seen.max(intensity);
                 if chunk.len() >= CHUNK_POINTS {
                     flush!();
                 }
@@ -394,6 +423,34 @@ fn run_loader(
         let i_med = p(0.50).max(i_min);
         let i_max = p(0.99).max(i_med * 1.0001);
         send_cancellable!(LoadMsg::Stats { i_min, i_max, i_med });
+    }
+
+    // Rebin the fine fixed-range intensity histogram into the data's actual log range so the
+    // levels strip is data-tight, and ship all four distributions to the UI.
+    if i_hi_seen > 0.0 {
+        let i_lo = i_lo_seen.max(1.0);
+        let i_hi = i_hi_seen.max(i_lo * 1.0001);
+        let (llo, lhi) = (i_lo.log10(), i_hi.log10());
+        let span = (lhi - llo).max(1e-6);
+        let mut hist_i = vec![0u32; HIST_BINS];
+        for (src, &c) in logi_fine.iter().enumerate() {
+            if c == 0 {
+                continue;
+            }
+            let src_log = ((src as f32 + 0.5) / LOGI_FINE as f32) * LOGI_HI;
+            let t = (((src_log - llo) / span) * HIST_BINS as f32) as i32;
+            if t >= 0 && (t as usize) < HIST_BINS {
+                hist_i[t as usize] += c;
+            }
+        }
+        send_cancellable!(LoadMsg::Histograms {
+            mz: hist_mz.to_vec(),
+            im: hist_im.to_vec(),
+            rt: hist_rt.to_vec(),
+            intensity: hist_i,
+            i_lo,
+            i_hi,
+        });
     }
 
     send_cancellable!(LoadMsg::Done {
@@ -653,7 +710,7 @@ mod tests {
         let budget = 50_000usize;
         let demo = DemoSource::new(20, total);
         let handle =
-            LoaderHandle::spawn(LoaderMode::Demo(demo), demo_bounds(), total, budget, false);
+            LoaderHandle::spawn(LoaderMode::Demo(demo), demo_bounds(), total, budget);
 
         let mut points = 0usize;
         let mut saw_stats = false;
@@ -678,7 +735,9 @@ mod tests {
                     points += p.len();
                 }
                 Ok(LoadMsg::Error(e)) => panic!("loader error: {e}"),
-                Ok(LoadMsg::Progress(_)) | Ok(LoadMsg::Annotations { .. }) => {}
+                Ok(LoadMsg::Progress(_))
+                | Ok(LoadMsg::Annotations { .. })
+                | Ok(LoadMsg::Histograms { .. }) => {}
                 Err(e) => panic!("loader timed out / disconnected: {e}"),
             }
         }
