@@ -42,6 +42,10 @@ impl Plan {
     }
 }
 
+/// Filter signature for caching the DBSCAN-input count: the three window ranges, the intensity
+/// range, the two MS toggles, and the resident point count.
+type CountSig = (f64, f64, f64, f64, f64, f64, f64, f64, bool, bool, usize);
+
 /// Everything that exists only once the window/GPU are live.
 struct Gfx {
     window: Arc<Window>,
@@ -87,9 +91,12 @@ struct Gfx {
     /// True for the built-in synthetic DEMO source: respawns must stay in demo mode rather
     /// than trying to open a real `.d` at the placeholder data path.
     is_demo: bool,
-    /// CPU copy of the resident points (bounded by CLUSTER_CAP) so DBSCAN can run on them
-    /// and write per-point cluster ids back into the GPU buffer.
+    /// CPU copy of the resident points (bounded by GPU capacity) so DBSCAN can run on a
+    /// filtered subset and write per-point cluster ids back into the GPU buffer.
     cpu_points: Vec<crate::data::point::GpuPoint>,
+    /// Cached filter signature; the filtered DBSCAN-input count is recomputed only when this
+    /// changes (avoids rescanning millions of points every frame).
+    last_count_sig: Option<CountSig>,
 
     // interaction
     modifiers: ModifiersState,
@@ -512,6 +519,7 @@ impl App {
             full_meta,
             is_demo: plan.is_demo,
             cpu_points: Vec::new(),
+            last_count_sig: None,
             modifiers: ModifiersState::empty(),
             left_down: false,
             right_down: false,
@@ -876,8 +884,27 @@ impl Gfx {
         )
     }
 
+    /// Signature of everything the filtered count depends on; used to skip the rescan when
+    /// nothing changed.
+    fn count_sig(&self) -> CountSig {
+        let s = &self.state;
+        (
+            s.mz_window.min,
+            s.mz_window.max,
+            s.im_window.min,
+            s.im_window.max,
+            s.rt_window.min,
+            s.rt_window.max,
+            s.intensity_window.min,
+            s.intensity_window.max,
+            s.show_ms1,
+            s.show_ms2,
+            self.cpu_points.len(),
+        )
+    }
+
     /// Count the resident points that pass the active filter (the DBSCAN input size). Parallel
-    /// so it can run every frame for a live readout even on a large resident set.
+    /// for speed; called only when the filter signature changes (see `count_sig`).
     fn count_filtered(&self) -> usize {
         use rayon::prelude::*;
         let (fmin, fmax, irange, ms) = self.active_filter();
@@ -958,9 +985,14 @@ impl Gfx {
             }
         }
         // Live DBSCAN input size = points passing the active filter (so the Cluster gate +
-        // readout react as you drag the intensity / window sliders).
+        // readout react as you drag the sliders). Recompute only when the filter or point set
+        // changes — rescanning millions of points every frame would stall the render loop.
         if self.state.load_progress >= 1.0 {
-            self.state.cluster_input_count = self.count_filtered();
+            let sig = self.count_sig();
+            if self.last_count_sig != Some(sig) {
+                self.state.cluster_input_count = self.count_filtered();
+                self.last_count_sig = Some(sig);
+            }
         }
         // Clustering: run DBSCAN on the filtered resident points and color by cluster id.
         if self.state.cluster_request {
