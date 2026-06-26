@@ -13,7 +13,7 @@ struct Volume {
     colormap_id : u32,
     n_colormaps : u32,
     density_scale : f32,  // recover raw intensity from the normalized texture
-    _pad0 : f32,
+    focus : f32,          // 1.0 = re-fit the window box to the full cube (zoom to selection)
     _pad1 : f32,
     _pad2 : f32,
 };
@@ -95,7 +95,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let o = near.xyz / near.w;
     let dir = normalize(far.xyz / far.w - o);
 
-    let hit = intersect_box(o, dir, vol.box_min.xyz, vol.box_max.xyz);
+    // Focus: re-fit the window box to the full cube. The ray then marches the whole cube
+    // and each marched position maps back into the window box for texture sampling.
+    let focus = vol.focus > 0.5;
+    let center = (vol.box_min.xyz + vol.box_max.xyz) * 0.5;
+    let halfspan = max((vol.box_max.xyz - vol.box_min.xyz) * 0.5, vec3<f32>(1e-6));
+    let march_min = select(vol.box_min.xyz, vec3<f32>(-1.0), focus);
+    let march_max = select(vol.box_max.xyz, vec3<f32>(1.0), focus);
+
+    let hit = intersect_box(o, dir, march_min, march_max);
     let t_enter = max(hit.x, 0.0);
     let t_exit = hit.y;
     if (t_exit <= t_enter) {
@@ -112,7 +120,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         var maxt = 0.0;
         for (var i = 0u; i < steps; i = i + 1u) {
             let p = o + dir * (t_enter + dt * (f32(i) + 0.5));
-            let uvw = p * 0.5 + vec3<f32>(0.5);
+            let sp = select(p, center + p * halfspan, focus);
+            let uvw = sp * 0.5 + vec3<f32>(0.5);
             let dens = textureSampleLevel(vol_tex, vol_smp, uvw, 0.0).r * vol.density_scale;
             maxt = max(maxt, transfer(dens));
         }
@@ -127,7 +136,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     var alpha = 0.0;
     for (var i = 0u; i < steps; i = i + 1u) {
         let p = o + dir * (t_enter + dt * (f32(i) + 0.5));
-        let uvw = p * 0.5 + vec3<f32>(0.5);
+        let sp = select(p, center + p * halfspan, focus);
+        let uvw = sp * 0.5 + vec3<f32>(0.5);
         let dens = textureSampleLevel(vol_tex, vol_smp, uvw, 0.0).r * vol.density_scale;
         let tval = transfer(dens);
         if (tval > 0.0) {

@@ -38,7 +38,8 @@ pub struct ParamsUniform {
     pub transfer: [f32; 4],
     pub point_size: f32,
     pub opacity: f32,
-    pub _pad0: f32,
+    /// 1.0 = re-fit the window box to the full cube (zoom to selection); 0.0 = no remap.
+    pub focus: f32,
     pub _pad1: f32,
     /// Bit mask: bit0 show MS1, bit1 show MS2.
     pub ms_mask: u32,
@@ -68,7 +69,9 @@ pub struct VolumeUniform {
     /// Multiplier applied to the sampled (normalized) voxel value to recover raw
     /// intensity before the transfer function (mirrors VolumeGrid::density_scale).
     pub density_scale: f32,
-    pub _pad: [f32; 3],
+    /// 1.0 = re-fit the window box to the full cube (zoom to selection); 0.0 = no remap.
+    pub focus: f32,
+    pub _pad: [f32; 2],
 }
 
 impl Default for VolumeUniform {
@@ -83,7 +86,8 @@ impl Default for VolumeUniform {
             colormap_id: 0,
             n_colormaps: 1,
             density_scale: 1.0,
-            _pad: [0.0; 3],
+            focus: 0.0,
+            _pad: [0.0; 2],
         }
     }
 }
@@ -93,7 +97,12 @@ impl Default for VolumeUniform {
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct CompactionUniform {
     pub point_count: u32,
-    pub _pad: [u32; 3],
+    /// Invocations per dispatch row (`groups_x * workgroup_size`). The compaction is
+    /// dispatched as a 2D workgroup grid so neither dimension exceeds wgpu's 65535 limit
+    /// at large point counts; the shader rebuilds the linear index as
+    /// `gid.x + gid.y * row_stride`.
+    pub row_stride: u32,
+    pub _pad: [u32; 2],
 }
 
 impl Default for ParamsUniform {
@@ -104,7 +113,7 @@ impl Default for ParamsUniform {
             transfer: [2.0, 1.0, 1e5, 1.0],
             point_size: 2.5,
             opacity: 0.6,
-            _pad0: 0.0,
+            focus: 0.0,
             _pad1: 0.0,
             ms_mask: 0b11,
             colormap_id: 0,

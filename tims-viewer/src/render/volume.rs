@@ -122,6 +122,23 @@ impl VolumeGrid {
         (lo, hi)
     }
 
+    /// Rebuild this grid as `wa*a + wb*b` of two same-dim source grids. Used to fold the
+    /// separate MS1 / MS2 density grids into the displayed volume per the MS1/MS2 toggle
+    /// (weights are 1.0 or 0.0), so the volume raycaster honors the same filter as points.
+    pub fn combine(&mut self, a: &VolumeGrid, b: &VolumeGrid, wa: f32, wb: f32) {
+        assert!(self.data.len() == a.data.len() && self.data.len() == b.data.len());
+        let mut max = 0.0f32;
+        for (i, d) in self.data.iter_mut().enumerate() {
+            let v = a.data[i] * wa + b.data[i] * wb;
+            *d = v;
+            if v > max {
+                max = v;
+            }
+        }
+        self.max_density = max;
+        self.dirty = true;
+    }
+
     /// Normalize by `density_scale` and convert to f16. The shader multiplies back by
     /// `density_scale` before the transfer function.
     pub fn to_f16_scaled(&self) -> Vec<f16> {

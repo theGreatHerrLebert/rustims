@@ -24,6 +24,7 @@ use rustdf::data::meta::{
 
 use super::demo::DemoSource;
 use super::point::{AxisBounds, GpuPoint};
+use crate::render::annotation::LineVertex;
 
 /// Messages from the loader thread to the render thread.
 ///
@@ -41,9 +42,9 @@ pub enum LoadMsg {
     Progress(f32),
     /// Robust intensity range (p1/p99) for transfer-function defaults.
     Stats { i_min: f32, i_max: f32 },
-    /// Annotation overlay geometry: line-list vertices (pairs = segments) in the
-    /// normalized cube (DDA precursor crosses / DIA isolation-window boxes).
-    Annotations { lines: Vec<[f32; 3]> },
+    /// Annotation overlay geometry: colored line-list vertices (pairs = segments) in the
+    /// normalized cube (DDA precursor crosses / DIA isolation-window footprints).
+    Annotations { lines: Vec<LineVertex> },
     /// All frames for `generation` have been streamed.
     Done { generation: u64 },
     /// Fatal error; loading stopped.
@@ -367,7 +368,7 @@ fn run_loader(
 /// Build annotation-overlay line geometry (normalized cube) from the run's DDA/DIA
 /// metadata. DDA precursors -> small 3D crosses; DIA isolation windows -> wireframe
 /// boxes. Returns line-list vertices (consecutive pairs are segments).
-fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<[f32; 3]> {
+fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<LineVertex> {
     // frame_id -> retention time (ids are contiguous 1..=N, validated at load).
     let meta = match read_meta_data_sql(path) {
         Ok(m) => m,
@@ -382,7 +383,7 @@ fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<[
     }
     let rt_of = |fid: u32| rt_by.get(fid as usize).copied().unwrap_or(0.0);
 
-    let mut lines: Vec<[f32; 3]> = Vec::new();
+    let mut lines: Vec<LineVertex> = Vec::new();
     match ds.get_acquisition_mode() {
         AcquisitionMode::DDA | AcquisitionMode::PRECURSOR => {
             if let Ok(precursors) = read_dda_precursor_meta(path) {
@@ -395,7 +396,7 @@ fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<[
                         .copied()
                         .unwrap_or(0.0);
                     let pos = bounds.normalize(p.precursor_mz_highest_intensity, im, rt_of(fid));
-                    push_cross(&mut lines, pos, 0.012);
+                    push_cross(&mut lines, pos, 0.012, [0.1, 0.95, 0.95]);
                 }
             }
         }
@@ -403,27 +404,41 @@ fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<[
             if let (Ok(windows), Ok(info)) =
                 (read_dia_ms_ms_windows(path), read_dia_ms_ms_info(path))
             {
-                // Per window group: RT span and a representative frame for scan->mobility.
-                let mut grp_rt: std::collections::HashMap<u32, (f64, f64)> = Default::default();
+                // A representative frame per window group, for scan->mobility conversion.
                 let mut grp_frame: std::collections::HashMap<u32, u32> = Default::default();
                 for di in &info {
-                    let rt = rt_of(di.frame_id);
-                    let e = grp_rt
-                        .entry(di.window_group)
-                        .or_insert((f64::INFINITY, f64::NEG_INFINITY));
-                    e.0 = e.0.min(rt);
-                    e.1 = e.1.max(rt);
                     grp_frame.entry(di.window_group).or_insert(di.frame_id);
                 }
-                for w in &windows {
+                // The isolation scheme repeats every cycle. Drawing each window as one
+                // full-RT box piles every window face onto the two RT end-walls (leaving only
+                // thin edges through the middle), which reads as a slab beside the data.
+                // Instead draw the (m/z, mobility) selection footprint at several evenly
+                // spaced RT slices, so the recurring selection sits on the precursor signal
+                // through the whole run.
+                // The fine diagonal has ~950 touching windows per group; drawing every one
+                // fills the band solid and hides the data. Subsample to leave gaps you can
+                // see the cloud through, and span each drawn rect across the skipped scans so
+                // it stays a visible window outline rather than a sliver.
+                const N_SLICES: usize = 6;
+                const WIN_STRIDE: usize = 16;
+                // Color each window by its group, so the interleaved isolation diagonals
+                // that tile the precursor space read as distinct bands.
+                let n_groups = windows.iter().map(|w| w.window_group).max().unwrap_or(1).max(1);
+                let (rt_lo, rt_hi) = (bounds.rt.min, bounds.rt.max);
+                for w in windows.iter().step_by(WIN_STRIDE) {
                     let fid = grp_frame.get(&w.window_group).copied().unwrap_or(1);
-                    let ims = ds.scan_to_inverse_mobility(fid, &vec![w.scan_num_begin, w.scan_num_end]);
+                    let scan_hi = w.scan_num_end + WIN_STRIDE as u32 / 2;
+                    let ims = ds.scan_to_inverse_mobility(fid, &vec![w.scan_num_begin, scan_hi]);
                     let im0 = ims.first().copied().unwrap_or(0.0);
                     let im1 = ims.get(1).copied().unwrap_or(im0);
-                    let (rt0, rt1) = grp_rt.get(&w.window_group).copied().unwrap_or((0.0, 0.0));
                     let mz0 = w.isolation_mz - w.isolation_width * 0.5;
                     let mz1 = w.isolation_mz + w.isolation_width * 0.5;
-                    push_box(&mut lines, bounds, (mz0, mz1), (im0, im1), (rt0, rt1));
+                    let color = group_color(w.window_group, n_groups);
+                    for i in 0..N_SLICES {
+                        let rt =
+                            rt_lo + (rt_hi - rt_lo) * (i as f64 + 0.5) / N_SLICES as f64;
+                        push_rect_mz_im(&mut lines, bounds, (mz0, mz1), (im0, im1), rt, color);
+                    }
                 }
             }
         }
@@ -432,45 +447,61 @@ fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<[
     lines
 }
 
-/// Append a 3-segment axis-aligned cross centered at `c` (half-length `h`).
-fn push_cross(lines: &mut Vec<[f32; 3]>, c: [f32; 3], h: f32) {
-    lines.push([c[0] - h, c[1], c[2]]);
-    lines.push([c[0] + h, c[1], c[2]]);
-    lines.push([c[0], c[1] - h, c[2]]);
-    lines.push([c[0], c[1] + h, c[2]]);
-    lines.push([c[0], c[1], c[2] - h]);
-    lines.push([c[0], c[1], c[2] + h]);
+/// Append a 3-segment axis-aligned cross centered at `c` (half-length `h`), in `color`.
+fn push_cross(lines: &mut Vec<LineVertex>, c: [f32; 3], h: f32, color: [f32; 3]) {
+    let v = |p: [f32; 3]| LineVertex::new(p, color);
+    lines.push(v([c[0] - h, c[1], c[2]]));
+    lines.push(v([c[0] + h, c[1], c[2]]));
+    lines.push(v([c[0], c[1] - h, c[2]]));
+    lines.push(v([c[0], c[1] + h, c[2]]));
+    lines.push(v([c[0], c[1], c[2] - h]));
+    lines.push(v([c[0], c[1], c[2] + h]));
 }
 
-/// Append the 12 edges of an axis-aligned box spanning the given real-unit ranges.
-fn push_box(
-    lines: &mut Vec<[f32; 3]>,
+/// Distinct color per window group, by evenly spacing hue around the wheel.
+fn group_color(group: u32, n_groups: u32) -> [f32; 3] {
+    let h = (group.saturating_sub(1) as f32) / (n_groups.max(1) as f32);
+    hsv_to_rgb(h, 0.7, 1.0)
+}
+
+/// HSV (all in [0,1] except hue which wraps) to linear-ish RGB for line colors.
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
+    let i = (h * 6.0).floor();
+    let f = h * 6.0 - i;
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - f * s);
+    let t = v * (1.0 - (1.0 - f) * s);
+    match (i as i32).rem_euclid(6) {
+        0 => [v, t, p],
+        1 => [q, v, p],
+        2 => [p, v, t],
+        3 => [p, q, v],
+        4 => [t, p, v],
+        _ => [v, p, q],
+    }
+}
+
+/// Append the 4 edges of an axis-aligned rectangle in the m/z x mobility plane at a fixed
+/// retention time — one isolation window's footprint, drawn at a given RT slice.
+fn push_rect_mz_im(
+    lines: &mut Vec<LineVertex>,
     bounds: &AxisBounds,
     mz: (f64, f64),
     im: (f64, f64),
-    rt: (f64, f64),
+    rt: f64,
+    color: [f32; 3],
 ) {
-    // 8 corners (normalized).
-    let corner = |a: f64, b: f64, c: f64| bounds.normalize(a, b, c);
+    let corner = |a: f64, b: f64| bounds.normalize(a, b, rt);
     let c = [
-        corner(mz.0, im.0, rt.0),
-        corner(mz.1, im.0, rt.0),
-        corner(mz.1, im.1, rt.0),
-        corner(mz.0, im.1, rt.0),
-        corner(mz.0, im.0, rt.1),
-        corner(mz.1, im.0, rt.1),
-        corner(mz.1, im.1, rt.1),
-        corner(mz.0, im.1, rt.1),
+        corner(mz.0, im.0),
+        corner(mz.1, im.0),
+        corner(mz.1, im.1),
+        corner(mz.0, im.1),
     ];
-    // 12 edges as index pairs.
-    const EDGES: [(usize, usize); 12] = [
-        (0, 1), (1, 2), (2, 3), (3, 0), // bottom (rt0)
-        (4, 5), (5, 6), (6, 7), (7, 4), // top (rt1)
-        (0, 4), (1, 5), (2, 6), (3, 7), // verticals
-    ];
+    const EDGES: [(usize, usize); 4] = [(0, 1), (1, 2), (2, 3), (3, 0)];
     for (a, b) in EDGES {
-        lines.push(c[a]);
-        lines.push(c[b]);
+        lines.push(LineVertex::new(c[a], color));
+        lines.push(LineVertex::new(c[b], color));
     }
 }
 

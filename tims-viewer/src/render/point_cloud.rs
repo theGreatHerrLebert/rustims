@@ -312,12 +312,22 @@ impl PointCloudRenderer {
         // Reset the survivor counter every frame (atomicAdd accumulates otherwise);
         // keep vertex_count=4 for the quad strip.
         queue.write_buffer(&self.draw_args, 0, bytemuck::cast_slice(&[4u32, 0u32, 0u32, 0u32]));
+        // 2D dispatch grid: a single dispatch dimension is capped at 65535 workgroups, which
+        // a 1D dispatch exceeds once resident points pass ~65535*256 (~16.8M). Spread the
+        // workgroups across x and y and let the shader rebuild the linear index from
+        // row_stride (= invocations per row).
+        const MAX_DIM: u32 = 65535;
+        let groups = self.resident.div_ceil(WORKGROUP_SIZE);
+        let groups_x = groups.min(MAX_DIM);
+        let groups_y = groups.div_ceil(groups_x);
+        let row_stride = groups_x * WORKGROUP_SIZE;
         queue.write_buffer(
             &self.compaction_buf,
             0,
             bytemuck::bytes_of(&CompactionUniform {
                 point_count: self.resident,
-                _pad: [0; 3],
+                row_stride,
+                _pad: [0; 2],
             }),
         );
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -326,8 +336,7 @@ impl PointCloudRenderer {
         });
         cpass.set_pipeline(&compute.pipeline);
         cpass.set_bind_group(0, &compute.bind_group, &[]);
-        let groups = self.resident.div_ceil(WORKGROUP_SIZE);
-        cpass.dispatch_workgroups(groups, 1, 1);
+        cpass.dispatch_workgroups(groups_x, groups_y, 1);
     }
 
     pub fn render(&self, rpass: &mut wgpu::RenderPass<'_>, mode: PointMode) {

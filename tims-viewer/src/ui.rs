@@ -113,7 +113,8 @@ pub fn build(ctx: &egui::Context, state: &mut AppState, camera: &mut OrbitCamera
                 ui.checkbox(&mut state.show_ms1, "MS1");
                 ui.checkbox(&mut state.show_ms2, "MS2");
             });
-            ui.checkbox(&mut state.show_annotations, "Annotations (precursors / DIA windows)");
+            ui.checkbox(&mut state.show_annotations, "Selection windows (DIA/MIDIA)");
+            ui.checkbox(&mut state.show_axes, "Axis frame + labels");
             ui.separator();
 
             // ---- Axis windows ----
@@ -121,6 +122,7 @@ pub fn build(ctx: &egui::Context, state: &mut AppState, camera: &mut OrbitCamera
             axis_window(ui, "RT (s)", &mut state.rt_window, state.bounds.rt.min, state.bounds.rt.max);
             axis_window(ui, "m/z (Th)", &mut state.mz_window, state.bounds.mz.min, state.bounds.mz.max);
             axis_window(ui, "1/K0", &mut state.im_window, state.bounds.im.min, state.bounds.im.max);
+            ui.checkbox(&mut state.focus, "Focus to window (zoom in)");
             if ui.button("Reset windows").clicked() {
                 state.reset_windows();
             }
@@ -153,6 +155,84 @@ pub fn build(ctx: &egui::Context, state: &mut AppState, camera: &mut OrbitCamera
                 }
             });
         });
+
+    // Axis labels are drawn as a screen-space overlay (outside the panel) so they sit at
+    // the projected ends of the data cube and rotate with it.
+    if state.show_axes {
+        draw_axis_labels(ctx, state, camera);
+    }
+}
+
+/// Project the data cube's axis ends to screen and label them (name + real-unit range),
+/// so the orientation of m/z, 1/K0 and RT is always readable.
+fn draw_axis_labels(ctx: &egui::Context, state: &AppState, camera: &OrbitCamera) {
+    let rect = ctx.screen_rect();
+    let (w, h) = (rect.width(), rect.height());
+    if w < 1.0 || h < 1.0 {
+        return;
+    }
+    let vp = camera.view_proj(w / h);
+    let project = |p: glam::Vec3| -> Option<egui::Pos2> {
+        let clip = vp * p.extend(1.0);
+        if clip.w <= 1e-4 {
+            return None; // behind the camera
+        }
+        let nx = clip.x / clip.w;
+        let ny = clip.y / clip.w;
+        Some(egui::pos2((nx * 0.5 + 0.5) * w, (1.0 - (ny * 0.5 + 0.5)) * h))
+    };
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("axis_labels"),
+    ));
+    let font = egui::FontId::proportional(14.0);
+    let mut label = |end: glam::Vec3, text: String, color: egui::Color32| {
+        if let Some(p) = project(end) {
+            // Drop shadow so labels stay legible over a bright cloud.
+            painter.text(
+                p + egui::vec2(1.0, 1.0),
+                egui::Align2::CENTER_CENTER,
+                &text,
+                font.clone(),
+                egui::Color32::from_black_alpha(200),
+            );
+            painter.text(p, egui::Align2::CENTER_CENTER, text, font.clone(), color);
+        }
+    };
+    // When focused, the cube represents the window, so label it with the window range.
+    let (mz, im, rt) = if state.focus {
+        (
+            (state.mz_window.min, state.mz_window.max),
+            (state.im_window.min, state.im_window.max),
+            (state.rt_window.min, state.rt_window.max),
+        )
+    } else {
+        (
+            (state.bounds.mz.min, state.bounds.mz.max),
+            (state.bounds.im.min, state.bounds.im.max),
+            (state.bounds.rt.min, state.bounds.rt.max),
+        )
+    };
+    // Each label sits just past the far end of its axis (from the shared min-corner).
+    label(
+        glam::vec3(1.16, -1.0, -1.0),
+        format!("m/z {:.0}–{:.0}", mz.0, mz.1),
+        egui::Color32::from_rgb(255, 150, 90),
+    );
+    label(
+        glam::vec3(-1.0, 1.16, -1.0),
+        format!("1/K0 {:.2}–{:.2}", im.0, im.1),
+        egui::Color32::from_rgb(120, 220, 255),
+    );
+    label(
+        glam::vec3(-1.0, -1.0, 1.16),
+        format!("RT {:.0}–{:.0}s", rt.0, rt.1),
+        egui::Color32::from_rgb(150, 235, 150),
+    );
+    // Mark the shared origin (min of all three axes).
+    if let Some(p) = project(glam::vec3(-1.0, -1.0, -1.0)) {
+        painter.circle_filled(p, 3.0, egui::Color32::from_white_alpha(170));
+    }
 }
 
 fn axis_window(
@@ -163,19 +243,9 @@ fn axis_window(
     hi: f64,
 ) {
     ui.label(label);
-    ui.horizontal(|ui| {
-        ui.add(
-            egui::DragValue::new(&mut win.min)
-                .speed((hi - lo) / 500.0)
-                .range(lo..=hi),
-        );
-        ui.label("–");
-        ui.add(
-            egui::DragValue::new(&mut win.max)
-                .speed((hi - lo) / 500.0)
-                .range(lo..=hi),
-        );
-    });
+    ui.add(egui::Slider::new(&mut win.min, lo..=hi).text("min"));
+    ui.add(egui::Slider::new(&mut win.max, lo..=hi).text("max"));
+    // Keep the range ordered (dragging min past max pushes max along).
     if win.min > win.max {
         win.max = win.min;
     }

@@ -217,7 +217,7 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
     points.update_camera(&queue, &cam_uniform);
     points.update_params(&queue, &params);
     annotations.update_camera(&queue, &cam_uniform);
-    annotations.update_filter(&queue, params.filter_min, params.filter_max);
+    annotations.update_filter(&queue, params.filter_min, params.filter_max, params.focus);
     if opts.volume {
         let mut vu = state.volume_uniform(camera.inv_view_proj(aspect));
         vu.density_scale = grid.density_scale();

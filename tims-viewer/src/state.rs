@@ -65,9 +65,13 @@ pub struct AppState {
     pub show_ms2: bool,
     /// Show the DDA-precursor / DIA-window annotation overlay.
     pub show_annotations: bool,
+    /// Show the data-cube wireframe + axis labels (m/z, 1/K0, RT).
+    pub show_axes: bool,
     pub rt_window: Window,
     pub mz_window: Window,
     pub im_window: Window,
+    /// Re-fit the window box to the full cube (zoom to selection) instead of just culling.
+    pub focus: bool,
 
     // Readouts
     pub fps: f32,
@@ -92,13 +96,14 @@ impl AppState {
             i_min: 1.0,
             i_max: 1e5,
             exposure: 1.0,
-            colormap_id: 0,
+            colormap_id: 1, // Inferno
             n_colormaps,
             point_size: 2.5,
             opacity: 0.5,
             show_ms1: true,
             show_ms2: true,
             show_annotations: true,
+            show_axes: true,
             rt_window: Window {
                 min: bounds.rt.min,
                 max: bounds.rt.max,
@@ -111,6 +116,7 @@ impl AppState {
                 min: bounds.im.min,
                 max: bounds.im.max,
             },
+            focus: false,
             fps: 0.0,
             resident_points: 0,
             capacity: 0,
@@ -159,7 +165,7 @@ impl AppState {
             transfer: [self.transfer.as_f32(), self.i_min, self.i_max, self.exposure],
             point_size: self.point_size,
             opacity: self.opacity,
-            _pad0: 0.0,
+            focus: if self.focus { 1.0 } else { 0.0 },
             _pad1: 0.0,
             ms_mask,
             colormap_id: self.colormap_id,
@@ -195,7 +201,8 @@ impl AppState {
             n_colormaps: self.n_colormaps.max(1),
             // Overwritten by the app from VolumeGrid::density_scale() each frame.
             density_scale: 1.0,
-            _pad: [0.0; 3],
+            focus: if self.focus { 1.0 } else { 0.0 },
+            _pad: [0.0; 2],
         }
     }
 }

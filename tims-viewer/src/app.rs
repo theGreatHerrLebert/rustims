@@ -17,7 +17,7 @@ use crate::data::demo::DemoSource;
 use crate::data::loader::{LoadMsg, LoaderHandle, LoaderMode};
 use crate::data::meta::MetaIndex;
 use crate::render::colormap::COLORMAP_NAMES;
-use crate::render::annotation::AnnotationRenderer;
+use crate::render::annotation::{AnnotationRenderer, LineVertex};
 use crate::render::point_cloud::PointCloudRenderer;
 use crate::render::volume::{VolumeGrid, VolumeRenderer, VOLUME_DIMS};
 use crate::state::{AppState, ViewMode};
@@ -57,8 +57,16 @@ struct Gfx {
 
     points: PointCloudRenderer,
     volume: VolumeRenderer,
+    /// Display density grid (folded from the MS1/MS2 grids per the MS toggle).
     grid: VolumeGrid,
+    /// Per-MS-level density grids, deposited separately so the volume can filter MS1/MS2.
+    grid_ms1: VolumeGrid,
+    grid_ms2: VolumeGrid,
+    /// Last MS toggle the display grid was folded for (to detect changes).
+    last_ms: (bool, bool),
     annotations: AnnotationRenderer,
+    /// Wireframe of the full data cube, drawn for spatial orientation.
+    axes: AnnotationRenderer,
     camera: OrbitCamera,
     state: AppState,
     loader: LoaderHandle,
@@ -93,6 +101,34 @@ impl App {
 }
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+/// The 12 edges of the normalized data cube `[-1, 1]^3` as a line list (pairs = segments),
+/// for the orientation wireframe.
+fn cube_edges() -> Vec<LineVertex> {
+    const FRAME_COLOR: [f32; 3] = [0.45, 0.55, 0.7]; // neutral steel, distinct from windows
+    let c = [-1.0f32, 1.0f32];
+    let corner = |i: usize, j: usize, k: usize| LineVertex::new([c[i], c[j], c[k]], FRAME_COLOR);
+    let mut v = Vec::with_capacity(24);
+    for &j in &[0usize, 1] {
+        for &k in &[0usize, 1] {
+            v.push(corner(0, j, k));
+            v.push(corner(1, j, k)); // edges along x (m/z)
+        }
+    }
+    for &i in &[0usize, 1] {
+        for &k in &[0usize, 1] {
+            v.push(corner(i, 0, k));
+            v.push(corner(i, 1, k)); // edges along y (1/K0)
+        }
+    }
+    for &i in &[0usize, 1] {
+        for &j in &[0usize, 1] {
+            v.push(corner(i, j, 0));
+            v.push(corner(i, j, 1)); // edges along z (RT)
+        }
+    }
+    v
+}
 
 fn create_depth(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> wgpu::TextureView {
     let tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -206,7 +242,16 @@ impl App {
         );
         let volume = VolumeRenderer::new(&device, &queue, format, DEPTH_FORMAT, VOLUME_DIMS);
         let grid = VolumeGrid::new(VOLUME_DIMS);
+        let grid_ms1 = VolumeGrid::new(VOLUME_DIMS);
+        let grid_ms2 = VolumeGrid::new(VOLUME_DIMS);
         let annotations = AnnotationRenderer::new(&device, format, DEPTH_FORMAT);
+
+        // Data-cube wireframe for orientation: the 12 edges of the normalized cube, with
+        // the clip window opened past the cube so the frame is never culled.
+        let mut axes = AnnotationRenderer::new(&device, format, DEPTH_FORMAT);
+        axes.upload(&device, &cube_edges());
+        // The axis frame outlines the cube itself, so it never re-fits (focus = 0).
+        axes.update_filter(&queue, [-2.0, -2.0, -2.0, 0.0], [2.0, 2.0, 2.0, 0.0], 0.0);
 
         let n_colormaps = COLORMAP_NAMES.len() as u32;
         let mut state = AppState::new(plan.meta.bounds, total, n_colormaps);
@@ -251,7 +296,11 @@ impl App {
             points,
             volume,
             grid,
+            grid_ms1,
+            grid_ms2,
+            last_ms: (true, true),
             annotations,
+            axes,
             camera: OrbitCamera::default(),
             state,
             loader,
@@ -287,9 +336,15 @@ impl Gfx {
             match self.loader.rx.try_recv() {
                 Ok(LoadMsg::Chunk { points, .. }) => {
                     // Volume density: deposit intensity*weight so the density is
-                    // independent of the downsample ratio (weight = 1/p = stride).
+                    // independent of the downsample ratio (weight = 1/p = stride). Deposit
+                    // into the per-MS-level grid so the volume can filter MS1/MS2 like points.
                     for p in &points {
-                        self.grid.deposit(p.pos, p.intensity * p.weight);
+                        let g = if p.flags & crate::data::point::GpuPoint::MS2_FLAG != 0 {
+                            &mut self.grid_ms2
+                        } else {
+                            &mut self.grid_ms1
+                        };
+                        g.deposit(p.pos, p.intensity * p.weight);
                     }
                     self.points.append(&self.queue, &points);
                 }
@@ -314,6 +369,7 @@ impl Gfx {
                     self.state.load_progress = 1.0;
                     // Recompute the volume range against the now-complete grid.
                     if self.state.view_mode == ViewMode::Volume {
+                        self.refresh_volume_grid();
                         let (lo, hi) = self.grid.density_percentiles();
                         self.state.i_min = lo;
                         self.state.i_max = hi;
@@ -338,6 +394,27 @@ impl Gfx {
             }
         }
         self.state.resident_points = self.points.resident();
+    }
+
+    /// Fold the MS1/MS2 density grids into the display grid per the MS toggle, when the
+    /// grids or the toggle changed. Returns true if the MS toggle itself changed (so the
+    /// caller can re-range the transfer function).
+    fn refresh_volume_grid(&mut self) -> bool {
+        let ms = (self.state.show_ms1, self.state.show_ms2);
+        let ms_changed = ms != self.last_ms;
+        if !self.grid_ms1.dirty() && !self.grid_ms2.dirty() && !ms_changed {
+            return false;
+        }
+        self.grid.combine(
+            &self.grid_ms1,
+            &self.grid_ms2,
+            ms.0 as u8 as f32,
+            ms.1 as u8 as f32,
+        );
+        self.grid_ms1.clear_dirty();
+        self.grid_ms2.clear_dirty();
+        self.last_ms = ms;
+        ms_changed
     }
 
     fn render(&mut self) {
@@ -403,14 +480,17 @@ impl Gfx {
         self.points.update_params(&self.queue, &params);
         self.annotations.update_camera(&self.queue, &cam);
         self.annotations
-            .update_filter(&self.queue, params.filter_min, params.filter_max);
+            .update_filter(&self.queue, params.filter_min, params.filter_max, params.focus);
+        self.axes.update_camera(&self.queue, &cam);
 
         // Volume mode: update the raycaster uniform (incl. the density scale) and
         // (re)upload the grid if it grew.
         if self.state.view_mode == ViewMode::Volume {
-            // On entering volume mode, auto-range the transfer fn to the density
-            // distribution (density sums differ in range from per-point intensity).
-            if self.last_view_mode != ViewMode::Volume {
+            // Fold MS1/MS2 density per the toggle (rebuilds the display grid if changed).
+            let ms_changed = self.refresh_volume_grid();
+            // Auto-range the transfer fn on entering volume mode or when the MS toggle
+            // changed the density (sums differ in range from per-point intensity).
+            if self.last_view_mode != ViewMode::Volume || ms_changed {
                 let (lo, hi) = self.grid.density_percentiles();
                 self.state.i_min = lo;
                 self.state.i_max = hi;
@@ -476,6 +556,9 @@ impl Gfx {
             match self.state.view_mode {
                 ViewMode::Points => self.points.render(&mut rpass, self.state.point_mode),
                 ViewMode::Volume => self.volume.render(&mut rpass),
+            }
+            if self.state.show_axes {
+                self.axes.render(&mut rpass);
             }
             if self.state.show_annotations {
                 self.annotations.render(&mut rpass);

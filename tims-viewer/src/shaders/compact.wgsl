@@ -43,7 +43,7 @@ struct DrawArgs {
 
 struct Compaction {
     point_count : u32,
-    _p0 : u32,
+    row_stride : u32,   // invocations per dispatch row (groups_x * workgroup_size)
     _p1 : u32,
     _p2 : u32,
 };
@@ -57,7 +57,8 @@ struct Compaction {
 
 @compute @workgroup_size(256)
 fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
-    let i = gid.x;
+    // 2D dispatch grid: rebuild the linear point index from the row stride.
+    let i = gid.x + gid.y * comp.row_stride;
     if (i >= comp.point_count) {
         return;
     }

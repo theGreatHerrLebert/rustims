@@ -14,7 +14,7 @@ struct Params {
     transfer   : vec4<f32>, // mode, i_min, i_max, exposure
     point_size : f32,
     opacity    : f32,
-    _pad0      : f32,
+    focus      : f32,
     _pad1      : f32,
     ms_mask     : u32,
     colormap_id : u32,
@@ -87,9 +87,17 @@ fn vs_main(
     );
     let corner = corners[vid];
 
+    // Focus: re-fit the active window box to the full cube (zoom to selection).
+    var fpos = pos;
+    if (params.focus > 0.5) {
+        let center = (params.filter_min.xyz + params.filter_max.xyz) * 0.5;
+        let halfspan = max((params.filter_max.xyz - params.filter_min.xyz) * 0.5, vec3<f32>(1e-6));
+        fpos = (pos - center) / halfspan;
+    }
+
     // World-space billboard so size attenuates with distance (perspective).
-    let half = params.point_size * 0.0015;
-    let world = pos + (corner.x * cam.right.xyz + corner.y * cam.up.xyz) * half;
+    let bb = params.point_size * 0.0015;
+    let world = fpos + (corner.x * cam.right.xyz + corner.y * cam.up.xyz) * bb;
     out.clip = cam.view_proj * vec4<f32>(world, 1.0);
     out.uv = corner;
     out.intensity = intensity;
