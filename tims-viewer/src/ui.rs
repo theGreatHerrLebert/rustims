@@ -426,6 +426,16 @@ fn view_section(ui: &mut egui::Ui, state: &mut AppState, camera: &mut OrbitCamer
                     camera.reset();
                 }
                 // Orthographic projection is hidden until its bugs are sorted; keep perspective.
+                if ui
+                    .button(format!(
+                        "⟳ Roll up: {}",
+                        crate::camera::ROLL_UP_AXIS[(camera.roll % 3) as usize]
+                    ))
+                    .on_hover_text("Topple the cube so the next data axis points up")
+                    .clicked()
+                {
+                    camera.roll_axis();
+                }
             });
             ui.horizontal(|ui| {
                 if ui.button("m/z view").clicked() {

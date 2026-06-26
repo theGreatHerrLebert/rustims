@@ -1,6 +1,6 @@
 //! Orbit camera around the normalized data cube.
 
-use glam::{Mat4, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 
 use crate::render::uniforms::CameraUniform;
 
@@ -33,7 +33,13 @@ pub struct OrbitCamera {
     pub znear: f32,
     pub zfar: f32,
     pub projection: Projection,
+    /// Which data axis points up ("topple the dice"): 0 = 1/K0, 1 = m/z, 2 = RT. Applied as a
+    /// cyclic permutation of the data axes baked into the view-projection.
+    pub roll: u8,
 }
+
+/// Name of the data axis currently pointing up, for the UI.
+pub const ROLL_UP_AXIS: [&str; 3] = ["1/K0", "m/z", "RT"];
 
 impl Default for OrbitCamera {
     fn default() -> Self {
@@ -46,6 +52,7 @@ impl Default for OrbitCamera {
             znear: 0.05,
             zfar: 100.0,
             projection: Projection::Perspective,
+            roll: 0,
         }
     }
 }
@@ -54,9 +61,29 @@ const PITCH_LIMIT: f32 = 1.5533; // ~89 degrees
 
 impl OrbitCamera {
     pub fn reset(&mut self) {
-        let proj = self.projection;
+        let (proj, roll) = (self.projection, self.roll);
         *self = OrbitCamera::default();
         self.projection = proj;
+        self.roll = roll;
+    }
+
+    /// Cycle which data axis points up (0 → 1/K0, 1 → m/z, 2 → RT).
+    pub fn roll_axis(&mut self) {
+        self.roll = (self.roll + 1) % 3;
+    }
+
+    /// Cyclic axis-permutation matrix for the current roll, mapping data (x=m/z, y=1/K0, z=RT)
+    /// to world so the chosen axis lands on world-up (Y). Identity, or a proper rotation.
+    fn perm(&self) -> Mat4 {
+        let m3 = match self.roll % 3 {
+            // 1/K0 (data y) up: identity.
+            0 => Mat3::IDENTITY,
+            // m/z (data x) up: data x→world y, y→z, z→x.
+            1 => Mat3::from_cols(Vec3::Y, Vec3::Z, Vec3::X),
+            // RT (data z) up: data x→world z, y→x, z→y.
+            _ => Mat3::from_cols(Vec3::Z, Vec3::X, Vec3::Y),
+        };
+        Mat4::from_mat3(m3)
     }
 
     pub fn set_axis_view(&mut self, axis: AxisView) {
@@ -122,7 +149,10 @@ impl OrbitCamera {
                 Mat4::orthographic_rh(-half_w, half_w, -half_h, half_h, self.znear, self.zfar)
             }
         };
-        proj * view
+        // Bake the axis permutation in last: data positions are permuted, then viewed. The
+        // volume raycaster reconstructs data-space coords through the inverse, so it stays
+        // consistent automatically.
+        proj * view * self.perm()
     }
 
     /// Inverse view-projection (column-major arrays), for reconstructing world-space
@@ -133,6 +163,11 @@ impl OrbitCamera {
 
     pub fn to_uniform(&self, aspect: f32, viewport: [f32; 2]) -> CameraUniform {
         let (right, up, _) = self.basis();
+        // Billboards expand in DATA space (before the baked permutation), so counter-rotate the
+        // camera screen axes by perm⁻¹ — then perm maps them back to the world screen axes.
+        let inv = self.perm().inverse();
+        let right = inv.transform_vector3(right);
+        let up = inv.transform_vector3(up);
         CameraUniform {
             view_proj: self.view_proj(aspect).to_cols_array_2d(),
             right: [right.x, right.y, right.z, 0.0],
