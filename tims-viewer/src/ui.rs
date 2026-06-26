@@ -67,6 +67,7 @@ pub fn build(
                 selection_section(ui, state);
                 rendering_section(ui, state, vol_range);
                 clustering_section(ui, state);
+                projections_section(ui, state);
                 view_section(ui, state, camera);
             });
         });
@@ -333,6 +334,58 @@ fn clustering_section(ui: &mut egui::Ui, state: &mut AppState) {
                 ));
             }
         });
+}
+
+/// **Projections**: 2D density minimaps of the full run onto the coordinate planes, with the
+/// current filter window drawn as a rectangle ("you are here").
+fn projections_section(ui: &mut egui::Ui, state: &mut AppState) {
+    if state.proj_mz_im.is_none() {
+        return; // nothing loaded yet
+    }
+    egui::CollapsingHeader::new("Projections (you are here)")
+        .default_open(false)
+        .show(ui, |ui| {
+            let (mz, im, rt) = (state.bounds.mz, state.bounds.im, state.bounds.rt);
+            minimap(ui, &state.proj_mz_im, "m/z × 1/K0",
+                (mz.min, mz.max), (state.mz_window.min, state.mz_window.max),
+                (im.min, im.max), (state.im_window.min, state.im_window.max));
+            minimap(ui, &state.proj_mz_rt, "m/z × RT",
+                (mz.min, mz.max), (state.mz_window.min, state.mz_window.max),
+                (rt.min, rt.max), (state.rt_window.min, state.rt_window.max));
+            minimap(ui, &state.proj_im_rt, "1/K0 × RT",
+                (im.min, im.max), (state.im_window.min, state.im_window.max),
+                (rt.min, rt.max), (state.rt_window.min, state.rt_window.max));
+        });
+}
+
+/// Draw one projection minimap (`tex`) with the current window drawn as a rectangle. `*b` are
+/// the axis bounds, `*w` the current window; the vertical axis low end is at the image bottom.
+fn minimap(
+    ui: &mut egui::Ui,
+    tex: &Option<egui::TextureHandle>,
+    label: &str,
+    xb: (f64, f64),
+    xw: (f64, f64),
+    yb: (f64, f64),
+    yw: (f64, f64),
+) {
+    let Some(t) = tex else { return };
+    ui.label(label);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(150.0, 150.0), egui::Sense::hover());
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    ui.painter().image(t.id(), rect, uv, egui::Color32::WHITE);
+    let fr = |v: f64, b: (f64, f64)| (((v - b.0) / (b.1 - b.0).max(1e-12)).clamp(0.0, 1.0)) as f32;
+    let x0 = rect.left() + fr(xw.0, xb) * rect.width();
+    let x1 = rect.left() + fr(xw.1, xb) * rect.width();
+    // Low value at the image bottom; egui screen y grows downward.
+    let y_top = rect.bottom() - fr(yw.1, yb) * rect.height();
+    let y_bot = rect.bottom() - fr(yw.0, yb) * rect.height();
+    let wr = egui::Rect::from_min_max(egui::pos2(x0, y_top), egui::pos2(x1, y_bot));
+    ui.painter().rect_stroke(
+        wr,
+        egui::Rounding::ZERO,
+        egui::Stroke::new(1.5, egui::Color32::from_rgb(120, 200, 255)),
+    );
 }
 
 /// **View / Camera**: axis frame · back-face grid · ortho · m/z|mob|RT snaps.

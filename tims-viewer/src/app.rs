@@ -267,6 +267,26 @@ fn axis_geometry(
     (verts, labels)
 }
 
+/// Render a 2D projection (row-major `x + PROJ_BINS*y` counts) into an egui image: log-scaled
+/// through inferno, with the vertical axis flipped so its low end sits at the image bottom.
+fn proj_to_color_image(data: &[u32]) -> egui::ColorImage {
+    let n = crate::data::loader::PROJ_BINS;
+    let maxc = data.iter().copied().max().unwrap_or(1).max(1) as f32;
+    let lmax = (maxc + 1.0).ln();
+    let mut pixels = vec![egui::Color32::from_gray(16); n * n];
+    for y in 0..n {
+        for x in 0..n {
+            let c = data[x + n * y];
+            if c > 0 {
+                let t = ((c as f32 + 1.0).ln() / lmax).clamp(0.0, 1.0);
+                let rgb = crate::render::colormap::sample(1, t); // inferno
+                pixels[x + n * (n - 1 - y)] = egui::Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+            }
+        }
+    }
+    egui::ColorImage { size: [n, n], pixels }
+}
+
 fn create_depth(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> wgpu::TextureView {
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("depth"),
@@ -544,7 +564,17 @@ impl Gfx {
                         self.state.auto_transfer_points();
                     }
                 }
-                Ok(LoadMsg::Histograms { mz, im, rt, intensity, i_lo, i_hi }) => {
+                Ok(LoadMsg::Histograms {
+                    mz,
+                    im,
+                    rt,
+                    intensity,
+                    i_lo,
+                    i_hi,
+                    proj_mz_im,
+                    proj_mz_rt,
+                    proj_im_rt,
+                }) => {
                     // Distribution strips for the levels-style filters; the intensity slider
                     // spans the data range, default filter = full (no cull).
                     self.state.hist_mz = mz;
@@ -557,6 +587,23 @@ impl Gfx {
                         min: i_lo as f64,
                         max: i_hi as f64,
                     };
+                    // Upload the 2D projection minimaps as egui textures.
+                    let opt = egui::TextureOptions::LINEAR;
+                    self.state.proj_mz_im = Some(self.egui_ctx.load_texture(
+                        "proj_mz_im",
+                        proj_to_color_image(&proj_mz_im),
+                        opt,
+                    ));
+                    self.state.proj_mz_rt = Some(self.egui_ctx.load_texture(
+                        "proj_mz_rt",
+                        proj_to_color_image(&proj_mz_rt),
+                        opt,
+                    ));
+                    self.state.proj_im_rt = Some(self.egui_ctx.load_texture(
+                        "proj_im_rt",
+                        proj_to_color_image(&proj_im_rt),
+                        opt,
+                    ));
                 }
                 Ok(LoadMsg::Annotations { lines, groups, n_groups }) => {
                     // Suppress the selection overlay in a refined region: it is normalized to
@@ -705,6 +752,9 @@ impl Gfx {
         self.state.hist_im.clear();
         self.state.hist_rt.clear();
         self.state.hist_intensity.clear();
+        self.state.proj_mz_im = None;
+        self.state.proj_mz_rt = None;
+        self.state.proj_im_rt = None;
         self.state.intensity_window = crate::state::Window {
             min: 0.0,
             max: f64::INFINITY,

@@ -128,6 +128,10 @@ pub struct AppState {
     pub hist_im: Vec<u32>,
     pub hist_rt: Vec<u32>,
     pub hist_intensity: Vec<u32>,
+    /// 2D projection minimaps (uploaded egui textures), the "you are here" overview planes.
+    pub proj_mz_im: Option<egui::TextureHandle>,
+    pub proj_mz_rt: Option<egui::TextureHandle>,
+    pub proj_im_rt: Option<egui::TextureHandle>,
     /// Re-fit the window box to the full cube (zoom to selection) instead of just culling.
     pub focus: bool,
     /// True while showing a re-streamed sub-region (vs the full run).
@@ -211,6 +215,9 @@ impl AppState {
             hist_im: Vec::new(),
             hist_rt: Vec::new(),
             hist_intensity: Vec::new(),
+            proj_mz_im: None,
+            proj_mz_rt: None,
+            proj_im_rt: None,
             focus: false,
             refined: false,
             color_mode: ColorMode::Intensity,

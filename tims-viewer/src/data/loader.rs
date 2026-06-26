@@ -52,6 +52,11 @@ pub enum LoadMsg {
         intensity: Vec<u32>,
         i_lo: f32,
         i_hi: f32,
+        /// 2D density projections (each `PROJ_BINS * PROJ_BINS`, row-major `x + PROJ_BINS*y`)
+        /// for the minimaps: m/z×1/K0, m/z×RT, 1/K0×RT.
+        proj_mz_im: Vec<u32>,
+        proj_mz_rt: Vec<u32>,
+        proj_im_rt: Vec<u32>,
     },
     /// Annotation overlay geometry: colored line-list vertices (pairs = segments) in the
     /// normalized cube (DDA precursor crosses / DIA isolation-window footprints). `groups`
@@ -174,6 +179,14 @@ fn hbin(n: f32) -> usize {
     (((n * 0.5 + 0.5).clamp(0.0, 1.0)) * (HIST_BINS as f32 - 1.0)) as usize
 }
 
+/// Side length of each 2D projection minimap (m/z·1/K0·RT plane heatmaps).
+pub const PROJ_BINS: usize = 96;
+/// Bin a normalized-cube coordinate in `[-1, 1]` into `[0, PROJ_BINS)`.
+#[inline]
+fn pbin(n: f32) -> usize {
+    (((n * 0.5 + 0.5).clamp(0.0, 1.0)) * (PROJ_BINS as f32 - 1.0)) as usize
+}
+
 /// Map a normalized-cube position to a coarse peak-grid cell index.
 #[inline]
 fn peak_cell(pos: [f32; 3]) -> u32 {
@@ -223,6 +236,10 @@ fn run_loader(
     let mut logi_fine = [0u32; LOGI_FINE];
     let mut i_lo_seen = f32::MAX;
     let mut i_hi_seen = 0.0f32;
+    // 2D density projections onto the coordinate planes (the "you are here" minimaps).
+    let mut proj_mz_im = vec![0u32; PROJ_BINS * PROJ_BINS]; // x = m/z, y = 1/K0
+    let mut proj_mz_rt = vec![0u32; PROJ_BINS * PROJ_BINS]; // x = m/z, y = RT
+    let mut proj_im_rt = vec![0u32; PROJ_BINS * PROJ_BINS]; // x = 1/K0, y = RT
 
     let mut chunk: Vec<GpuPoint> = Vec::with_capacity(CHUNK_POINTS);
 
@@ -326,6 +343,9 @@ fn run_loader(
                 hist_rt[hbin(pos[2])] += 1;
                 logi_fine[((intensity.max(1.0).log10() / LOGI_HI) * LOGI_FINE as f32)
                     .clamp(0.0, (LOGI_FINE - 1) as f32) as usize] += 1;
+                proj_mz_im[pbin(pos[0]) + PROJ_BINS * pbin(pos[1])] += 1;
+                proj_mz_rt[pbin(pos[0]) + PROJ_BINS * pbin(pos[2])] += 1;
+                proj_im_rt[pbin(pos[1]) + PROJ_BINS * pbin(pos[2])] += 1;
                 i_lo_seen = i_lo_seen.min(intensity);
                 i_hi_seen = i_hi_seen.max(intensity);
                 if chunk.len() >= CHUNK_POINTS {
@@ -405,6 +425,9 @@ fn run_loader(
             hist_rt[hbin(gp.pos[2])] += 1;
             logi_fine[((gp.intensity.max(1.0).log10() / LOGI_HI) * LOGI_FINE as f32)
                 .clamp(0.0, (LOGI_FINE - 1) as f32) as usize] += 1;
+            proj_mz_im[pbin(gp.pos[0]) + PROJ_BINS * pbin(gp.pos[1])] += 1;
+            proj_mz_rt[pbin(gp.pos[0]) + PROJ_BINS * pbin(gp.pos[2])] += 1;
+            proj_im_rt[pbin(gp.pos[1]) + PROJ_BINS * pbin(gp.pos[2])] += 1;
             i_lo_seen = i_lo_seen.min(gp.intensity);
             i_hi_seen = i_hi_seen.max(gp.intensity);
         }
@@ -462,6 +485,9 @@ fn run_loader(
             intensity: hist_i,
             i_lo,
             i_hi,
+            proj_mz_im,
+            proj_mz_rt,
+            proj_im_rt,
         });
     }
 
