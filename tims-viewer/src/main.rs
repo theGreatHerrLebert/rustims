@@ -67,7 +67,12 @@ struct Args {
 }
 
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // Keep our own INFO logs, but silence the very chatty wgpu/naga internals (e.g.
+    // "Device::maintain: waiting for submission index ..." every frame). RUST_LOG overrides.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
+        "info,wgpu_core=warn,wgpu_hal=warn,wgpu=warn,naga=warn",
+    ))
+    .init();
     let args = Args::parse();
 
     let (meta, is_demo) = if args.input.eq_ignore_ascii_case("DEMO") {
