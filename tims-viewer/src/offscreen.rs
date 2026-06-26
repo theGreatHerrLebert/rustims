@@ -110,6 +110,9 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
         crate::data::loader::stride_for(total, capacity as usize) as u32;
     state.view_mode = if opts.volume { ViewMode::Volume } else { ViewMode::Points };
     state.vol_style = if opts.mip { VolStyle::Mip } else { VolStyle::Composite };
+    // MS selection is applied at upload time via `opts.ms`; let the shader pass everything
+    // that was uploaded (don't double-filter with the interactive MS1-only default).
+    state.show_ms2 = true;
 
     // Load the whole run synchronously by draining the streaming loader.
     let mode = if plan.is_demo {

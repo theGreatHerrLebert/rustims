@@ -116,7 +116,7 @@ impl Default for ParamsUniform {
             opacity: 0.6,
             focus: 0.0,
             color_mode: 0,
-            ms_mask: 0b11,
+            ms_mask: 0b01, // MS1-only by default (matches AppState)
             colormap_id: 0,
             render_mode: 0,
             n_colormaps: 1,

@@ -179,7 +179,9 @@ impl AppState {
             point_size: 2.5,
             opacity: 0.5,
             show_ms1: true,
-            show_ms2: true,
+            // Default to MS1-only: the precursor map is the cleaner first view; MS2 fragments
+            // can be toggled on in the Filters panel.
+            show_ms2: false,
             show_annotations: true,
             show_axes: true,
             show_grid_backfaces: false,
