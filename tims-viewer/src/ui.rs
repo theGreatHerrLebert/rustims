@@ -1,6 +1,6 @@
 //! egui control panel.
 
-use crate::camera::{AxisView, OrbitCamera, Projection};
+use crate::camera::{AxisView, OrbitCamera};
 use crate::render::colormap::{sample, COLORMAP_NAMES};
 use crate::render::point_cloud::PointMode;
 use crate::state::{
@@ -399,14 +399,7 @@ fn view_section(ui: &mut egui::Ui, state: &mut AppState, camera: &mut OrbitCamer
                 if ui.button("Reset").clicked() {
                     camera.reset();
                 }
-                let mut ortho = camera.projection == Projection::Orthographic;
-                if ui.checkbox(&mut ortho, "Ortho").changed() {
-                    camera.projection = if ortho {
-                        Projection::Orthographic
-                    } else {
-                        Projection::Perspective
-                    };
-                }
+                // Orthographic projection is hidden until its bugs are sorted; keep perspective.
             });
             ui.horizontal(|ui| {
                 if ui.button("m/z view").clicked() {

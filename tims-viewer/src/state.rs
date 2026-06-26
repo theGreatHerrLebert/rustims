@@ -186,7 +186,8 @@ impl AppState {
             // Default to MS1-only: the precursor map is the cleaner first view; MS2 fragments
             // can be toggled on in the Filters panel.
             show_ms2: false,
-            show_annotations: true,
+            // The DIA/MIDIA window overlay is off by default (toggle on in the Filters panel).
+            show_annotations: false,
             show_axes: true,
             show_grid_backfaces: false,
             show_colorbar: true,

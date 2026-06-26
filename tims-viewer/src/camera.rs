@@ -7,6 +7,8 @@ use crate::render::uniforms::CameraUniform;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Projection {
     Perspective,
+    /// Hidden from the UI until its bugs are fixed; the projection math is kept.
+    #[allow(dead_code)]
     Orthographic,
 }
 
