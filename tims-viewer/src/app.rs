@@ -70,8 +70,15 @@ struct Gfx {
     anno_lines: Vec<LineVertex>,
     anno_groups: Vec<u32>,
     last_group_mask: u32,
-    /// Wireframe of the full data cube, drawn for spatial orientation.
+    /// Wireframe of the full data cube + axis ticks (+ optional back-face grid), drawn for
+    /// spatial orientation.
     axes: AnnotationRenderer,
+    /// Numeric tick labels for the overlay text pass, rebuilt only when the shown ranges,
+    /// focus, or the back-face-grid toggle change (avoids per-frame string allocs).
+    tick_labels: Vec<ui::TickLabel>,
+    /// Cached (mz, im, rt) real ranges + grid-toggle the `axes` geometry was built for.
+    shown_ranges: ((f64, f64), (f64, f64), (f64, f64)),
+    shown_grid: bool,
     camera: OrbitCamera,
     state: AppState,
     loader: LoaderHandle,
@@ -107,10 +114,18 @@ impl App {
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+/// Neutral steel for the cube wireframe, distinct from the window overlay colors.
+const FRAME_COLOR: [f32; 3] = [0.45, 0.55, 0.7];
+/// Dimmed frame color for the short tick segments.
+const TICK_COLOR: [f32; 3] = [0.6, 0.7, 0.85];
+/// Very dim back-face gridlines (faintness via low RGB, the pipeline has no alpha blend).
+const GRID_COLOR: [f32; 3] = [0.18, 0.21, 0.27];
+/// Tick length in cube units (the segments sit just outside the near edges).
+const TICK_LEN: f32 = 0.04;
+
 /// The 12 edges of the normalized data cube `[-1, 1]^3` as a line list (pairs = segments),
 /// for the orientation wireframe.
 fn cube_edges() -> Vec<LineVertex> {
-    const FRAME_COLOR: [f32; 3] = [0.45, 0.55, 0.7]; // neutral steel, distinct from windows
     let c = [-1.0f32, 1.0f32];
     let corner = |i: usize, j: usize, k: usize| LineVertex::new([c[i], c[j], c[k]], FRAME_COLOR);
     let mut v = Vec::with_capacity(24);
@@ -133,6 +148,115 @@ fn cube_edges() -> Vec<LineVertex> {
         }
     }
     v
+}
+
+/// Build the cube wireframe + short 3D tick segments (+ optional back-face gridlines) and
+/// the matching numeric tick labels. `mz/im/rt` are the (lo,hi) real ranges currently shown
+/// (window if focus, else bounds). All geometry rides the always-on-top `axes` renderer.
+fn axis_geometry(
+    mz: (f64, f64),
+    im: (f64, f64),
+    rt: (f64, f64),
+    show_grid: bool,
+) -> (Vec<LineVertex>, Vec<ui::TickLabel>) {
+    use crate::data::point::AxisTransform;
+    use crate::ticks::{fmt_tick, ticks_for, Axis};
+
+    // Axis label colors mirror ui::draw_axis_labels (m/z orange, 1/K0 cyan, RT green).
+    const MZ_COL: egui::Color32 = egui::Color32::from_rgb(255, 150, 90);
+    const IM_COL: egui::Color32 = egui::Color32::from_rgb(120, 220, 255);
+    const RT_COL: egui::Color32 = egui::Color32::from_rgb(150, 235, 150);
+
+    let mut verts = cube_edges();
+    let mut labels = Vec::new();
+
+    let tx_mz = AxisTransform::new(mz.0, mz.1);
+    let tx_im = AxisTransform::new(im.0, im.1);
+    let tx_rt = AxisTransform::new(rt.0, rt.1);
+    let mz_ticks = ticks_for(mz.0, mz.1, 5, |v| tx_mz.normalize(v));
+    let im_ticks = ticks_for(im.0, im.1, 5, |v| tx_im.normalize(v));
+    let rt_ticks = ticks_for(rt.0, rt.1, 5, |v| tx_rt.normalize(v));
+    let mz_span = (mz.1 - mz.0).abs();
+    let im_span = (im.1 - im.0).abs();
+    let rt_span = (rt.1 - rt.0).abs();
+
+    let mut seg = |a: [f32; 3], b: [f32; 3], color: [f32; 3]| {
+        verts.push(LineVertex::new(a, color));
+        verts.push(LineVertex::new(b, color));
+    };
+
+    // m/z (x) axis: edge at y=-1, z=-1; tick + label extend in -y (just outside).
+    for t in &mz_ticks {
+        let n = t.norm;
+        seg([n, -1.0, -1.0], [n, -1.0 - TICK_LEN, -1.0], TICK_COLOR);
+        labels.push(ui::TickLabel {
+            world: glam::vec3(n, -1.0 - 2.2 * TICK_LEN, -1.0),
+            text: fmt_tick(Axis::Mz, t.value, mz_span),
+            axis_color: MZ_COL,
+        });
+    }
+    // 1/K0 (y) axis: edge at x=-1, z=-1; tick + label extend in -x.
+    for t in &im_ticks {
+        let n = t.norm;
+        seg([-1.0, n, -1.0], [-1.0 - TICK_LEN, n, -1.0], TICK_COLOR);
+        labels.push(ui::TickLabel {
+            world: glam::vec3(-1.0 - 2.2 * TICK_LEN, n, -1.0),
+            text: fmt_tick(Axis::Im, t.value, im_span),
+            axis_color: IM_COL,
+        });
+    }
+    // RT (z) axis: edge at x=-1, y=-1; tick + label extend in -y (reads against the floor).
+    for t in &rt_ticks {
+        let n = t.norm;
+        seg([-1.0, -1.0, n], [-1.0, -1.0 - TICK_LEN, n], TICK_COLOR);
+        labels.push(ui::TickLabel {
+            world: glam::vec3(-1.0, -1.0 - 2.2 * TICK_LEN, n),
+            text: fmt_tick(Axis::Rt, t.value, rt_span),
+            axis_color: RT_COL,
+        });
+    }
+
+    // Optional faint gridlines on the three faces meeting at the max-corner (+1,+1,+1),
+    // which sit "behind" the cloud for the default orbit. Skip near-edge ticks so the
+    // gridlines don't double the cube wireframe.
+    if show_grid {
+        let interior = |n: f32| n > -0.999 && n < 0.999;
+        // Face z=+1 (m/z × 1/K0 plane).
+        for t in &mz_ticks {
+            if interior(t.norm) {
+                seg([t.norm, -1.0, 1.0], [t.norm, 1.0, 1.0], GRID_COLOR);
+            }
+        }
+        for t in &im_ticks {
+            if interior(t.norm) {
+                seg([-1.0, t.norm, 1.0], [1.0, t.norm, 1.0], GRID_COLOR);
+            }
+        }
+        // Face y=+1 (m/z × RT plane).
+        for t in &mz_ticks {
+            if interior(t.norm) {
+                seg([t.norm, 1.0, -1.0], [t.norm, 1.0, 1.0], GRID_COLOR);
+            }
+        }
+        for t in &rt_ticks {
+            if interior(t.norm) {
+                seg([-1.0, 1.0, t.norm], [1.0, 1.0, t.norm], GRID_COLOR);
+            }
+        }
+        // Face x=+1 (1/K0 × RT plane).
+        for t in &im_ticks {
+            if interior(t.norm) {
+                seg([1.0, t.norm, -1.0], [1.0, t.norm, 1.0], GRID_COLOR);
+            }
+        }
+        for t in &rt_ticks {
+            if interior(t.norm) {
+                seg([1.0, -1.0, t.norm], [1.0, 1.0, t.norm], GRID_COLOR);
+            }
+        }
+    }
+
+    (verts, labels)
 }
 
 fn create_depth(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> wgpu::TextureView {
@@ -251,18 +375,29 @@ impl App {
         let grid_ms2 = VolumeGrid::new(VOLUME_DIMS);
         let annotations = AnnotationRenderer::new(&device, format, DEPTH_FORMAT);
 
-        // Data-cube wireframe for orientation: the 12 edges of the normalized cube, with
-        // the clip window opened past the cube so the frame is never culled.
-        let mut axes = AnnotationRenderer::new(&device, format, DEPTH_FORMAT);
-        axes.upload(&device, &cube_edges());
-        // The axis frame outlines the cube itself, so it never re-fits (focus = 0).
-        axes.update_filter(&queue, [-2.0, -2.0, -2.0, 0.0], [2.0, 2.0, 2.0, 0.0], 0.0);
-
         let n_colormaps = COLORMAP_NAMES.len() as u32;
         let mut state = AppState::new(plan.meta.bounds, total, n_colormaps);
         state.capacity = capacity;
         state.downsample_stride =
             crate::data::loader::stride_for(total, capacity as usize) as u32;
+
+        // Data-cube wireframe + axis ticks for orientation, with the clip window opened past
+        // the cube so the frame and the slightly-out-of-cube ticks are never culled.
+        let init_ranges = (
+            (plan.meta.bounds.mz.min, plan.meta.bounds.mz.max),
+            (plan.meta.bounds.im.min, plan.meta.bounds.im.max),
+            (plan.meta.bounds.rt.min, plan.meta.bounds.rt.max),
+        );
+        let mut axes = AnnotationRenderer::new(&device, format, DEPTH_FORMAT);
+        let (init_verts, init_labels) = axis_geometry(
+            init_ranges.0,
+            init_ranges.1,
+            init_ranges.2,
+            state.show_grid_backfaces,
+        );
+        axes.upload(&device, &init_verts);
+        // The axis frame outlines the cube itself, so it never re-fits (focus = 0).
+        axes.update_filter(&queue, [-2.0, -2.0, -2.0, 0.0], [2.0, 2.0, 2.0, 0.0], 0.0);
 
         // egui plumbing.
         let egui_ctx = egui::Context::default();
@@ -309,6 +444,9 @@ impl App {
             anno_groups: Vec::new(),
             last_group_mask: u32::MAX,
             axes,
+            tick_labels: init_labels,
+            shown_ranges: init_ranges,
+            shown_grid: state.show_grid_backfaces,
             camera: OrbitCamera::default(),
             state,
             loader,
@@ -362,12 +500,17 @@ impl Gfx {
                     self.points.append(&self.queue, &points);
                 }
                 Ok(LoadMsg::Progress(p)) => self.state.load_progress = p,
-                Ok(LoadMsg::Stats { i_min, i_max }) => {
-                    // Point-intensity range; only relevant to point mode (volume uses a
-                    // density range derived from the grid).
-                    if self.state.view_mode == ViewMode::Points {
-                        self.state.i_min = i_min;
-                        self.state.i_max = i_max;
+                Ok(LoadMsg::Stats { i_min, i_max, i_med }) => {
+                    // Stash the raw, mode-independent percentiles so any later mode switch
+                    // or Auto button can re-run the heuristic from scratch.
+                    self.state.i_p1 = i_min;
+                    self.state.i_med = i_med;
+                    self.state.i_p99 = i_max;
+                    // Auto-expose the point cloud the moment the range is known (the cloud
+                    // snaps legible without slider tweaks). Volume re-ranges on Done.
+                    if self.state.view_mode == ViewMode::Points && self.state.may_auto_transfer()
+                    {
+                        self.state.auto_transfer_points();
                     }
                 }
                 Ok(LoadMsg::Annotations { lines, groups, n_groups }) => {
@@ -379,11 +522,11 @@ impl Gfx {
                 Ok(LoadMsg::Done { .. }) => {
                     self.state.load_progress = 1.0;
                     // Recompute the volume range against the now-complete grid.
-                    if self.state.view_mode == ViewMode::Volume {
+                    if self.state.view_mode == ViewMode::Volume && self.state.may_auto_transfer()
+                    {
                         self.refresh_volume_grid();
                         let (lo, hi) = self.grid.density_percentiles();
-                        self.state.i_min = lo;
-                        self.state.i_max = hi;
+                        self.state.auto_transfer_volume(lo, hi);
                     }
                 }
                 Ok(LoadMsg::Error(e)) => {
@@ -446,8 +589,51 @@ impl Gfx {
         self.last_group_mask = mask;
     }
 
+    /// Rebuild the axis tick geometry + numeric labels when the shown ranges (focus toggle
+    /// or a window slider moved while focused) or the back-face-grid toggle change. Mirrors
+    /// the focus branch of `ui::draw_axis_labels`.
+    fn refresh_axis_geometry(&mut self) {
+        let ranges = if self.state.focus {
+            (
+                (self.state.mz_window.min, self.state.mz_window.max),
+                (self.state.im_window.min, self.state.im_window.max),
+                (self.state.rt_window.min, self.state.rt_window.max),
+            )
+        } else {
+            (
+                (self.state.bounds.mz.min, self.state.bounds.mz.max),
+                (self.state.bounds.im.min, self.state.bounds.im.max),
+                (self.state.bounds.rt.min, self.state.bounds.rt.max),
+            )
+        };
+        let grid = self.state.show_grid_backfaces;
+        // Epsilon compare so float jitter on the sliders doesn't rebuild every frame.
+        let close = |a: (f64, f64), b: (f64, f64)| {
+            (a.0 - b.0).abs() < 1e-6 && (a.1 - b.1).abs() < 1e-6
+        };
+        let unchanged = grid == self.shown_grid
+            && close(ranges.0, self.shown_ranges.0)
+            && close(ranges.1, self.shown_ranges.1)
+            && close(ranges.2, self.shown_ranges.2);
+        if unchanged {
+            return;
+        }
+        let (verts, labels) = axis_geometry(ranges.0, ranges.1, ranges.2, grid);
+        self.axes.upload(&self.device, &verts);
+        self.tick_labels = labels;
+        self.shown_ranges = ranges;
+        self.shown_grid = grid;
+    }
+
     fn render(&mut self) {
         self.pump_loader();
+        // Re-range when switching Volume->Points. The two modes live in completely different
+        // value ranges (per-point intensity vs summed density), so a transfer range pinned in
+        // one mode is meaningless in the other: always re-range on the switch and clear the
+        // manual-edit latch so the new mode starts from a sensible auto view.
+        if self.last_view_mode == ViewMode::Volume && self.state.view_mode == ViewMode::Points {
+            self.state.reset_transfer_auto((0.0, 0.0));
+        }
         // Re-filter the selection overlay if the per-group visibility changed.
         if self.state.group_mask != self.last_group_mask {
             self.reupload_annotations();
@@ -485,10 +671,16 @@ impl Gfx {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        // egui frame.
+        // egui frame. The "Auto" transfer button needs the volume density percentiles, but
+        // computing them scans + sorts every non-zero voxel (~6M), so pass a CLOSURE that
+        // ui::build invokes only on click — never on the per-frame render path.
         let raw_input = self.egui_state.take_egui_input(self.window.as_ref());
+        let tick_labels = &self.tick_labels;
+        let grid = &self.grid;
         let full_output = self.egui_ctx.run(raw_input, |ctx| {
-            ui::build(ctx, &mut self.state, &mut self.camera);
+            ui::build(ctx, &mut self.state, &mut self.camera, tick_labels, || {
+                grid.density_percentiles()
+            });
         });
         self.egui_state
             .handle_platform_output(self.window.as_ref(), full_output.platform_output);
@@ -499,6 +691,12 @@ impl Gfx {
             self.egui_renderer
                 .update_texture(&self.device, &self.queue, *id, delta);
         }
+
+        // Rebuild axis ticks/labels (and back-face grid) AFTER ui::build, so a same-frame
+        // toggle of "Focus to window", a window slider, or the back-face grid is reflected
+        // by the tick geometry in the SAME frame the point cloud / volume box snaps to it
+        // (params() below also reads the post-build state). Mirrors ui::draw_axis_labels.
+        self.refresh_axis_geometry();
 
         // Uniforms — computed AFTER egui so they reflect this frame's UI/camera changes
         // (otherwise a Points->Volume switch renders one frame with a stale matrix and
@@ -521,12 +719,17 @@ impl Gfx {
         if self.state.view_mode == ViewMode::Volume {
             // Fold MS1/MS2 density per the toggle (rebuilds the display grid if changed).
             let ms_changed = self.refresh_volume_grid();
-            // Auto-range the transfer fn on entering volume mode or when the MS toggle
-            // changed the density (sums differ in range from per-point intensity).
-            if self.last_view_mode != ViewMode::Volume || ms_changed {
+            // Entering Volume always re-ranges to the density scale and clears the manual-edit
+            // latch (a range pinned in Points mode is meaningless for density — this is what
+            // made the volume render flat after a Points-mode transfer tweak). An MS toggle
+            // within Volume re-ranges too, but respects a manual pin set in Volume mode.
+            let entering_volume = self.last_view_mode != ViewMode::Volume;
+            if entering_volume {
                 let (lo, hi) = self.grid.density_percentiles();
-                self.state.i_min = lo;
-                self.state.i_max = hi;
+                self.state.reset_transfer_auto((lo, hi));
+            } else if ms_changed && self.state.may_auto_transfer() {
+                let (lo, hi) = self.grid.density_percentiles();
+                self.state.auto_transfer_volume(lo, hi);
             }
             let inv_vp = self.camera.inv_view_proj(aspect);
             let mut vu = self.state.volume_uniform(inv_vp);

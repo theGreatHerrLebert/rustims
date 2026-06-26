@@ -106,6 +106,8 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
     let bounds = plan.meta.bounds;
     let mut state = AppState::new(bounds, total, COLORMAP_NAMES.len() as u32);
     state.capacity = capacity;
+    state.downsample_stride =
+        crate::data::loader::stride_for(total, capacity as usize) as u32;
     state.view_mode = if opts.volume { ViewMode::Volume } else { ViewMode::Points };
     state.vol_style = if opts.mip { VolStyle::Mip } else { VolStyle::Composite };
 
@@ -183,13 +185,16 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
     // cloud uses the retained-intensity percentiles.
     if opts.volume {
         let (lo, hi) = grid.density_percentiles();
-        state.i_min = lo;
-        state.i_max = hi;
+        state.auto_transfer_volume(lo, hi);
     } else if !reservoir.is_empty() {
         reservoir.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let pct = |q: f32| reservoir[(((reservoir.len() - 1) as f32) * q) as usize];
-        state.i_min = pct(0.01).max(1.0);
-        state.i_max = pct(0.99).max(state.i_min * 1.0001);
+        // Feed the same auto-exposure heuristic the interactive viewer uses, so the
+        // headless render is legible (median mid-LUT, additive cloud not blown out).
+        state.i_p1 = pct(0.01).max(1.0);
+        state.i_med = pct(0.50).max(state.i_p1);
+        state.i_p99 = pct(0.99).max(state.i_med * 1.0001);
+        state.auto_transfer_points();
     }
     // Apply transfer-function overrides (e.g. raise i_min to threshold out noise).
     if let Some(v) = opts.i_min {

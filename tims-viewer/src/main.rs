@@ -11,6 +11,7 @@ mod data;
 mod offscreen;
 mod render;
 mod state;
+mod ticks;
 mod ui;
 
 use anyhow::Result;

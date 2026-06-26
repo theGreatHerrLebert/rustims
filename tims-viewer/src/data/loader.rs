@@ -40,8 +40,8 @@ pub enum LoadMsg {
     PeakChunk { points: Vec<GpuPoint> },
     /// Fractional load progress in `[0, 1]`.
     Progress(f32),
-    /// Robust intensity range (p1/p99) for transfer-function defaults.
-    Stats { i_min: f32, i_max: f32 },
+    /// Robust intensity percentiles (p1/p50/p99) for transfer-function defaults.
+    Stats { i_min: f32, i_max: f32, i_med: f32 },
     /// Annotation overlay geometry: colored line-list vertices (pairs = segments) in the
     /// normalized cube (DDA precursor crosses / DIA isolation-window footprints). `groups`
     /// is a parallel per-vertex window-group id (u32::MAX = ungrouped); `n_groups` is the
@@ -358,8 +358,9 @@ fn run_loader(
             reservoir[i.min(reservoir.len() - 1)]
         };
         let i_min = p(0.01).max(1.0);
-        let i_max = p(0.99).max(i_min * 1.0001);
-        send_cancellable!(LoadMsg::Stats { i_min, i_max });
+        let i_med = p(0.50).max(i_min);
+        let i_max = p(0.99).max(i_med * 1.0001);
+        send_cancellable!(LoadMsg::Stats { i_min, i_max, i_med });
     }
 
     send_cancellable!(LoadMsg::Done {
@@ -633,8 +634,9 @@ mod tests {
                     }
                     points += p.len();
                 }
-                Ok(LoadMsg::Stats { i_min, i_max }) => {
+                Ok(LoadMsg::Stats { i_min, i_max, i_med }) => {
                     assert!(i_min > 0.0 && i_max > i_min);
+                    assert!(i_med >= i_min && i_med <= i_max);
                     saw_stats = true;
                 }
                 // The only non-panic exit: reaching past the loop proves Done arrived.

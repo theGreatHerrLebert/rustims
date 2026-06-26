@@ -55,6 +55,16 @@ pub struct AppState {
     pub i_min: f32,
     pub i_max: f32,
     pub exposure: f32,
+    /// Raw p1 of retained point intensity, from LoadMsg::Stats. 0.0 until known.
+    /// Stored unstretched so a mode switch can re-run the heuristic from scratch.
+    pub i_p1: f32,
+    /// p50 (median) of retained point intensity, from LoadMsg::Stats. 0.0 until known.
+    pub i_med: f32,
+    /// Raw p99 of retained point intensity, from LoadMsg::Stats. 0.0 until known.
+    pub i_p99: f32,
+    /// True once the user has manually edited transfer/exposure/range this session;
+    /// suppresses further auto-ranging so we never clobber manual edits.
+    pub transfer_user_dirty: bool,
     pub colormap_id: u32,
     pub n_colormaps: u32,
     pub point_size: f32,
@@ -67,6 +77,10 @@ pub struct AppState {
     pub show_annotations: bool,
     /// Show the data-cube wireframe + axis labels (m/z, 1/K0, RT).
     pub show_axes: bool,
+    /// Draw faint gridlines across the three far cube faces for depth reference.
+    pub show_grid_backfaces: bool,
+    /// Draw the intensity colorbar overlay (active colormap + range + transfer tag).
+    pub show_colorbar: bool,
     /// Per-window-group visibility bitmask (bit g-1 = group g); used by the selection overlay.
     pub group_mask: u32,
     /// Number of DIA/MIDIA window groups in the loaded run (0 until known).
@@ -100,6 +114,10 @@ impl AppState {
             i_min: 1.0,
             i_max: 1e5,
             exposure: 1.0,
+            i_p1: 0.0,
+            i_med: 0.0,
+            i_p99: 0.0,
+            transfer_user_dirty: false,
             colormap_id: 1, // Inferno
             n_colormaps,
             point_size: 2.5,
@@ -108,10 +126,14 @@ impl AppState {
             show_ms2: true,
             show_annotations: true,
             show_axes: true,
+            show_grid_backfaces: false,
+            show_colorbar: true,
             group_mask: u32::MAX,
             n_window_groups: 0,
             rt_window: Window {
-                min: bounds.rt.min,
+                // Skip the first ~15% of the run by default: the early gradient is usually
+                // near-empty (no peptides eluting yet). "Reset windows" restores the full range.
+                min: bounds.rt.min + 0.15 * (bounds.rt.max - bounds.rt.min),
                 max: bounds.rt.max,
             },
             mz_window: Window {
@@ -146,6 +168,63 @@ impl AppState {
             min: self.bounds.im.min,
             max: self.bounds.im.max,
         };
+    }
+
+    /// Auto-set transfer mode + range + exposure for POINT mode from the stored intensity
+    /// percentiles (`i_p1`/`i_med`/`i_p99`) so the median maps to a legible mid-tone and the
+    /// additive cloud never saturates. No-op until percentiles are known (`i_med > 0`).
+    pub fn auto_transfer_points(&mut self) {
+        if self.i_med <= 0.0 {
+            return;
+        }
+        let p1 = self.i_p1.max(1.0);
+        // Derive the working median into a LOCAL: `i_med` is the pristine raw p50 from
+        // LoadMsg::Stats and must stay untouched so a later mode switch / Auto click can
+        // re-run this heuristic from scratch (see field doc). Writing back here would
+        // ratchet the anchor upward if p1 ever exceeds the raw median.
+        let p50 = self.i_med.max(p1);
+        let p99 = self.i_p99.max(p50 * 1.0001);
+        self.i_min = p1;
+        // Headroom above p99 so the few brightest peaks still gain color but the bulk maps
+        // below 1.0. 4x ~= one extra decade for lognormal tails.
+        self.i_max = (p99 * 4.0).max(p50 * 1.0001);
+
+        // timsTOF intensity is lognormal -> Log transfer puts the median mid-LUT.
+        self.transfer = TransferMode::Log;
+
+        // Exposure controls additive COVERAGE (alpha), independent of the LUT index.
+        // contrib = falloff(center=1) * opacity * exposure * weight, with weight == stride
+        // (the loader deposits weight = 1/p = stride). Solve exposure so a single median
+        // splat lands at ~TARGET_ALPHA so overlapping medians ramp toward (not past) white.
+        let weight = self.downsample_stride.max(1) as f32;
+        const TARGET_ALPHA: f32 = 0.35;
+        self.exposure =
+            (TARGET_ALPHA / (self.opacity.max(0.05) * weight)).clamp(0.02, 4.0);
+    }
+
+    /// Auto-set transfer range for VOLUME mode from density percentiles
+    /// (p50 .. p99.9 from VolumeGrid::density_percentiles). Volume composite alpha is
+    /// integrated in-shader, so exposure stays at its tuned default.
+    pub fn auto_transfer_volume(&mut self, lo: f32, hi: f32) {
+        self.transfer = TransferMode::Log;
+        self.i_min = lo.max(1e-6);
+        self.i_max = hi.max(self.i_min * 1.0001);
+        self.exposure = 1.0;
+    }
+
+    /// True when auto-ranging is allowed (no manual transfer edits yet).
+    pub fn may_auto_transfer(&self) -> bool {
+        !self.transfer_user_dirty
+    }
+
+    /// Re-enable auto-ranging and immediately re-apply the heuristic for the active mode.
+    /// `volume_range` is the density percentile pair, used only in volume mode.
+    pub fn reset_transfer_auto(&mut self, volume_range: (f32, f32)) {
+        self.transfer_user_dirty = false;
+        match self.view_mode {
+            ViewMode::Points => self.auto_transfer_points(),
+            ViewMode::Volume => self.auto_transfer_volume(volume_range.0, volume_range.1),
+        }
     }
 
     /// Build the GPU params uniform from the current UI state.

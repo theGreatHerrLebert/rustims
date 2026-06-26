@@ -38,27 +38,33 @@ fn anchors(map: usize) -> &'static [[u8; 3]] {
     }
 }
 
+/// RGB at normalized position `t∈[0,1]` for colormap `map` (CPU mirror of the LUT).
+/// The egui colorbar and the GPU LUT both go through this anchor-lerp so they can't drift.
+pub fn sample(map: usize, t: f32) -> [u8; 3] {
+    let a = anchors(map);
+    let segs = a.len() - 1;
+    let t = t.clamp(0.0, 1.0);
+    let fseg = t * segs as f32;
+    let seg = (fseg.floor() as usize).min(segs - 1);
+    let local = fseg - seg as f32;
+    let c0 = a[seg];
+    let c1 = a[seg + 1];
+    let lerp = |i: usize| (c0[i] as f32 + (c1[i] as f32 - c0[i] as f32) * local).round() as u8;
+    [lerp(0), lerp(1), lerp(2)]
+}
+
 /// Build the RGBA8 LUT pixel data, row-major (`width=256`, `height=N`).
 pub fn build_lut_rgba8() -> (Vec<u8>, u32, u32) {
     let n = COLORMAP_NAMES.len();
     let mut data = vec![0u8; LUT_WIDTH * n * 4];
     for map in 0..n {
-        let a = anchors(map);
-        let segs = a.len() - 1;
         for x in 0..LUT_WIDTH {
             let t = x as f32 / (LUT_WIDTH - 1) as f32;
-            let fseg = t * segs as f32;
-            let seg = (fseg.floor() as usize).min(segs - 1);
-            let local = fseg - seg as f32;
-            let c0 = a[seg];
-            let c1 = a[seg + 1];
-            let lerp = |i: usize| {
-                (c0[i] as f32 + (c1[i] as f32 - c0[i] as f32) * local).round() as u8
-            };
+            let rgb = sample(map, t);
             let idx = (map * LUT_WIDTH + x) * 4;
-            data[idx] = lerp(0);
-            data[idx + 1] = lerp(1);
-            data[idx + 2] = lerp(2);
+            data[idx] = rgb[0];
+            data[idx + 1] = rgb[1];
+            data[idx + 2] = rgb[2];
             data[idx + 3] = 255;
         }
     }
@@ -117,4 +123,19 @@ pub fn create_lut_texture(
         ..Default::default()
     });
     (texture, view, sampler)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sample_endpoints_match_anchors() {
+        // Viridis anchors run [68,1,84] -> ... -> [253,231,37].
+        assert_eq!(sample(0, 0.0), [68, 1, 84]);
+        assert_eq!(sample(0, 1.0), [253, 231, 37]);
+        // Out-of-range t clamps to the endpoints.
+        assert_eq!(sample(0, -1.0), [68, 1, 84]);
+        assert_eq!(sample(0, 2.0), [253, 231, 37]);
+    }
 }
