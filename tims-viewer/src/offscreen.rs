@@ -118,6 +118,7 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
         LoaderMode::Real {
             path: plan.meta.data_path.clone(),
             frame_ids: plan.meta.frames.iter().map(|f| f.id).collect(),
+            filter: None,
         }
     };
     let loader = LoaderHandle::spawn(mode, bounds, total, capacity as usize);

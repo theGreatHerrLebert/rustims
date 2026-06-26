@@ -23,6 +23,7 @@ pub struct FrameInfo {
 }
 
 /// Lightweight index over a run's metadata.
+#[derive(Clone)]
 pub struct MetaIndex {
     pub data_path: String,
     pub frames: Vec<FrameInfo>,

@@ -82,6 +82,8 @@ struct Gfx {
     camera: OrbitCamera,
     state: AppState,
     loader: LoaderHandle,
+    /// The full run's metadata, retained so a refined region can revert to the whole run.
+    full_meta: MetaIndex,
 
     // interaction
     modifiers: ModifiersState,
@@ -411,6 +413,9 @@ impl App {
         );
         let egui_renderer = egui_wgpu::Renderer::new(&device, format, None, 1, true);
 
+        // Keep the full run's metadata so a refined region can revert to the whole run.
+        let full_meta = plan.meta.clone();
+
         // Spawn the loader.
         let mode = if plan.is_demo {
             LoaderMode::Demo(DemoSource::new(plan.meta.frames.len(), total))
@@ -419,6 +424,7 @@ impl App {
             LoaderMode::Real {
                 path: plan.meta.data_path.clone(),
                 frame_ids,
+                filter: None,
             }
         };
         let loader = LoaderHandle::spawn(mode, plan.meta.bounds, total, capacity as usize);
@@ -450,6 +456,7 @@ impl App {
             camera: OrbitCamera::default(),
             state,
             loader,
+            full_meta,
             modifiers: ModifiersState::empty(),
             left_down: false,
             right_down: false,
@@ -514,10 +521,14 @@ impl Gfx {
                     }
                 }
                 Ok(LoadMsg::Annotations { lines, groups, n_groups }) => {
-                    self.anno_lines = lines;
-                    self.anno_groups = groups;
-                    self.state.n_window_groups = n_groups;
-                    self.reupload_annotations();
+                    // Suppress the selection overlay in a refined region: it is normalized to
+                    // the window, so off-region windows would clutter the cube edges.
+                    if !self.state.refined {
+                        self.anno_lines = lines;
+                        self.anno_groups = groups;
+                        self.state.n_window_groups = n_groups;
+                        self.reupload_annotations();
+                    }
                 }
                 Ok(LoadMsg::Done { .. }) => {
                     self.state.load_progress = 1.0;
@@ -625,8 +636,103 @@ impl Gfx {
         self.shown_grid = grid;
     }
 
+    /// Re-spawn the loader over `frame_ids` with `bounds`, `total` estimate and an optional
+    /// per-point region filter, resetting the point buffer, volume grids and load/transfer
+    /// state so the new selection streams in from scratch. Shared by refine and revert.
+    fn respawn_loader(
+        &mut self,
+        frame_ids: Vec<u32>,
+        bounds: crate::data::point::AxisBounds,
+        total: u64,
+        filter: Option<crate::data::loader::RegionFilter>,
+    ) {
+        let capacity = self.state.capacity as usize;
+        self.loader = LoaderHandle::spawn(
+            LoaderMode::Real {
+                path: self.full_meta.data_path.clone(),
+                frame_ids,
+                filter,
+            },
+            bounds,
+            total,
+            capacity,
+        );
+        // Reset GPU/CPU buffers for a fresh stream.
+        self.points.reset();
+        self.grid_ms1.clear();
+        self.grid_ms2.clear();
+        self.grid.clear();
+        self.last_ms = (true, true);
+        self.anno_lines.clear();
+        self.anno_groups.clear();
+        self.annotations.upload(&self.device, &[]);
+        self.last_group_mask = u32::MAX;
+        // Reset per-load state; re-derive the cube + transfer for the new bounds.
+        self.state.bounds = bounds;
+        self.state.reset_windows();
+        self.state.focus = false;
+        self.state.transfer_user_dirty = false;
+        self.state.n_window_groups = 0;
+        self.state.group_mask = u32::MAX;
+        self.state.load_progress = 0.0;
+        self.state.load_failed = false;
+        self.state.resident_points = 0;
+        self.state.downsample_stride = crate::data::loader::stride_for(total, capacity) as u32;
+        // Force a transfer re-range next frame and an axis-geometry rebuild (NaN never matches).
+        self.last_view_mode = ViewMode::Points;
+        self.shown_ranges = ((f64::NAN, 0.0), (0.0, 0.0), (0.0, 0.0));
+    }
+
+    /// Re-stream just the current RT/m-z/1-K0 window at full resolution. Frame selection
+    /// handles the RT window; a per-point m/z·1/K0 cull handles the rest, and the window
+    /// becomes the new cube — so the fixed budget now buys (often stride-1) detail there.
+    fn refine_to_window(&mut self) {
+        use crate::data::point::{AxisBounds, AxisTransform};
+        let (rt0, rt1) = (self.state.rt_window.min, self.state.rt_window.max);
+        let (mz0, mz1) = (self.state.mz_window.min, self.state.mz_window.max);
+        let (im0, im1) = (self.state.im_window.min, self.state.im_window.max);
+        let mut frame_ids = Vec::new();
+        let mut total: u64 = 0;
+        for f in &self.full_meta.frames {
+            if f.retention_time >= rt0 && f.retention_time <= rt1 {
+                frame_ids.push(f.id);
+                total = total.saturating_add(f.num_peaks);
+            }
+        }
+        if frame_ids.is_empty() {
+            return;
+        }
+        let bounds = AxisBounds {
+            mz: AxisTransform::new(mz0, mz1),
+            im: AxisTransform::new(im0, im1),
+            rt: AxisTransform::new(rt0, rt1),
+        };
+        let filter = Some(crate::data::loader::RegionFilter {
+            mz: (mz0, mz1),
+            im: (im0, im1),
+        });
+        self.respawn_loader(frame_ids, bounds, total, filter);
+        self.state.refined = true;
+    }
+
+    /// Revert a refinement: re-stream the whole run at the global downsample.
+    fn load_full_run(&mut self) {
+        let frame_ids: Vec<u32> = self.full_meta.frames.iter().map(|f| f.id).collect();
+        let bounds = self.full_meta.bounds;
+        let total = self.full_meta.total_points_estimate;
+        self.respawn_loader(frame_ids, bounds, total, None);
+        self.state.refined = false;
+    }
+
     fn render(&mut self) {
         self.pump_loader();
+        // Level-of-detail: consume any pending refine/revert request from the UI.
+        if let Some(action) = self.state.refine_request.take() {
+            match action {
+                crate::state::RefineAction::Refine => self.refine_to_window(),
+                crate::state::RefineAction::FullRun => self.load_full_run(),
+            }
+        }
         // Re-range when switching Volume->Points. The two modes live in completely different
         // value ranges (per-point intensity vs summed density), so a transfer range pinned in
         // one mode is meaningless in the other: always re-range on the switch and clear the

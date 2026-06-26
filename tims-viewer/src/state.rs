@@ -42,6 +42,15 @@ pub struct Window {
     pub max: f64,
 }
 
+/// A request from the UI for the app to re-stream the loader (level-of-detail refinement).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefineAction {
+    /// Re-stream only the current RT/m-z/1-K0 window at full resolution.
+    Refine,
+    /// Re-stream the whole run (revert a refinement).
+    FullRun,
+}
+
 pub struct AppState {
     pub bounds: AxisBounds,
 
@@ -90,6 +99,10 @@ pub struct AppState {
     pub im_window: Window,
     /// Re-fit the window box to the full cube (zoom to selection) instead of just culling.
     pub focus: bool,
+    /// True while showing a re-streamed sub-region (vs the full run).
+    pub refined: bool,
+    /// Pending level-of-detail request from the UI; the app consumes it each frame.
+    pub refine_request: Option<RefineAction>,
 
     // Readouts
     pub fps: f32,
@@ -145,6 +158,8 @@ impl AppState {
                 max: bounds.im.max,
             },
             focus: false,
+            refined: false,
+            refine_request: None,
             fps: 0.0,
             resident_points: 0,
             capacity: 0,

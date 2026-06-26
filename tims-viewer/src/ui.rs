@@ -3,7 +3,7 @@
 use crate::camera::{AxisView, OrbitCamera, Projection};
 use crate::render::colormap::{sample, COLORMAP_NAMES};
 use crate::render::point_cloud::PointMode;
-use crate::state::{AppState, TransferMode, ViewMode, VolStyle};
+use crate::state::{AppState, RefineAction, TransferMode, ViewMode, VolStyle};
 use crate::ticks::RT_MINUTES_SPAN;
 
 /// A numeric axis-tick label for the screen-space overlay: a world-space anchor (just
@@ -104,6 +104,20 @@ fn filters_section(ui: &mut egui::Ui, state: &mut AppState) {
             ui.checkbox(&mut state.focus, "Focus to window (zoom in)");
             if ui.button("Reset windows").clicked() {
                 state.reset_windows();
+            }
+            ui.separator();
+            // Level-of-detail: re-stream just this window at full resolution.
+            if state.refined {
+                ui.colored_label(egui::Color32::LIGHT_GREEN, "● refined region (full res)");
+                if ui.button("⟲ Back to full run").clicked() {
+                    state.refine_request = Some(RefineAction::FullRun);
+                }
+            } else if ui
+                .button("⤢ Refine to window (full res)")
+                .on_hover_text("Re-stream only this RT / m-z / mobility window at full resolution")
+                .clicked()
+            {
+                state.refine_request = Some(RefineAction::Refine);
             }
         });
 }

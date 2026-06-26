@@ -59,9 +59,22 @@ pub enum LoadCmd {
     Cancel,
 }
 
+/// Optional real-unit m/z + 1/K0 window applied per-point during a region refinement load
+/// (frame selection already handles the RT window). Points outside are skipped at the source.
+#[derive(Clone, Copy)]
+pub struct RegionFilter {
+    pub mz: (f64, f64),
+    pub im: (f64, f64),
+}
+
 /// What to stream.
 pub enum LoaderMode {
-    Real { path: String, frame_ids: Vec<u32> },
+    Real {
+        path: String,
+        frame_ids: Vec<u32>,
+        /// Per-point m/z·1/K0 cull for region refinement (`None` for the full run).
+        filter: Option<RegionFilter>,
+    },
     Demo(DemoSource),
 }
 
@@ -286,7 +299,7 @@ fn run_loader(
             return;
         }
         match &mode {
-            LoaderMode::Real { frame_ids, .. } => {
+            LoaderMode::Real { frame_ids, filter, .. } => {
                 let ds = dataset.as_ref().unwrap();
                 let frame = ds.get_frame(frame_ids[idx]);
                 let rt = frame.ims_frame.retention_time;
@@ -297,6 +310,13 @@ fn run_loader(
                 // Validate parallel arrays — never zip past the shortest.
                 let n = mz.len().min(im.len()).min(it.len());
                 for j in 0..n {
+                    // Region refinement: drop points outside the m/z·1/K0 window at the
+                    // source so the budget is spent only on the focused region.
+                    if let Some(f) = filter {
+                        if mz[j] < f.mz.0 || mz[j] > f.mz.1 || im[j] < f.im.0 || im[j] > f.im.1 {
+                            continue;
+                        }
+                    }
                     handle_point!(mz[j], im[j], rt, it[j] as f32, is_ms2);
                 }
             }

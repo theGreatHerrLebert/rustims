@@ -59,6 +59,14 @@ impl VolumeGrid {
         self.dirty = false;
     }
 
+    /// Zero all density (and the running max) — used when re-streaming a refined region so
+    /// the grid rebuilds from scratch.
+    pub fn clear(&mut self) {
+        self.data.iter_mut().for_each(|v| *v = 0.0);
+        self.max_density = 0.0;
+        self.dirty = true;
+    }
+
     /// Deposit a point (normalized cube position in [-1,1], raw intensity) using
     /// trilinear cloud-in-cell weighting: the intensity is split across the 8 nearest
     /// voxels by their interpolation weights and ADDED. This is conservative (the 8
