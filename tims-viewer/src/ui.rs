@@ -62,13 +62,34 @@ pub fn build(
             }
             ui.separator();
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                filters_section(ui, state);
-                selection_section(ui, state);
-                rendering_section(ui, state, vol_range);
-                clustering_section(ui, state);
-                projections_section(ui, state);
-                view_section(ui, state, camera);
+            // ---- Tab bar: group the sections so the panel isn't overloaded ----
+            const TABS: [&str; 3] = ["Filter", "Render", "Analyze"];
+            ui.horizontal(|ui| {
+                if ui.button("‹").on_hover_text("Previous tab").clicked() {
+                    state.ui_tab = (state.ui_tab + TABS.len() as u8 - 1) % TABS.len() as u8;
+                }
+                for (i, name) in TABS.iter().enumerate() {
+                    ui.selectable_value(&mut state.ui_tab, i as u8, *name);
+                }
+                if ui.button("›").on_hover_text("Next tab").clicked() {
+                    state.ui_tab = (state.ui_tab + 1) % TABS.len() as u8;
+                }
+            });
+            ui.separator();
+
+            egui::ScrollArea::vertical().show(ui, |ui| match state.ui_tab {
+                0 => {
+                    filters_section(ui, state);
+                    selection_section(ui, state);
+                }
+                1 => {
+                    rendering_section(ui, state, vol_range);
+                    view_section(ui, state, camera);
+                }
+                _ => {
+                    clustering_section(ui, state);
+                    projections_section(ui, state);
+                }
             });
         });
 

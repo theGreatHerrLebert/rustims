@@ -136,6 +136,8 @@ pub struct AppState {
     pub focus: bool,
     /// True while showing a re-streamed sub-region (vs the full run).
     pub refined: bool,
+    /// Active panel tab (0 = Filter, 1 = Render, 2 = Analyze).
+    pub ui_tab: u8,
 
     // Clustering (color points by DBSCAN cluster id)
     pub color_mode: ColorMode,
@@ -223,6 +225,7 @@ impl AppState {
             proj_im_rt: None,
             focus: false,
             refined: false,
+            ui_tab: 0,
             color_mode: ColorMode::Intensity,
             cluster_eps: 0.012,
             cluster_min_pts: 8,
