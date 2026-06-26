@@ -84,6 +84,9 @@ struct Gfx {
     loader: LoaderHandle,
     /// The full run's metadata, retained so a refined region can revert to the whole run.
     full_meta: MetaIndex,
+    /// True for the built-in synthetic DEMO source: respawns must stay in demo mode rather
+    /// than trying to open a real `.d` at the placeholder data path.
+    is_demo: bool,
     /// CPU copy of the resident points (bounded by CLUSTER_CAP) so DBSCAN can run on them
     /// and write per-point cluster ids back into the GPU buffer.
     cpu_points: Vec<crate::data::point::GpuPoint>,
@@ -466,6 +469,7 @@ impl App {
             state,
             loader,
             full_meta,
+            is_demo: plan.is_demo,
             cpu_points: Vec::new(),
             modifiers: ModifiersState::empty(),
             left_down: false,
@@ -673,17 +677,19 @@ impl Gfx {
         filter: Option<crate::data::loader::RegionFilter>,
     ) {
         let capacity = self.state.capacity as usize;
-        self.loader = LoaderHandle::spawn(
+        // Stay in the source's mode: a DEMO session must respawn a synthetic source, not try
+        // to open a real `.d` at the placeholder path.
+        let mode = if self.is_demo {
+            LoaderMode::Demo(DemoSource::new(frame_ids.len(), total))
+        } else {
             LoaderMode::Real {
                 path: self.full_meta.data_path.clone(),
                 frame_ids,
                 filter,
-            },
-            bounds,
-            total,
-            capacity,
-            self.state.intensity_priority,
-        );
+            }
+        };
+        self.loader =
+            LoaderHandle::spawn(mode, bounds, total, capacity, self.state.intensity_priority);
         // Reset GPU/CPU buffers for a fresh stream.
         self.points.reset();
         self.cpu_points.clear();
@@ -1000,7 +1006,18 @@ impl Gfx {
                 occlusion_query_set: None,
             });
             match self.state.view_mode {
-                ViewMode::Points => self.points.render(&mut rpass, self.state.point_mode),
+                ViewMode::Points => {
+                    // Cluster coloring must use the opaque pipeline (REPLACE blend + depth
+                    // write): the additive pipeline would sum cluster hues regardless of the
+                    // fragment's alpha. Don't mutate point_mode, so the user's additive/opaque
+                    // choice is restored when they switch back to intensity coloring.
+                    let mode = if self.state.color_mode == crate::state::ColorMode::Cluster {
+                        crate::render::point_cloud::PointMode::StructuralOpaque
+                    } else {
+                        self.state.point_mode
+                    };
+                    self.points.render(&mut rpass, mode);
+                }
                 ViewMode::Volume => self.volume.render(&mut rpass),
             }
             if self.state.show_axes {
