@@ -43,8 +43,9 @@ impl ColorMode {
     }
 }
 
-/// Max resident points DBSCAN will run on; above this, clustering is disabled (refine first).
-pub const CLUSTER_CAP: u32 = 600_000;
+/// Max filtered points DBSCAN will run on; above this, clustering is disabled (filter/refine
+/// down first). DBSCAN is grid-accelerated (~O(n)), so a couple million is a few seconds.
+pub const CLUSTER_CAP: u32 = 2_000_000;
 
 impl TransferMode {
     fn as_f32(self) -> f32 {

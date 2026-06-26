@@ -641,14 +641,13 @@ impl Gfx {
                     ));
                 }
                 Ok(LoadMsg::Annotations { lines, groups, n_groups }) => {
-                    // Suppress the selection overlay in a refined region: it is normalized to
-                    // the window, so off-region windows would clutter the cube edges.
-                    if !self.state.refined {
-                        self.anno_lines = lines;
-                        self.anno_groups = groups;
-                        self.state.n_window_groups = n_groups;
-                        self.reupload_annotations();
-                    }
+                    // Show the selection overlay in refined regions too: it is normalized to the
+                    // current bounds, and the per-vertex window cull clips off-region boxes to
+                    // the cube, so only the windows overlapping the region remain.
+                    self.anno_lines = lines;
+                    self.anno_groups = groups;
+                    self.state.n_window_groups = n_groups;
+                    self.reupload_annotations();
                 }
                 Ok(LoadMsg::Done { .. }) => {
                     self.state.load_progress = 1.0;
