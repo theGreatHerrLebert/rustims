@@ -287,6 +287,33 @@ fn proj_to_color_image(data: &[u32]) -> egui::ColorImage {
     egui::ColorImage { size: [n, n], pixels }
 }
 
+/// Whether a point passes the active filter (normalized window + intensity range + MS mask).
+/// Mirrors the point-cloud shader cull so the DBSCAN input matches what is displayed.
+#[inline]
+fn point_passes(
+    p: &crate::data::point::GpuPoint,
+    fmin: [f32; 3],
+    fmax: [f32; 3],
+    irange: (f32, f32),
+    ms_mask: u32,
+) -> bool {
+    let pos = p.pos;
+    if pos[0] < fmin[0] || pos[0] > fmax[0] || pos[1] < fmin[1] || pos[1] > fmax[1]
+        || pos[2] < fmin[2] || pos[2] > fmax[2]
+    {
+        return false;
+    }
+    if p.intensity < irange.0 || p.intensity > irange.1 {
+        return false;
+    }
+    let is_ms2 = p.flags & crate::data::point::GpuPoint::MS2_FLAG != 0;
+    if is_ms2 {
+        ms_mask & 2 != 0
+    } else {
+        ms_mask & 1 != 0
+    }
+}
+
 fn create_depth(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> wgpu::TextureView {
     let tex = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("depth"),
@@ -528,10 +555,10 @@ impl Gfx {
                         g.deposit(p.pos, p.intensity * p.weight);
                     }
                     self.points.append(&self.queue, &points);
-                    // Retain a CPU copy for DBSCAN, bounded by the cluster cap AND the GPU
-                    // residency so cpu_points never exceeds the displayed set (keeps the
-                    // run_clustering equality guard reachable on small-capacity GPUs too).
-                    let cap = crate::state::CLUSTER_CAP.min(self.state.capacity) as usize;
+                    // Retain a CPU copy of every resident point (bounded by GPU capacity) so
+                    // DBSCAN can run on any FILTERED subset — you filter the region down to a
+                    // clusterable count instead of shrinking the spatial window.
+                    let cap = self.state.capacity as usize;
                     if self.cpu_points.len() < cap {
                         let room = cap - self.cpu_points.len();
                         self.cpu_points.extend(points.iter().take(room).copied());
@@ -541,10 +568,10 @@ impl Gfx {
                     // Peaks are display-only enrichment; append to the cloud but do NOT
                     // add to the volume density (would double-count dense cells).
                     self.points.append(&self.queue, &points);
-                    // Retain a CPU copy for DBSCAN, bounded by the cluster cap AND the GPU
-                    // residency so cpu_points never exceeds the displayed set (keeps the
-                    // run_clustering equality guard reachable on small-capacity GPUs too).
-                    let cap = crate::state::CLUSTER_CAP.min(self.state.capacity) as usize;
+                    // Retain a CPU copy of every resident point (bounded by GPU capacity) so
+                    // DBSCAN can run on any FILTERED subset — you filter the region down to a
+                    // clusterable count instead of shrinking the spatial window.
+                    let cap = self.state.capacity as usize;
                     if self.cpu_points.len() < cap {
                         let room = cap - self.cpu_points.len();
                         self.cpu_points.extend(points.iter().take(room).copied());
@@ -830,29 +857,74 @@ impl Gfx {
         self.state.refined = true;
     }
 
-    /// Run DBSCAN on the resident points (only when the full resident set is retained on the
-    /// CPU, i.e. within CLUSTER_CAP), write per-point cluster ids back into the GPU buffer, and
-    /// switch to cluster coloring. No-op while still streaming or if too many points are resident.
+    /// The active point filter, mirroring the shader cull: normalized window min/max, the
+    /// intensity range (real units), and the MS bit mask.
+    fn active_filter(&self) -> ([f32; 3], [f32; 3], (f32, f32), u32) {
+        let s = &self.state;
+        let fmin = s
+            .bounds
+            .normalize(s.mz_window.min, s.im_window.min, s.rt_window.min);
+        let fmax = s
+            .bounds
+            .normalize(s.mz_window.max, s.im_window.max, s.rt_window.max);
+        let ms_mask = (s.show_ms1 as u32) | ((s.show_ms2 as u32) << 1);
+        (
+            fmin,
+            fmax,
+            (s.intensity_window.min as f32, s.intensity_window.max as f32),
+            ms_mask,
+        )
+    }
+
+    /// Count the resident points that pass the active filter (the DBSCAN input size). Parallel
+    /// so it can run every frame for a live readout even on a large resident set.
+    fn count_filtered(&self) -> usize {
+        use rayon::prelude::*;
+        let (fmin, fmax, irange, ms) = self.active_filter();
+        self.cpu_points
+            .par_iter()
+            .filter(|p| point_passes(p, fmin, fmax, irange, ms))
+            .count()
+    }
+
+    /// Run DBSCAN on the FILTERED resident points (intensity + window + MS filters), write per-
+    /// point cluster ids into the GPU buffer, and switch to cluster coloring. Filtered-out points
+    /// are cleared to NO_CLUSTER (the shader culls them anyway). No-op while streaming, with no
+    /// filtered points, or with more than CLUSTER_CAP in the filter (tighten the filters).
     fn run_clustering(&mut self) {
         if self.state.load_progress < 1.0
             || self.cpu_points.is_empty()
             || self.cpu_points.len() as u32 != self.state.resident_points
         {
-            return; // still streaming, or partial retention (too many points) — refine first
+            return; // still streaming or partial retention
         }
-        let positions: Vec<[f32; 3]> = self.cpu_points.iter().map(|p| p.pos).collect();
+        let (fmin, fmax, irange, ms) = self.active_filter();
+        let mut idx: Vec<usize> = Vec::new();
+        let mut positions: Vec<[f32; 3]> = Vec::new();
+        for (i, p) in self.cpu_points.iter().enumerate() {
+            if point_passes(p, fmin, fmax, irange, ms) {
+                idx.push(i);
+                positions.push(p.pos);
+            }
+        }
+        if positions.is_empty() || positions.len() > crate::state::CLUSTER_CAP as usize {
+            return; // nothing in the filter, or still too many — tighten the filters
+        }
         let (labels, k) = crate::cluster::dbscan(
             &positions,
             self.state.cluster_eps,
             self.state.cluster_min_pts as usize,
         );
+        for p in self.cpu_points.iter_mut() {
+            p._pad[0] = crate::data::point::GpuPoint::NO_CLUSTER;
+        }
         let mut noise = 0usize;
-        for (p, &lab) in self.cpu_points.iter_mut().zip(labels.iter()) {
-            p._pad[0] = if lab < 0 {
+        for (j, &pi) in idx.iter().enumerate() {
+            self.cpu_points[pi]._pad[0] = if labels[j] < 0 {
                 noise += 1;
                 crate::data::point::GpuPoint::NO_CLUSTER
             } else {
-                lab as u32
+                labels[j] as u32
             };
         }
         self.points.reset();
@@ -860,6 +932,7 @@ impl Gfx {
         self.state.resident_points = self.points.resident();
         self.state.cluster_count = k;
         self.state.cluster_noise = noise;
+        self.state.cluster_input_count = positions.len();
         self.state.color_mode = crate::state::ColorMode::Cluster;
         self.state.view_mode = ViewMode::Points;
         // Cluster coloring renders opaque in the shader regardless of point_mode, so the
@@ -884,7 +957,12 @@ impl Gfx {
                 crate::state::RefineAction::FullRun => self.load_full_run(),
             }
         }
-        // Clustering: run DBSCAN on the resident points and color by cluster id.
+        // Live DBSCAN input size = points passing the active filter (so the Cluster gate +
+        // readout react as you drag the intensity / window sliders).
+        if self.state.load_progress >= 1.0 {
+            self.state.cluster_input_count = self.count_filtered();
+        }
+        // Clustering: run DBSCAN on the filtered resident points and color by cluster id.
         if self.state.cluster_request {
             self.state.cluster_request = false;
             self.run_clustering();

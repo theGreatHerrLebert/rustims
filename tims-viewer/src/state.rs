@@ -146,6 +146,8 @@ pub struct AppState {
     /// Last clustering result: number of clusters and noise points (0 until run).
     pub cluster_count: usize,
     pub cluster_noise: usize,
+    /// Live count of resident points passing the active filter (the DBSCAN input size).
+    pub cluster_input_count: usize,
     /// Set by the UI "Cluster" button; the app runs DBSCAN and consumes it.
     pub cluster_request: bool,
     /// Pending level-of-detail request from the UI; the app consumes it each frame.
@@ -226,6 +228,7 @@ impl AppState {
             cluster_min_pts: 8,
             cluster_count: 0,
             cluster_noise: 0,
+            cluster_input_count: 0,
             cluster_request: false,
             refine_request: None,
             fps: 0.0,

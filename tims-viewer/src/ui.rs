@@ -121,18 +121,23 @@ fn filters_section(ui: &mut egui::Ui, state: &mut AppState) {
                 state.reset_windows();
             }
             ui.separator();
-            // Level-of-detail: re-stream just this window at full resolution.
-            if state.refined {
-                ui.colored_label(egui::Color32::LIGHT_GREEN, "● refined region (full res)");
-                if ui.button("⟲ Back to full run").clicked() {
-                    state.refine_request = Some(RefineAction::FullRun);
-                }
-            } else if ui
+            // Level-of-detail: re-stream just this window at full resolution. "Refine" is
+            // always available so you can zoom in further from an already-refined region
+            // (nested refinement) without first resetting back to the full run.
+            if ui
                 .button("⤢ Refine to window (full res)")
                 .on_hover_text("Re-stream only this RT / m-z / mobility window at full resolution")
                 .clicked()
             {
                 state.refine_request = Some(RefineAction::Refine);
+            }
+            if state.refined {
+                ui.horizontal(|ui| {
+                    ui.colored_label(egui::Color32::LIGHT_GREEN, "● refined");
+                    if ui.button("⟲ Back to full run").clicked() {
+                        state.refine_request = Some(RefineAction::FullRun);
+                    }
+                });
             }
         });
 }
@@ -308,23 +313,23 @@ fn clustering_section(ui: &mut egui::Ui, state: &mut AppState) {
                     .text("eps"),
             );
             ui.add(egui::Slider::new(&mut state.cluster_min_pts, 2..=50).text("min pts"));
-            let too_many = state.resident_points > CLUSTER_CAP;
+            // Gate on the FILTERED input size: tighten the intensity/window filters to bring a
+            // dense region under the cap instead of having to shrink the spatial window.
+            let n = state.cluster_input_count;
+            let too_many = n as u32 > CLUSTER_CAP;
             let loading = state.load_progress < 1.0;
-            ui.add_enabled_ui(!too_many && !loading, |ui| {
+            ui.add_enabled_ui(!too_many && n > 0 && !loading, |ui| {
                 if ui.button("Cluster (DBSCAN)").clicked() {
                     state.cluster_request = true;
                 }
             });
+            ui.label(format!("{} points in filter", fmt_count(n as u64)));
             if loading {
                 ui.label("loading…");
             } else if too_many {
                 ui.colored_label(
                     egui::Color32::from_rgb(230, 180, 80),
-                    format!(
-                        "Refine to ≤ {} pts to cluster ({} shown)",
-                        fmt_count(CLUSTER_CAP as u64),
-                        fmt_count(state.resident_points as u64)
-                    ),
+                    format!("filter down to ≤ {} to cluster", fmt_count(CLUSTER_CAP as u64)),
                 );
             } else if state.cluster_count > 0 || state.cluster_noise > 0 {
                 ui.label(format!(
