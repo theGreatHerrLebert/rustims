@@ -67,6 +67,10 @@ pub struct AppState {
     pub show_annotations: bool,
     /// Show the data-cube wireframe + axis labels (m/z, 1/K0, RT).
     pub show_axes: bool,
+    /// Per-window-group visibility bitmask (bit g-1 = group g); used by the selection overlay.
+    pub group_mask: u32,
+    /// Number of DIA/MIDIA window groups in the loaded run (0 until known).
+    pub n_window_groups: u32,
     pub rt_window: Window,
     pub mz_window: Window,
     pub im_window: Window,
@@ -104,6 +108,8 @@ impl AppState {
             show_ms2: true,
             show_annotations: true,
             show_axes: true,
+            group_mask: u32::MAX,
+            n_window_groups: 0,
             rt_window: Window {
                 min: bounds.rt.min,
                 max: bounds.rt.max,

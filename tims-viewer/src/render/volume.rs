@@ -28,6 +28,8 @@ pub struct VolumeGrid {
     /// Largest accumulated voxel density (drives the normalization scale).
     max_density: f32,
     dirty: bool,
+    /// Reusable f16 staging buffer for uploads, to avoid a per-frame allocation.
+    scratch: Vec<f16>,
 }
 
 impl VolumeGrid {
@@ -45,6 +47,7 @@ impl VolumeGrid {
             data: vec![0.0; n],
             max_density: 0.0,
             dirty: false,
+            scratch: Vec::new(),
         }
     }
 
@@ -139,14 +142,18 @@ impl VolumeGrid {
         self.dirty = true;
     }
 
-    /// Normalize by `density_scale` and convert to f16. The shader multiplies back by
+    /// Normalize by `density_scale` and convert to f16 into the reusable scratch buffer
+    /// (avoids a fresh multi-MB allocation per upload). The shader multiplies back by
     /// `density_scale` before the transfer function.
-    pub fn to_f16_scaled(&self) -> Vec<f16> {
+    pub fn to_f16_scaled(&mut self) -> &[f16] {
         let inv = 1.0 / self.density_scale();
-        self.data
-            .iter()
-            .map(|&v| f16::from_f32((v * inv).min(F16_TARGET_MAX)))
-            .collect()
+        if self.scratch.len() != self.data.len() {
+            self.scratch = vec![f16::from_f32(0.0); self.data.len()];
+        }
+        for (s, &v) in self.scratch.iter_mut().zip(self.data.iter()) {
+            *s = f16::from_f32((v * inv).min(F16_TARGET_MAX));
+        }
+        &self.scratch
     }
 }
 
@@ -468,7 +475,7 @@ mod tests {
             let t = i as f32 / 15.0 * 2.0 - 1.0;
             grid.deposit([t, 0.0, 0.0], 500.0 + i as f32 * 100.0);
         }
-        r.upload(&queue, &grid.to_f16_scaled());
+        r.upload(&queue, grid.to_f16_scaled());
         let cam = crate::camera::OrbitCamera::default();
         let mut u = VolumeUniform {
             inv_view_proj: cam.inv_view_proj(1.0),

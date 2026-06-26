@@ -43,8 +43,10 @@ pub enum LoadMsg {
     /// Robust intensity range (p1/p99) for transfer-function defaults.
     Stats { i_min: f32, i_max: f32 },
     /// Annotation overlay geometry: colored line-list vertices (pairs = segments) in the
-    /// normalized cube (DDA precursor crosses / DIA isolation-window footprints).
-    Annotations { lines: Vec<LineVertex> },
+    /// normalized cube (DDA precursor crosses / DIA isolation-window footprints). `groups`
+    /// is a parallel per-vertex window-group id (u32::MAX = ungrouped); `n_groups` is the
+    /// number of DIA/MIDIA window groups, for the per-group visibility UI.
+    Annotations { lines: Vec<LineVertex>, groups: Vec<u32>, n_groups: u32 },
     /// All frames for `generation` have been streamed.
     Done { generation: u64 },
     /// Fatal error; loading stopped.
@@ -342,9 +344,9 @@ fn run_loader(
     // Annotation overlay (real data only — needs the dataset's scan->mobility converter
     // and the DDA/DIA metadata tables).
     if let (LoaderMode::Real { path, .. }, Some(ds)) = (&mode, &dataset) {
-        let lines = build_annotations(ds, path, &bounds);
+        let (lines, groups, n_groups) = build_annotations(ds, path, &bounds);
         if !lines.is_empty() {
-            send_cancellable!(LoadMsg::Annotations { lines });
+            send_cancellable!(LoadMsg::Annotations { lines, groups, n_groups });
         }
     }
 
@@ -368,11 +370,15 @@ fn run_loader(
 /// Build annotation-overlay line geometry (normalized cube) from the run's DDA/DIA
 /// metadata. DDA precursors -> small 3D crosses; DIA isolation windows -> wireframe
 /// boxes. Returns line-list vertices (consecutive pairs are segments).
-fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<LineVertex> {
+fn build_annotations(
+    ds: &TimsDataset,
+    path: &str,
+    bounds: &AxisBounds,
+) -> (Vec<LineVertex>, Vec<u32>, u32) {
     // frame_id -> retention time (ids are contiguous 1..=N, validated at load).
     let meta = match read_meta_data_sql(path) {
         Ok(m) => m,
-        Err(_) => return Vec::new(),
+        Err(_) => return (Vec::new(), Vec::new(), 0),
     };
     let max_id = meta.iter().map(|m| m.id).max().unwrap_or(0).max(0) as usize;
     let mut rt_by = vec![0f64; max_id + 1];
@@ -383,7 +389,11 @@ fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<L
     }
     let rt_of = |fid: u32| rt_by.get(fid as usize).copied().unwrap_or(0.0);
 
+    // `groups` is a per-vertex window-group id, parallel to `lines`, for CPU-side group
+    // toggling. u32::MAX means "ungrouped, always shown" (DDA precursor crosses).
     let mut lines: Vec<LineVertex> = Vec::new();
+    let mut groups: Vec<u32> = Vec::new();
+    let mut n_groups_out: u32 = 0;
     match ds.get_acquisition_mode() {
         AcquisitionMode::DDA | AcquisitionMode::PRECURSOR => {
             if let Ok(precursors) = read_dda_precursor_meta(path) {
@@ -396,7 +406,7 @@ fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<L
                         .copied()
                         .unwrap_or(0.0);
                     let pos = bounds.normalize(p.precursor_mz_highest_intensity, im, rt_of(fid));
-                    push_cross(&mut lines, pos, 0.012, [0.1, 0.95, 0.95]);
+                    push_cross(&mut lines, &mut groups, pos, 0.012, [0.1, 0.95, 0.95], u32::MAX);
                 }
             }
         }
@@ -420,14 +430,21 @@ fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<L
                 // see the cloud through, and span each drawn rect across the skipped scans so
                 // it stays a visible window outline rather than a sliver.
                 const N_SLICES: usize = 6;
-                const WIN_STRIDE: usize = 16;
+                const TARGET_WINDOWS: usize = 800;
+                // Subsample so a fine MIDIA diagonal (~15k windows) stays legible, but a
+                // conventional DIA scheme (tens of windows) keeps every box (stride == 1).
+                let stride = (windows.len() / TARGET_WINDOWS).max(1);
                 // Color each window by its group, so the interleaved isolation diagonals
                 // that tile the precursor space read as distinct bands.
                 let n_groups = windows.iter().map(|w| w.window_group).max().unwrap_or(1).max(1);
+                n_groups_out = n_groups;
+                let max_scan = windows.iter().map(|w| w.scan_num_end).max().unwrap_or(0);
                 let (rt_lo, rt_hi) = (bounds.rt.min, bounds.rt.max);
-                for w in windows.iter().step_by(WIN_STRIDE) {
+                for w in windows.iter().step_by(stride) {
                     let fid = grp_frame.get(&w.window_group).copied().unwrap_or(1);
-                    let scan_hi = w.scan_num_end + WIN_STRIDE as u32 / 2;
+                    // Widen across the skipped scans so the rect stays a visible window;
+                    // clamp to the largest real scan so the last window can't overshoot.
+                    let scan_hi = (w.scan_num_end + stride as u32 / 2).min(max_scan.max(w.scan_num_end));
                     let ims = ds.scan_to_inverse_mobility(fid, &vec![w.scan_num_begin, scan_hi]);
                     let im0 = ims.first().copied().unwrap_or(0.0);
                     let im1 = ims.get(1).copied().unwrap_or(im0);
@@ -437,29 +454,43 @@ fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<L
                     for i in 0..N_SLICES {
                         let rt =
                             rt_lo + (rt_hi - rt_lo) * (i as f64 + 0.5) / N_SLICES as f64;
-                        push_rect_mz_im(&mut lines, bounds, (mz0, mz1), (im0, im1), rt, color);
+                        push_rect_mz_im(
+                            &mut lines, &mut groups, bounds, (mz0, mz1), (im0, im1), rt, color,
+                            w.window_group,
+                        );
                     }
                 }
             }
         }
         AcquisitionMode::Unknown => {}
     }
-    lines
+    (lines, groups, n_groups_out)
 }
 
-/// Append a 3-segment axis-aligned cross centered at `c` (half-length `h`), in `color`.
-fn push_cross(lines: &mut Vec<LineVertex>, c: [f32; 3], h: f32, color: [f32; 3]) {
-    let v = |p: [f32; 3]| LineVertex::new(p, color);
-    lines.push(v([c[0] - h, c[1], c[2]]));
-    lines.push(v([c[0] + h, c[1], c[2]]));
-    lines.push(v([c[0], c[1] - h, c[2]]));
-    lines.push(v([c[0], c[1] + h, c[2]]));
-    lines.push(v([c[0], c[1], c[2] - h]));
-    lines.push(v([c[0], c[1], c[2] + h]));
+/// Append a 3-segment axis-aligned cross centered at `c` (half-length `h`), in `color`,
+/// tagging each vertex with `group`.
+fn push_cross(
+    lines: &mut Vec<LineVertex>,
+    groups: &mut Vec<u32>,
+    c: [f32; 3],
+    h: f32,
+    color: [f32; 3],
+    group: u32,
+) {
+    let mut v = |p: [f32; 3]| {
+        lines.push(LineVertex::new(p, color));
+        groups.push(group);
+    };
+    v([c[0] - h, c[1], c[2]]);
+    v([c[0] + h, c[1], c[2]]);
+    v([c[0], c[1] - h, c[2]]);
+    v([c[0], c[1] + h, c[2]]);
+    v([c[0], c[1], c[2] - h]);
+    v([c[0], c[1], c[2] + h]);
 }
 
 /// Distinct color per window group, by evenly spacing hue around the wheel.
-fn group_color(group: u32, n_groups: u32) -> [f32; 3] {
+pub fn group_color(group: u32, n_groups: u32) -> [f32; 3] {
     let h = (group.saturating_sub(1) as f32) / (n_groups.max(1) as f32);
     hsv_to_rgb(h, 0.7, 1.0)
 }
@@ -485,11 +516,13 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
 /// retention time — one isolation window's footprint, drawn at a given RT slice.
 fn push_rect_mz_im(
     lines: &mut Vec<LineVertex>,
+    groups: &mut Vec<u32>,
     bounds: &AxisBounds,
     mz: (f64, f64),
     im: (f64, f64),
     rt: f64,
     color: [f32; 3],
+    group: u32,
 ) {
     let corner = |a: f64, b: f64| bounds.normalize(a, b, rt);
     let c = [
@@ -502,6 +535,8 @@ fn push_rect_mz_im(
     for (a, b) in EDGES {
         lines.push(LineVertex::new(c[a], color));
         lines.push(LineVertex::new(c[b], color));
+        groups.push(group);
+        groups.push(group);
     }
 }
 

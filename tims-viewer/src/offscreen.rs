@@ -160,7 +160,7 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
                 points.append(&queue, &pts);
             }
             Ok(LoadMsg::Stats { .. }) => {} // recomputed below from retained points
-            Ok(LoadMsg::Annotations { lines }) => {
+            Ok(LoadMsg::Annotations { lines, .. }) => {
                 if opts.annotations {
                     annotations.upload(&device, &lines);
                 }
@@ -222,7 +222,7 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
         let mut vu = state.volume_uniform(camera.inv_view_proj(aspect));
         vu.density_scale = grid.density_scale();
         volume.update_uniform(&queue, &vu);
-        volume.upload(&queue, &grid.to_f16_scaled());
+        volume.upload(&queue, grid.to_f16_scaled());
     }
 
     // Offscreen targets.

@@ -65,6 +65,11 @@ struct Gfx {
     /// Last MS toggle the display grid was folded for (to detect changes).
     last_ms: (bool, bool),
     annotations: AnnotationRenderer,
+    /// Full annotation geometry + parallel per-vertex group ids, retained so the overlay
+    /// can be re-uploaded filtered by the per-group visibility mask without a reload.
+    anno_lines: Vec<LineVertex>,
+    anno_groups: Vec<u32>,
+    last_group_mask: u32,
     /// Wireframe of the full data cube, drawn for spatial orientation.
     axes: AnnotationRenderer,
     camera: OrbitCamera,
@@ -300,6 +305,9 @@ impl App {
             grid_ms2,
             last_ms: (true, true),
             annotations,
+            anno_lines: Vec::new(),
+            anno_groups: Vec::new(),
+            last_group_mask: u32::MAX,
             axes,
             camera: OrbitCamera::default(),
             state,
@@ -362,8 +370,11 @@ impl Gfx {
                         self.state.i_max = i_max;
                     }
                 }
-                Ok(LoadMsg::Annotations { lines }) => {
-                    self.annotations.upload(&self.device, &lines);
+                Ok(LoadMsg::Annotations { lines, groups, n_groups }) => {
+                    self.anno_lines = lines;
+                    self.anno_groups = groups;
+                    self.state.n_window_groups = n_groups;
+                    self.reupload_annotations();
                 }
                 Ok(LoadMsg::Done { .. }) => {
                     self.state.load_progress = 1.0;
@@ -417,8 +428,28 @@ impl Gfx {
         ms_changed
     }
 
+    /// Re-upload the selection overlay, keeping only vertices whose window group is enabled
+    /// in `state.group_mask` (ungrouped vertices, u32::MAX, are always kept).
+    fn reupload_annotations(&mut self) {
+        let mask = self.state.group_mask;
+        let visible = |g: u32| g == u32::MAX || g > 32 || (mask & (1u32 << g.saturating_sub(1))) != 0;
+        let filtered: Vec<LineVertex> = self
+            .anno_lines
+            .iter()
+            .zip(self.anno_groups.iter())
+            .filter(|(_, &g)| visible(g))
+            .map(|(v, _)| *v)
+            .collect();
+        self.annotations.upload(&self.device, &filtered);
+        self.last_group_mask = mask;
+    }
+
     fn render(&mut self) {
         self.pump_loader();
+        // Re-filter the selection overlay if the per-group visibility changed.
+        if self.state.group_mask != self.last_group_mask {
+            self.reupload_annotations();
+        }
 
         // FPS (exponential smoothing).
         let now = Instant::now();
@@ -500,7 +531,7 @@ impl Gfx {
             vu.density_scale = self.grid.density_scale();
             self.volume.update_uniform(&self.queue, &vu);
             if self.grid.dirty() {
-                self.volume.upload(&self.queue, &self.grid.to_f16_scaled());
+                self.volume.upload(&self.queue, self.grid.to_f16_scaled());
                 self.grid.clear_dirty();
             }
         }

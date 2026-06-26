@@ -114,6 +114,39 @@ pub fn build(ctx: &egui::Context, state: &mut AppState, camera: &mut OrbitCamera
                 ui.checkbox(&mut state.show_ms2, "MS2");
             });
             ui.checkbox(&mut state.show_annotations, "Selection windows (DIA/MIDIA)");
+            if state.show_annotations && state.n_window_groups > 0 {
+                let n = state.n_window_groups;
+                ui.horizontal(|ui| {
+                    ui.label("groups:");
+                    if ui.small_button("all").clicked() {
+                        state.group_mask = u32::MAX;
+                    }
+                    if ui.small_button("none").clicked() {
+                        state.group_mask = 0;
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    for g in 1..=n.min(32) {
+                        let bit = 1u32 << (g - 1);
+                        let mut on = state.group_mask & bit != 0;
+                        let [r, gg, b] = crate::data::loader::group_color(g, n);
+                        let label = egui::RichText::new(format!("{g}")).color(
+                            egui::Color32::from_rgb(
+                                (r * 255.0) as u8,
+                                (gg * 255.0) as u8,
+                                (b * 255.0) as u8,
+                            ),
+                        );
+                        if ui.checkbox(&mut on, label).changed() {
+                            if on {
+                                state.group_mask |= bit;
+                            } else {
+                                state.group_mask &= !bit;
+                            }
+                        }
+                    }
+                });
+            }
             ui.checkbox(&mut state.show_axes, "Axis frame + labels");
             ui.separator();
 
@@ -245,10 +278,14 @@ fn axis_window(
     ui.label(label);
     ui.add(egui::Slider::new(&mut win.min, lo..=hi).text("min"));
     ui.add(egui::Slider::new(&mut win.max, lo..=hi).text("max"));
-    // Keep the range ordered (dragging min past max pushes max along).
-    if win.min > win.max {
-        win.max = win.min;
+    // Keep the range ordered AND non-degenerate: a zero-width window would collapse the
+    // focus (zoom-to-window) remap onto a single line via the shader's 1e-6 halfspan clamp.
+    let eps = (hi - lo) * 1e-3;
+    win.min = win.min.clamp(lo, hi - eps);
+    if win.max < win.min + eps {
+        win.max = win.min + eps;
     }
+    win.max = win.max.min(hi);
 }
 
 fn fmt_count(n: u64) -> String {
