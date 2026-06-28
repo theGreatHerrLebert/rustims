@@ -580,7 +580,7 @@ async fn run() -> Result<(), String> {
     // Clustering (DBSCAN on the focused set).
     bind_cluster(&gfx);
     // Collapsible section headers + tab switching.
-    bind_panel_chrome();
+    bind_panel_chrome(&gfx);
 
     // Track CSS/DPR changes (window resize fires on zoom + monitor moves too).
     {
@@ -1146,6 +1146,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
     set_text("cl-readout", "—"); // clustering is invalidated by a new load
     set_checked("cl-color", false);
     set_body_class("has-clusters", false);
+    set_body_class("cluster-color", false);
 }
 
 /// Build the region + budget query string for `/points` and `/meta`.
@@ -1420,6 +1421,7 @@ fn invalidate_clusters_mut(g: &mut Gfx) {
         set_text("cl-readout", "—");
         set_checked("cl-color", false);
         set_body_class("has-clusters", false);
+        set_body_class("cluster-color", false);
     }
 }
 
@@ -1509,10 +1511,8 @@ fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: &[usize], labels: &[i32], k: u
         "cl-readout",
         &format!("{k} clusters · {} noise · {} pts", group(noise), group(idx.len())),
     );
-    if let Some(s) = gfx.borrow().cluster_stats.as_ref() {
-        render_cluster_panel(s);
-    }
-    set_body_class("has-clusters", true);
+    set_body_class("cluster-color", true); // cluster coloring active -> hide the intensity colorbar
+    update_cluster_panel(gfx); // we ran from the Cluster tab, so this shows + renders the panel
     show_status("");
 }
 
@@ -1532,7 +1532,7 @@ fn compute_cluster_stats(
     let (mut signal_int, mut noise_int) = (0f64, 0f64);
     for (j, &l) in labels.iter().enumerate() {
         let pt = &pts[idx[j]];
-        let contrib = (pt.intensity * pt.weight) as f64;
+        let contrib = pt.intensity as f64 * pt.weight as f64; // widen before multiply
         if l < 0 {
             noise_pts += 1;
             noise_int += contrib;
@@ -1582,18 +1582,19 @@ fn render_cluster_panel(s: &ClusterStats) {
     set_text("cs-pts-t", &group_short(total_pts as usize));
     set_text("cs-pts-c", &group_short(s.signal_pts as usize));
     set_text("cs-pts-n", &group_short(s.noise_pts as usize));
-    set_text("cs-int-t", &group_short(total_int as usize));
-    set_text("cs-int-c", &group_short(s.signal_int as usize));
-    set_text("cs-int-n", &group_short(s.noise_int as usize));
+    set_text("cs-int-t", &fmt_count(total_int));
+    set_text("cs-int-c", &fmt_count(s.signal_int));
+    set_text("cs-int-n", &fmt_count(s.noise_int));
     set_text("cs-k", &s.k.to_string());
-    set_text(
-        "cs-ratio",
-        &if s.noise_pts > 0 {
-            format!("{:.1}×", s.signal_pts as f64 / s.noise_pts as f64)
+    let ratio = |sig: f64, noise: f64| {
+        if noise > 0.0 {
+            format!("{:.1}×", sig / noise)
         } else {
             "∞".into()
-        },
-    );
+        }
+    };
+    set_text("cs-ratio", &ratio(s.signal_pts as f64, s.noise_pts as f64));
+    set_text("cs-iratio", &ratio(s.signal_int, s.noise_int));
     set_text("cs-sub", &format!("{} clusters · {} pts", s.k, group_short(total_pts as usize)));
     set_hist_svg("csh-size", &hist_bins(&s.sizes, 24));
     set_hist_svg("csh-mz", &hist_bins(&s.mz_extent, 24));
@@ -1601,18 +1602,41 @@ fn render_cluster_panel(s: &ClusterStats) {
     set_hist_svg("csh-rt", &hist_bins(&s.rt_extent, 24));
 }
 
-/// Bin non-negative values into `n` equal bins over `[0, max]` (counts per bin).
+/// Bin non-negative finite values into `n` equal-width bins over `[0, max]`. Everything collapses to
+/// bin 0 when every value is 0.
 fn hist_bins(values: &[f64], n: usize) -> Vec<u32> {
-    let mut h = vec![0u32; n.max(1)];
-    let max = values.iter().cloned().fold(0.0f64, f64::max);
+    let n = n.max(1);
+    let mut h = vec![0u32; n];
+    let finite: Vec<f64> = values.iter().copied().filter(|v| v.is_finite() && *v >= 0.0).collect();
+    let max = finite.iter().copied().fold(0.0f64, f64::max);
     if max <= 0.0 {
+        h[0] = finite.len() as u32;
         return h;
     }
-    for &v in values {
-        let b = ((v / max) * (n as f64 - 1.0)).clamp(0.0, n as f64 - 1.0) as usize;
+    for &v in &finite {
+        // equal-width: scale by n then clamp to n-1 (vs *(n-1), which leaves the last bin only for
+        // exact maxima).
+        let b = ((v / max * n as f64) as usize).min(n - 1);
         h[b] += 1;
     }
     h
+}
+
+/// Compact display of a (possibly huge / non-finite) f64 sum — avoids the silent `as usize`
+/// saturation when intensity totals are large.
+fn fmt_count(x: f64) -> String {
+    if !x.is_finite() {
+        return "—".into();
+    }
+    if x >= 1e9 {
+        format!("{:.1}G", x / 1e9)
+    } else if x >= 1e6 {
+        format!("{:.1}M", x / 1e6)
+    } else if x >= 1e4 {
+        format!("{:.0}k", x / 1e3)
+    } else {
+        format!("{:.0}", x)
+    }
 }
 
 /// Toggle a class on `<body>`.
@@ -1641,6 +1665,7 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     on_toggle("cl-color", gfx, |g, on| {
         if g.clustered {
             g.params.color_mode = if on { 1 } else { 0 };
+            set_body_class("cluster-color", on); // toggles the intensity colorbar back on when off
         }
     });
 }
@@ -1722,10 +1747,11 @@ fn switch_tab(name: &str) {
 }
 
 /// Wire tab switching + collapsible section headers via one delegated click listener.
-fn bind_panel_chrome() {
+fn bind_panel_chrome(gfx: &Rc<RefCell<Gfx>>) {
     let Some(doc) = document() else {
         return;
     };
+    let gfx = gfx.clone();
     add_listener(doc.as_ref(), "click", move |e: web_sys::Event| {
         let Some(t) = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else {
             return;
@@ -1733,6 +1759,7 @@ fn bind_panel_chrome() {
         if let Ok(Some(tab)) = t.closest(".tab") {
             if let Some(name) = tab.get_attribute("data-tab") {
                 switch_tab(&name);
+                update_cluster_panel(&gfx); // stats panel shows only on the Cluster tab
             }
         } else if let Ok(Some(ey)) = t.closest(".ey") {
             if let Some(sec) = ey.parent_element() {
@@ -1740,6 +1767,21 @@ fn bind_panel_chrome() {
             }
         }
     });
+}
+
+/// Show the cluster stats panel iff the Cluster tab is active and a result exists (so switching tabs
+/// is the natural dismiss, and the right edge is free for the colorbar elsewhere).
+fn update_cluster_panel(gfx: &Rc<RefCell<Gfx>>) {
+    let on_cluster_tab = by_id::<web_sys::HtmlElement>("tabbtn-cluster")
+        .map(|b| b.class_list().contains("active"))
+        .unwrap_or(false);
+    let show = on_cluster_tab && gfx.borrow().clustered;
+    set_body_class("has-clusters", show);
+    if show {
+        if let Some(s) = gfx.borrow().cluster_stats.as_ref() {
+            render_cluster_panel(s);
+        }
+    }
 }
 
 /// Render a 2D density projection to its `<canvas>` with the inferno colormap (sqrt-scaled). The

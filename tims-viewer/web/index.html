@@ -81,7 +81,9 @@
     /* cluster stats rail (right edge, shown when a clustering result exists) */
     .rail.right { left: auto; right: 16px; display: none; }
     body.has-clusters .rail.right { display: flex; }
-    body.has-clusters .cbar { display: none; } /* the stats rail takes the right edge */
+    /* hide the intensity colorbar when the stats rail takes the right edge, or when the cloud is
+       cluster-colored (the intensity legend is meaningless then) */
+    body.has-clusters .cbar, body.cluster-color .cbar { display: none; }
     .cs-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11.5px;
       margin-bottom: 10px; }
     .cs-table th, .cs-table td { text-align: right; padding: 3px 5px; }
@@ -266,6 +268,8 @@
 
     @media (max-width: 720px) {
       .rail { width: calc(100vw - 32px); }
+      /* the stats rail would cover the controls full-width — hide it on narrow viewports */
+      body.has-clusters .rail.right { display: none; }
       /* open: toggle parks at the rail's top-right (acts as close); collapsed: top-left to reopen */
       .railbtn { left: auto; right: 16px; }
       .railtgl:checked ~ .railbtn { left: 16px; right: auto; }
@@ -464,7 +468,8 @@
           <tr><td>Intensity</td><td id="cs-int-t">—</td><td id="cs-int-c">—</td><td id="cs-int-n">—</td></tr>
         </table>
         <div class="row"><span class="lbl">Clusters</span><span class="val" id="cs-k" style="min-width:auto">—</span></div>
-        <div class="row"><span class="lbl">Signal / noise</span><span class="val" id="cs-ratio" style="min-width:auto">—</span></div>
+        <div class="row"><span class="lbl">S/N · points</span><span class="val" id="cs-ratio" style="min-width:auto">—</span></div>
+        <div class="row"><span class="lbl">S/N · intensity</span><span class="val" id="cs-iratio" style="min-width:auto">—</span></div>
       </section>
       <section class="sec">
         <div class="ey">Per-cluster</div>
