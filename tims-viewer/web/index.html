@@ -74,6 +74,9 @@
     /* volume-only controls, shown when View = Volume */
     .vol-only { display: none; }
     body.volmode .vol-only { display: flex; }
+    /* point-only controls (Transfer/Exposure don't affect the volume) — greyed in Volume mode */
+    .points-only { transition: opacity .15s; }
+    body.volmode .points-only { opacity: .35; pointer-events: none; }
 
     .sec { padding: 14px 18px 4px 20px; }
     .sec + .sec { border-top: 1px solid var(--line-2); }
@@ -335,13 +338,13 @@
 
       <section class="sec">
         <div class="ey">Intensity</div>
-        <div class="row"><span class="lbl" id="l-xf">Transfer</span>
+        <div class="row points-only"><span class="lbl" id="l-xf">Transfer</span>
           <span class="seg" role="radiogroup" aria-labelledby="l-xf">
             <input type="radio" name="xf" id="xf-lin" /><label for="xf-lin">Lin</label>
             <input type="radio" name="xf" id="xf-sqrt" checked /><label for="xf-sqrt">√</label>
             <input type="radio" name="xf" id="xf-log" /><label for="xf-log">Log</label>
           </span></div>
-        <div class="row"><label class="lbl" for="expo">Exposure</label>
+        <div class="row points-only"><label class="lbl" for="expo">Exposure</label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="expo" min="0.02" max="4" step="0.02" value="1.00" />
             <input type="number" class="numin" id="expo-n" min="0.02" max="4" step="0.02" value="1.00" aria-label="exposure value" /></span></div>
