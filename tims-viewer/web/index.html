@@ -316,7 +316,7 @@
           <span style="display:flex;align-items:center;gap:8px">
             <input type="number" class="numin" id="load-n" min="1" step="100000" value="0" style="width:84px" aria-label="points to load from the server" />
             <button class="btn mono" id="load-go" type="button">load</button></span></div>
-        <div class="row"><span class="lbl" id="l-mode">Mode</span>
+        <div class="row points-only"><span class="lbl" id="l-mode">Mode</span>
           <span class="seg" role="radiogroup" aria-labelledby="l-mode">
             <input type="radio" name="mode" id="m-add" checked /><label for="m-add">Density</label>
             <input type="radio" name="mode" id="m-opq" /><label for="m-opq">Solid</label>
@@ -326,11 +326,11 @@
             <option value="0">Viridis</option><option value="1" selected>Inferno</option>
             <option value="2">Turbo</option><option value="3">Grayscale</option>
           </select></div>
-        <div class="row"><label class="lbl" for="psize">Point size</label>
+        <div class="row points-only"><label class="lbl" for="psize">Point size</label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="psize" min="0.5" max="6" step="0.1" value="2.5" />
             <input type="number" class="numin" id="psize-n" min="0.5" max="6" step="0.1" value="2.5" aria-label="point size value" /></span></div>
-        <div class="row"><label class="lbl" for="opac">Opacity</label>
+        <div class="row points-only"><label class="lbl" for="opac">Opacity</label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="opac" min="0.05" max="1" step="0.05" value="0.6" />
             <input type="number" class="numin" id="opac-n" min="0.05" max="1" step="0.05" value="0.60" aria-label="opacity value" /></span></div>
