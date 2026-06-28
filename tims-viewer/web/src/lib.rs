@@ -20,9 +20,14 @@ use tims_viewer::data::point::{AxisTransform, GpuPoint};
 use tims_viewer::render::annotation::{AnnotationRenderer, LineVertex};
 use tims_viewer::ticks::{fmt_tick, ticks_for, Axis, RT_MINUTES_SPAN};
 use tims_viewer::render::colormap::{sample as colormap_sample, COLORMAP_NAMES};
+use tims_viewer::cluster::dbscan;
 use tims_viewer::render::point_cloud::{PointCloudRenderer, PointMode};
 use tims_viewer::render::uniforms::{ParamsUniform, VolumeUniform};
 use tims_viewer::render::volume::{VolumeGrid, VolumeRenderer, VOLUME_DIMS};
+
+/// Max points DBSCAN runs on in the browser (it blocks the main thread). Beyond this, Focus a region
+/// first. Mirrors the native CLUSTER_CAP.
+const CLUSTER_CAP: usize = 2_000_000;
 
 /// Points (the splat cloud) vs Volume (raymarched density grid).
 #[derive(Clone, Copy, PartialEq)]
@@ -123,6 +128,12 @@ struct Gfx {
     /// Volume density transfer range (raw density percentiles), auto-ranged on grid build.
     vol_i_min: f32,
     vol_i_max: f32,
+    // ---- clustering (CLUSTERING_WEB_PLAN.md) ----
+    cluster_eps: f32,
+    cluster_min_pts: usize,
+    /// True while a DBSCAN result is colouring the cloud (`params.color_mode == 1`). Invalidated on
+    /// reload / focus / filter change.
+    clustered: bool,
     /// Declared last so it drops AFTER the surface/device — wgpu requires the instance to outlive
     /// everything created from it.
     _instance: wgpu::Instance,
@@ -318,7 +329,13 @@ impl Gfx {
             if volume_view {
                 self.volume.as_ref().unwrap().render(&mut rpass);
             } else {
-                self.renderer.render(&mut rpass, self.point_mode);
+                // Cluster hues mush under additive blending — force opaque while cluster-colored.
+                let pm = if self.params.color_mode == 1 {
+                    PointMode::StructuralOpaque
+                } else {
+                    self.point_mode
+                };
+                self.renderer.render(&mut rpass, pm);
             }
             self.axes.render(&mut rpass);
         }
@@ -505,6 +522,9 @@ async fn run() -> Result<(), String> {
         vol_style: 0,
         vol_i_min: 1.0,
         vol_i_max: 2.0,
+        cluster_eps: 0.012,
+        cluster_min_pts: 8,
+        clustered: false,
     }));
 
     wire_input(&gfx, &window, &canvas_for_input);
@@ -540,6 +560,8 @@ async fn run() -> Result<(), String> {
     bind_maps(&gfx);
     // Points/Volume view mode + volume controls.
     bind_volume(&gfx);
+    // Clustering (DBSCAN on the focused set).
+    bind_cluster(&gfx);
     // Collapsible section headers + tab switching.
     bind_panel_chrome();
 
@@ -1065,6 +1087,8 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
         cpu.truncate(cap as usize);
         g.cpu_points = cpu;
         g.vol_needs_grid = true; // the volume density grid is rebuilt from the new points
+        g.params.color_mode = 0; // the fresh buffer has no cluster ids
+        g.clustered = false;
         // Re-apply auto-transfer (exposure + floor range) and bounds from the new meta; keep the
         // user's colormap / point size / opacity / MS mask.
         if let Some(m) = &meta {
@@ -1101,6 +1125,8 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
     }
     reset_crops(gfx);
     reset_display(gfx, n);
+    set_text("cl-readout", "—"); // clustering is invalidated by a new load
+    set_checked("cl-color", false);
 }
 
 /// Build the region + budget query string for `/points` and `/meta`.
@@ -1365,6 +1391,112 @@ fn bind_volume(gfx: &Rc<RefCell<Gfx>>) {
     }
 }
 
+/// Revert cluster colouring (a filter/load changed the set, so the labels are stale). Cheap — just
+/// flips `color_mode` back to intensity; the stale `_pad[0]` ids stay unused until the next Run.
+fn invalidate_clusters_mut(g: &mut Gfx) {
+    if g.clustered {
+        g.params.color_mode = 0;
+        g.clustered = false;
+        set_text("cl-readout", "—");
+        set_checked("cl-color", false);
+    }
+}
+
+/// Run DBSCAN on the filtered resident points, write cluster ids into the GPU buffer, and colour by
+/// cluster. Synchronous (blocks the main thread) — Focus first if the filtered set is large.
+fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
+    // Gather the filtered survivors (spatial crop + intensity floor + MS) and their cube positions.
+    let (idx, positions, eps, min_pts) = {
+        let g = gfx.borrow();
+        let p = &g.params;
+        let (fmin, fmax, ms) = (p.filter_min, p.filter_max, p.ms_mask);
+        let mut idx: Vec<usize> = Vec::new();
+        let mut positions: Vec<[f32; 3]> = Vec::new();
+        for (i, pt) in g.cpu_points.iter().enumerate() {
+            let pos = pt.pos;
+            if pos[0] < fmin[0]
+                || pos[0] > fmax[0]
+                || pos[1] < fmin[1]
+                || pos[1] > fmax[1]
+                || pos[2] < fmin[2]
+                || pos[2] > fmax[2]
+                || pt.intensity < fmin[3]
+            {
+                continue;
+            }
+            let is_ms2 = pt.flags & GpuPoint::MS2_FLAG != 0;
+            if !(if is_ms2 { ms & 0b10 != 0 } else { ms & 0b01 != 0 }) {
+                continue;
+            }
+            idx.push(i);
+            positions.push(pos);
+        }
+        (idx, positions, g.cluster_eps, g.cluster_min_pts)
+    };
+    if idx.is_empty() {
+        show_status("nothing to cluster — adjust the filter");
+        return;
+    }
+    if idx.len() > CLUSTER_CAP {
+        show_status(&format!(
+            "{} points — Focus a region first (cap {})",
+            group(idx.len()),
+            group(CLUSTER_CAP)
+        ));
+        return;
+    }
+    show_status("clustering…");
+    let (labels, k) = dbscan(&positions, eps, min_pts);
+    let noise = labels.iter().filter(|&&l| l < 0).count();
+    {
+        let mut gb = gfx.borrow_mut();
+        let g: &mut Gfx = &mut gb; // &mut Gfx so renderer/queue/cpu_points field-split
+        // Clear all ids, then write the survivors' labels (noise stays NO_CLUSTER).
+        for pt in g.cpu_points.iter_mut() {
+            pt._pad[0] = GpuPoint::NO_CLUSTER;
+        }
+        for (j, &i) in idx.iter().enumerate() {
+            if labels[j] >= 0 {
+                g.cpu_points[i]._pad[0] = labels[j] as u32;
+            }
+        }
+        // Take the points out so renderer (mut) and the points (shared) don't overlap.
+        let pts = std::mem::take(&mut g.cpu_points);
+        g.renderer.reset();
+        g.renderer.append(&g.queue, &pts);
+        g.cpu_points = pts;
+        g.params.color_mode = 1;
+        g.clustered = true;
+        g.view_mode = ViewMode::Points; // cluster colour is a point concept
+        g.filter_dirty = true; // refresh the displayed-count HUD
+    }
+
+    set_checked("v-pts", true);
+    set_checked("v-vol", false);
+    set_volmode(false);
+    set_checked("cl-color", true);
+    set_text(
+        "cl-readout",
+        &format!("{k} clusters · {} noise · {} pts", group(noise), group(idx.len())),
+    );
+    show_status("");
+}
+
+/// Wire the Cluster tab: eps / min-pts, Run, and the Color-by-cluster toggle.
+fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
+    bind_value(gfx, "cl-eps", "cl-eps-n", 3, |g, v| g.cluster_eps = v as f32);
+    bind_value(gfx, "cl-min", "cl-min-n", 0, |g, v| g.cluster_min_pts = (v as usize).max(1));
+    if let Some(btn) = by_id::<web_sys::HtmlElement>("cl-run") {
+        let gfx = gfx.clone();
+        add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| run_clustering(&gfx));
+    }
+    on_toggle("cl-color", gfx, |g, on| {
+        if g.clustered {
+            g.params.color_mode = if on { 1 } else { 0 };
+        }
+    });
+}
+
 /// Wire the Focus / Back buttons; control enable/disable is driven by `refresh_controls`.
 fn bind_focus(gfx: &Rc<RefCell<Gfx>>) {
     if let Some(btn) = by_id::<web_sys::HtmlElement>("focus-go") {
@@ -1435,7 +1567,7 @@ fn set_class(id: &str, class: &str, on: bool) {
 
 /// Show one tab pane (`view`/`focus`) and highlight its button; hide the others.
 fn switch_tab(name: &str) {
-    for t in ["view", "focus"] {
+    for t in ["view", "focus", "cluster"] {
         set_class(&format!("tabbtn-{t}"), "active", t == name);
         set_class(&format!("tab-{t}"), "active", t == name);
     }
@@ -1978,12 +2110,13 @@ fn wire_controls(gfx: &Rc<RefCell<Gfx>>) {
     bind_value(gfx, "floor", "floor-n", 0, |g, v| {
         g.params.filter_min[3] = v as f32;
         g.filter_dirty = true;
+        invalidate_clusters_mut(g);
     });
 
     // Filters
-    on_toggle("ms-1", gfx, |g, on| if on { g.params.ms_mask = 0b01; g.filter_dirty = true; g.vol_needs_grid = true; });
-    on_toggle("ms-2", gfx, |g, on| if on { g.params.ms_mask = 0b10; g.filter_dirty = true; g.vol_needs_grid = true; });
-    on_toggle("ms-b", gfx, |g, on| if on { g.params.ms_mask = 0b11; g.filter_dirty = true; g.vol_needs_grid = true; });
+    on_toggle("ms-1", gfx, |g, on| if on { g.params.ms_mask = 0b01; g.filter_dirty = true; g.vol_needs_grid = true; invalidate_clusters_mut(g); });
+    on_toggle("ms-2", gfx, |g, on| if on { g.params.ms_mask = 0b10; g.filter_dirty = true; g.vol_needs_grid = true; invalidate_clusters_mut(g); });
+    on_toggle("ms-b", gfx, |g, on| if on { g.params.ms_mask = 0b11; g.filter_dirty = true; g.vol_needs_grid = true; invalidate_clusters_mut(g); });
     bind_crop(gfx, "cmz", 0);
     bind_crop(gfx, "cim", 1);
     bind_crop(gfx, "crt", 2);
@@ -2036,6 +2169,7 @@ fn crop_apply(gfx: &Rc<RefCell<Gfx>>, axis: usize, prefix: &str, lo_val: f64, hi
         g.params.filter_min[axis] = a;
         g.params.filter_max[axis] = b;
         g.filter_dirty = true;
+        invalidate_clusters_mut(&mut g);
         g.axis_bounds
     };
     set_text(&format!("{prefix}-v"), &crop_label(bounds, axis, a, b));

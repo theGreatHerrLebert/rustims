@@ -281,6 +281,7 @@
       <div class="tabs">
         <button class="tab active" id="tabbtn-view" data-tab="view" type="button">View</button>
         <button class="tab" id="tabbtn-focus" data-tab="focus" type="button">Focus</button>
+        <button class="tab" id="tabbtn-cluster" data-tab="cluster" type="button">Cluster</button>
       </div>
       <div class="tabpane active" id="tab-view">
       <section class="sec">
@@ -408,6 +409,24 @@
           <div class="map-wrap" id="mw-1"><canvas id="map-1" width="96" height="96"></canvas><div class="map-sel" id="sel-1"></div></div></div>
         <div class="map"><div class="map-cap"><b>1/K₀</b> × <b>RT</b></div>
           <div class="map-wrap" id="mw-2"><canvas id="map-2" width="96" height="96"></canvas><div class="map-sel" id="sel-2"></div></div></div>
+      </section>
+      </div>
+      <div class="tabpane" id="tab-cluster">
+      <section class="sec">
+        <div class="ey">Cluster · DBSCAN</div>
+        <div class="row"><label class="lbl" for="cl-eps">ε radius</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="cl-eps" min="0.002" max="0.1" step="0.001" value="0.012" aria-label="cluster radius" />
+            <input type="number" class="numin" id="cl-eps-n" min="0.002" max="0.1" step="0.001" value="0.012" aria-label="cluster radius value" /></span></div>
+        <div class="row"><label class="lbl" for="cl-min">Min points</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="cl-min" min="2" max="50" step="1" value="8" aria-label="cluster min points" />
+            <input type="number" class="numin" id="cl-min-n" min="2" max="50" step="1" value="8" aria-label="cluster min points value" /></span></div>
+        <div class="row"><button class="btn" id="cl-run" type="button" style="flex:1">⬡ Run clustering</button></div>
+        <div class="row"><label class="lbl" for="cl-color">Color by cluster</label>
+          <span><input type="checkbox" class="sw" id="cl-color" /><label for="cl-color" class="sw-l" aria-hidden="true"></label></span></div>
+        <div class="row"><span class="lbl">Result</span><span class="val" id="cl-readout" style="min-width:auto">—</span></div>
+        <div class="sub" style="padding:0 0 4px; color:var(--faint)">DBSCAN on the filtered points (Focus a region for big runs).</div>
       </section>
       </div>
     </div>
