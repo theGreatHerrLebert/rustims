@@ -73,6 +73,57 @@ class MidiaExperiment:
         return MidiaSlice(self, frame_ids)
 
     # -- extraction-window lookup -------------------------------------------------------
+    def midia_dimension(self, step: np.ndarray, scan: np.ndarray) -> np.ndarray:
+        """Per-point precursor isolation m/z (window left bound) from ``(step, scan)``.
+
+        This is the "MIDIA dimension": the precursor isolation m/z each fragment point was
+        produced under, recovered from its quadrupole step and scan. ``NaN`` where the
+        ``(step, scan)`` pair falls in no extraction window. Used both by the 4D clustering
+        and the fragment point-cloud view.
+        """
+        step = np.asarray(step)
+        scan = np.asarray(scan)
+        if step.shape != scan.shape:
+            raise ValueError(
+                f"step and scan must have the same shape, got {step.shape} and {scan.shape}")
+        mc = np.full(step.shape, np.nan, dtype=np.float64)
+        for s in np.unique(step):
+            m = step == s
+            mc[m] = self.isolation_left_bound(int(s), scan[m])
+        return mc
+
+    def fragment_scan_ranges(self, query_start: float, query_length: float = 12.0,
+                             target_length: float = 36.0, perc_overlap: float = 50.0) -> dict:
+        """Per-quadrupole-step fragment scan range overlapping a precursor query.
+
+        Ports ``proteolizardmidia.utility.get_scan_ranges`` onto the metadata-derived windows:
+        a precursor *query* (an m/z window of width ``query_length`` starting at ``query_start``)
+        is tested for overlap against each extraction window (treated as ``target_length`` wide,
+        per the original's "quadrupole width" control). ``perc_overlap`` sets how much the two
+        must overlap to count. Returns ``{WindowGroup: (scan_min, scan_max)}`` — for each step,
+        the scan span of the windows whose isolation m/z overlaps the query.
+
+        Note: the original ``get_scan_ranges`` cropped scans to ``< last_used`` (450) before the
+        overlap test — an artifact of its fixed-size ``.h5`` grid, which padded a tail of unused
+        scans. Our windows come straight from ``dia_ms_ms_windows`` (only real, used scan ranges),
+        so there is no padding to crop; the panel's ``scan min/max`` control covers any deliberate
+        scan limiting. The ``last_used`` crop is therefore intentionally dropped.
+        """
+        q_mid = query_start + 0.5 * query_length
+        l = 0.5 * query_length
+        k = 0.5 * target_length
+        factor = perc_overlap / 100.0
+        # Required centre-distance for the demanded overlap (original's allowed_diff).
+        allowed = (l + k * (1 - 2 * factor)) if l > k else (k + l * (1 - 2 * factor))
+
+        ranges: dict[int, tuple[int, int]] = {}
+        for grp, w in self._win_by_group.items():
+            mids = w["left"] + 0.5 * target_length  # window midpoint (left bound + half width)
+            sel = np.abs(mids - q_mid) <= allowed
+            if np.any(sel):
+                ranges[grp] = (int(w["begin"][sel].min()), int(w["end"][sel].max()))
+        return ranges
+
     def isolation_left_bound(self, step: int, scans: np.ndarray) -> np.ndarray:
         """Vectorized ``(step, scan) -> precursor isolation-window left bound``.
 
@@ -149,3 +200,22 @@ class MidiaSlice:
 
 def _empty_points() -> pd.DataFrame:
     return pd.DataFrame({c: [] for c in ["frame", "scan", "mz", "intensity", "cycle", "step"]})
+
+
+def filter_fragments_by_scan_ranges(fragments: pd.DataFrame, scan_ranges: dict,
+                                    scan_min: int = 0, scan_max: int = 1_000_000) -> pd.DataFrame:
+    """Keep fragment points whose ``(step, scan)`` falls in its step's selected scan range.
+
+    ``scan_ranges`` is ``{WindowGroup: (scan_min, scan_max)}`` as returned by
+    :meth:`MidiaExperiment.fragment_scan_ranges`; ``scan_min``/``scan_max`` apply an additional
+    global clamp (the MIDIA scan-range control).
+    """
+    if fragments.empty:
+        return fragments
+    step = fragments.step.to_numpy()
+    scan = fragments.scan.to_numpy()
+    keep = np.zeros(len(fragments), dtype=bool)
+    for grp, (lo, hi) in scan_ranges.items():
+        keep |= (step == grp) & (scan >= lo) & (scan <= hi)
+    keep &= (scan >= scan_min) & (scan <= scan_max)
+    return fragments[keep].reset_index(drop=True)

@@ -157,11 +157,7 @@ def cluster_midia_hdbscan(points: pd.DataFrame,
 
 def _midia_dimension(experiment: "MidiaExperiment", step: np.ndarray, scan: np.ndarray) -> np.ndarray:
     """Per-point precursor isolation m/z from (step, scan); NaN where no window applies."""
-    mc = np.full(step.shape, np.nan, dtype=np.float64)
-    for s in np.unique(step):
-        m = step == s
-        mc[m] = experiment.isolation_left_bound(int(s), scan[m])
-    return mc
+    return experiment.midia_dimension(step, scan)
 
 
 def calculate_statistics(
