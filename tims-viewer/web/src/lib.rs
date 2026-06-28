@@ -1168,9 +1168,14 @@ fn set_disabled(id: &str, disabled: bool) {
 /// Reflect the current load/focus state onto the controls: Focus/Load active only with a server +
 /// a non-empty stack and no load in flight; Back active only when focused; show the focus depth.
 fn refresh_controls(gfx: &Rc<RefCell<Gfx>>) {
-    let (busy, has_server, depth) = {
+    let (busy, has_server, depth, committed_imin) = {
         let g = gfx.borrow();
-        (g.reloading, !g.points_base.is_empty(), g.focus_stack.len())
+        (
+            g.reloading,
+            !g.points_base.is_empty(),
+            g.focus_stack.len(),
+            g.focus_stack.last().map(|(r, _)| r.imin).unwrap_or(0.0),
+        )
     };
     let active = has_server && depth >= 1 && !busy;
     for id in ["focus-go", "load-go", "load-n"] {
@@ -1180,6 +1185,16 @@ fn refresh_controls(gfx: &Rc<RefCell<Gfx>>) {
     set_text(
         "focus-depth",
         &if depth > 1 { format!("L{}", depth - 1) } else { String::new() },
+    );
+    // When the current view was loaded with an intensity cutoff, the low-intensity points aren't
+    // resident — make that explicit so a floor parked at 0 isn't mistaken for "all points".
+    set_text(
+        "floor-src",
+        &if committed_imin > 0.0 {
+            format!("· baked ≥ {committed_imin:.0} (Back to lower)")
+        } else {
+            String::new()
+        },
     );
 }
 
