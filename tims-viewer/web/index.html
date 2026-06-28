@@ -133,6 +133,9 @@
     .crop .clab { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim);
       margin-bottom: 5px; font-family: var(--mono); }
     .crop .clab b { color: var(--ink); font-weight: 500; }
+    /* distribution strip above the crop slider (SVG injected by the wasm), aligned to its range */
+    .crop-hist { height: 26px; margin: 1px 0 3px; opacity: .9; }
+    .crop-hist svg { display: block; width: 100%; height: 100%; }
     /* dual-thumb range: two inputs overlaid on one track, fill between the thumbs */
     .dual { position: relative; height: 20px; }
     .dual-track, .dual-fill { position: absolute; top: 50%; transform: translateY(-50%);
@@ -295,6 +298,7 @@
           </span></div>
         <div class="crop">
           <div class="clab"><b>m/z</b><span id="cmz-v">full</span></div>
+          <div class="crop-hist" id="cmz-hist"></div>
           <div class="dual">
             <div class="dual-track"></div><div class="dual-fill" id="cmz-fill"></div>
             <input type="range" id="cmz-lo" min="0" max="1000" value="0" aria-label="m/z crop minimum" />
@@ -303,6 +307,7 @@
         </div>
         <div class="crop">
           <div class="clab"><b>1/K₀</b><span id="cim-v">full</span></div>
+          <div class="crop-hist" id="cim-hist"></div>
           <div class="dual">
             <div class="dual-track"></div><div class="dual-fill" id="cim-fill"></div>
             <input type="range" id="cim-lo" min="0" max="1000" value="0" aria-label="ion mobility crop minimum" />
@@ -311,6 +316,7 @@
         </div>
         <div class="crop">
           <div class="clab"><b>RT</b><span id="crt-v">full</span></div>
+          <div class="crop-hist" id="crt-hist"></div>
           <div class="dual">
             <div class="dual-track"></div><div class="dual-fill" id="crt-fill"></div>
             <input type="range" id="crt-lo" min="0" max="1000" value="0" aria-label="retention time crop minimum" />

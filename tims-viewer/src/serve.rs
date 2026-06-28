@@ -33,7 +33,7 @@ pub fn serve(plan: Plan, port: u16) -> Result<()> {
     let total = plan.meta.total_points_estimate;
     let capacity = plan.budget.max(1).min((total as usize).max(1));
     let stride = crate::data::loader::stride_for(total, capacity) as u64;
-    let (points, stats) = collect_points(plan)?;
+    let (points, stats, hist) = collect_points(plan)?;
     let n_points = points.len();
     // Prefer the loader's systematic-base percentiles (matches the native viewer's Stats); fall
     // back to computing over the served points (incl. the peak tail) only if Stats never arrived.
@@ -59,6 +59,11 @@ pub fn serve(plan: Plan, port: u16) -> Result<()> {
         "intensity": {
             "p1": fin(i_p1 as f64), "p50": fin(i_p50 as f64), "p99": fin(i_p99 as f64),
         },
+        // Per-axis density histograms (HIST_BINS bins over the full cube range, same mapping as the
+        // crop sliders) so the client can draw the distribution behind each filter.
+        "hist": hist.as_ref().map(|h| serde_json::json!({
+            "mz": h.mz, "im": h.im, "rt": h.rt,
+        })),
     })
     .to_string();
     let meta: Arc<[u8]> = Arc::from(meta.into_bytes().into_boxed_slice());
@@ -113,9 +118,16 @@ fn respond_bytes(req: Request, body: Arc<[u8]>, content_type: &str) -> std::io::
     req.respond(resp)
 }
 
+/// Per-axis density histograms from the loader (each `HIST_BINS` bins over the cube range).
+struct Hist {
+    mz: Vec<u32>,
+    im: Vec<u32>,
+    rt: Vec<u32>,
+}
+
 /// Drain the loader into a point buffer; also capture the loader's intensity `Stats`
-/// (systematic-base p1/p50/p99 as `(i_min, i_med, i_max)`) for the client's auto-transfer.
-fn collect_points(plan: Plan) -> Result<(Vec<GpuPoint>, Option<(f32, f32, f32)>)> {
+/// (systematic-base p1/p50/p99 as `(i_min, i_med, i_max)`) and the per-axis histograms.
+fn collect_points(plan: Plan) -> Result<(Vec<GpuPoint>, Option<(f32, f32, f32)>, Option<Hist>)> {
     let total = plan.meta.total_points_estimate;
     let bounds = plan.meta.bounds;
     let capacity = plan.budget.max(1).min((total as usize).max(1));
@@ -133,6 +145,7 @@ fn collect_points(plan: Plan) -> Result<(Vec<GpuPoint>, Option<(f32, f32, f32)>)
 
     let mut points: Vec<GpuPoint> = Vec::with_capacity(capacity);
     let mut stats: Option<(f32, f32, f32)> = None;
+    let mut hist: Option<Hist> = None;
     let mut done = false;
     loop {
         match loader.rx.recv() {
@@ -145,17 +158,18 @@ fn collect_points(plan: Plan) -> Result<(Vec<GpuPoint>, Option<(f32, f32, f32)>)
                 }
             }
             Ok(LoadMsg::Stats { i_min, i_max, i_med }) => stats = Some((i_min, i_med, i_max)),
+            Ok(LoadMsg::Histograms { mz, im, rt, .. }) => hist = Some(Hist { mz, im, rt }),
             Ok(LoadMsg::Done { .. }) => {
                 done = true;
                 break;
             }
             Ok(LoadMsg::Error(e)) => anyhow::bail!("loader error: {e}"),
-            Ok(_) => {} // Histograms/Annotations/Progress: not part of the v1 point stream
+            Ok(_) => {} // Annotations/Progress: not part of the v1 point stream
             Err(_) => break,
         }
     }
     anyhow::ensure!(done, "loader thread ended before completing the load");
-    Ok((points, stats))
+    Ok((points, stats, hist))
 }
 
 /// Intensity (p1, p50, p99), nearest-rank, for the client's auto-transfer/exposure (mirrors the

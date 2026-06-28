@@ -350,6 +350,10 @@ async fn run() -> Result<(), String> {
     }
     // Push code state onto every DOM control (defeats the browser's cross-reload form restore).
     sync_controls(&gfx);
+    // Draw the per-axis distribution strips above the crop sliders.
+    if let Some(h) = server_meta.as_ref().and_then(|m| m.hist.as_ref()) {
+        draw_hist_backdrops(h);
+    }
 
     // Track CSS/DPR changes (window resize fires on zoom + monitor moves too).
     {
@@ -538,6 +542,9 @@ struct MetaInfo {
     i_p50: f64,
     i_p99: f64,
     stride: f64,
+    /// Per-axis density histograms `[mz, im, rt]` (each over the full axis range), for the crop
+    /// distribution strips. `None` if the server didn't provide them.
+    hist: Option<[Vec<u32>; 3]>,
 }
 
 /// Derive the `/meta` URL from the `/points` URL: replace only the trailing path endpoint and keep
@@ -614,12 +621,36 @@ async fn fetch_meta(url: &str) -> Result<MetaInfo, String> {
     let stride = jnum(&v, "downsample_stride")
         .filter(|x| x.is_finite() && *x >= 1.0)
         .unwrap_or(1.0);
+
+    // Optional per-axis density histograms.
+    let h = jget(&v, "hist");
+    let read_u32_array = |key: &str| -> Option<Vec<u32>> {
+        let a = jget(&h, key);
+        if !a.is_object() {
+            return None;
+        }
+        let arr = js_sys::Array::from(&a);
+        if arr.length() == 0 {
+            return None;
+        }
+        Some((0..arr.length()).map(|i| arr.get(i).as_f64().unwrap_or(0.0).max(0.0) as u32).collect())
+    };
+    let hist = if h.is_object() {
+        match (read_u32_array("mz"), read_u32_array("im"), read_u32_array("rt")) {
+            (Some(mz), Some(im), Some(rt)) => Some([mz, im, rt]),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     Ok(MetaInfo {
         bounds,
         i_p1: pos("p1").unwrap_or(0.0),
         i_p50: pos("p50").unwrap_or(0.0),
         i_p99: pos("p99").unwrap_or(0.0),
         stride,
+        hist,
     })
 }
 
@@ -1020,6 +1051,36 @@ fn crop_apply(gfx: &Rc<RefCell<Gfx>>, axis: usize, prefix: &str, lo_val: f64, hi
         let st = fill.style();
         let _ = st.set_property("left", &format!("{:.2}%", lo_val / 10.0));
         let _ = st.set_property("width", &format!("{:.2}%", (hi_val - lo_val).max(0.0) / 10.0));
+    }
+}
+
+/// Inject an SVG area chart of `bins` into element `id` (sqrt height so low bins stay visible).
+fn set_hist_svg(id: &str, bins: &[u32]) {
+    let Some(el) = document().and_then(|d| d.get_element_by_id(id)) else {
+        return;
+    };
+    if bins.len() < 2 {
+        return;
+    }
+    let max = (*bins.iter().max().unwrap_or(&1)).max(1) as f32;
+    let last = bins.len() - 1;
+    let mut d = String::from("M0,100");
+    for (i, &c) in bins.iter().enumerate() {
+        let h = (c as f32 / max).sqrt() * 100.0;
+        d.push_str(&format!(" L{i},{:.1}", 100.0 - h));
+    }
+    d.push_str(&format!(" L{last},100 Z"));
+    el.set_inner_html(&format!(
+        "<svg viewBox=\"0 0 {last} 100\" preserveAspectRatio=\"none\">\
+         <path d=\"{d}\" fill=\"rgba(120,150,190,0.30)\" stroke=\"rgba(150,180,220,0.55)\" stroke-width=\"0.6\"/>\
+         </svg>"
+    ));
+}
+
+/// Draw the per-axis distribution strips above the crop sliders, aligned to their range.
+fn draw_hist_backdrops(hist: &[Vec<u32>; 3]) {
+    for (axis, prefix) in [(0usize, "cmz"), (1, "cim"), (2, "crt")] {
+        set_hist_svg(&format!("{prefix}-hist"), &hist[axis]);
     }
 }
 
