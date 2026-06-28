@@ -124,6 +124,9 @@ struct State {
     /// Full-run intensity distribution, for estimating region survivor counts vs an intensity floor.
     full_i_hist: Vec<u32>,
     full_i_p99: f32,
+    /// Precomputed `/windows` JSON: the run's DIA isolation-window footprints in real units (static;
+    /// the web re-normalizes them to whatever region it has focused). Empty for demo / non-DIA runs.
+    windows_json: Arc<[u8]>,
     cache: Mutex<Cache>,
 }
 
@@ -146,12 +149,18 @@ pub fn serve(plan: Plan, port: u16) -> Result<()> {
     let full_key = LoadKey::of(&full, budget);
     let mut map = HashMap::new();
     map.insert(full_key, Arc::new(built.result));
+
+    // The DIA isolation-window footprints are run-level — read them once (opening one dataset) and
+    // serve them statically from `/windows`. Demo / non-DIA runs serve an empty set.
+    let windows_json = build_windows_json(is_demo, &meta.data_path);
+
     let state = Arc::new(State {
         meta,
         is_demo,
         default_budget: budget,
         full_i_hist: built.i_hist,
         full_i_p99: built.i_p99,
+        windows_json,
         cache: Mutex::new(Cache {
             map,
             order: VecDeque::new(),
@@ -198,6 +207,10 @@ fn handle(req: Request, state: &State) -> std::io::Result<()> {
     }
     let url = req.url().to_string();
     let path = url.split('?').next().unwrap_or("");
+    if *req.method() == Method::Get && path == "/windows" {
+        // Run-level DIA isolation-window footprints (static JSON; region-independent).
+        return respond_bytes(req, state.windows_json.clone(), "application/json");
+    }
     let (want_points, want_meta) = (path == "/points", path == "/meta");
     if *req.method() == Method::Get && (want_points || want_meta) {
         let (region, budget) = parse_query(&url, state);
@@ -315,6 +328,23 @@ fn get_or_build(state: &State, region: &Region4D, budget: usize) -> Result<Arc<L
 /// Run one region load: select frames, size the stride to the region survivor estimate, stream
 /// through the loader (normalized to the region so it fills the cube), shuffle, and pack the
 /// `/points` bytes + `/meta` JSON.
+/// Build the static `/windows` JSON: `{ max_window_group, windows: [[group, mz0, mz1, im0, im1], …] }`
+/// in real units. Demo or non-DIA runs yield an empty set.
+fn build_windows_json(is_demo: bool, data_path: &str) -> Arc<[u8]> {
+    let json = if is_demo {
+        serde_json::json!({ "max_window_group": 0, "windows": [] })
+    } else {
+        let ds = rustdf::data::dataset::TimsDataset::new("NO_SDK", data_path, false, false);
+        let (rects, max_group) = crate::data::loader::dia_window_rects(&ds, data_path);
+        let windows: Vec<[f64; 5]> = rects
+            .iter()
+            .map(|r| [r.group as f64, r.mz0, r.mz1, r.im0, r.im1])
+            .collect();
+        serde_json::json!({ "max_window_group": max_group, "windows": windows })
+    };
+    Arc::from(json.to_string().into_bytes().into_boxed_slice())
+}
+
 fn build_load_result(
     meta: &MetaIndex,
     is_demo: bool,

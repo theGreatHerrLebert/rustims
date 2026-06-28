@@ -29,6 +29,21 @@ use tims_viewer::render::volume::{VolumeGrid, VolumeRenderer, VOLUME_DIMS};
 /// first. Mirrors the native CLUSTER_CAP.
 const CLUSTER_CAP: usize = 2_000_000;
 
+/// RT slices each DIA window footprint is drawn at (mirrors the native loader's `DIA_WINDOW_RT_SLICES`,
+/// which lives in the native-only loader module).
+const DIA_WINDOW_RT_SLICES: usize = 6;
+
+/// A DIA isolation-window footprint in real units (from `/windows`); re-normalized to the focused
+/// region each load to draw the precursor-selection overlay in the m/z × 1/K0 (scan) plane.
+#[derive(Clone, Copy)]
+struct WinRect {
+    g: u32,
+    mz0: f64,
+    mz1: f64,
+    im0: f64,
+    im1: f64,
+}
+
 /// Points (the splat cloud) vs Volume (raymarched density grid).
 #[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
@@ -102,6 +117,12 @@ struct Gfx {
     renderer: PointCloudRenderer,
     /// Wireframe cube + axis edges drawn around the cloud for spatial orientation.
     axes: AnnotationRenderer,
+    /// DIA isolation-window overlay (separate line buffer from the axes), with the run's footprints
+    /// in real units re-normalized to the focused region.
+    windows: AnnotationRenderer,
+    window_rects: Vec<WinRect>,
+    max_window_group: u32,
+    show_windows: bool,
     /// DOM tick/axis labels (element + its world position in the `[-1,1]` cube), projected each
     /// frame onto the canvas. Empty when real-unit bounds are unknown (demo fallback).
     labels: Vec<(web_sys::HtmlElement, [f32; 3])>,
@@ -317,6 +338,7 @@ impl Gfx {
         let cam = self.camera.to_uniform(w / h, [w, h]);
         self.renderer.update_camera(&self.queue, &cam);
         self.axes.update_camera(&self.queue, &cam);
+        self.windows.update_camera(&self.queue, &cam);
         self.update_labels(w / h);
         let volume_view = self.view_mode == ViewMode::Volume && self.volume.is_some();
         if volume_view {
@@ -384,6 +406,9 @@ impl Gfx {
                 self.renderer.render(&mut rpass, pm);
             }
             self.axes.render(&mut rpass);
+            if self.show_windows {
+                self.windows.render(&mut rpass);
+            }
         }
         self.queue.submit(std::iter::once(enc.finish()));
         surface_tex.present();
@@ -523,6 +548,9 @@ async fn run() -> Result<(), String> {
     let mut axes = AnnotationRenderer::new(&device, format, DEPTH_FORMAT);
     axes.upload(&device, &cube_box_verts());
     axes.update_filter(&queue, [-2.0, -2.0, -2.0, 0.0], [2.0, 2.0, 2.0, 0.0], 0.0);
+    // DIA window overlay: culled to the cube so off-region windows clip (filled on the /windows fetch).
+    let windows = AnnotationRenderer::new(&device, format, DEPTH_FORMAT);
+    windows.update_filter(&queue, [-1.0, -1.0, -1.0, 0.0], [1.0, 1.0, 1.0, 0.0], 0.0);
     let labels = create_axis_labels(axis_bounds);
 
     let canvas_for_input = canvas.clone();
@@ -539,6 +567,10 @@ async fn run() -> Result<(), String> {
         depth_view,
         renderer,
         axes,
+        windows,
+        window_rects: Vec::new(),
+        max_window_group: 0,
+        show_windows: false,
         labels,
         camera: OrbitCamera::default(),
         params,
@@ -617,8 +649,27 @@ async fn run() -> Result<(), String> {
     bind_volume(&gfx);
     // Clustering (DBSCAN on the focused set).
     bind_cluster(&gfx);
+    // DIA isolation-window overlay.
+    bind_windows(&gfx);
     // Collapsible section headers + tab switching.
     bind_panel_chrome(&gfx);
+
+    // Fetch the run-level DIA windows once; build the overlay + enable the toggle when they arrive.
+    if !url.is_empty() {
+        let gfx = gfx.clone();
+        let wurl = windows_url(&url);
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok((rects, max_group)) = fetch_windows(&wurl).await {
+                {
+                    let mut g = gfx.borrow_mut();
+                    g.window_rects = rects;
+                    g.max_window_group = max_group;
+                }
+                rebuild_window_overlay(&gfx);
+                set_disabled("show-windows", gfx.borrow().max_window_group == 0);
+            }
+        });
+    }
 
     // Track CSS/DPR changes (window resize fires on zoom + monitor moves too).
     {
@@ -847,6 +898,88 @@ fn meta_url(points: &str) -> String {
         Some(q) => format!("{meta_path}?{q}"),
         None => meta_path,
     }
+}
+
+/// The run-level `/windows` URL (strip the `/points` query — windows are region-independent).
+fn windows_url(points: &str) -> String {
+    let path = points.split('?').next().unwrap_or(points);
+    path.strip_suffix("/points")
+        .map(|base| format!("{base}/windows"))
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// Fetch the run's DIA isolation-window footprints (real units) + the max group id.
+async fn fetch_windows(url: &str) -> Result<(Vec<WinRect>, u32), String> {
+    let window = web_sys::window().ok_or("no window")?;
+    let resp_val = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url))
+        .await
+        .map_err(|e| format!("fetch failed: {e:?}"))?;
+    let resp: web_sys::Response = resp_val.dyn_into().map_err(|_| "not a Response".to_string())?;
+    if !resp.ok() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let text = wasm_bindgen_futures::JsFuture::from(resp.text().map_err(|e| format!("text: {e:?}"))?)
+        .await
+        .map_err(|e| format!("body read failed: {e:?}"))?
+        .as_string()
+        .ok_or("windows body is not text")?;
+    let v = js_sys::JSON::parse(&text).map_err(|_| "windows is not valid JSON".to_string())?;
+    let max_group = jnum(&v, "max_window_group").unwrap_or(0.0).max(0.0) as u32;
+    let arr = js_sys::Array::from(&jget(&v, "windows"));
+    let mut rects = Vec::with_capacity(arr.length() as usize);
+    for i in 0..arr.length() {
+        let row = js_sys::Array::from(&arr.get(i));
+        if row.length() < 5 {
+            continue;
+        }
+        let f = |k: u32| row.get(k).as_f64().unwrap_or(0.0);
+        rects.push(WinRect { g: f(0) as u32, mz0: f(1), mz1: f(2), im0: f(3), im1: f(4) });
+    }
+    Ok((rects, max_group))
+}
+
+/// Build the window-overlay line vertices: each footprint as an `(m/z × 1/K0)` rectangle at
+/// `DIA_WINDOW_RT_SLICES` RT slices, normalized to the focused region's `bounds` and colored by group.
+fn build_window_verts(rects: &[WinRect], bounds: [(f64, f64); 3], max_group: u32) -> Vec<LineVertex> {
+    let norm = |val: f64, axis: usize| -> f32 {
+        let (lo, hi) = bounds[axis];
+        (((val - lo) / (hi - lo).max(1e-12)) * 2.0 - 1.0) as f32
+    };
+    let mut v: Vec<LineVertex> = Vec::new();
+    let denom = max_group.max(1);
+    for r in rects {
+        let color = tims_viewer::render::colormap::group_color(r.g, denom);
+        let (mz0, mz1) = (norm(r.mz0, 0), norm(r.mz1, 0));
+        let (im0, im1) = (norm(r.im0, 1), norm(r.im1, 1));
+        for i in 0..DIA_WINDOW_RT_SLICES {
+            let rt_real =
+                bounds[2].0 + (bounds[2].1 - bounds[2].0) * (i as f64 + 0.5) / DIA_WINDOW_RT_SLICES as f64;
+            let rt = norm(rt_real, 2);
+            let corners = [[mz0, im0, rt], [mz1, im0, rt], [mz1, im1, rt], [mz0, im1, rt]];
+            for e in 0..4 {
+                v.push(LineVertex::new(corners[e], color));
+                v.push(LineVertex::new(corners[(e + 1) % 4], color));
+            }
+        }
+    }
+    v
+}
+
+/// Re-normalize the run's window footprints to the current region and upload the overlay. A no-op-ish
+/// empty upload when there are no windows or no real-unit bounds.
+fn rebuild_window_overlay(gfx: &Rc<RefCell<Gfx>>) {
+    let verts = {
+        let g = gfx.borrow();
+        match g.axis_bounds {
+            Some(b) if !g.window_rects.is_empty() => {
+                build_window_verts(&g.window_rects, b, g.max_window_group)
+            }
+            _ => Vec::new(),
+        }
+    };
+    let mut g = gfx.borrow_mut();
+    let g = &mut *g;
+    g.windows.upload(&g.device, &verts);
 }
 
 fn jget(obj: &JsValue, key: &str) -> JsValue {
@@ -1190,6 +1323,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
     set_checked("cl-color", false);
     set_body_class("has-clusters", false);
     set_body_class("cluster-color", false);
+    rebuild_window_overlay(gfx); // re-normalize the DIA windows to the new region
 }
 
 /// Build the region + budget query string for `/points` and `/meta`.
@@ -1927,6 +2061,11 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     }
 }
 
+/// Wire the "Show DIA windows" toggle (enabled only once `/windows` returns groups).
+fn bind_windows(gfx: &Rc<RefCell<Gfx>>) {
+    on_toggle("show-windows", gfx, |g, on| g.show_windows = on);
+}
+
 /// Wire the Focus / Back buttons; control enable/disable is driven by `refresh_controls`.
 fn bind_focus(gfx: &Rc<RefCell<Gfx>>) {
     if let Some(btn) = by_id::<web_sys::HtmlElement>("focus-go") {
@@ -2567,6 +2706,8 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
     set_value_pair("cl-eps", "cl-eps-n", cl_eps, 3);
     set_value_pair("cl-min", "cl-min-n", cl_min, 0);
     set_checked("cl-color", false);
+    set_checked("show-windows", false); // off until /windows loads (then enabled if groups exist)
+    set_disabled("show-windows", true);
     // Crops start at the full range (thumbs, fills, readouts).
     reset_crops(gfx);
 }

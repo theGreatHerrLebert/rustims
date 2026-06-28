@@ -525,6 +525,68 @@ fn run_loader(
 }
 
 /// Build annotation-overlay line geometry (normalized cube) from the run's DDA/DIA
+/// Number of evenly spaced RT slices each DIA window footprint is drawn at.
+pub const DIA_WINDOW_RT_SLICES: usize = 6;
+
+/// One DIA/MIDIA isolation window's selection footprint in **real units**: an `(m/z × 1/K0)`
+/// rectangle (mobility already converted from scan numbers). Group ids color the interleaved
+/// isolation bands. The web `/windows` endpoint serves these; the web re-normalizes them to its
+/// region bounds (so they align with the cloud and off-region windows clip).
+#[derive(Clone, Copy, Debug)]
+pub struct WindowRect {
+    pub group: u32,
+    pub mz0: f64,
+    pub mz1: f64,
+    pub im0: f64,
+    pub im1: f64,
+}
+
+/// Read the DIA/MIDIA isolation windows and return their real-unit `(m/z × 1/K0)` footprints plus
+/// the max group id (the `group_color` denominator). Subsamples a fine MIDIA diagonal so it stays
+/// legible, widening each kept rect symmetrically across the skipped scans. Returns empty for
+/// non-DIA or unreadable runs.
+pub fn dia_window_rects(ds: &TimsDataset, path: &str) -> (Vec<WindowRect>, u32) {
+    let (windows, info) = match (read_dia_ms_ms_windows(path), read_dia_ms_ms_info(path)) {
+        (Ok(w), Ok(i)) => (w, i),
+        _ => return (Vec::new(), 0),
+    };
+    if windows.is_empty() {
+        return (Vec::new(), 0);
+    }
+    // A representative frame per window group, for scan->mobility conversion.
+    let mut grp_frame: std::collections::HashMap<u32, u32> = Default::default();
+    for di in &info {
+        grp_frame.entry(di.window_group).or_insert(di.frame_id);
+    }
+    // Subsample so a fine MIDIA diagonal (~15k windows) stays legible; a conventional DIA scheme
+    // (tens of windows) keeps every box (stride == 1).
+    const TARGET_WINDOWS: usize = 800;
+    let stride = (windows.len() / TARGET_WINDOWS).max(1);
+    let max_group = windows.iter().map(|w| w.window_group).max().unwrap_or(1).max(1);
+    let max_scan = windows.iter().map(|w| w.scan_num_end).max().unwrap_or(0);
+    let mut out = Vec::new();
+    for w in windows.iter().step_by(stride) {
+        let fid = grp_frame.get(&w.window_group).copied().unwrap_or(1);
+        // Widen SYMMETRICALLY across the skipped scans so the rect stays a visible window AND stays
+        // centered on the real window's mobility (widening only the high-scan end would shift the
+        // 1/K0 center). stride == 1 (conventional DIA) leaves it exact.
+        let half = stride as u32 / 2;
+        let scan_lo = w.scan_num_begin.saturating_sub(half);
+        let scan_hi = (w.scan_num_end + half).min(max_scan.max(w.scan_num_end));
+        let ims = ds.scan_to_inverse_mobility(fid, &vec![scan_lo, scan_hi]);
+        let im0 = ims.first().copied().unwrap_or(0.0);
+        let im1 = ims.get(1).copied().unwrap_or(im0);
+        out.push(WindowRect {
+            group: w.window_group,
+            mz0: w.isolation_mz - w.isolation_width * 0.5,
+            mz1: w.isolation_mz + w.isolation_width * 0.5,
+            im0,
+            im1,
+        });
+    }
+    (out, max_group)
+}
+
 /// metadata. DDA precursors -> small 3D crosses; DIA isolation windows -> wireframe
 /// boxes. Returns line-list vertices (consecutive pairs are segments).
 fn build_annotations(
@@ -568,58 +630,29 @@ fn build_annotations(
             }
         }
         AcquisitionMode::DIA => {
-            if let (Ok(windows), Ok(info)) =
-                (read_dia_ms_ms_windows(path), read_dia_ms_ms_info(path))
-            {
-                // A representative frame per window group, for scan->mobility conversion.
-                let mut grp_frame: std::collections::HashMap<u32, u32> = Default::default();
-                for di in &info {
-                    grp_frame.entry(di.window_group).or_insert(di.frame_id);
-                }
-                // The isolation scheme repeats every cycle. Drawing each window as one
-                // full-RT box piles every window face onto the two RT end-walls (leaving only
-                // thin edges through the middle), which reads as a slab beside the data.
-                // Instead draw the (m/z, mobility) selection footprint at several evenly
-                // spaced RT slices, so the recurring selection sits on the precursor signal
-                // through the whole run.
-                // The fine diagonal has ~950 touching windows per group; drawing every one
-                // fills the band solid and hides the data. Subsample to leave gaps you can
-                // see the cloud through, and span each drawn rect across the skipped scans so
-                // it stays a visible window outline rather than a sliver.
-                const N_SLICES: usize = 6;
-                const TARGET_WINDOWS: usize = 800;
-                // Subsample so a fine MIDIA diagonal (~15k windows) stays legible, but a
-                // conventional DIA scheme (tens of windows) keeps every box (stride == 1).
-                let stride = (windows.len() / TARGET_WINDOWS).max(1);
-                // Color each window by its group, so the interleaved isolation diagonals
-                // that tile the precursor space read as distinct bands.
-                let n_groups = windows.iter().map(|w| w.window_group).max().unwrap_or(1).max(1);
-                n_groups_out = n_groups;
-                let max_scan = windows.iter().map(|w| w.scan_num_end).max().unwrap_or(0);
-                let (rt_lo, rt_hi) = (bounds.rt.min, bounds.rt.max);
-                for w in windows.iter().step_by(stride) {
-                    let fid = grp_frame.get(&w.window_group).copied().unwrap_or(1);
-                    // Widen SYMMETRICALLY across the skipped scans so the rect stays a visible
-                    // window AND stays centered on the real window's mobility: widening only the
-                    // high-scan end would shift the box's 1/K0 center toward lower mobility for a
-                    // subsampled MIDIA scheme. stride == 1 (conventional DIA) leaves it exact.
-                    let half = stride as u32 / 2;
-                    let scan_lo = w.scan_num_begin.saturating_sub(half);
-                    let scan_hi = (w.scan_num_end + half).min(max_scan.max(w.scan_num_end));
-                    let ims = ds.scan_to_inverse_mobility(fid, &vec![scan_lo, scan_hi]);
-                    let im0 = ims.first().copied().unwrap_or(0.0);
-                    let im1 = ims.get(1).copied().unwrap_or(im0);
-                    let mz0 = w.isolation_mz - w.isolation_width * 0.5;
-                    let mz1 = w.isolation_mz + w.isolation_width * 0.5;
-                    let color = crate::render::colormap::group_color(w.window_group, n_groups);
-                    for i in 0..N_SLICES {
-                        let rt =
-                            rt_lo + (rt_hi - rt_lo) * (i as f64 + 0.5) / N_SLICES as f64;
-                        push_rect_mz_im(
-                            &mut lines, &mut groups, bounds, (mz0, mz1), (im0, im1), rt, color,
-                            w.window_group,
-                        );
-                    }
+            // The (m/z × 1/K0) selection footprints in real units, shared with the web overlay's
+            // `/windows` endpoint so the two never drift.
+            let (rects, max_group) = dia_window_rects(ds, path);
+            n_groups_out = max_group;
+            let (rt_lo, rt_hi) = (bounds.rt.min, bounds.rt.max);
+            for r in &rects {
+                let color = crate::render::colormap::group_color(r.group, max_group);
+                // Draw the footprint at several evenly spaced RT slices, so the recurring isolation
+                // scheme sits on the precursor signal through the whole run rather than piling onto
+                // the two RT end-walls.
+                for i in 0..DIA_WINDOW_RT_SLICES {
+                    let rt = rt_lo
+                        + (rt_hi - rt_lo) * (i as f64 + 0.5) / DIA_WINDOW_RT_SLICES as f64;
+                    push_rect_mz_im(
+                        &mut lines,
+                        &mut groups,
+                        bounds,
+                        (r.mz0, r.mz1),
+                        (r.im0, r.im1),
+                        rt,
+                        color,
+                        r.group,
+                    );
                 }
             }
         }
