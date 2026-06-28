@@ -1446,12 +1446,21 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         return;
     }
     show_status("clustering…");
-    let (labels, k) = dbscan(&positions, eps, min_pts);
+    // Defer the (synchronous, blocking) DBSCAN one macrotask so the "clustering…" status paints
+    // first — otherwise the tab freezes with no feedback.
+    let gfx = gfx.clone();
+    defer(move || {
+        let (labels, k) = dbscan(&positions, eps, min_pts);
+        finish_clustering(&gfx, &idx, &labels, k);
+    });
+}
+
+/// Write DBSCAN labels into the GPU buffer + recolor by cluster, then update the UI.
+fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: &[usize], labels: &[i32], k: usize) {
     let noise = labels.iter().filter(|&&l| l < 0).count();
     {
         let mut gb = gfx.borrow_mut();
         let g: &mut Gfx = &mut gb; // &mut Gfx so renderer/queue/cpu_points field-split
-        // Clear all ids, then write the survivors' labels (noise stays NO_CLUSTER).
         for pt in g.cpu_points.iter_mut() {
             pt._pad[0] = GpuPoint::NO_CLUSTER;
         }
@@ -1460,7 +1469,6 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
                 g.cpu_points[i]._pad[0] = labels[j] as u32;
             }
         }
-        // Take the points out so renderer (mut) and the points (shared) don't overlap.
         let pts = std::mem::take(&mut g.cpu_points);
         g.renderer.reset();
         g.renderer.append(&g.queue, &pts);
@@ -1470,7 +1478,6 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         g.view_mode = ViewMode::Points; // cluster colour is a point concept
         g.filter_dirty = true; // refresh the displayed-count HUD
     }
-
     set_checked("v-pts", true);
     set_checked("v-vol", false);
     set_volmode(false);
@@ -1482,10 +1489,18 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
     show_status("");
 }
 
+/// Run a closure on the next macrotask (after a browser paint) via `setTimeout(0)`.
+fn defer<F: FnOnce() + 'static>(f: F) {
+    let cb = wasm_bindgen::closure::Closure::once_into_js(f);
+    if let Some(w) = web_sys::window() {
+        let _ = w.set_timeout_with_callback_and_timeout_and_arguments_0(cb.unchecked_ref(), 0);
+    }
+}
+
 /// Wire the Cluster tab: eps / min-pts, Run, and the Color-by-cluster toggle.
 fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     bind_value(gfx, "cl-eps", "cl-eps-n", 3, |g, v| g.cluster_eps = v as f32);
-    bind_value(gfx, "cl-min", "cl-min-n", 0, |g, v| g.cluster_min_pts = (v as usize).max(1));
+    bind_value(gfx, "cl-min", "cl-min-n", 0, |g, v| g.cluster_min_pts = (v as usize).max(2));
     if let Some(btn) = by_id::<web_sys::HtmlElement>("cl-run") {
         let gfx = gfx.clone();
         add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| run_clustering(&gfx));
@@ -2007,7 +2022,7 @@ fn set_value_pair(slider_id: &str, num_id: &str, v: f64, prec: usize) {
 /// actual params (a checked-but-stale radio won't emit `change` when clicked); calling this after
 /// wiring re-asserts the truth so the panel always reflects what's rendering.
 fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
-    let (auto, rmode, xf, ms, cmap, psize, opac, expo, floor) = {
+    let (auto, rmode, xf, ms, cmap, psize, opac, expo, floor, cl_eps, cl_min) = {
         let g = gfx.borrow();
         (
             g.auto_rotate,
@@ -2019,6 +2034,8 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
             g.params.opacity as f64,
             g.params.transfer[3] as f64,
             g.params.filter_min[3] as f64,
+            g.cluster_eps as f64,
+            g.cluster_min_pts as f64,
         )
     };
     set_checked("ar", auto);
@@ -2038,6 +2055,10 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
     set_value_pair("opac", "opac-n", opac, 2);
     set_value_pair("expo", "expo-n", expo, 2);
     set_value_pair("floor", "floor-n", floor, 0);
+    // Cluster controls (defeat browser form-restore; no result yet, so colour off).
+    set_value_pair("cl-eps", "cl-eps-n", cl_eps, 3);
+    set_value_pair("cl-min", "cl-min-n", cl_min, 0);
+    set_checked("cl-color", false);
     // Crops start at the full range (thumbs, fills, readouts).
     reset_crops(gfx);
 }
