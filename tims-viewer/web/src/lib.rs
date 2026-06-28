@@ -337,22 +337,22 @@ async fn run() -> Result<(), String> {
 
     wire_input(&gfx, &window, &canvas_for_input);
     wire_controls(&gfx);
-    // Scale the intensity-floor controls (slider + number) to the data before syncing values.
-    if let Some(m) = &server_meta {
-        if m.i_p99 > 1.0 {
-            for id in ["floor", "floor-n"] {
-                if let Some(inp) = by_id::<web_sys::HtmlInputElement>(id) {
-                    let _ = inp.set_attribute("max", &format!("{:.0}", m.i_p99));
-                    let _ = inp.set_attribute("step", &format!("{:.0}", (m.i_p99 / 200.0).max(1.0)));
-                }
-            }
-        }
+    // Bind the cbrt-mapped intensity floor to the data range (number field is in real counts).
+    let floor_hi = server_meta.as_ref().map(|m| m.i_p99).filter(|x| *x > 1.0).unwrap_or(1000.0);
+    bind_floor(&gfx, floor_hi);
+    if let Some(n) = by_id::<web_sys::HtmlInputElement>("floor-n") {
+        let _ = n.set_attribute("max", &format!("{floor_hi:.0}"));
     }
     // Push code state onto every DOM control (defeats the browser's cross-reload form restore).
     sync_controls(&gfx);
-    // Draw the per-axis distribution strips above the crop sliders.
-    if let Some(h) = server_meta.as_ref().and_then(|m| m.hist.as_ref()) {
-        draw_hist_backdrops(h);
+    // Distribution strips: per-axis crops + the cbrt intensity floor.
+    if let Some(m) = &server_meta {
+        if let Some(h) = &m.hist {
+            draw_hist_backdrops(h);
+        }
+        if let Some(ih) = &m.i_hist {
+            set_hist_svg("floor-hist", ih);
+        }
     }
 
     // Track CSS/DPR changes (window resize fires on zoom + monitor moves too).
@@ -545,6 +545,8 @@ struct MetaInfo {
     /// Per-axis density histograms `[mz, im, rt]` (each over the full axis range), for the crop
     /// distribution strips. `None` if the server didn't provide them.
     hist: Option<[Vec<u32>; 3]>,
+    /// cbrt-binned intensity distribution over `[0, p99]`, for the floor control's strip.
+    i_hist: Option<Vec<u32>>,
 }
 
 /// Derive the `/meta` URL from the `/points` URL: replace only the trailing path endpoint and keep
@@ -622,27 +624,13 @@ async fn fetch_meta(url: &str) -> Result<MetaInfo, String> {
         .filter(|x| x.is_finite() && *x >= 1.0)
         .unwrap_or(1.0);
 
-    // Optional per-axis density histograms.
+    // Optional per-axis density histograms + the intensity (floor) histogram.
     let h = jget(&v, "hist");
-    let read_u32_array = |key: &str| -> Option<Vec<u32>> {
-        let a = jget(&h, key);
-        if !a.is_object() {
-            return None;
-        }
-        let arr = js_sys::Array::from(&a);
-        if arr.length() == 0 {
-            return None;
-        }
-        Some((0..arr.length()).map(|i| arr.get(i).as_f64().unwrap_or(0.0).max(0.0) as u32).collect())
+    let hist = match (js_u32_array(&h, "mz"), js_u32_array(&h, "im"), js_u32_array(&h, "rt")) {
+        (Some(mz), Some(im), Some(rt)) => Some([mz, im, rt]),
+        _ => None,
     };
-    let hist = if h.is_object() {
-        match (read_u32_array("mz"), read_u32_array("im"), read_u32_array("rt")) {
-            (Some(mz), Some(im), Some(rt)) => Some([mz, im, rt]),
-            _ => None,
-        }
-    } else {
-        None
-    };
+    let i_hist = js_u32_array(&it, "hist");
 
     Ok(MetaInfo {
         bounds,
@@ -651,7 +639,21 @@ async fn fetch_meta(url: &str) -> Result<MetaInfo, String> {
         i_p99: pos("p99").unwrap_or(0.0),
         stride,
         hist,
+        i_hist,
     })
+}
+
+/// Read a JSON `u32` array field (`obj[key]`); `None` if absent or not a non-empty array.
+fn js_u32_array(obj: &JsValue, key: &str) -> Option<Vec<u32>> {
+    let a = jget(obj, key);
+    if !a.is_object() {
+        return None;
+    }
+    let arr = js_sys::Array::from(&a);
+    if arr.length() == 0 {
+        return None;
+    }
+    Some((0..arr.length()).map(|i| arr.get(i).as_f64().unwrap_or(0.0).max(0.0) as u32).collect())
 }
 
 /// Label for a per-axis crop: real units when `/meta` bounds are known, else a percentage.
@@ -862,6 +864,43 @@ fn bind_value(
     }
 }
 
+/// Bind the intensity-floor control with a cbrt mapping: the slider's 0..1000 position is uniform
+/// in `cbrt(intensity)` over `[0, hi]` (so the low-intensity region gets fine control), while the
+/// number field stays in real counts. Both drive `filter_min[3]`.
+fn bind_floor(gfx: &Rc<RefCell<Gfx>>, hi: f64) {
+    let (Some(slider), Some(num)) = (
+        by_id::<web_sys::HtmlInputElement>("floor"),
+        by_id::<web_sys::HtmlInputElement>("floor-n"),
+    ) else {
+        return;
+    };
+    let hi = hi.max(1.0);
+    // slider position (0..1000) -> intensity = hi * (pos/1000)^3
+    {
+        let (gfx_c, s, n) = (gfx.clone(), slider.clone(), num.clone());
+        add_listener(slider.as_ref(), "input", move |_e: web_sys::Event| {
+            let pos = (s.value_as_number() / 1000.0).clamp(0.0, 1.0);
+            let intensity = hi * pos.powi(3);
+            gfx_c.borrow_mut().params.filter_min[3] = intensity as f32;
+            n.set_value(&format!("{intensity:.0}"));
+        });
+    }
+    // typed intensity -> pos = 1000 * cbrt(intensity/hi)
+    {
+        let (gfx_c, s, n) = (gfx.clone(), slider.clone(), num.clone());
+        add_listener(num.as_ref(), "change", move |_e: web_sys::Event| {
+            let raw = n.value_as_number();
+            if raw.is_nan() {
+                return;
+            }
+            let intensity = raw.clamp(0.0, hi);
+            s.set_value(&format!("{:.0}", 1000.0 * (intensity / hi).cbrt()));
+            n.set_value(&format!("{intensity:.0}"));
+            gfx_c.borrow_mut().params.filter_min[3] = intensity as f32;
+        });
+    }
+}
+
 /// Set a slider + its number field to `v` without firing handlers (for startup sync).
 fn set_value_pair(slider_id: &str, num_id: &str, v: f64, prec: usize) {
     if let Some(s) = by_id::<web_sys::HtmlInputElement>(slider_id) {
@@ -984,7 +1023,7 @@ fn wire_controls(gfx: &Rc<RefCell<Gfx>>) {
     on_toggle("xf-sqrt", gfx, |g, on| if on { g.params.transfer[0] = 1.0; });
     on_toggle("xf-log", gfx, |g, on| if on { g.params.transfer[0] = 2.0; });
     bind_value(gfx, "expo", "expo-n", 2, |g, v| g.params.transfer[3] = v as f32);
-    bind_value(gfx, "floor", "floor-n", 0, |g, v| g.params.filter_min[3] = v as f32);
+    // `floor` is bound separately (cbrt-mapped) once the intensity range is known — see bind_floor.
 
     // Filters
     on_toggle("ms-1", gfx, |g, on| if on { g.params.ms_mask = 0b01; });
