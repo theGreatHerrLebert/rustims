@@ -119,6 +119,9 @@ struct Gfx {
     floor_hi: f64,
     /// True while a reload is in flight (debounces overlapping Load/Focus requests).
     reloading: bool,
+    /// Bumped whenever `cpu_points` is replaced (a load). Captured at clustering Run so a deferred
+    /// DBSCAN that resolves after a reload can detect the stale point set and abort.
+    data_gen: u64,
     /// Set when the active filter or draw count changes; the next frame recomputes the displayed
     /// count (CPU-side over `cpu_points`) — camera-independent, so it need not run every frame.
     filter_dirty: bool,
@@ -531,6 +534,7 @@ async fn run() -> Result<(), String> {
         cpu_points,
         floor_hi,
         reloading: false,
+        data_gen: 0,
         filter_dirty: true,
         focus_stack: axis_bounds
             .map(|b| vec![(Region { mz: b[0], im: b[1], rt: b[2], imin: 0.0 }, None)])
@@ -1112,6 +1116,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
         let mut cpu = pts;
         cpu.truncate(cap as usize);
         g.cpu_points = cpu;
+        g.data_gen = g.data_gen.wrapping_add(1); // invalidate any in-flight clustering Run
         g.vol_needs_grid = true; // the volume density grid is rebuilt from the new points
         g.params.color_mode = 0; // the fresh buffer has no cluster ids
         g.clustered = false;
@@ -1443,8 +1448,12 @@ fn invalidate_clusters_mut(g: &mut Gfx) {
 /// Run DBSCAN on the filtered resident points, write cluster ids into the GPU buffer, and colour by
 /// cluster. Synchronous (blocks the main thread) — Focus first if the filtered set is large.
 fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
+    if gfx.borrow().reloading {
+        show_status("loading — try clustering again in a moment");
+        return;
+    }
     // Gather the filtered survivors (spatial crop + intensity floor + MS) and their cube positions.
-    let (idx, positions, eps, min_pts) = {
+    let (idx, positions, eps, min_pts, gen) = {
         let g = gfx.borrow();
         let p = &g.params;
         let (fmin, fmax, ms) = (p.filter_min, p.filter_max, p.ms_mask);
@@ -1469,7 +1478,7 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
             idx.push(i);
             positions.push(pos);
         }
-        (idx, positions, g.cluster_eps, g.cluster_min_pts)
+        (idx, positions, g.cluster_eps, g.cluster_min_pts, g.data_gen)
     };
     if idx.is_empty() {
         show_status("nothing to cluster — adjust the filter");
@@ -1489,7 +1498,7 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
     let gfx = gfx.clone();
     defer(move || {
         let (labels, k) = dbscan(&positions, eps, min_pts);
-        finish_clustering(&gfx, idx, labels, k);
+        finish_clustering(&gfx, idx, labels, k, gen);
     });
 }
 
@@ -1502,12 +1511,16 @@ fn reupload_points(g: &mut Gfx) {
 }
 
 /// Write DBSCAN labels into the GPU buffer + recolor by cluster, compute stats, then update the UI.
-fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: Vec<usize>, labels: Vec<i32>, k: usize) {
+fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: Vec<usize>, labels: Vec<i32>, k: usize, gen: u64) {
     let noise = labels.iter().filter(|&&l| l < 0).count();
     let n_in = idx.len();
     {
         let mut gb = gfx.borrow_mut();
         let g: &mut Gfx = &mut gb; // &mut Gfx so renderer/queue/cpu_points field-split
+        if g.data_gen != gen {
+            show_status(""); // the point set changed under us — drop this stale result
+            return;
+        }
         let stats = compute_cluster_stats(&idx, &labels, k, &g.cpu_points, g.axis_bounds);
         for pt in g.cpu_points.iter_mut() {
             pt._pad[0] = GpuPoint::NO_CLUSTER;
@@ -1736,7 +1749,10 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     }
     if let Some(btn) = by_id::<web_sys::HtmlElement>("cl-export") {
         let gfx = gfx.clone();
-        add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| export_clusters(&gfx));
+        add_listener(btn.as_ref(), "click", move |e: web_sys::Event| {
+            e.stop_propagation(); // the button sits in an .ey header — don't toggle collapse
+            export_clusters(&gfx);
+        });
     }
 }
 
@@ -1873,9 +1889,13 @@ fn isolate_cluster(gfx: &Rc<RefCell<Gfx>>, sel: Option<i32>) {
         reupload_points(g);
         g.cluster_sel = sel;
         g.params.color_mode = 1; // isolate is only visible under cluster coloring
+        g.view_mode = ViewMode::Points; // cluster ids are invisible in Volume
     }
     set_checked("cl-color", true);
     set_body_class("cluster-color", true);
+    set_checked("v-pts", true);
+    set_checked("v-vol", false);
+    set_volmode(false);
     update_cluster_panel(gfx); // re-render the list with the active row marked
 }
 
@@ -1895,19 +1915,27 @@ fn export_clusters(gfx: &Rc<RefCell<Gfx>>) {
     download_text("clusters.csv", "text/csv", &csv);
 }
 
-/// Trigger a file download of `content` via a `data:` URL anchor.
+/// Trigger a file download of `content` via a `data:` URL anchor (attached to the DOM for the click
+/// so browsers honor it, then removed).
 fn download_text(filename: &str, mime: &str, content: &str) {
     let Some(doc) = document() else {
         return;
     };
-    let Ok(a) = doc.create_element("a") else {
+    let Ok(el) = doc.create_element("a") else {
+        return;
+    };
+    let Ok(a) = el.dyn_into::<web_sys::HtmlElement>() else {
         return;
     };
     let encoded = String::from(js_sys::encode_uri_component(content));
     let _ = a.set_attribute("href", &format!("data:{mime};charset=utf-8,{encoded}"));
     let _ = a.set_attribute("download", filename);
-    if let Ok(el) = a.dyn_into::<web_sys::HtmlElement>() {
-        el.click();
+    if let Some(body) = doc.body() {
+        let _ = body.append_child(&a);
+        a.click();
+        let _ = body.remove_child(&a);
+    } else {
+        a.click();
     }
 }
 
