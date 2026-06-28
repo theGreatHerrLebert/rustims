@@ -314,6 +314,11 @@ impl PointCloudRenderer {
         self.draw_count.min(self.resident)
     }
 
+    /// Public view of `effective()` (the drawn-instance count) for HUD/displayed-count accounting.
+    pub fn drawn(&self) -> u32 {
+        self.effective()
+    }
+
     pub fn update_camera(&self, queue: &wgpu::Queue, cam: &CameraUniform) {
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(cam));
     }

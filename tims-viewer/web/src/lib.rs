@@ -82,6 +82,9 @@ struct Gfx {
     floor_hi: f64,
     /// True while a reload is in flight (debounces overlapping Load/Focus requests).
     reloading: bool,
+    /// Set when the active filter or draw count changes; the next frame recomputes the displayed
+    /// count (CPU-side over `cpu_points`) — camera-independent, so it need not run every frame.
+    filter_dirty: bool,
     /// Declared last so it drops AFTER the surface/device — wgpu requires the instance to outlive
     /// everything created from it.
     _instance: wgpu::Instance,
@@ -141,6 +144,20 @@ impl Gfx {
         self.hud_tick = self.hud_tick.wrapping_add(1);
         if self.hud_tick % 12 == 0 {
             set_text("hud-fps", &format!("{:.0} fps", self.fps_ema));
+        }
+        // Recompute the displayed (filter-surviving) count when the filter/draw-count changed.
+        if self.filter_dirty {
+            let shown = recount_displayed(self);
+            let resident = self.renderer.resident() as usize;
+            let txt = if self.points_base.is_empty() {
+                format!("{} · demo", group_short(shown))
+            } else if shown >= resident {
+                group_short(resident) // nothing hidden — show the loaded pool
+            } else {
+                format!("{} / {}", group_short(shown), group_short(resident))
+            };
+            set_text("hud-points", &txt);
+            self.filter_dirty = false;
         }
 
         if self.auto_rotate {
@@ -308,10 +325,8 @@ async fn run() -> Result<(), String> {
         supports_compaction,
     );
     let n = renderer.append(&queue, &pts);
-    set_text(
-        "hud-points",
-        &if is_demo_fallback { format!("{} · demo", group(n)) } else { group(n) },
-    );
+    // The HUD point count is owned by the per-frame displayed-count recount (filter_dirty starts
+    // true, so the first frame fills it).
     log::info!("uploaded {n} points (compaction: {supports_compaction})");
 
     // Native-matching defaults: MS1-only, sqrt transfer, additive density. When the server gave
@@ -361,6 +376,7 @@ async fn run() -> Result<(), String> {
         cpu_points,
         floor_hi,
         reloading: false,
+        filter_dirty: true,
     }));
 
     wire_input(&gfx, &window, &canvas_for_input);
@@ -852,7 +868,11 @@ fn reset_crops(gfx: &Rc<RefCell<Gfx>>) {
 
 /// Reset the Display control to 100% of the (new) resident pool.
 fn reset_display(gfx: &Rc<RefCell<Gfx>>, n: usize) {
-    gfx.borrow_mut().renderer.set_draw_count(u32::MAX);
+    {
+        let mut g = gfx.borrow_mut();
+        g.renderer.set_draw_count(u32::MAX);
+        g.filter_dirty = true; // HUD displayed-count recomputed next frame
+    }
     if let Some(s) = by_id::<web_sys::HtmlInputElement>("disp") {
         s.set_value("100");
     }
@@ -860,7 +880,6 @@ fn reset_display(gfx: &Rc<RefCell<Gfx>>, n: usize) {
         num.set_value(&n.to_string());
         let _ = num.set_attribute("max", &n.to_string());
     }
-    set_text("hud-points", &group(n));
 }
 
 /// Apply a freshly fetched load in place: rebuild the GPU buffer at the new capacity, retain the
@@ -1036,6 +1055,18 @@ fn set_checked(id: &str, v: bool) {
 }
 
 /// Group an integer with thin spaces for the HUD readout, e.g. 300000 -> "300 000".
+/// Compact count for the HUD: `3.7M`, `379k`, or grouped digits under 10k. Keeps the
+/// `displayed / resident` readout from overflowing the stat cell.
+fn group_short(n: usize) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1e6)
+    } else if n >= 10_000 {
+        format!("{:.0}k", n as f64 / 1e3)
+    } else {
+        group(n)
+    }
+}
+
 fn group(n: usize) -> String {
     let s = n.to_string();
     let b = s.as_bytes();
@@ -1047,6 +1078,37 @@ fn group(n: usize) -> String {
         out.push(*c as char);
     }
     out
+}
+
+/// Count points surviving the active 4D filter (spatial window + intensity floor + MS mask) among
+/// the drawn prefix of the resident pool. Camera-independent (frustum culling excluded), so it is
+/// recomputed only when the filter or draw count changes — not every frame.
+fn recount_displayed(g: &Gfx) -> usize {
+    let p = &g.params;
+    let limit = (g.renderer.drawn() as usize).min(g.cpu_points.len());
+    let (fmin, fmax, ms) = (p.filter_min, p.filter_max, p.ms_mask);
+    let mut shown = 0usize;
+    for pt in &g.cpu_points[..limit] {
+        let pos = pt.pos;
+        if pos[0] < fmin[0]
+            || pos[0] > fmax[0]
+            || pos[1] < fmin[1]
+            || pos[1] > fmax[1]
+            || pos[2] < fmin[2]
+            || pos[2] > fmax[2]
+        {
+            continue;
+        }
+        if pt.intensity < fmin[3] {
+            continue;
+        }
+        let is_ms2 = (pt.flags & GpuPoint::MS2_FLAG) != 0;
+        let pass = if is_ms2 { ms & 0b10 != 0 } else { ms & 0b01 != 0 };
+        if pass {
+            shown += 1;
+        }
+    }
+    shown
 }
 
 /// Bind the Display slider (1..100 %) to the renderer's runtime draw count — trade detail for
@@ -1097,8 +1159,7 @@ fn display_apply(gfx: &Rc<RefCell<Gfx>>, k: u32) -> (u32, u32) {
     let total = g.renderer.resident().max(1);
     let kk = k.clamp(1, total);
     g.renderer.set_draw_count(kk);
-    drop(g);
-    set_text("hud-points", &group(kk as usize));
+    g.filter_dirty = true; // the displayed count is recomputed next frame
     (kk, total)
 }
 
@@ -1259,12 +1320,15 @@ fn wire_controls(gfx: &Rc<RefCell<Gfx>>) {
     on_toggle("xf-log", gfx, |g, on| if on { g.params.transfer[0] = 2.0; });
     bind_value(gfx, "expo", "expo-n", 2, |g, v| g.params.transfer[3] = v as f32);
     // Floor is linear in real counts; its slider/number range is scaled to the data in run().
-    bind_value(gfx, "floor", "floor-n", 0, |g, v| g.params.filter_min[3] = v as f32);
+    bind_value(gfx, "floor", "floor-n", 0, |g, v| {
+        g.params.filter_min[3] = v as f32;
+        g.filter_dirty = true;
+    });
 
     // Filters
-    on_toggle("ms-1", gfx, |g, on| if on { g.params.ms_mask = 0b01; });
-    on_toggle("ms-2", gfx, |g, on| if on { g.params.ms_mask = 0b10; });
-    on_toggle("ms-b", gfx, |g, on| if on { g.params.ms_mask = 0b11; });
+    on_toggle("ms-1", gfx, |g, on| if on { g.params.ms_mask = 0b01; g.filter_dirty = true; });
+    on_toggle("ms-2", gfx, |g, on| if on { g.params.ms_mask = 0b10; g.filter_dirty = true; });
+    on_toggle("ms-b", gfx, |g, on| if on { g.params.ms_mask = 0b11; g.filter_dirty = true; });
     bind_crop(gfx, "cmz", 0);
     bind_crop(gfx, "cim", 1);
     bind_crop(gfx, "crt", 2);
@@ -1316,6 +1380,7 @@ fn crop_apply(gfx: &Rc<RefCell<Gfx>>, axis: usize, prefix: &str, lo_val: f64, hi
         let mut g = gfx.borrow_mut();
         g.params.filter_min[axis] = a;
         g.params.filter_max[axis] = b;
+        g.filter_dirty = true;
         g.axis_bounds
     };
     set_text(&format!("{prefix}-v"), &crop_label(bounds, axis, a, b));
