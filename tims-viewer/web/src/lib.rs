@@ -45,6 +45,11 @@ const DEFAULT_SERVER_PORT: u16 = 8090;
 #[wasm_bindgen(start)]
 pub fn start() {
     console_error_panic_hook::set_once();
+    // Off the main thread (the clustering Web Worker re-inits this same wasm) there is no DOM —
+    // `window()` is None. Skip the renderer; the worker only calls `cluster_dbscan_flat`.
+    if web_sys::window().is_none() {
+        return;
+    }
     let _ = console_log::init_with_level(log::Level::Info);
     wasm_bindgen_futures::spawn_local(async {
         if let Err(e) = run().await {
@@ -52,6 +57,14 @@ pub fn start() {
             show_status(&format!("tims-viewer could not start: {e}"));
         }
     });
+}
+
+/// DBSCAN over a flat `[x,y,z, x,y,z, …]` buffer, returning per-point labels (`-1` = noise). The
+/// Web Worker calls this; exported so its wasm instance has it too.
+#[wasm_bindgen]
+pub fn cluster_dbscan_flat(flat: &[f32], min_pts: usize, eps: f32) -> Vec<i32> {
+    let pts: Vec<[f32; 3]> = flat.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    dbscan(&pts, eps, min_pts).0
 }
 
 /// Summary of a clustering result, for the MIDIA-style stats panel.
@@ -159,6 +172,10 @@ struct Gfx {
     cluster_idx: Vec<usize>,
     cluster_labels: Vec<i32>,
     cluster_sel: Option<i32>,
+    /// Persistent DBSCAN worker (lazily created; `None` if workers are unavailable → main-thread
+    /// fallback), and the in-flight job's (survivor idx, data generation) awaiting its reply.
+    cluster_worker: Option<web_sys::Worker>,
+    cluster_pending: Option<(Vec<usize>, u64)>,
     /// Declared last so it drops AFTER the surface/device — wgpu requires the instance to outlive
     /// everything created from it.
     _instance: wgpu::Instance,
@@ -555,6 +572,8 @@ async fn run() -> Result<(), String> {
         cluster_idx: Vec::new(),
         cluster_labels: Vec::new(),
         cluster_sel: None,
+        cluster_worker: None,
+        cluster_pending: None,
     }));
 
     wire_input(&gfx, &window, &canvas_for_input);
@@ -1124,6 +1143,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
         g.cluster_idx = Vec::new();
         g.cluster_labels = Vec::new();
         g.cluster_sel = None;
+        g.cluster_pending = None;
         // Re-apply auto-transfer (exposure + floor range) and bounds from the new meta; keep the
         // user's colormap / point size / opacity / MS mask.
         if let Some(m) = &meta {
@@ -1431,6 +1451,7 @@ fn bind_volume(gfx: &Rc<RefCell<Gfx>>) {
 /// Revert cluster colouring (a filter/load changed the set, so the labels are stale). Cheap — just
 /// flips `color_mode` back to intensity; the stale `_pad[0]` ids stay unused until the next Run.
 fn invalidate_clusters_mut(g: &mut Gfx) {
+    g.cluster_pending = None; // abandon any in-flight worker job (its reply will be ignored)
     if g.clustered {
         g.params.color_mode = 0;
         g.clustered = false;
@@ -1450,6 +1471,10 @@ fn invalidate_clusters_mut(g: &mut Gfx) {
 fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
     if gfx.borrow().reloading {
         show_status("loading — try clustering again in a moment");
+        return;
+    }
+    if gfx.borrow().cluster_pending.is_some() {
+        show_status("clustering already running…");
         return;
     }
     // Gather the filtered survivors (spatial crop + intensity floor + MS) and their cube positions.
@@ -1493,13 +1518,116 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         return;
     }
     show_status("clustering…");
-    // Defer the (synchronous, blocking) DBSCAN one macrotask so the "clustering…" status paints
-    // first — otherwise the tab freezes with no feedback.
+    // Off-main-thread: post to the persistent DBSCAN worker so the tab stays responsive. The worker
+    // replies via its onmessage handler, which calls finish_clustering.
+    if let Some(worker) = ensure_cluster_worker(gfx) {
+        let flat: Vec<f32> = positions.iter().flatten().copied().collect();
+        if post_cluster_job(&worker, &flat, eps, min_pts) {
+            gfx.borrow_mut().cluster_pending = Some((idx, gen));
+            return;
+        }
+    }
+    // Fallback (no worker): defer the blocking DBSCAN one macrotask so the status paints first.
     let gfx = gfx.clone();
     defer(move || {
         let (labels, k) = dbscan(&positions, eps, min_pts);
         finish_clustering(&gfx, idx, labels, k, gen);
     });
+}
+
+/// JS module source for the DBSCAN worker — re-imports this same wasm (URLs injected) and runs
+/// `cluster_dbscan_flat` per posted job. Top-level await holds the message queue until wasm is ready.
+const CLUSTER_WORKER_SRC: &str = r#"
+import init, { cluster_dbscan_flat } from '__GLUE__';
+await init({ module_or_path: '__WASM__' });
+self.onmessage = (e) => {
+  const { flat, eps, min_pts } = e.data;
+  const labels = cluster_dbscan_flat(new Float32Array(flat), min_pts, eps);
+  self.postMessage({ labels }, [labels.buffer]);
+};
+"#;
+
+/// Return the persistent DBSCAN worker, creating it on first use. `None` (→ main-thread fallback) if
+/// workers are unavailable or the wasm/glue URLs can't be discovered.
+fn ensure_cluster_worker(gfx: &Rc<RefCell<Gfx>>) -> Option<web_sys::Worker> {
+    if let Some(w) = gfx.borrow().cluster_worker.clone() {
+        return Some(w);
+    }
+    let w = create_cluster_worker(gfx)?;
+    gfx.borrow_mut().cluster_worker = Some(w.clone());
+    Some(w)
+}
+
+/// Build the DBSCAN worker from a Blob module that re-imports the Trunk-built wasm (URLs read from
+/// the page's preload links, so Trunk's content hashing is handled).
+fn create_cluster_worker(gfx: &Rc<RefCell<Gfx>>) -> Option<web_sys::Worker> {
+    let doc = document()?;
+    // The glue JS + wasm URLs from Trunk's preload links (absolute via the element `href` property).
+    let link_href = |sel: &str| -> Option<String> {
+        doc.query_selector(sel)
+            .ok()
+            .flatten()
+            .and_then(|e| e.dyn_into::<web_sys::HtmlLinkElement>().ok())
+            .map(|l| l.href())
+    };
+    let glue = link_href("link[rel='modulepreload']")?;
+    let wasm = link_href("link[rel='preload'][as='fetch']")?;
+    let src = CLUSTER_WORKER_SRC.replace("__GLUE__", &glue).replace("__WASM__", &wasm);
+
+    let parts = js_sys::Array::of1(&JsValue::from_str(&src));
+    let blob = web_sys::Blob::new_with_str_sequence(&parts).ok()?;
+    let url = web_sys::Url::create_object_url_with_blob(&blob).ok()?;
+    let opts = web_sys::WorkerOptions::new();
+    opts.set_type(web_sys::WorkerType::Module);
+    let worker = web_sys::Worker::new_with_options(&url, &opts).ok()?;
+    let _ = web_sys::Url::revoke_object_url(&url); // the worker has captured the script
+
+    // Reply handler: pair the labels with the pending (idx, gen) and finish on the main thread.
+    let gfx_msg = gfx.clone();
+    let cb = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::MessageEvent)>::new(
+        move |e: web_sys::MessageEvent| {
+            let Some(labels) = js_sys::Reflect::get(&e.data(), &JsValue::from_str("labels"))
+                .ok()
+                .and_then(|v| v.dyn_into::<js_sys::Int32Array>().ok())
+                .map(|a| a.to_vec())
+            else {
+                return;
+            };
+            if let Some((idx, gen)) = gfx_msg.borrow_mut().cluster_pending.take() {
+                let k = labels.iter().copied().max().map_or(0, |m| (m + 1).max(0) as usize);
+                finish_clustering(&gfx_msg, idx, labels, k, gen);
+            }
+        },
+    );
+    worker.set_onmessage(Some(cb.as_ref().unchecked_ref()));
+    cb.forget(); // the worker lives for the app's lifetime
+
+    // If the worker fails (e.g. its wasm can't load), drop it so the next Run uses the main thread,
+    // and release any stuck pending job.
+    let gfx_err = gfx.clone();
+    add_listener(worker.as_ref(), "error", move |_e: web_sys::Event| {
+        let mut g = gfx_err.borrow_mut();
+        g.cluster_pending = None;
+        g.cluster_worker = None;
+        drop(g);
+        show_status("clustering worker unavailable — runs on the main thread");
+    });
+    Some(worker)
+}
+
+/// Post a clustering job (the flat positions buffer is transferred, not copied) to the worker.
+fn post_cluster_job(worker: &web_sys::Worker, flat: &[f32], eps: f32, min_pts: usize) -> bool {
+    let arr = js_sys::Float32Array::from(flat);
+    let msg = js_sys::Object::new();
+    let set = |k: &str, v: &JsValue| js_sys::Reflect::set(&msg, &JsValue::from_str(k), v).is_ok();
+    if !set("flat", &arr.buffer()) || !set("eps", &JsValue::from_f64(eps as f64)) {
+        return false;
+    }
+    if !set("min_pts", &JsValue::from_f64(min_pts as f64)) {
+        return false;
+    }
+    let transfer = js_sys::Array::of1(&arr.buffer());
+    worker.post_message_with_transfer(&msg, &transfer).is_ok()
 }
 
 /// Re-upload the resident `cpu_points` to the GPU (the only path to refresh the cluster ids).
