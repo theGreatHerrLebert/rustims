@@ -62,11 +62,38 @@
     .body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 4px 0 14px; }
     .body::-webkit-scrollbar { width: 8px; }
     .body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
+    /* tabs */
+    .tabs { display: flex; gap: 4px; padding: 8px 16px 0 18px; border-bottom: 1px solid var(--line); }
+    .tab { flex: 1; font-family: var(--sans); font-size: 12px; font-weight: 500; color: var(--dim);
+      background: transparent; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      padding: 7px 4px 8px; cursor: pointer; transition: color .14s, border-color .14s; }
+    .tab:hover { color: var(--ink); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tabpane { display: none; }
+    .tabpane.active { display: block; }
+
     .sec { padding: 14px 18px 4px 20px; }
     .sec + .sec { border-top: 1px solid var(--line-2); }
     .ey { display: flex; align-items: center; gap: 8px; font-size: 10px; letter-spacing: .18em;
-      text-transform: uppercase; color: var(--dim); margin-bottom: 11px; }
+      text-transform: uppercase; color: var(--dim); margin-bottom: 11px;
+      cursor: pointer; user-select: none; transition: color .14s; }
+    .ey:hover { color: var(--ink); }
+    .ey::before { content: "▾"; font-size: 9px; letter-spacing: 0; color: var(--faint);
+      transition: transform .18s; }
     .ey::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+    .sec.collapsed .ey { margin-bottom: 4px; }
+    .sec.collapsed .ey::before { transform: rotate(-90deg); }
+    .sec.collapsed > *:not(.ey) { display: none; }
+
+    /* 2D projection minimaps (box-select to focus) */
+    .map { margin-bottom: 12px; }
+    .map-cap { font-size: 11px; color: var(--dim); font-family: var(--mono); margin-bottom: 4px; }
+    .map-cap b { color: var(--ink); font-weight: 500; }
+    .map-wrap { position: relative; width: 100%; aspect-ratio: 1 / 1; border: 1px solid var(--line);
+      border-radius: 6px; overflow: hidden; cursor: crosshair; background: #05070b; }
+    .map-wrap canvas { width: 100%; height: 100%; display: block; }
+    .map-sel { position: absolute; border: 1px solid var(--accent); background: var(--accent-dim);
+      pointer-events: none; display: none; }
 
     .row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
       min-height: 30px; margin-bottom: 9px; }
@@ -243,6 +270,11 @@
     </div>
 
     <div class="body">
+      <div class="tabs">
+        <button class="tab active" id="tabbtn-view" data-tab="view" type="button">View</button>
+        <button class="tab" id="tabbtn-focus" data-tab="focus" type="button">Focus</button>
+      </div>
+      <div class="tabpane active" id="tab-view">
       <section class="sec">
         <div class="ey">View</div>
         <div class="row"><label class="lbl" for="ar">Auto-orbit</label>
@@ -304,7 +336,8 @@
           </div>
         </div>
       </section>
-
+      </div>
+      <div class="tabpane" id="tab-focus">
       <section class="sec">
         <div class="ey">Filters</div>
         <div class="row" style="gap:8px">
@@ -345,6 +378,16 @@
           </div>
         </div>
       </section>
+      <section class="sec">
+        <div class="ey">Maps · drag a box to focus</div>
+        <div class="map"><div class="map-cap"><b>m/z</b> × <b>1/K₀</b></div>
+          <div class="map-wrap" id="mw-0"><canvas id="map-0" width="96" height="96"></canvas><div class="map-sel" id="sel-0"></div></div></div>
+        <div class="map"><div class="map-cap"><b>m/z</b> × <b>RT</b></div>
+          <div class="map-wrap" id="mw-1"><canvas id="map-1" width="96" height="96"></canvas><div class="map-sel" id="sel-1"></div></div></div>
+        <div class="map"><div class="map-cap"><b>1/K₀</b> × <b>RT</b></div>
+          <div class="map-wrap" id="mw-2"><canvas id="map-2" width="96" height="96"></canvas><div class="map-sel" id="sel-2"></div></div></div>
+      </section>
+      </div>
     </div>
   </aside>
 

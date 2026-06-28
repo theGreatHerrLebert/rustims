@@ -413,6 +413,11 @@ fn build_load_result(
         "hist": hist.as_ref().map(|h| serde_json::json!({
             "mz": h.mz, "im": h.im, "rt": h.rt,
         })),
+        // Sample-based 2D density projections for the box-select minimaps.
+        "proj": hist.as_ref().map(|h| serde_json::json!({
+            "bins": (h.proj_mz_im.len() as f64).sqrt().round() as u32,
+            "mz_im": h.proj_mz_im, "mz_rt": h.proj_mz_rt, "im_rt": h.proj_im_rt,
+        })),
     })
     .to_string();
 
@@ -457,11 +462,15 @@ fn respond_bytes(req: Request, body: Arc<[u8]>, content_type: &str) -> std::io::
     req.respond(resp)
 }
 
-/// Per-axis density histograms from the loader (each `HIST_BINS` bins over the region range).
+/// Per-axis density histograms (each `HIST_BINS` bins over the region range) plus the three 2D
+/// density projections (`PROJ_BINS²`, row-major `x + bins*y`) for the box-select minimaps.
 struct Hist {
     mz: Vec<u32>,
     im: Vec<u32>,
     rt: Vec<u32>,
+    proj_mz_im: Vec<u32>,
+    proj_mz_rt: Vec<u32>,
+    proj_im_rt: Vec<u32>,
 }
 
 /// Drain the loader (with `total_estimate` already sized to the region) into a bounded point
@@ -504,7 +513,11 @@ fn collect(
                 }
             }
             Ok(LoadMsg::Stats { i_min, i_max, i_med }) => stats = Some((i_min, i_med, i_max)),
-            Ok(LoadMsg::Histograms { mz, im, rt, .. }) => hist = Some(Hist { mz, im, rt }),
+            Ok(LoadMsg::Histograms {
+                mz, im, rt, proj_mz_im, proj_mz_rt, proj_im_rt, ..
+            }) => {
+                hist = Some(Hist { mz, im, rt, proj_mz_im, proj_mz_rt, proj_im_rt });
+            }
             Ok(LoadMsg::Done { .. }) => {
                 done = true;
                 break;
@@ -533,6 +546,7 @@ fn empty_result(region: &Region4D) -> Built {
         },
         "intensity": { "p1": 1.0, "p50": 1.0, "p99": 1.0, "hist": vec![0u32; I_HIST_BINS] },
         "hist": serde_json::Value::Null,
+        "proj": serde_json::Value::Null,
     })
     .to_string();
     Built {

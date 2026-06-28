@@ -19,7 +19,7 @@ use tims_viewer::camera::{OrbitCamera, ROLL_UP_AXIS};
 use tims_viewer::data::point::{AxisTransform, GpuPoint};
 use tims_viewer::render::annotation::{AnnotationRenderer, LineVertex};
 use tims_viewer::ticks::{fmt_tick, ticks_for, Axis, RT_MINUTES_SPAN};
-use tims_viewer::render::colormap::COLORMAP_NAMES;
+use tims_viewer::render::colormap::{sample as colormap_sample, COLORMAP_NAMES};
 use tims_viewer::render::point_cloud::{PointCloudRenderer, PointMode};
 use tims_viewer::render::uniforms::ParamsUniform;
 
@@ -407,7 +407,7 @@ async fn run() -> Result<(), String> {
     }
     // Push code state onto every DOM control (defeats the browser's cross-reload form restore).
     sync_controls(&gfx);
-    // Distribution strips: per-axis crops + the linear intensity floor.
+    // Distribution strips: per-axis crops + the linear intensity floor + the projection maps.
     if let Some(m) = &server_meta {
         if let Some(h) = &m.hist {
             draw_hist_backdrops(h);
@@ -415,6 +415,7 @@ async fn run() -> Result<(), String> {
         if let Some(ih) = &m.i_hist {
             set_hist_svg("floor-hist", ih);
         }
+        render_maps(m);
     }
     // Runtime detail/performance control over how many of the loaded points are drawn.
     bind_display(&gfx);
@@ -422,6 +423,10 @@ async fn run() -> Result<(), String> {
     bind_load(&gfx);
     // Focus / Back: drill into the crop+floor region at full budget, and pop back out.
     bind_focus(&gfx);
+    // 2D projection minimaps: drag a box to focus a region.
+    bind_maps(&gfx);
+    // Collapsible section headers + tab switching.
+    bind_panel_chrome();
 
     // Track CSS/DPR changes (window resize fires on zoom + monitor moves too).
     {
@@ -630,6 +635,9 @@ struct MetaInfo {
     hist: Option<[Vec<u32>; 3]>,
     /// Linear intensity distribution over `[0, p99]` (real counts), for the floor strip.
     i_hist: Option<Vec<u32>>,
+    /// 2D density projections `[mz×im, mz×rt, im×rt]` (each `proj_bins²`) for the box-select maps.
+    proj: Option<[Vec<u32>; 3]>,
+    proj_bins: usize,
 }
 
 /// Derive the `/meta` URL from the `/points` URL: replace only the trailing path endpoint and keep
@@ -715,6 +723,21 @@ async fn fetch_meta(url: &str) -> Result<MetaInfo, String> {
     };
     let i_hist = js_u32_array(&it, "hist");
 
+    // 2D projections for the box-select maps.
+    let pj = jget(&v, "proj");
+    let proj = match (
+        js_u32_array(&pj, "mz_im"),
+        js_u32_array(&pj, "mz_rt"),
+        js_u32_array(&pj, "im_rt"),
+    ) {
+        (Some(a), Some(b), Some(c)) => Some([a, b, c]),
+        _ => None,
+    };
+    let proj_bins = proj
+        .as_ref()
+        .map(|p| (p[0].len() as f64).sqrt().round() as usize)
+        .unwrap_or(0);
+
     Ok(MetaInfo {
         bounds,
         i_p1: pos("p1").unwrap_or(0.0),
@@ -723,6 +746,8 @@ async fn fetch_meta(url: &str) -> Result<MetaInfo, String> {
         stride,
         hist,
         i_hist,
+        proj,
+        proj_bins,
     })
 }
 
@@ -946,6 +971,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
         if let Some(ih) = &m.i_hist {
             set_hist_svg("floor-hist", ih);
         }
+        render_maps(m);
     }
     for id in ["floor", "floor-n"] {
         if let Some(inp) = by_id::<web_sys::HtmlInputElement>(id) {
@@ -1171,6 +1197,201 @@ fn bind_load(gfx: &Rc<RefCell<Gfx>>) {
         add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| trigger());
     }
     add_listener(num.as_ref(), "change", move |_e: web_sys::Event| trigger());
+}
+
+/// Toggle a class on an element by id.
+fn set_class(id: &str, class: &str, on: bool) {
+    if let Some(el) = by_id::<web_sys::HtmlElement>(id) {
+        let _ = el.class_list().toggle_with_force(class, on);
+    }
+}
+
+/// Show one tab pane (`view`/`focus`) and highlight its button; hide the others.
+fn switch_tab(name: &str) {
+    for t in ["view", "focus"] {
+        set_class(&format!("tabbtn-{t}"), "active", t == name);
+        set_class(&format!("tab-{t}"), "active", t == name);
+    }
+}
+
+/// Wire tab switching + collapsible section headers via one delegated click listener.
+fn bind_panel_chrome() {
+    let Some(doc) = document() else {
+        return;
+    };
+    add_listener(doc.as_ref(), "click", move |e: web_sys::Event| {
+        let Some(t) = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else {
+            return;
+        };
+        if let Ok(Some(tab)) = t.closest(".tab") {
+            if let Some(name) = tab.get_attribute("data-tab") {
+                switch_tab(&name);
+            }
+        } else if let Ok(Some(ey)) = t.closest(".ey") {
+            if let Some(sec) = ey.parent_element() {
+                let _ = sec.class_list().toggle("collapsed");
+            }
+        }
+    });
+}
+
+/// Render a 2D density projection to its `<canvas>` with the inferno colormap (sqrt-scaled). The
+/// projection is row-major `x + bins*y`; y is flipped so the low bin sits at the bottom.
+fn render_heatmap(canvas_id: &str, data: &[u32], bins: usize) {
+    if bins == 0 || data.len() < bins * bins {
+        return;
+    }
+    let Some(canvas) = by_id::<web_sys::HtmlCanvasElement>(canvas_id) else {
+        return;
+    };
+    canvas.set_width(bins as u32);
+    canvas.set_height(bins as u32);
+    let Some(ctx) = canvas
+        .get_context("2d")
+        .ok()
+        .flatten()
+        .and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok())
+    else {
+        return;
+    };
+    let max = data.iter().copied().max().unwrap_or(1).max(1) as f32;
+    let mut buf = vec![0u8; bins * bins * 4];
+    for y in 0..bins {
+        let row = bins - 1 - y; // flip: low bin at the bottom
+        for x in 0..bins {
+            let t = (data[x + bins * y] as f32 / max).sqrt();
+            let rgb = colormap_sample(1, t); // inferno
+            let i = (row * bins + x) * 4;
+            buf[i] = rgb[0];
+            buf[i + 1] = rgb[1];
+            buf[i + 2] = rgb[2];
+            buf[i + 3] = 255;
+        }
+    }
+    if let Ok(img) = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
+        wasm_bindgen::Clamped(&buf),
+        bins as u32,
+        bins as u32,
+    ) {
+        let _ = ctx.put_image_data(&img, 0.0, 0.0);
+    }
+}
+
+/// Render all three projection minimaps from a load's meta.
+fn render_maps(meta: &MetaInfo) {
+    if let Some(proj) = &meta.proj {
+        for (i, id) in ["map-0", "map-1", "map-2"].iter().enumerate() {
+            render_heatmap(id, &proj[i], meta.proj_bins);
+        }
+    }
+}
+
+/// Map a box on projection `proj` (x,y fractions of the map) to a 4D region of the current view.
+/// The map renders low-at-bottom, so the y fractions flip; the unselected axis keeps the full view
+/// range, and the current intensity floor carries through.
+fn region_from_box(g: &Gfx, proj: usize, x: (f64, f64), y: (f64, f64)) -> Option<Region> {
+    let b = g.axis_bounds?;
+    let lerp = |rng: (f64, f64), f: f64| rng.0 + f * (rng.1 - rng.0);
+    let (yl, yh) = (1.0 - y.1, 1.0 - y.0); // top->bottom px, but low-at-bottom display
+    let imin = g.params.filter_min[3].max(0.0);
+    let (mz, im, rt) = match proj {
+        0 => ((lerp(b[0], x.0), lerp(b[0], x.1)), (lerp(b[1], yl), lerp(b[1], yh)), b[2]),
+        1 => ((lerp(b[0], x.0), lerp(b[0], x.1)), b[1], (lerp(b[2], yl), lerp(b[2], yh))),
+        2 => (b[0], (lerp(b[1], x.0), lerp(b[1], x.1)), (lerp(b[2], yl), lerp(b[2], yh))),
+        _ => return None,
+    };
+    Some(Region { mz, im, rt, imin })
+}
+
+/// Mouse position within a map-wrap as fractions `[0,1]` (x left→right, y top→bottom).
+fn map_frac(mw: &web_sys::HtmlElement, e: &web_sys::MouseEvent) -> (f64, f64) {
+    let rect = mw.get_bounding_client_rect();
+    let nx = ((e.client_x() as f64 - rect.left()) / rect.width().max(1.0)).clamp(0.0, 1.0);
+    let ny = ((e.client_y() as f64 - rect.top()) / rect.height().max(1.0)).clamp(0.0, 1.0);
+    (nx, ny)
+}
+
+/// Position (or, with `show=false`, hide) the selection-box overlay on map `proj`.
+fn set_sel_box(proj: usize, x0: f64, y0: f64, x1: f64, y1: f64, show: bool) {
+    let Some(sel) = by_id::<web_sys::HtmlElement>(&format!("sel-{proj}")) else {
+        return;
+    };
+    let st = sel.style();
+    if !show {
+        let _ = st.set_property("display", "none");
+        return;
+    }
+    let (l, r) = (x0.min(x1), x0.max(x1));
+    let (t, b) = (y0.min(y1), y0.max(y1));
+    let _ = st.set_property("display", "block");
+    let _ = st.set_property("left", &format!("{:.2}%", l * 100.0));
+    let _ = st.set_property("top", &format!("{:.2}%", t * 100.0));
+    let _ = st.set_property("width", &format!("{:.2}%", (r - l) * 100.0));
+    let _ = st.set_property("height", &format!("{:.2}%", (b - t) * 100.0));
+}
+
+/// Wire box-select on the three projection maps: drag a rectangle → Focus that 4D region.
+fn bind_maps(gfx: &Rc<RefCell<Gfx>>) {
+    if gfx.borrow().points_base.is_empty() {
+        return; // demo fallback: maps render but can't drive a server focus
+    }
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    // Shared drag state: (proj index, start-x frac, start-y frac).
+    let drag: Rc<RefCell<Option<(usize, f64, f64)>>> = Rc::new(RefCell::new(None));
+
+    for proj in 0..3usize {
+        let Some(mw) = by_id::<web_sys::HtmlElement>(&format!("mw-{proj}")) else {
+            continue;
+        };
+        let (drag, mw2) = (drag.clone(), mw.clone());
+        add_listener(mw.as_ref(), "mousedown", move |e: web_sys::MouseEvent| {
+            e.prevent_default();
+            let (nx, ny) = map_frac(&mw2, &e);
+            *drag.borrow_mut() = Some((proj, nx, ny));
+            set_sel_box(proj, nx, ny, nx, ny, true);
+        });
+    }
+    {
+        let drag = drag.clone();
+        add_listener(window.as_ref(), "mousemove", move |e: web_sys::MouseEvent| {
+            let Some((proj, x0, y0)) = *drag.borrow() else {
+                return;
+            };
+            if let Some(mw) = by_id::<web_sys::HtmlElement>(&format!("mw-{proj}")) {
+                let (nx, ny) = map_frac(&mw, &e);
+                set_sel_box(proj, x0, y0, nx, ny, true);
+            }
+        });
+    }
+    {
+        let (drag, gfx) = (drag.clone(), gfx.clone());
+        add_listener(window.as_ref(), "mouseup", move |e: web_sys::MouseEvent| {
+            let Some((proj, x0, y0)) = drag.borrow_mut().take() else {
+                return;
+            };
+            set_sel_box(proj, 0.0, 0.0, 0.0, 0.0, false);
+            let Some(mw) = by_id::<web_sys::HtmlElement>(&format!("mw-{proj}")) else {
+                return;
+            };
+            let (nx, ny) = map_frac(&mw, &e);
+            let (xa, xb) = (x0.min(nx), x0.max(nx));
+            let (ya, yb) = (y0.min(ny), y0.max(ny));
+            if (xb - xa) < 0.02 || (yb - ya) < 0.02 || gfx.borrow().reloading {
+                return; // ignore clicks / tiny drags / mid-load
+            }
+            if let Some(r) = region_from_box(&gfx.borrow(), proj, (xa, xb), (ya, yb)) {
+                let budget = gfx.borrow().n_cap;
+                wasm_bindgen_futures::spawn_local(load_region(
+                    gfx.clone(),
+                    r,
+                    Some(budget),
+                    StackOp::Push,
+                ));
+            }
+        });
+    }
 }
 
 /// Create the DOM label elements inside `#axis-labels`; returns `(element, cube-position)` pairs

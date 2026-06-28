@@ -28,4 +28,5 @@ web-sys = { version = "0.3", features = [
     "Document", "Window", "Element", "HtmlCanvasElement", "Node", "EventTarget",
     "Event", "MouseEvent", "WheelEvent", "Response", "Location",
     "HtmlInputElement", "HtmlSelectElement", "HtmlElement", "CssStyleDeclaration",
+    "CanvasRenderingContext2d", "ImageData", "DomRect", "DomTokenList",
 ] }
