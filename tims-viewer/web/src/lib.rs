@@ -185,7 +185,11 @@ impl Gfx {
             // independent of the downsample ratio.
             grid.clear();
             let ms = self.params.ms_mask;
+            let floor = self.params.filter_min[3]; // intensity floor: dim points don't deposit
             for pt in &self.cpu_points {
+                if pt.intensity < floor {
+                    continue;
+                }
                 let is_ms2 = pt.flags & GpuPoint::MS2_FLAG != 0;
                 if if is_ms2 { ms & 0b10 != 0 } else { ms & 0b01 != 0 } {
                     grid.deposit(pt.pos, pt.intensity * pt.weight);
@@ -1336,6 +1340,16 @@ fn bind_volume(gfx: &Rc<RefCell<Gfx>>) {
     on_toggle("vs-comp", gfx, |g, on| if on { g.vol_style = 0 });
     on_toggle("vs-mip", gfx, |g, on| if on { g.vol_style = 1 });
     bind_value(gfx, "vsteps", "vsteps-n", 0, |g, v| g.vol_steps = (v as u32).max(1));
+    // The intensity floor feeds the volume deposit; rebuild when it SETTLES (slider release /
+    // number commit), not on every drag tick — a rebuild is O(resident) and would lag a drag.
+    for id in ["floor", "floor-n"] {
+        if let Some(inp) = by_id::<web_sys::HtmlInputElement>(id) {
+            let gfx = gfx.clone();
+            add_listener(inp.as_ref(), "change", move |_e: web_sys::Event| {
+                gfx.borrow_mut().vol_needs_grid = true;
+            });
+        }
+    }
 }
 
 /// Wire the Focus / Back buttons; control enable/disable is driven by `refresh_controls`.
