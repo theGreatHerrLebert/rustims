@@ -856,23 +856,53 @@ fn group(n: usize) -> String {
 /// performance live, with no re-upload. Points are shuffled server-side, so the drawn prefix is a
 /// representative subsample at any fraction. Also reflects the drawn count in the HUD.
 fn bind_display(gfx: &Rc<RefCell<Gfx>>) {
-    let Some(slider) = by_id::<web_sys::HtmlInputElement>("disp") else {
+    let (Some(slider), Some(num)) = (
+        by_id::<web_sys::HtmlInputElement>("disp"),
+        by_id::<web_sys::HtmlInputElement>("disp-n"),
+    ) else {
         return;
     };
-    let total = gfx.borrow().renderer.resident();
-    let apply: std::rc::Rc<dyn Fn()> = {
-        let (gfx, s) = (gfx.clone(), slider.clone());
-        std::rc::Rc::new(move || {
+    // slider(%) -> count: update the count field + HUD
+    {
+        let (gfx, s, n) = (gfx.clone(), slider.clone(), num.clone());
+        add_listener(slider.as_ref(), "input", move |_e: web_sys::Event| {
+            let total = gfx.borrow().renderer.resident().max(1);
             let pct = (s.value_as_number() / 100.0).clamp(0.0, 1.0);
-            let k = ((total as f64) * pct).round().max(1.0) as u32;
-            gfx.borrow_mut().renderer.set_draw_count(k);
-            set_text("disp-v", &group(k as usize));
-            set_text("hud-points", &group(k as usize));
-        })
-    };
-    apply(); // honor the slider's current (possibly browser-restored) value on startup
-    let apply_c = apply.clone();
-    add_listener(slider.as_ref(), "input", move |_e: web_sys::Event| apply_c());
+            let (k, _) = display_apply(&gfx, ((total as f64) * pct).round() as u32);
+            n.set_value(&k.to_string());
+        });
+    }
+    // count -> %: update the slider + HUD
+    {
+        let (gfx, s, n) = (gfx.clone(), slider.clone(), num.clone());
+        add_listener(num.as_ref(), "change", move |_e: web_sys::Event| {
+            let raw = n.value_as_number();
+            if raw.is_nan() {
+                return;
+            }
+            let (k, total) = display_apply(&gfx, raw.max(1.0) as u32);
+            s.set_value(&format!("{:.0}", 100.0 * (k as f64) / (total as f64)));
+            n.set_value(&k.to_string());
+        });
+    }
+    // Initialize draw count + count field from the slider's current value.
+    let total = gfx.borrow().renderer.resident().max(1);
+    let pct = (slider.value_as_number() / 100.0).clamp(0.0, 1.0);
+    let (k0, _) = display_apply(gfx, ((total as f64) * pct).round() as u32);
+    num.set_value(&k0.to_string());
+    let _ = num.set_attribute("max", &total.to_string());
+}
+
+/// Set the renderer's draw count (clamped to the live resident pool) and update the HUD.
+/// Returns `(applied_count, pool_total)`.
+fn display_apply(gfx: &Rc<RefCell<Gfx>>, k: u32) -> (u32, u32) {
+    let mut g = gfx.borrow_mut();
+    let total = g.renderer.resident().max(1);
+    let kk = k.clamp(1, total);
+    g.renderer.set_draw_count(kk);
+    drop(g);
+    set_text("hud-points", &group(kk as usize));
+    (kk, total)
 }
 
 /// Bind a slider + its editable number field bidirectionally to a render parameter: dragging the

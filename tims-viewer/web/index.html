@@ -256,7 +256,7 @@
         <div class="row"><label class="lbl" for="disp">Display</label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="disp" min="1" max="100" step="1" value="100" aria-label="fraction of points to display" />
-            <output class="val" id="disp-v" for="disp">—</output></span></div>
+            <input type="number" class="numin" id="disp-n" min="1" step="1000" value="0" style="width:78px" aria-label="number of points to display" /></span></div>
         <div class="row"><span class="lbl" id="l-mode">Mode</span>
           <span class="seg" role="radiogroup" aria-labelledby="l-mode">
             <input type="radio" name="mode" id="m-add" checked /><label for="m-add">Density</label>
