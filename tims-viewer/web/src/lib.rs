@@ -120,6 +120,9 @@ struct Gfx {
     /// Raymarch samples; composite (0) vs max-intensity-projection (1).
     vol_steps: u32,
     vol_style: u32,
+    /// Volume density transfer range (raw density percentiles), auto-ranged on grid build.
+    vol_i_min: f32,
+    vol_i_max: f32,
     /// Declared last so it drops AFTER the surface/device — wgpu requires the instance to outlive
     /// everything created from it.
     _instance: wgpu::Instance,
@@ -188,6 +191,11 @@ impl Gfx {
                     grid.deposit(pt.pos, pt.intensity * pt.weight);
                 }
             }
+            // Auto-range the density transfer to the grid's own percentiles (median..p99.9) — the
+            // point intensity range is a different scale, which is why the volume looked flat.
+            let (lo, hi) = grid.density_percentiles();
+            self.vol_i_min = lo;
+            self.vol_i_max = hi;
             self.volume.as_ref().unwrap().upload(&self.queue, grid.to_f16_scaled());
             self.vol_needs_grid = false;
             show_status(""); // clear the "building volume…" notice
@@ -198,7 +206,8 @@ impl Gfx {
             inv_view_proj: inv,
             box_min: [p.filter_min[0], p.filter_min[1], p.filter_min[2], 0.0],
             box_max: [p.filter_max[0], p.filter_max[1], p.filter_max[2], 0.0],
-            transfer: p.transfer,
+            // Log over the density percentiles + exposure 1.0 (mirrors the native auto-range).
+            transfer: [2.0, self.vol_i_min, self.vol_i_max, 1.0],
             steps: self.vol_steps.max(1),
             style: self.vol_style,
             colormap_id: p.colormap_id,
@@ -490,6 +499,8 @@ async fn run() -> Result<(), String> {
         vol_needs_grid: true,
         vol_steps: 256,
         vol_style: 0,
+        vol_i_min: 1.0,
+        vol_i_max: 2.0,
     }));
 
     wire_input(&gfx, &window, &canvas_for_input);
