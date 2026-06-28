@@ -54,6 +54,20 @@ pub fn start() {
     });
 }
 
+/// Summary of a clustering result, for the MIDIA-style stats panel.
+struct ClusterStats {
+    k: usize,
+    signal_pts: u64,
+    noise_pts: u64,
+    signal_int: f64,
+    noise_int: f64,
+    /// Per-cluster point count + real-unit extent on each axis (for the histograms).
+    sizes: Vec<f64>,
+    mz_extent: Vec<f64>,
+    im_extent: Vec<f64>,
+    rt_extent: Vec<f64>,
+}
+
 /// A 4D region of the run in real units (the focus lens). `imin` is the intensity floor in counts.
 #[derive(Clone, Copy)]
 struct Region {
@@ -134,6 +148,8 @@ struct Gfx {
     /// True while a DBSCAN result is colouring the cloud (`params.color_mode == 1`). Invalidated on
     /// reload / focus / filter change.
     clustered: bool,
+    /// The last clustering result's stats (for the right-hand panel); cleared on invalidate.
+    cluster_stats: Option<ClusterStats>,
     /// Declared last so it drops AFTER the surface/device — wgpu requires the instance to outlive
     /// everything created from it.
     _instance: wgpu::Instance,
@@ -525,6 +541,7 @@ async fn run() -> Result<(), String> {
         cluster_eps: 0.012,
         cluster_min_pts: 8,
         clustered: false,
+        cluster_stats: None,
     }));
 
     wire_input(&gfx, &window, &canvas_for_input);
@@ -1089,6 +1106,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
         g.vol_needs_grid = true; // the volume density grid is rebuilt from the new points
         g.params.color_mode = 0; // the fresh buffer has no cluster ids
         g.clustered = false;
+        g.cluster_stats = None;
         // Re-apply auto-transfer (exposure + floor range) and bounds from the new meta; keep the
         // user's colormap / point size / opacity / MS mask.
         if let Some(m) = &meta {
@@ -1127,6 +1145,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
     reset_display(gfx, n);
     set_text("cl-readout", "—"); // clustering is invalidated by a new load
     set_checked("cl-color", false);
+    set_body_class("has-clusters", false);
 }
 
 /// Build the region + budget query string for `/points` and `/meta`.
@@ -1397,8 +1416,10 @@ fn invalidate_clusters_mut(g: &mut Gfx) {
     if g.clustered {
         g.params.color_mode = 0;
         g.clustered = false;
+        g.cluster_stats = None;
         set_text("cl-readout", "—");
         set_checked("cl-color", false);
+        set_body_class("has-clusters", false);
     }
 }
 
@@ -1455,12 +1476,13 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
     });
 }
 
-/// Write DBSCAN labels into the GPU buffer + recolor by cluster, then update the UI.
+/// Write DBSCAN labels into the GPU buffer + recolor by cluster, compute stats, then update the UI.
 fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: &[usize], labels: &[i32], k: usize) {
     let noise = labels.iter().filter(|&&l| l < 0).count();
     {
         let mut gb = gfx.borrow_mut();
         let g: &mut Gfx = &mut gb; // &mut Gfx so renderer/queue/cpu_points field-split
+        let stats = compute_cluster_stats(idx, labels, k, &g.cpu_points, g.axis_bounds);
         for pt in g.cpu_points.iter_mut() {
             pt._pad[0] = GpuPoint::NO_CLUSTER;
         }
@@ -1475,6 +1497,7 @@ fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: &[usize], labels: &[i32], k: u
         g.cpu_points = pts;
         g.params.color_mode = 1;
         g.clustered = true;
+        g.cluster_stats = Some(stats);
         g.view_mode = ViewMode::Points; // cluster colour is a point concept
         g.filter_dirty = true; // refresh the displayed-count HUD
     }
@@ -1486,7 +1509,117 @@ fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: &[usize], labels: &[i32], k: u
         "cl-readout",
         &format!("{k} clusters · {} noise · {} pts", group(noise), group(idx.len())),
     );
+    if let Some(s) = gfx.borrow().cluster_stats.as_ref() {
+        render_cluster_panel(s);
+    }
+    set_body_class("has-clusters", true);
     show_status("");
+}
+
+/// Aggregate per-cluster stats from the DBSCAN labels (intensity weighted by `weight` so it's
+/// downsample-independent; extents in real units via `axis_bounds`).
+fn compute_cluster_stats(
+    idx: &[usize],
+    labels: &[i32],
+    k: usize,
+    pts: &[GpuPoint],
+    bounds: Option<[(f64, f64); 3]>,
+) -> ClusterStats {
+    let mut sizes = vec![0f64; k];
+    let mut lo = vec![[f32::INFINITY; 3]; k];
+    let mut hi = vec![[f32::NEG_INFINITY; 3]; k];
+    let (mut signal_pts, mut noise_pts) = (0u64, 0u64);
+    let (mut signal_int, mut noise_int) = (0f64, 0f64);
+    for (j, &l) in labels.iter().enumerate() {
+        let pt = &pts[idx[j]];
+        let contrib = (pt.intensity * pt.weight) as f64;
+        if l < 0 {
+            noise_pts += 1;
+            noise_int += contrib;
+        } else {
+            let c = l as usize;
+            sizes[c] += 1.0;
+            signal_pts += 1;
+            signal_int += contrib;
+            for a in 0..3 {
+                lo[c][a] = lo[c][a].min(pt.pos[a]);
+                hi[c][a] = hi[c][a].max(pt.pos[a]);
+            }
+        }
+    }
+    // Normalized [-1,1] span -> real-unit extent on each axis.
+    let extent = |a: usize| -> Vec<f64> {
+        (0..k)
+            .map(|c| {
+                if sizes[c] == 0.0 {
+                    return 0.0;
+                }
+                let span = (hi[c][a] - lo[c][a]).max(0.0) as f64;
+                match bounds {
+                    Some(b) => span * 0.5 * (b[a].1 - b[a].0).abs(),
+                    None => span,
+                }
+            })
+            .collect()
+    };
+    ClusterStats {
+        k,
+        signal_pts,
+        noise_pts,
+        signal_int,
+        noise_int,
+        mz_extent: extent(0),
+        im_extent: extent(1),
+        rt_extent: extent(2),
+        sizes,
+    }
+}
+
+/// Fill the cluster stats panel: the summary table + four per-cluster histograms.
+fn render_cluster_panel(s: &ClusterStats) {
+    let total_pts = s.signal_pts + s.noise_pts;
+    let total_int = s.signal_int + s.noise_int;
+    set_text("cs-pts-t", &group_short(total_pts as usize));
+    set_text("cs-pts-c", &group_short(s.signal_pts as usize));
+    set_text("cs-pts-n", &group_short(s.noise_pts as usize));
+    set_text("cs-int-t", &group_short(total_int as usize));
+    set_text("cs-int-c", &group_short(s.signal_int as usize));
+    set_text("cs-int-n", &group_short(s.noise_int as usize));
+    set_text("cs-k", &s.k.to_string());
+    set_text(
+        "cs-ratio",
+        &if s.noise_pts > 0 {
+            format!("{:.1}×", s.signal_pts as f64 / s.noise_pts as f64)
+        } else {
+            "∞".into()
+        },
+    );
+    set_text("cs-sub", &format!("{} clusters · {} pts", s.k, group_short(total_pts as usize)));
+    set_hist_svg("csh-size", &hist_bins(&s.sizes, 24));
+    set_hist_svg("csh-mz", &hist_bins(&s.mz_extent, 24));
+    set_hist_svg("csh-im", &hist_bins(&s.im_extent, 24));
+    set_hist_svg("csh-rt", &hist_bins(&s.rt_extent, 24));
+}
+
+/// Bin non-negative values into `n` equal bins over `[0, max]` (counts per bin).
+fn hist_bins(values: &[f64], n: usize) -> Vec<u32> {
+    let mut h = vec![0u32; n.max(1)];
+    let max = values.iter().cloned().fold(0.0f64, f64::max);
+    if max <= 0.0 {
+        return h;
+    }
+    for &v in values {
+        let b = ((v / max) * (n as f64 - 1.0)).clamp(0.0, n as f64 - 1.0) as usize;
+        h[b] += 1;
+    }
+    h
+}
+
+/// Toggle a class on `<body>`.
+fn set_body_class(class: &str, on: bool) {
+    if let Some(body) = document().and_then(|d| d.body()) {
+        let _ = body.class_list().toggle_with_force(class, on);
+    }
 }
 
 /// Run a closure on the next macrotask (after a browser paint) via `setTimeout(0)`.
