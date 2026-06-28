@@ -33,7 +33,10 @@ pub fn serve(plan: Plan, port: u16) -> Result<()> {
     let total = plan.meta.total_points_estimate;
     let capacity = plan.budget.max(1).min((total as usize).max(1));
     let stride = crate::data::loader::stride_for(total, capacity) as u64;
-    let (points, stats, hist) = collect_points(plan)?;
+    let (mut points, stats, hist) = collect_points(plan)?;
+    // Shuffle so any prefix is a representative subsample: the client can then trade detail for
+    // performance by drawing just the first K points (and a buffer-size cap keeps a fair sample).
+    shuffle_points(&mut points);
     let n_points = points.len();
     // Prefer the loader's systematic-base percentiles (matches the native viewer's Stats); fall
     // back to computing over the served points (incl. the peak tail) only if Stats never arrived.
@@ -190,6 +193,21 @@ fn intensity_percentiles(points: &[GpuPoint]) -> (f32, f32, f32) {
         v[idx].max(1.0)
     };
     (pct(0.01), pct(0.50), pct(0.99))
+}
+
+/// In-place Fisher-Yates shuffle with a seeded xorshift64 (deterministic, no `rand` dependency).
+/// Decorrelates the loader's RT-ordered emission so a prefix of the array is a uniform subsample.
+fn shuffle_points(points: &mut [GpuPoint]) {
+    let mut s: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut next = || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        s
+    };
+    for i in (1..points.len()).rev() {
+        points.swap(i, (next() % (i as u64 + 1)) as usize);
+    }
 }
 
 /// Linear intensity histogram over `[0, hi]` (80 bins) in real counts; values above `hi` clamp to

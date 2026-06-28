@@ -29,6 +29,9 @@ pub struct PointCloudRenderer {
 
     capacity: u32,
     resident: u32,
+    /// How many of the resident points to actually draw (perf vs. detail at runtime). `u32::MAX`
+    /// means "all". Points are stored shuffled, so any prefix is a representative subsample.
+    draw_count: u32,
 
     camera_buf: wgpu::Buffer,
     params_buf: wgpu::Buffer,
@@ -258,6 +261,7 @@ impl PointCloudRenderer {
             master,
             capacity,
             resident: 0,
+            draw_count: u32::MAX,
             camera_buf,
             params_buf,
             compaction_buf,
@@ -300,6 +304,16 @@ impl PointCloudRenderer {
         n
     }
 
+    /// Set how many resident points to draw (clamped to resident when rendering).
+    pub fn set_draw_count(&mut self, n: u32) {
+        self.draw_count = n;
+    }
+
+    /// Points actually drawn this frame = `min(draw_count, resident)`.
+    fn effective(&self) -> u32 {
+        self.draw_count.min(self.resident)
+    }
+
     pub fn update_camera(&self, queue: &wgpu::Queue, cam: &CameraUniform) {
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(cam));
     }
@@ -314,18 +328,20 @@ impl PointCloudRenderer {
         let Some(compute) = &self.compute else {
             return;
         };
-        if self.resident == 0 {
+        let n = self.effective();
+        if n == 0 {
             return;
         }
         // Reset the survivor counter every frame (atomicAdd accumulates otherwise);
         // keep vertex_count=4 for the quad strip.
         queue.write_buffer(&compute.draw_args, 0, bytemuck::cast_slice(&[4u32, 0u32, 0u32, 0u32]));
         // 2D dispatch grid: a single dispatch dimension is capped at 65535 workgroups, which
-        // a 1D dispatch exceeds once resident points pass ~65535*256 (~16.8M). Spread the
+        // a 1D dispatch exceeds once the point count passes ~65535*256 (~16.8M). Spread the
         // workgroups across x and y and let the shader rebuild the linear index from
-        // row_stride (= invocations per row).
+        // row_stride (= invocations per row). Only the first `n` points are considered, so the
+        // shader's `i >= point_count` cull also enforces the runtime draw count.
         const MAX_DIM: u32 = 65535;
-        let groups = self.resident.div_ceil(WORKGROUP_SIZE);
+        let groups = n.div_ceil(WORKGROUP_SIZE);
         let groups_x = groups.min(MAX_DIM);
         let groups_y = groups.div_ceil(groups_x);
         let row_stride = groups_x * WORKGROUP_SIZE;
@@ -333,7 +349,7 @@ impl PointCloudRenderer {
             &self.compaction_buf,
             0,
             bytemuck::bytes_of(&CompactionUniform {
-                point_count: self.resident,
+                point_count: n,
                 row_stride,
                 _pad: [0; 2],
             }),
@@ -348,7 +364,8 @@ impl PointCloudRenderer {
     }
 
     pub fn render(&self, rpass: &mut wgpu::RenderPass<'_>, mode: PointMode) {
-        if self.resident == 0 {
+        let n = self.effective();
+        if n == 0 {
             return;
         }
         let pipeline = match mode {
@@ -362,9 +379,9 @@ impl PointCloudRenderer {
             rpass.set_vertex_buffer(0, compute.compacted.slice(..));
             rpass.draw_indirect(&compute.draw_args, 0);
         } else {
-            // Fallback (e.g. WebGL2): draw all resident points, cull in the vertex shader.
+            // Fallback (e.g. WebGL2): draw the first `n` resident points, cull in the vertex shader.
             rpass.set_vertex_buffer(0, self.master.slice(..));
-            rpass.draw(0..4, 0..self.resident);
+            rpass.draw(0..4, 0..n);
         }
     }
 }

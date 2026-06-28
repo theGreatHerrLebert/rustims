@@ -367,6 +367,8 @@ async fn run() -> Result<(), String> {
             set_hist_svg("floor-hist", ih);
         }
     }
+    // Runtime detail/performance control over how many of the loaded points are drawn.
+    bind_display(&gfx);
 
     // Track CSS/DPR changes (window resize fires on zoom + monitor moves too).
     {
@@ -848,6 +850,29 @@ fn group(n: usize) -> String {
         out.push(*c as char);
     }
     out
+}
+
+/// Bind the Display slider (1..100 %) to the renderer's runtime draw count — trade detail for
+/// performance live, with no re-upload. Points are shuffled server-side, so the drawn prefix is a
+/// representative subsample at any fraction. Also reflects the drawn count in the HUD.
+fn bind_display(gfx: &Rc<RefCell<Gfx>>) {
+    let Some(slider) = by_id::<web_sys::HtmlInputElement>("disp") else {
+        return;
+    };
+    let total = gfx.borrow().renderer.resident();
+    let apply: std::rc::Rc<dyn Fn()> = {
+        let (gfx, s) = (gfx.clone(), slider.clone());
+        std::rc::Rc::new(move || {
+            let pct = (s.value_as_number() / 100.0).clamp(0.0, 1.0);
+            let k = ((total as f64) * pct).round().max(1.0) as u32;
+            gfx.borrow_mut().renderer.set_draw_count(k);
+            set_text("disp-v", &group(k as usize));
+            set_text("hud-points", &group(k as usize));
+        })
+    };
+    apply(); // honor the slider's current (possibly browser-restored) value on startup
+    let apply_c = apply.clone();
+    add_listener(slider.as_ref(), "input", move |_e: web_sys::Event| apply_c());
 }
 
 /// Bind a slider + its editable number field bidirectionally to a render parameter: dragging the
