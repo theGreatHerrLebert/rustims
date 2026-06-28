@@ -1077,11 +1077,46 @@ async fn load_region(gfx: Rc<RefCell<Gfx>>, region: Region, budget: Option<usize
 fn compute_focus_region(g: &Gfx) -> Option<Region> {
     let b = g.axis_bounds?;
     let p = &g.params;
+    let (fmin, fmax, ms) = (p.filter_min, p.filter_max, p.ms_mask);
+    let limit = (g.renderer.drawn() as usize).min(g.cpu_points.len());
+    // Fit the box to the points that actually survive the active 4D filter (window + intensity
+    // floor + MS) — NOT to the crop sliders. Otherwise points removed by the intensity floor still
+    // "hold the box open" to the full extent. Survivors already lie inside any active spatial crop.
+    let mut lo = [f32::INFINITY; 3];
+    let mut hi = [f32::NEG_INFINITY; 3];
+    let mut n = 0u64;
+    for pt in &g.cpu_points[..limit] {
+        let pos = pt.pos;
+        if pos[0] < fmin[0]
+            || pos[0] > fmax[0]
+            || pos[1] < fmin[1]
+            || pos[1] > fmax[1]
+            || pos[2] < fmin[2]
+            || pos[2] > fmax[2]
+            || pt.intensity < fmin[3]
+        {
+            continue;
+        }
+        let is_ms2 = (pt.flags & GpuPoint::MS2_FLAG) != 0;
+        if !(if is_ms2 { ms & 0b10 != 0 } else { ms & 0b01 != 0 }) {
+            continue;
+        }
+        for a in 0..3 {
+            lo[a] = lo[a].min(pos[a]);
+            hi[a] = hi[a].max(pos[a]);
+        }
+        n += 1;
+    }
+    if n == 0 {
+        return None; // nothing visible to focus on
+    }
+    // Normalized survivor bbox -> real units, with a small margin (and a floor so a thin axis can't
+    // collapse to zero width).
     let lerp = |rng: (f64, f64), norm: f32| rng.0 + ((norm as f64 + 1.0) * 0.5) * (rng.1 - rng.0);
     let mk = |axis: usize| {
-        let a = lerp(b[axis], p.filter_min[axis]);
-        let c = lerp(b[axis], p.filter_max[axis]);
-        (a.min(c), a.max(c))
+        let m = ((hi[axis] - lo[axis]) * 0.02).max(0.01);
+        let (a, c) = ((lo[axis] - m).max(-1.0), (hi[axis] + m).min(1.0));
+        (lerp(b[axis], a), lerp(b[axis], c))
     };
     let (mz, im, rt) = (mk(0), mk(1), mk(2));
     let ok = |r: (f64, f64)| r.0.is_finite() && r.1.is_finite() && r.1 > r.0;
