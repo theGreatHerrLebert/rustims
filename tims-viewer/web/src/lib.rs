@@ -173,9 +173,13 @@ struct Gfx {
     cluster_labels: Vec<i32>,
     cluster_sel: Option<i32>,
     /// Persistent DBSCAN worker (lazily created; `None` if workers are unavailable → main-thread
-    /// fallback), and the in-flight job's (survivor idx, data generation) awaiting its reply.
+    /// fallback), and the in-flight job's (survivor idx, data generation, job id) awaiting its reply.
+    /// `job_id` distinguishes a superseded job's late reply; `worker_failed` latches a runtime failure
+    /// so we stop recreating a broken worker and use the main thread.
     cluster_worker: Option<web_sys::Worker>,
-    cluster_pending: Option<(Vec<usize>, u64)>,
+    cluster_pending: Option<(Vec<usize>, u64, u64)>,
+    next_cluster_job: u64,
+    cluster_worker_failed: bool,
     /// Declared last so it drops AFTER the surface/device — wgpu requires the instance to outlive
     /// everything created from it.
     _instance: wgpu::Instance,
@@ -574,6 +578,8 @@ async fn run() -> Result<(), String> {
         cluster_sel: None,
         cluster_worker: None,
         cluster_pending: None,
+        next_cluster_job: 0,
+        cluster_worker_failed: false,
     }));
 
     wire_input(&gfx, &window, &canvas_for_input);
@@ -1522,8 +1528,13 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
     // replies via its onmessage handler, which calls finish_clustering.
     if let Some(worker) = ensure_cluster_worker(gfx) {
         let flat: Vec<f32> = positions.iter().flatten().copied().collect();
-        if post_cluster_job(&worker, &flat, eps, min_pts) {
-            gfx.borrow_mut().cluster_pending = Some((idx, gen));
+        let job = {
+            let mut g = gfx.borrow_mut();
+            g.next_cluster_job = g.next_cluster_job.wrapping_add(1);
+            g.next_cluster_job
+        };
+        if post_cluster_job(&worker, &flat, eps, min_pts, job) {
+            gfx.borrow_mut().cluster_pending = Some((idx, gen, job));
             return;
         }
     }
@@ -1541,17 +1552,23 @@ const CLUSTER_WORKER_SRC: &str = r#"
 import init, { cluster_dbscan_flat } from '__GLUE__';
 await init({ module_or_path: '__WASM__' });
 self.onmessage = (e) => {
-  const { flat, eps, min_pts } = e.data;
+  const { flat, eps, min_pts, job } = e.data;
   const labels = cluster_dbscan_flat(new Float32Array(flat), min_pts, eps);
-  self.postMessage({ labels }, [labels.buffer]);
+  self.postMessage({ labels, job }, [labels.buffer]);
 };
 "#;
 
 /// Return the persistent DBSCAN worker, creating it on first use. `None` (→ main-thread fallback) if
 /// workers are unavailable or the wasm/glue URLs can't be discovered.
 fn ensure_cluster_worker(gfx: &Rc<RefCell<Gfx>>) -> Option<web_sys::Worker> {
-    if let Some(w) = gfx.borrow().cluster_worker.clone() {
-        return Some(w);
+    {
+        let g = gfx.borrow();
+        if g.cluster_worker_failed {
+            return None; // a prior runtime failure latched — stay on the main thread
+        }
+        if let Some(w) = g.cluster_worker.clone() {
+            return Some(w);
+        }
     }
     let w = create_cluster_worker(gfx)?;
     gfx.borrow_mut().cluster_worker = Some(w.clone());
@@ -1575,25 +1592,43 @@ fn create_cluster_worker(gfx: &Rc<RefCell<Gfx>>) -> Option<web_sys::Worker> {
     let src = CLUSTER_WORKER_SRC.replace("__GLUE__", &glue).replace("__WASM__", &wasm);
 
     let parts = js_sys::Array::of1(&JsValue::from_str(&src));
-    let blob = web_sys::Blob::new_with_str_sequence(&parts).ok()?;
+    let bag = web_sys::BlobPropertyBag::new();
+    bag.set_type("text/javascript"); // module workers require a JS MIME on the script
+    let blob = web_sys::Blob::new_with_str_sequence_and_options(&parts, &bag).ok()?;
     let url = web_sys::Url::create_object_url_with_blob(&blob).ok()?;
     let opts = web_sys::WorkerOptions::new();
     opts.set_type(web_sys::WorkerType::Module);
     let worker = web_sys::Worker::new_with_options(&url, &opts).ok()?;
     let _ = web_sys::Url::revoke_object_url(&url); // the worker has captured the script
 
-    // Reply handler: pair the labels with the pending (idx, gen) and finish on the main thread.
+    // Reply handler: only finish the reply whose job id matches the pending one (a superseded job's
+    // late reply carries a stale id and is ignored).
     let gfx_msg = gfx.clone();
     let cb = wasm_bindgen::closure::Closure::<dyn FnMut(web_sys::MessageEvent)>::new(
         move |e: web_sys::MessageEvent| {
-            let Some(labels) = js_sys::Reflect::get(&e.data(), &JsValue::from_str("labels"))
-                .ok()
+            let data = e.data();
+            let get = |k: &str| js_sys::Reflect::get(&data, &JsValue::from_str(k)).ok();
+            let Some(labels) = get("labels")
                 .and_then(|v| v.dyn_into::<js_sys::Int32Array>().ok())
                 .map(|a| a.to_vec())
             else {
                 return;
             };
-            if let Some((idx, gen)) = gfx_msg.borrow_mut().cluster_pending.take() {
+            let reply_job = get("job").and_then(|v| v.as_f64()).map(|f| f as u64);
+            let job = {
+                let g = gfx_msg.borrow();
+                match (&g.cluster_pending, reply_job) {
+                    (Some((_, _, pj)), Some(rj)) if *pj == rj => Some(rj),
+                    _ => None, // no pending / superseded job — drop this reply
+                }
+            };
+            if job.is_none() {
+                return;
+            }
+            if let Some((idx, gen, _)) = gfx_msg.borrow_mut().cluster_pending.take() {
+                if labels.len() != idx.len() {
+                    return; // malformed reply — never index past the survivor set
+                }
                 let k = labels.iter().copied().max().map_or(0, |m| (m + 1).max(0) as usize);
                 finish_clustering(&gfx_msg, idx, labels, k, gen);
             }
@@ -1602,28 +1637,32 @@ fn create_cluster_worker(gfx: &Rc<RefCell<Gfx>>) -> Option<web_sys::Worker> {
     worker.set_onmessage(Some(cb.as_ref().unchecked_ref()));
     cb.forget(); // the worker lives for the app's lifetime
 
-    // If the worker fails (e.g. its wasm can't load), drop it so the next Run uses the main thread,
-    // and release any stuck pending job.
-    let gfx_err = gfx.clone();
-    add_listener(worker.as_ref(), "error", move |_e: web_sys::Event| {
-        let mut g = gfx_err.borrow_mut();
-        g.cluster_pending = None;
-        g.cluster_worker = None;
-        drop(g);
-        show_status("clustering worker unavailable — runs on the main thread");
-    });
+    // A runtime failure (e.g. the worker's wasm can't load, or a message can't deserialize) latches
+    // `cluster_worker_failed` so every later Run uses the main thread instead of rebuilding a broken
+    // worker; also release any stuck pending job.
+    for ev in ["error", "messageerror"] {
+        let gfx_err = gfx.clone();
+        add_listener(worker.as_ref(), ev, move |_e: web_sys::Event| {
+            let mut g = gfx_err.borrow_mut();
+            g.cluster_pending = None;
+            g.cluster_worker = None;
+            g.cluster_worker_failed = true;
+            drop(g);
+            show_status("clustering worker unavailable — runs on the main thread");
+        });
+    }
     Some(worker)
 }
 
 /// Post a clustering job (the flat positions buffer is transferred, not copied) to the worker.
-fn post_cluster_job(worker: &web_sys::Worker, flat: &[f32], eps: f32, min_pts: usize) -> bool {
+fn post_cluster_job(worker: &web_sys::Worker, flat: &[f32], eps: f32, min_pts: usize, job: u64) -> bool {
     let arr = js_sys::Float32Array::from(flat);
     let msg = js_sys::Object::new();
     let set = |k: &str, v: &JsValue| js_sys::Reflect::set(&msg, &JsValue::from_str(k), v).is_ok();
     if !set("flat", &arr.buffer()) || !set("eps", &JsValue::from_f64(eps as f64)) {
         return false;
     }
-    if !set("min_pts", &JsValue::from_f64(min_pts as f64)) {
+    if !set("min_pts", &JsValue::from_f64(min_pts as f64)) || !set("job", &JsValue::from_f64(job as f64)) {
         return false;
     }
     let transfer = js_sys::Array::of1(&arr.buffer());
@@ -1640,6 +1679,10 @@ fn reupload_points(g: &mut Gfx) {
 
 /// Write DBSCAN labels into the GPU buffer + recolor by cluster, compute stats, then update the UI.
 fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: Vec<usize>, labels: Vec<i32>, k: usize, gen: u64) {
+    if labels.len() != idx.len() {
+        show_status(""); // malformed result — never index past the survivor set
+        return;
+    }
     let noise = labels.iter().filter(|&&l| l < 0).count();
     let n_in = idx.len();
     {
