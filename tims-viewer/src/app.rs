@@ -761,14 +761,19 @@ impl Gfx {
         &mut self,
         frame_ids: Vec<u32>,
         bounds: crate::data::point::AxisBounds,
+        // Stride estimate: the region-relative survivor estimate (== `demo_source_total` for a full
+        // load, or scaled by the m/z·1/K0 window for a refinement).
         total: u64,
+        // Actual points the DEMO source should generate (the RT-region size, BEFORE the m/z·1/K0
+        // cull) — the loader's region filter then culls it once. For real data this is unused.
+        demo_source_total: u64,
         filter: Option<crate::data::loader::RegionFilter>,
     ) {
         let capacity = self.state.capacity as usize;
         // Stay in the source's mode: a DEMO session must respawn a synthetic source, not try
         // to open a real `.d` at the placeholder path.
         let mode = if self.is_demo {
-            LoaderMode::Demo(DemoSource::new(frame_ids.len(), total))
+            LoaderMode::Demo(DemoSource::new(frame_ids.len(), demo_source_total))
         } else {
             LoaderMode::Real {
                 path: self.full_meta.data_path.clone(),
@@ -848,7 +853,8 @@ impl Gfx {
         let b = &self.full_meta.bounds;
         let mz_frac = ((mz1 - mz0) / (b.mz.max - b.mz.min).max(1e-9)).clamp(0.0, 1.0);
         let im_frac = ((im1 - im0) / (b.im.max - b.im.min).max(1e-9)).clamp(0.0, 1.0);
-        let total = (((total as f64) * mz_frac * im_frac).ceil() as u64).max(1);
+        // `total` is the RT-region size (all m/z·1/K0); the stride estimate scales it by the window.
+        let estimate = (((total as f64) * mz_frac * im_frac).ceil() as u64).max(1);
         let bounds = AxisBounds {
             mz: AxisTransform::new(mz0, mz1),
             im: AxisTransform::new(im0, im1),
@@ -859,7 +865,7 @@ impl Gfx {
             im: (im0, im1),
             intensity_min: 0.0, // native region refinement does not cull intensity at the source
         });
-        self.respawn_loader(frame_ids, bounds, total, filter);
+        self.respawn_loader(frame_ids, bounds, estimate, total, filter);
         self.state.refined = true;
     }
 
@@ -969,7 +975,7 @@ impl Gfx {
         let frame_ids: Vec<u32> = self.full_meta.frames.iter().map(|f| f.id).collect();
         let bounds = self.full_meta.bounds;
         let total = self.full_meta.total_points_estimate;
-        self.respawn_loader(frame_ids, bounds, total, None);
+        self.respawn_loader(frame_ids, bounds, total, total, None);
         self.state.refined = false;
     }
 

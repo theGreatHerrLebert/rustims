@@ -318,8 +318,8 @@ fn run_loader(
     let mut global_i: u64 = 0;
     let stride_u64 = stride as u64;
 
-    // Per-point handler shared by both sources: update the peak grid for EVERY point,
-    // and emit every stride-th into the systematic density base.
+    // Per-point handler shared by both sources: cull against the region filter first, then update
+    // the peak grid for every SURVIVING point and emit every stride-th into the systematic base.
     macro_rules! handle_point {
         ($mz:expr, $im:expr, $rt:expr, $it:expr, $ms2:expr) => {{
             let intensity = $it;
@@ -832,12 +832,19 @@ mod tests {
         let (sys_full, _) =
             drain(LoaderHandle::spawn(LoaderMode::Demo(demo()), demo_bounds(), total, budget, region));
 
-        // 85% of the budget is the systematic base; region estimate should land near it.
-        assert!(
-            sys_region as f64 >= 0.6 * budget as f64,
-            "region estimate underfilled the budget: sys={sys_region} budget={budget}"
+        // Exact: the systematic base keeps every `stride`-th SURVIVOR, where the stride is sized to
+        // the survivor count. This equals ceil(survivors/stride) only if `global_i` advances solely
+        // for survivors — it would fail if culled points still advanced the index.
+        let systematic_budget = (budget * 85 / 100).max(1);
+        let stride = stride_for(survivors as u64, systematic_budget) as u64;
+        let expected = (survivors as u64).div_ceil(stride) as usize;
+        assert_eq!(
+            sys_region, expected,
+            "region systematic count must be exactly ceil(survivors/stride): \
+             survivors={survivors} stride={stride}"
         );
-        // Full-run estimate spends only ~(survivors/total) of it — far less.
+        // The full-run estimate sizes the stride to ~total, spending only ~(survivors/total) of the
+        // budget — far less than the region estimate. This is the blocker-1 regression guard.
         assert!(
             (sys_full as f64) < 0.5 * sys_region as f64,
             "full-run estimate did not under-spend (blocker-1 unfixed): full={sys_full} region={sys_region}"
