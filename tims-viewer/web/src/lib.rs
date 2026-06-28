@@ -94,9 +94,10 @@ struct Gfx {
     /// Set when the active filter or draw count changes; the next frame recomputes the displayed
     /// count (CPU-side over `cpu_points`) — camera-independent, so it need not run every frame.
     filter_dirty: bool,
-    /// Focus stack of loaded regions (`last()` = current view; index 0 = the full run). Focus
-    /// pushes; Back pops. Empty in the demo fallback (focus disabled).
-    focus_stack: Vec<Region>,
+    /// Focus stack of `(region, budget)` (`last()` = current view; index 0 = the full run). The
+    /// root's budget is `None` => loaded via no-query so it hits the server's pinned full-run cache.
+    /// Focus pushes; Back pops. Empty in the demo fallback (focus disabled).
+    focus_stack: Vec<(Region, Option<usize>)>,
     /// Declared last so it drops AFTER the surface/device — wgpu requires the instance to outlive
     /// everything created from it.
     _instance: wgpu::Instance,
@@ -390,7 +391,7 @@ async fn run() -> Result<(), String> {
         reloading: false,
         filter_dirty: true,
         focus_stack: axis_bounds
-            .map(|b| vec![Region { mz: b[0], im: b[1], rt: b[2], imin: 0.0 }])
+            .map(|b| vec![(Region { mz: b[0], im: b[1], rt: b[2], imin: 0.0 }, None)])
             .unwrap_or_default(),
     }));
 
@@ -604,7 +605,7 @@ async fn fetch_points(url: &str) -> Result<Vec<GpuPoint>, String> {
     let len = bytes.length();
     let stride = std::mem::size_of::<GpuPoint>() as u32;
     if len == 0 {
-        return Err("empty body".into());
+        return Ok(Vec::new()); // a valid empty region (the caller decides what to show)
     }
     if len % stride != 0 {
         return Err(format!("body {len} bytes is not a multiple of the {stride}-byte point stride"));
@@ -963,42 +964,80 @@ fn region_query(r: &Region, budget: usize) -> String {
     )
 }
 
-/// The focus-lens load primitive: re-fetch a region at a budget and rebuild the GPU buffer.
-/// `push` records the region on the focus stack (Focus); Back / Load-budget pass `false`.
-/// Debounced via `reloading`.
-async fn load_region(gfx: Rc<RefCell<Gfx>>, region: Region, budget: usize, push: bool) {
+/// Which way `load_region` mutates the focus stack — applied only AFTER a successful load.
+#[derive(Clone, Copy)]
+enum StackOp {
+    Push,
+    Pop,
+    Keep,
+}
+
+/// The focus-lens load primitive: re-fetch a region and rebuild the GPU buffer. `budget == None`
+/// loads the pinned full run via no-query (cache hit for Back-to-root); `Some(b)` is an explicit
+/// region+budget query. The stack op is applied only after the load succeeds, so a debounced or
+/// failed load never desyncs the stack from the displayed view. Debounced via `reloading`.
+async fn load_region(gfx: Rc<RefCell<Gfx>>, region: Region, budget: Option<usize>, op: StackOp) {
     {
         let mut g = gfx.borrow_mut();
-        if g.reloading || g.points_base.is_empty() {
+        if g.reloading || g.focus_stack.is_empty() {
             return;
         }
         g.reloading = true;
     }
+    refresh_controls(&gfx); // disable focus/back/load while a load is in flight
     let base = gfx.borrow().points_base.clone();
-    let q = region_query(&region, budget);
-    let purl = with_query(&base, &q);
-    let murl = with_query(&meta_url(&base), &q);
+    let q = budget.map(|b| region_query(&region, b));
+    let purl = q.as_ref().map_or_else(|| base.clone(), |q| with_query(&base, q));
+    let mbase = meta_url(&base);
+    let murl = q.as_ref().map_or(mbase.clone(), |q| with_query(&mbase, q));
     show_status("loading…");
-    let meta = fetch_meta(&murl).await.ok();
-    let result = fetch_points(&purl).await;
+    // Require BOTH meta and points: applying points without their matching meta would leave
+    // axis_bounds stale while the buffer is normalized to the new region (breaks nested Focus).
+    let meta = fetch_meta(&murl).await;
+    let pts = fetch_points(&purl).await;
     gfx.borrow_mut().reloading = false;
-    match result {
-        Ok(pts) if !pts.is_empty() => {
-            apply_load(&gfx, meta, pts);
-            if push {
-                gfx.borrow_mut().focus_stack.push(region);
+    match (meta, pts) {
+        (Ok(meta), Ok(pts)) if !pts.is_empty() => {
+            apply_load(&gfx, Some(meta), pts);
+            // Maintain the stack from the SERVER-canonical bounds (apply_load set axis_bounds), so
+            // `stack.last()` always matches the displayed view.
+            let canonical = gfx.borrow().axis_bounds.map(|b| Region {
+                mz: b[0],
+                im: b[1],
+                rt: b[2],
+                imin: region.imin,
+            });
+            {
+                let mut g = gfx.borrow_mut();
+                match op {
+                    StackOp::Push => {
+                        if let Some(c) = canonical {
+                            g.focus_stack.push((c, budget));
+                        }
+                    }
+                    StackOp::Pop => {
+                        if g.focus_stack.len() > 1 {
+                            g.focus_stack.pop();
+                        }
+                    }
+                    StackOp::Keep => {
+                        if let (Some(c), Some(top)) = (canonical, g.focus_stack.last_mut()) {
+                            *top = (c, budget);
+                        }
+                    }
+                }
             }
-            update_back_button(&gfx);
             show_status("");
         }
-        Ok(_) => show_status("region is empty — nothing matched"),
-        Err(e) => show_status(&format!("load failed: {e}")),
+        (Ok(_), Ok(_)) => show_status("region is empty — nothing matched"),
+        (Err(e), _) | (_, Err(e)) => show_status(&format!("load failed: {e}")),
     }
+    refresh_controls(&gfx);
 }
 
 /// The current crop box + intensity floor, mapped from the normalized cube back to real units of
 /// the current view — the region to focus on. `None` for the demo (no real bounds) or a degenerate
-/// (zero-width) box that would divide-by-zero when re-normalized.
+/// (zero/negative-width or non-finite) box that would divide-by-zero when re-normalized.
 fn compute_focus_region(g: &Gfx) -> Option<Region> {
     let b = g.axis_bounds?;
     let p = &g.params;
@@ -1009,15 +1048,18 @@ fn compute_focus_region(g: &Gfx) -> Option<Region> {
         (a.min(c), a.max(c))
     };
     let (mz, im, rt) = (mk(0), mk(1), mk(2));
-    let wide = |r: (f64, f64), full: (f64, f64)| (r.1 - r.0) > (full.1 - full.0).abs() * 1e-4;
-    if !wide(mz, b[0]) || !wide(im, b[1]) || !wide(rt, b[2]) {
+    let ok = |r: (f64, f64)| r.0.is_finite() && r.1.is_finite() && r.1 > r.0;
+    if !ok(mz) || !ok(im) || !ok(rt) {
         return None;
     }
     Some(Region { mz, im, rt, imin: p.filter_min[3].max(0.0) })
 }
 
-/// Focus on the current crop+floor box: push it and re-load at full budget (high local detail).
+/// Focus on the current crop+floor box: re-load it at full budget and push it on success.
 fn do_focus(gfx: &Rc<RefCell<Gfx>>) {
+    if gfx.borrow().reloading {
+        return;
+    }
     let region = match compute_focus_region(&gfx.borrow()) {
         Some(r) => r,
         None => {
@@ -1026,52 +1068,52 @@ fn do_focus(gfx: &Rc<RefCell<Gfx>>) {
         }
     };
     let budget = gfx.borrow().n_cap;
-    wasm_bindgen_futures::spawn_local(load_region(gfx.clone(), region, budget, true));
+    wasm_bindgen_futures::spawn_local(load_region(gfx.clone(), region, Some(budget), StackOp::Push));
 }
 
-/// Pop the focus stack and re-load the previous (coarser) region.
+/// Re-load the region one level down the stack; pop only after it succeeds.
 fn do_back(gfx: &Rc<RefCell<Gfx>>) {
-    let region = {
-        let mut g = gfx.borrow_mut();
-        if g.focus_stack.len() <= 1 {
+    let target = {
+        let g = gfx.borrow();
+        if g.reloading || g.focus_stack.len() <= 1 {
             return;
         }
-        g.focus_stack.pop();
-        match g.focus_stack.last() {
-            Some(r) => *r,
-            None => return,
-        }
+        g.focus_stack[g.focus_stack.len() - 2] // peek; load_region pops on success
     };
-    let budget = gfx.borrow().n_cap;
-    wasm_bindgen_futures::spawn_local(load_region(gfx.clone(), region, budget, false));
+    wasm_bindgen_futures::spawn_local(load_region(gfx.clone(), target.0, target.1, StackOp::Pop));
 }
 
-/// Enable Back only when focused, and show the focus depth.
-fn update_back_button(gfx: &Rc<RefCell<Gfx>>) {
-    let depth = gfx.borrow().focus_stack.len();
-    if let Some(btn) = by_id::<web_sys::HtmlElement>("focus-back") {
-        if depth > 1 {
-            let _ = btn.remove_attribute("disabled");
+/// Set/clear the `disabled` attribute on an element.
+fn set_disabled(id: &str, disabled: bool) {
+    if let Some(el) = by_id::<web_sys::HtmlElement>(id) {
+        if disabled {
+            let _ = el.set_attribute("disabled", "true");
         } else {
-            let _ = btn.set_attribute("disabled", "true");
+            let _ = el.remove_attribute("disabled");
         }
     }
+}
+
+/// Reflect the current load/focus state onto the controls: Focus/Load active only with a server +
+/// a non-empty stack and no load in flight; Back active only when focused; show the focus depth.
+fn refresh_controls(gfx: &Rc<RefCell<Gfx>>) {
+    let (busy, has_server, depth) = {
+        let g = gfx.borrow();
+        (g.reloading, !g.points_base.is_empty(), g.focus_stack.len())
+    };
+    let active = has_server && depth >= 1 && !busy;
+    for id in ["focus-go", "load-go", "load-n"] {
+        set_disabled(id, !active);
+    }
+    set_disabled("focus-back", busy || !has_server || depth <= 1);
     set_text(
         "focus-depth",
         &if depth > 1 { format!("L{}", depth - 1) } else { String::new() },
     );
 }
 
-/// Wire the Focus / Back buttons (disabled in the demo fallback).
+/// Wire the Focus / Back buttons; control enable/disable is driven by `refresh_controls`.
 fn bind_focus(gfx: &Rc<RefCell<Gfx>>) {
-    if gfx.borrow().points_base.is_empty() {
-        for id in ["focus-go", "focus-back"] {
-            if let Some(btn) = by_id::<web_sys::HtmlElement>(id) {
-                let _ = btn.set_attribute("disabled", "true");
-            }
-        }
-        return;
-    }
     if let Some(btn) = by_id::<web_sys::HtmlElement>("focus-go") {
         let gfx = gfx.clone();
         add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| do_focus(&gfx));
@@ -1080,7 +1122,7 @@ fn bind_focus(gfx: &Rc<RefCell<Gfx>>) {
         let gfx = gfx.clone();
         add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| do_back(&gfx));
     }
-    update_back_button(gfx);
+    refresh_controls(gfx);
 }
 
 /// Wire the Load control: show N_cap, initialize to the resident count, and re-fetch the run at the
@@ -1110,10 +1152,16 @@ fn bind_load(gfx: &Rc<RefCell<Gfx>>) {
             let v = num.value_as_number();
             if v.is_finite() && v >= 1.0 {
                 let budget = (v as usize).min(n_cap).max(1);
-                // Re-load the CURRENT region (focus stack top) at the new budget — no stack change.
-                let region = gfx.borrow().focus_stack.last().copied();
+                // Re-load the CURRENT region (focus stack top) at the new budget — Keep updates the
+                // top entry's budget, no push/pop.
+                let region = gfx.borrow().focus_stack.last().map(|(r, _)| *r);
                 if let Some(region) = region {
-                    wasm_bindgen_futures::spawn_local(load_region(gfx.clone(), region, budget, false));
+                    wasm_bindgen_futures::spawn_local(load_region(
+                        gfx.clone(),
+                        region,
+                        Some(budget),
+                        StackOp::Keep,
+                    ));
                 }
             }
         }
