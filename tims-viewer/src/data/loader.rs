@@ -75,22 +75,20 @@ pub enum LoadCmd {
     Cancel,
 }
 
-/// Optional real-unit m/z + 1/K0 window applied per-point during a region refinement load
-/// (frame selection already handles the RT window). Points outside are skipped at the source.
+/// Optional real-unit m/z + 1/K0 + intensity cull applied per-point during a region refinement
+/// load (frame selection already handles the RT window). Points outside are skipped at the source,
+/// so the budget concentrates on the focused region (the 4D lens — see FOCUS_LENS_PLAN.md).
 #[derive(Clone, Copy)]
 pub struct RegionFilter {
     pub mz: (f64, f64),
     pub im: (f64, f64),
+    /// Per-point intensity floor (real counts); points below are dropped at the source.
+    pub intensity_min: f32,
 }
 
 /// What to stream.
 pub enum LoaderMode {
-    Real {
-        path: String,
-        frame_ids: Vec<u32>,
-        /// Per-point m/z·1/K0 cull for region refinement (`None` for the full run).
-        filter: Option<RegionFilter>,
-    },
+    Real { path: String, frame_ids: Vec<u32> },
     Demo(DemoSource),
 }
 
@@ -107,13 +105,14 @@ impl LoaderHandle {
         bounds: AxisBounds,
         total_estimate: u64,
         budget: usize,
+        filter: Option<RegionFilter>,
     ) -> Self {
         let (msg_tx, msg_rx) = bounded::<LoadMsg>(8);
         let (cmd_tx, cmd_rx) = bounded::<LoadCmd>(4);
         let handle = std::thread::Builder::new()
             .name("tims-loader".into())
             .spawn(move || {
-                run_loader(mode, bounds, total_estimate, budget, &msg_tx, &cmd_rx);
+                run_loader(mode, bounds, total_estimate, budget, filter, &msg_tx, &cmd_rx);
             })
             .expect("failed to spawn loader thread");
         LoaderHandle {
@@ -205,6 +204,7 @@ fn run_loader(
     bounds: AxisBounds,
     total_estimate: u64,
     budget: usize,
+    filter: Option<RegionFilter>,
     tx: &Sender<LoadMsg>,
     cmd_rx: &Receiver<LoadCmd>,
 ) {
@@ -323,6 +323,17 @@ fn run_loader(
     macro_rules! handle_point {
         ($mz:expr, $im:expr, $rt:expr, $it:expr, $ms2:expr) => {{
             let intensity = $it;
+            // Region cull (the 4D lens): drop points outside the m/z·1/K0·intensity window at the
+            // source so the budget concentrates on the focused region. RT is handled by frame
+            // selection. `global_i` is not advanced for culled points, so the systematic stride
+            // counts only survivors.
+            if let Some(f) = &filter {
+                if $mz < f.mz.0 || $mz > f.mz.1 || $im < f.im.0 || $im > f.im.1
+                    || intensity < f.intensity_min
+                {
+                    continue;
+                }
+            }
             let pos = bounds.normalize($mz, $im, $rt);
             let flags = if $ms2 { GpuPoint::MS2_FLAG } else { 0 };
             // Peak: keep the highest-intensity point per coarse cell.
@@ -357,7 +368,7 @@ fn run_loader(
     }
 
     match &mode {
-        LoaderMode::Real { frame_ids, filter, .. } => {
+        LoaderMode::Real { frame_ids, .. } => {
             use rayon::prelude::*;
             let ds = dataset.as_ref().unwrap();
             // Decode frames in parallel batches (the heavy, CPU-bound part — every core helps),
@@ -383,13 +394,6 @@ fn run_loader(
                     // Validate parallel arrays — never zip past the shortest.
                     let n = mz.len().min(im.len()).min(it.len());
                     for j in 0..n {
-                        // Region refinement: drop points outside the m/z·1/K0 window at the
-                        // source so the budget is spent only on the focused region.
-                        if let Some(f) = filter {
-                            if mz[j] < f.mz.0 || mz[j] > f.mz.1 || im[j] < f.im.0 || im[j] > f.im.1 {
-                                continue;
-                            }
-                        }
                         handle_point!(mz[j], im[j], rt, it[j] as f32, is_ms2);
                     }
                 }
@@ -751,7 +755,7 @@ mod tests {
         let budget = 50_000usize;
         let demo = DemoSource::new(20, total);
         let handle =
-            LoaderHandle::spawn(LoaderMode::Demo(demo), demo_bounds(), total, budget);
+            LoaderHandle::spawn(LoaderMode::Demo(demo), demo_bounds(), total, budget, None);
 
         let mut points = 0usize;
         let mut saw_stats = false;
@@ -786,5 +790,57 @@ mod tests {
         assert!(points > 0, "loader produced no points");
         // ~budget points (stride=2 over 100k); allow generous slack.
         assert!(points <= 70_000, "downsample exceeded budget: {points}");
+    }
+
+    /// Drain a loader run, returning (systematic base count, peak count).
+    fn drain(handle: LoaderHandle) -> (usize, usize) {
+        let (mut sys, mut pk) = (0usize, 0usize);
+        loop {
+            match handle.rx.recv_timeout(Duration::from_secs(30)) {
+                Ok(LoadMsg::Chunk { points, .. }) => sys += points.len(),
+                Ok(LoadMsg::PeakChunk { points }) => pk += points.len(),
+                Ok(LoadMsg::Done { .. }) => break,
+                Ok(LoadMsg::Error(e)) => panic!("loader error: {e}"),
+                Ok(_) => {}
+                Err(e) => panic!("loader timed out / disconnected: {e}"),
+            }
+        }
+        (sys, pk)
+    }
+
+    /// FOCUS_LENS_PLAN.md blocker-1 proof: a region load must spend its budget on the *region*,
+    /// not stay over-strided on the full-run estimate. Drives the systematic-base count.
+    #[test]
+    fn region_estimate_concentrates_budget() {
+        let total = 200_000u64;
+        let demo = || DemoSource::new(30, total);
+        // m/z sub-range; im wide open so only m/z culls (isolates a clean strict subset).
+        let region = Some(RegionFilter { mz: (100.0, 500.0), im: (-10.0, 10.0), intensity_min: 0.0 });
+
+        // True survivors in the region (stride 1: budget exceeds everything).
+        let (survivors, _) =
+            drain(LoaderHandle::spawn(LoaderMode::Demo(demo()), demo_bounds(), total, total as usize * 2, region));
+        assert!(survivors > 1000, "region too small to test: {survivors}");
+        assert!((survivors as u64) < total, "region should be a strict subset of the run");
+
+        let budget = (survivors / 2).max(2000); // below survivors so sampling is actually active
+
+        // Region-relative estimate (= survivors): the systematic base should ~fill the budget.
+        let (sys_region, _) =
+            drain(LoaderHandle::spawn(LoaderMode::Demo(demo()), demo_bounds(), survivors as u64, budget, region));
+        // Full-run estimate (the bug): stride stays coarse -> budget badly under-spent.
+        let (sys_full, _) =
+            drain(LoaderHandle::spawn(LoaderMode::Demo(demo()), demo_bounds(), total, budget, region));
+
+        // 85% of the budget is the systematic base; region estimate should land near it.
+        assert!(
+            sys_region as f64 >= 0.6 * budget as f64,
+            "region estimate underfilled the budget: sys={sys_region} budget={budget}"
+        );
+        // Full-run estimate spends only ~(survivors/total) of it — far less.
+        assert!(
+            (sys_full as f64) < 0.5 * sys_region as f64,
+            "full-run estimate did not under-spend (blocker-1 unfixed): full={sys_full} region={sys_region}"
+        );
     }
 }

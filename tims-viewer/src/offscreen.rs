@@ -121,10 +121,9 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
         LoaderMode::Real {
             path: plan.meta.data_path.clone(),
             frame_ids: plan.meta.frames.iter().map(|f| f.id).collect(),
-            filter: None,
         }
     };
-    let loader = LoaderHandle::spawn(mode, bounds, total, capacity as usize);
+    let loader = LoaderHandle::spawn(mode, bounds, total, capacity as usize, None);
     let keep = |p: &GpuPoint| match opts.ms {
         MsFilter::All => true,
         MsFilter::Ms1 => p.flags & GpuPoint::MS2_FLAG == 0,

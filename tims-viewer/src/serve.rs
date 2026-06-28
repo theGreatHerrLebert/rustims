@@ -146,10 +146,9 @@ fn collect_points(plan: Plan) -> Result<(Vec<GpuPoint>, Option<(f32, f32, f32)>,
         LoaderMode::Real {
             path: plan.meta.data_path.clone(),
             frame_ids: plan.meta.frames.iter().map(|f| f.id).collect(),
-            filter: None,
         }
     };
-    let loader = LoaderHandle::spawn(mode, bounds, total, capacity);
+    let loader = LoaderHandle::spawn(mode, bounds, total, capacity, None);
 
     let mut points: Vec<GpuPoint> = Vec::with_capacity(capacity);
     let mut stats: Option<(f32, f32, f32)> = None;

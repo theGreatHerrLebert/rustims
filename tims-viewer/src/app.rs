@@ -484,10 +484,9 @@ impl App {
             LoaderMode::Real {
                 path: plan.meta.data_path.clone(),
                 frame_ids,
-                filter: None,
             }
         };
-        let loader = LoaderHandle::spawn(mode, plan.meta.bounds, total, capacity as usize);
+        let loader = LoaderHandle::spawn(mode, plan.meta.bounds, total, capacity as usize, None);
 
         Ok(Gfx {
             window,
@@ -774,10 +773,9 @@ impl Gfx {
             LoaderMode::Real {
                 path: self.full_meta.data_path.clone(),
                 frame_ids,
-                filter,
             }
         };
-        self.loader = LoaderHandle::spawn(mode, bounds, total, capacity);
+        self.loader = LoaderHandle::spawn(mode, bounds, total, capacity, filter);
         // Reset GPU/CPU buffers for a fresh stream.
         self.points.reset();
         self.cpu_points.clear();
@@ -859,6 +857,7 @@ impl Gfx {
         let filter = Some(crate::data::loader::RegionFilter {
             mz: (mz0, mz1),
             im: (im0, im1),
+            intensity_min: 0.0, // native region refinement does not cull intensity at the source
         });
         self.respawn_loader(frame_ids, bounds, total, filter);
         self.state.refined = true;
