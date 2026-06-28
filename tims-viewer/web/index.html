@@ -125,6 +125,8 @@
       background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 7px;
       padding: 7px 12px; cursor: pointer; transition: all .14s; }
     .btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+    .btn:disabled, .btn:disabled:hover { opacity: .4; cursor: default; color: var(--dim);
+      border-color: var(--line); background: rgba(255,255,255,0.03); }
     .btn.mono { font-family: var(--mono); font-size: 11px; }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
@@ -305,6 +307,10 @@
 
       <section class="sec">
         <div class="ey">Filters</div>
+        <div class="row" style="gap:8px">
+          <button class="btn" id="focus-go" type="button" style="flex:1">⊕ Focus selection</button>
+          <button class="btn mono" id="focus-back" type="button" disabled>← Back <span id="focus-depth" class="dim"></span></button>
+        </div>
         <div class="row"><span class="lbl" id="l-ms">Show</span>
           <span class="seg" role="radiogroup" aria-labelledby="l-ms">
             <input type="radio" name="ms" id="ms-1" checked /><label for="ms-1">MS1</label>

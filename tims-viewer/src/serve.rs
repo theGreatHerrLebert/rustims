@@ -135,7 +135,9 @@ pub fn serve(plan: Plan, port: u16) -> Result<()> {
         "the point wire format is little-endian; --serve is unsupported on this big-endian target"
     );
     let Plan { meta, is_demo, budget } = plan;
-    let full = full_region(&meta);
+    // Snap the eager full region onto the cache grid so a client's explicit full-bounds query
+    // (also snapped in parse_query) resolves to this same cached entry instead of rebuilding.
+    let full = snap_region(full_region(&meta));
 
     // Eager full-run build (filter=None): seeds the cache and the intensity reference.
     let built = build_load_result(&meta, is_demo, &full, budget, None)?;
