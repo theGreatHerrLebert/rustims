@@ -339,6 +339,11 @@ impl Gfx {
         self.renderer.update_camera(&self.queue, &cam);
         self.axes.update_camera(&self.queue, &cam);
         self.windows.update_camera(&self.queue, &cam);
+        if self.show_windows {
+            // Cull the windows to the live crop box (mirror the point filter), like the native overlay.
+            self.windows
+                .update_filter(&self.queue, self.params.filter_min, self.params.filter_max, 0.0);
+        }
         self.update_labels(w / h);
         let volume_view = self.view_mode == ViewMode::Volume && self.volume.is_some();
         if volume_view {
@@ -948,9 +953,16 @@ fn build_window_verts(rects: &[WinRect], bounds: [(f64, f64); 3], max_group: u32
     let mut v: Vec<LineVertex> = Vec::new();
     let denom = max_group.max(1);
     for r in rects {
+        // Clamp the axis-aligned footprint to the region so a partly-off-region window clips cleanly
+        // (the per-vertex shader cull would otherwise leave stubs); drop windows fully outside.
+        let (mz0r, mz1r) = (r.mz0.max(bounds[0].0), r.mz1.min(bounds[0].1));
+        let (im0r, im1r) = (r.im0.max(bounds[1].0), r.im1.min(bounds[1].1));
+        if mz1r <= mz0r || im1r <= im0r {
+            continue;
+        }
         let color = tims_viewer::render::colormap::group_color(r.g, denom);
-        let (mz0, mz1) = (norm(r.mz0, 0), norm(r.mz1, 0));
-        let (im0, im1) = (norm(r.im0, 1), norm(r.im1, 1));
+        let (mz0, mz1) = (norm(mz0r, 0), norm(mz1r, 0));
+        let (im0, im1) = (norm(im0r, 1), norm(im1r, 1));
         for i in 0..DIA_WINDOW_RT_SLICES {
             let rt_real =
                 bounds[2].0 + (bounds[2].1 - bounds[2].0) * (i as f64 + 0.5) / DIA_WINDOW_RT_SLICES as f64;
