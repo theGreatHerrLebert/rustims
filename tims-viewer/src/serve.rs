@@ -12,7 +12,7 @@
 //! `(region, budget)` and shared between `/points` and `/meta`. Several worker threads serve
 //! concurrently so a multi-second region load can't stall other requests. Localhost only.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
@@ -82,6 +82,41 @@ impl LoadKey {
     }
 }
 
+/// Max distinct (region, budget) loads kept resident. Each can be hundreds of MB, so bound it; the
+/// pinned full-run base is never evicted (instant Reset).
+const CACHE_MAX: usize = 8;
+
+/// Bounded FIFO cache of built loads. The pinned key (full run) is never evicted.
+struct Cache {
+    map: HashMap<LoadKey, Arc<LoadResult>>,
+    order: VecDeque<LoadKey>,
+    pinned: LoadKey,
+}
+
+impl Cache {
+    fn get(&self, k: &LoadKey) -> Option<Arc<LoadResult>> {
+        self.map.get(k).cloned()
+    }
+    fn insert(&mut self, k: LoadKey, v: Arc<LoadResult>) {
+        if self.map.insert(k, v).is_none() {
+            self.order.push_back(k);
+        }
+        while self.map.len() > CACHE_MAX {
+            // Evict the oldest non-pinned entry; drop stale/pinned keys from the order queue.
+            let mut evicted = false;
+            while let Some(old) = self.order.pop_front() {
+                if old != self.pinned && self.map.remove(&old).is_some() {
+                    evicted = true;
+                    break;
+                }
+            }
+            if !evicted {
+                break;
+            }
+        }
+    }
+}
+
 struct State {
     meta: MetaIndex,
     is_demo: bool,
@@ -89,7 +124,7 @@ struct State {
     /// Full-run intensity distribution, for estimating region survivor counts vs an intensity floor.
     full_i_hist: Vec<u32>,
     full_i_p99: f32,
-    cache: Mutex<HashMap<LoadKey, Arc<LoadResult>>>,
+    cache: Mutex<Cache>,
 }
 
 /// Build the full run eagerly (fast first paint + the estimate reference), then serve region
@@ -106,19 +141,21 @@ pub fn serve(plan: Plan, port: u16) -> Result<()> {
     let built = build_load_result(&meta, is_demo, &full, budget, None)?;
     let n0 = built.result.n_points;
     let bytes0 = built.result.points.len();
+    let full_key = LoadKey::of(&full, budget);
+    let mut map = HashMap::new();
+    map.insert(full_key, Arc::new(built.result));
     let state = Arc::new(State {
         meta,
         is_demo,
         default_budget: budget,
         full_i_hist: built.i_hist,
         full_i_p99: built.i_p99,
-        cache: Mutex::new(HashMap::new()),
+        cache: Mutex::new(Cache {
+            map,
+            order: VecDeque::new(),
+            pinned: full_key,
+        }),
     });
-    state
-        .cache
-        .lock()
-        .unwrap()
-        .insert(LoadKey::of(&full, budget), Arc::new(built.result));
 
     let server = Arc::new(
         Server::http(("127.0.0.1", port)).map_err(|e| anyhow::anyhow!("bind {port}: {e}"))?,
@@ -195,16 +232,20 @@ fn parse_query(url: &str, state: &State) -> (Region4D, usize) {
             match k {
                 "n" => {
                     if let Ok(n) = v.parse::<usize>() {
-                        budget = n.max(1);
+                        budget = n;
                     }
                 }
                 "imin" => {
                     if let Ok(x) = v.parse::<f32>() {
-                        r.imin = x.max(0.0);
+                        if x.is_finite() {
+                            r.imin = x.max(0.0);
+                        }
                     }
                 }
                 _ => {
-                    if let Ok(x) = v.parse::<f64>() {
+                    // Ignore non-finite (NaN/inf) coordinates rather than letting them reach the
+                    // cube transform / cache key / normalization.
+                    if let Some(x) = v.parse::<f64>().ok().filter(|x| x.is_finite()) {
                         match k {
                             "mz0" => r.mz.0 = x,
                             "mz1" => r.mz.1 = x,
@@ -219,19 +260,44 @@ fn parse_query(url: &str, state: &State) -> (Region4D, usize) {
             }
         }
     }
+    // The demo loader generates frames 0..N starting at RT 0 and ignores frame ids, so it can't
+    // honor an RT sub-window — use the full RT range for demo sessions (m/z·1/K0·intensity focus
+    // still works). Real data realizes RT via frame selection.
+    if state.is_demo {
+        r.rt = full.rt;
+    }
     r.mz = clamp_range(r.mz, full.mz);
     r.im = clamp_range(r.im, full.im);
     r.rt = clamp_range(r.rt, full.rt);
-    (r, budget)
+    // Snap to the cache-key grid so the reported bounds exactly match the key (no aliasing where
+    // two distinct requests round to the same key but expect different results).
+    r = snap_region(r);
+    // Cap the budget to the server pool (also guards the downstream `budget * 85` from overflow).
+    (r, budget.clamp(1, state.default_budget))
+}
+
+/// Round a region onto the same grid the cache key quantizes to, so key and bounds stay consistent.
+fn snap_region(mut r: Region4D) -> Region4D {
+    let snap = |x: f64, s: f64| (x * s).round() / s;
+    r.mz = (snap(r.mz.0, 1e3), snap(r.mz.1, 1e3));
+    r.im = (snap(r.im.0, 1e6), snap(r.im.1, 1e6));
+    r.rt = (snap(r.rt.0, 1e3), snap(r.rt.1, 1e3));
+    r.imin = snap(r.imin as f64, 1e3) as f32;
+    r
 }
 
 /// Look up a cached load or build (and cache) it. The build runs outside the lock so concurrent
 /// requests for *other* regions are not blocked; a rare double-build of the same region is harmless.
 fn get_or_build(state: &State, region: &Region4D, budget: usize) -> Result<Arc<LoadResult>> {
     let key = LoadKey::of(region, budget);
-    if let Some(lr) = state.cache.lock().unwrap().get(&key).cloned() {
+    // Poison-safe: a panicked worker must not wedge the others.
+    let lock = || state.cache.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(lr) = lock().get(&key) {
         return Ok(lr);
     }
+    // Build outside the lock (a multi-second load mustn't block other regions). Builds are
+    // deterministic, so a rare concurrent double-build of the same key yields identical bytes —
+    // `/meta` and `/points` stay coherent regardless of which build each request observes.
     let built = build_load_result(
         &state.meta,
         state.is_demo,
@@ -240,7 +306,7 @@ fn get_or_build(state: &State, region: &Region4D, budget: usize) -> Result<Arc<L
         Some((&state.full_i_hist, state.full_i_p99)),
     )?;
     let lr = Arc::new(built.result);
-    state.cache.lock().unwrap().insert(key, lr.clone());
+    lock().insert(key, lr.clone());
     Ok(lr)
 }
 
@@ -264,6 +330,12 @@ fn build_load_result(
             frame_ids.push(f.id);
             rt_total = rt_total.saturating_add(f.num_peaks);
         }
+    }
+
+    // A region with no frames in its RT window is valid — return an empty result (the loader would
+    // otherwise error on a zero-frame run). Frames-but-zero-survivors flows through normally below.
+    if frame_ids.is_empty() {
+        return Ok(empty_result(region));
     }
 
     // Region-relative survivor estimate -> stride (FOCUS_LENS_PLAN.md blocker-1): scale the RT
@@ -406,12 +478,27 @@ fn collect(
     let mut stats: Option<(f32, f32, f32)> = None;
     let mut hist: Option<Hist> = None;
     let mut done = false;
+    // Reservoir-sample the emitted stream to `capacity` rather than truncating its prefix: if the
+    // region estimate under-counts and the loader over-emits, truncation would keep an RT-ordered
+    // prefix (bias). A reservoir keeps a uniform sample regardless of how wrong the estimate was.
+    let mut seen: u64 = 0;
+    let mut rng: u64 = 0xD1B5_4A32_D192_ED03;
     loop {
         match loader.rx.recv() {
             Ok(LoadMsg::Chunk { points: pts, .. }) | Ok(LoadMsg::PeakChunk { points: pts }) => {
-                let room = capacity.saturating_sub(points.len());
-                if room > 0 {
-                    points.extend(pts.into_iter().take(room));
+                for p in pts {
+                    seen += 1;
+                    if points.len() < capacity {
+                        points.push(p);
+                    } else {
+                        rng ^= rng << 13;
+                        rng ^= rng >> 7;
+                        rng ^= rng << 17;
+                        let j = (rng % seen) as usize;
+                        if j < capacity {
+                            points[j] = p;
+                        }
+                    }
                 }
             }
             Ok(LoadMsg::Stats { i_min, i_max, i_med }) => stats = Some((i_min, i_med, i_max)),
@@ -427,6 +514,34 @@ fn collect(
     }
     anyhow::ensure!(done, "loader thread ended before completing the load");
     Ok((points, stats, hist))
+}
+
+/// A valid empty load for a region with no points (e.g. an RT window selecting no frames).
+fn empty_result(region: &Region4D) -> Built {
+    let fin = |x: f64| if x.is_finite() { x } else { 0.0 };
+    let meta_json = serde_json::json!({
+        "version": 1,
+        "point_stride": std::mem::size_of::<GpuPoint>(),
+        "n_points": 0,
+        "downsample_stride": 1,
+        "bounds": {
+            "mz": [fin(region.mz.0), fin(region.mz.1)],
+            "im": [fin(region.im.0), fin(region.im.1)],
+            "rt": [fin(region.rt.0), fin(region.rt.1)],
+        },
+        "intensity": { "p1": 1.0, "p50": 1.0, "p99": 1.0, "hist": vec![0u32; I_HIST_BINS] },
+        "hist": serde_json::Value::Null,
+    })
+    .to_string();
+    Built {
+        result: LoadResult {
+            points: Arc::from(Vec::<u8>::new().into_boxed_slice()),
+            meta: Arc::from(meta_json.into_bytes().into_boxed_slice()),
+            n_points: 0,
+        },
+        i_hist: vec![0u32; I_HIST_BINS],
+        i_p99: 1.0,
+    }
 }
 
 fn full_region(meta: &MetaIndex) -> Region4D {

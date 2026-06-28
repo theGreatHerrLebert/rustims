@@ -211,7 +211,7 @@ fn run_loader(
     // Stratified sampling: spend ~85% of the budget on a systematic density base, and
     // reserve the rest for per-cell intensity PEAKS so sparse high-intensity features
     // always survive (pure systematic sampling can statistically miss them).
-    let systematic_budget = ((budget * 85) / 100).max(1);
+    let systematic_budget = (budget.saturating_mul(85) / 100).max(1);
     let stride = stride_for(total_estimate, systematic_budget);
     let weight = stride as f32;
     let mut systematic_count: u64 = 0;
