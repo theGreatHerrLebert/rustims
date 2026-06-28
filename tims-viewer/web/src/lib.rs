@@ -1319,6 +1319,14 @@ fn set_volmode(on: bool) {
 /// Wire the Points/Volume view-mode toggle + volume controls (style, steps). Disables Volume when
 /// the GPU can't host the 3D density texture.
 fn bind_volume(gfx: &Rc<RefCell<Gfx>>) {
+    // Force the View toggle + style to the code defaults (Points / Composite), so a browser-restored
+    // radio can't desync from view_mode (starts Points) / vol_style (starts Composite) — otherwise
+    // the toggle shows Volume/MIP while the code renders Points/Composite.
+    set_checked("v-pts", true);
+    set_checked("v-vol", false);
+    set_checked("vs-comp", true);
+    set_checked("vs-mip", false);
+    set_volmode(false);
     if gfx.borrow().volume.is_none() {
         set_disabled("v-vol", true);
         return; // leave Points selected; volume unsupported on this GPU
@@ -1346,7 +1354,12 @@ fn bind_volume(gfx: &Rc<RefCell<Gfx>>) {
         if let Some(inp) = by_id::<web_sys::HtmlInputElement>(id) {
             let gfx = gfx.clone();
             add_listener(inp.as_ref(), "change", move |_e: web_sys::Event| {
-                gfx.borrow_mut().vol_needs_grid = true;
+                let mut g = gfx.borrow_mut();
+                // Only flag in Volume mode; entering Volume already rebuilds, so a Points-mode
+                // floor change needs no flag.
+                if g.view_mode == ViewMode::Volume {
+                    g.vol_needs_grid = true;
+                }
             });
         }
     }
