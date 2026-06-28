@@ -70,6 +70,18 @@ struct Gfx {
     hud_tick: u32,
     /// Real-unit axis ranges `[mz, im, rt]` from `/meta`, for crop labels; `None` => show %.
     axis_bounds: Option<[(f64, f64); 3]>,
+    // ---- reload state (focus-lens A3): re-fetch a region/budget and rebuild the GPU buffer ----
+    /// Base `/points` URL of the server (query appended per load); empty in the demo fallback.
+    points_base: String,
+    /// Max points the GPU buffer can hold (`max_buffer_size / stride`); the load budget cap.
+    n_cap: usize,
+    supports_compaction: bool,
+    /// Resident CPU copy of the uploaded points (retained for the displayed-count recount, B).
+    cpu_points: Vec<GpuPoint>,
+    /// Current intensity p99 — the linear floor range; read live by the floor binding.
+    floor_hi: f64,
+    /// True while a reload is in flight (debounces overlapping Load/Focus requests).
+    reloading: bool,
     /// Declared last so it drops AFTER the surface/device — wgpu requires the instance to outlive
     /// everything created from it.
     _instance: wgpu::Instance,
@@ -281,12 +293,8 @@ async fn run() -> Result<(), String> {
     };
     // Cap to what the GPU buffer can hold (master is a vertex+storage buffer): on a 12M budget
     // = 384 MB, clamp to the device's max so the allocation can't fail.
-    let stride = std::mem::size_of::<GpuPoint>() as u64;
-    let mut max_pts = (device.limits().max_buffer_size / stride) as usize;
-    if supports_compaction {
-        max_pts = max_pts.min((device.limits().max_storage_buffer_binding_size as u64 / stride) as usize);
-    }
-    let capacity = pts.len().min(max_pts).max(1) as u32;
+    let n_cap = gpu_point_cap(&device, supports_compaction);
+    let capacity = pts.len().min(n_cap).max(1) as u32;
     if (capacity as usize) < pts.len() {
         log::warn!("capping {} -> {capacity} points (GPU buffer limit {} MB)",
             pts.len(), device.limits().max_buffer_size / (1 << 20));
@@ -324,6 +332,9 @@ async fn run() -> Result<(), String> {
     let labels = create_axis_labels(axis_bounds);
 
     let canvas_for_input = canvas.clone();
+    let mut cpu_points = pts;
+    cpu_points.truncate(capacity as usize);
+    let floor_hi = server_meta.as_ref().map(|m| m.i_p99).filter(|x| *x > 1.0).unwrap_or(1000.0);
     let gfx = Rc::new(RefCell::new(Gfx {
         _instance: instance,
         canvas,
@@ -344,6 +355,12 @@ async fn run() -> Result<(), String> {
         fps_t: 0.0,
         hud_tick: 0,
         axis_bounds,
+        points_base: if is_demo_fallback { String::new() } else { url.clone() },
+        n_cap,
+        supports_compaction,
+        cpu_points,
+        floor_hi,
+        reloading: false,
     }));
 
     wire_input(&gfx, &window, &canvas_for_input);
@@ -369,6 +386,8 @@ async fn run() -> Result<(), String> {
     }
     // Runtime detail/performance control over how many of the loaded points are drawn.
     bind_display(&gfx);
+    // Load-budget control: re-fetch a different number of points from the server.
+    bind_load(&gfx);
 
     // Track CSS/DPR changes (window resize fires on zoom + monitor moves too).
     {
@@ -788,6 +807,184 @@ fn axis_label_specs(bounds: [(f64, f64); 3]) -> Vec<(String, [f32; 3], &'static 
     out
 }
 
+/// Max points the GPU buffer can hold = `max_buffer_size / stride` (also bounded by the storage-
+/// bind limit on the compaction path). The hard ceiling on a load budget.
+fn gpu_point_cap(device: &wgpu::Device, supports_compaction: bool) -> usize {
+    let stride = std::mem::size_of::<GpuPoint>() as u64;
+    let mut cap = (device.limits().max_buffer_size / stride) as usize;
+    if supports_compaction {
+        cap = cap.min((device.limits().max_storage_buffer_binding_size as u64 / stride) as usize);
+    }
+    cap.max(1)
+}
+
+/// Append a query string to a URL (`?q` or `&q`).
+fn with_query(base: &str, query: &str) -> String {
+    if base.contains('?') {
+        format!("{base}&{query}")
+    } else {
+        format!("{base}?{query}")
+    }
+}
+
+/// Scale the linear intensity-floor controls (slider + number) to a new data range.
+fn set_floor_range(floor_hi: f64) {
+    for id in ["floor", "floor-n"] {
+        if let Some(inp) = by_id::<web_sys::HtmlInputElement>(id) {
+            let _ = inp.set_attribute("max", &format!("{floor_hi:.0}"));
+            let _ = inp.set_attribute("step", &format!("{:.0}", (floor_hi / 200.0).max(1.0)));
+        }
+    }
+}
+
+/// Reset the per-axis crop sliders to the full cube (thumbs, fills, readouts, and the filter).
+fn reset_crops(gfx: &Rc<RefCell<Gfx>>) {
+    for (axis, prefix) in [(0usize, "cmz"), (1, "cim"), (2, "crt")] {
+        if let Some(lo) = by_id::<web_sys::HtmlInputElement>(&format!("{prefix}-lo")) {
+            lo.set_value("0");
+        }
+        if let Some(hi) = by_id::<web_sys::HtmlInputElement>(&format!("{prefix}-hi")) {
+            hi.set_value("1000");
+        }
+        crop_apply(gfx, axis, prefix, 0.0, 1000.0);
+    }
+}
+
+/// Reset the Display control to 100% of the (new) resident pool.
+fn reset_display(gfx: &Rc<RefCell<Gfx>>, n: usize) {
+    gfx.borrow_mut().renderer.set_draw_count(u32::MAX);
+    if let Some(s) = by_id::<web_sys::HtmlInputElement>("disp") {
+        s.set_value("100");
+    }
+    if let Some(num) = by_id::<web_sys::HtmlInputElement>("disp-n") {
+        num.set_value(&n.to_string());
+        let _ = num.set_attribute("max", &n.to_string());
+    }
+    set_text("hud-points", &group(n));
+}
+
+/// Apply a freshly fetched load in place: rebuild the GPU buffer at the new capacity, retain the
+/// CPU copy, re-apply auto-transfer + bounds, reset crops/floor/Display, and rebind the DOM. Used
+/// by every reload (Load budget now; Focus/Back next). Returns the resident count.
+fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>) {
+    let n = {
+        let mut g = gfx.borrow_mut();
+        let cap = pts.len().min(g.n_cap).max(1) as u32;
+        let mut renderer = PointCloudRenderer::new(
+            &g.device,
+            &g.queue,
+            g.config.format,
+            DEPTH_FORMAT,
+            cap,
+            g.supports_compaction,
+        );
+        let n = renderer.append(&g.queue, &pts);
+        g.renderer = renderer;
+        let mut cpu = pts;
+        cpu.truncate(cap as usize);
+        g.cpu_points = cpu;
+        // Re-apply auto-transfer (exposure + floor range) and bounds from the new meta; keep the
+        // user's colormap / point size / opacity / MS mask.
+        if let Some(m) = &meta {
+            apply_auto_transfer(&mut g.params, m);
+            g.floor_hi = m.i_p99.max(1.0);
+            g.axis_bounds = m.bounds;
+        }
+        // The new load defines the view: reset spatial crops + the intensity floor to "show all".
+        for a in 0..3 {
+            g.params.filter_min[a] = -1.0;
+            g.params.filter_max[a] = 1.0;
+        }
+        g.params.filter_min[3] = 0.0;
+        let bounds = g.axis_bounds;
+        g.labels = create_axis_labels(bounds); // clears the container first, then rebuilds
+        n
+    };
+    // DOM rebind (outside the borrow).
+    if let Some(m) = &meta {
+        set_floor_range(m.i_p99.max(1.0));
+        if let Some(h) = &m.hist {
+            draw_hist_backdrops(h);
+        }
+        if let Some(ih) = &m.i_hist {
+            set_hist_svg("floor-hist", ih);
+        }
+    }
+    for id in ["floor", "floor-n"] {
+        if let Some(inp) = by_id::<web_sys::HtmlInputElement>(id) {
+            inp.set_value("0");
+        }
+    }
+    reset_crops(gfx);
+    reset_display(gfx, n);
+}
+
+/// Re-fetch the run at a new budget (full bounds) and rebuild the GPU buffer. Debounced via
+/// `reloading`. Focus/Back will drive the same path with a region query.
+async fn reload(gfx: Rc<RefCell<Gfx>>, budget: usize) {
+    {
+        let mut g = gfx.borrow_mut();
+        if g.reloading || g.points_base.is_empty() {
+            return;
+        }
+        g.reloading = true;
+    }
+    let base = gfx.borrow().points_base.clone();
+    let q = format!("n={budget}");
+    let purl = with_query(&base, &q);
+    let murl = with_query(&meta_url(&base), &q);
+    show_status("loading…");
+    let meta = fetch_meta(&murl).await.ok();
+    let result = fetch_points(&purl).await;
+    gfx.borrow_mut().reloading = false;
+    match result {
+        Ok(pts) if !pts.is_empty() => {
+            apply_load(&gfx, meta, pts);
+            show_status("");
+        }
+        Ok(_) => show_status("load returned no points"),
+        Err(e) => show_status(&format!("load failed: {e}")),
+    }
+}
+
+/// Wire the Load control: show N_cap, initialize to the resident count, and re-fetch the run at the
+/// typed budget (clamped to N_cap) on click / Enter. Disabled in the demo fallback (no server).
+fn bind_load(gfx: &Rc<RefCell<Gfx>>) {
+    let (Some(num), Some(btn)) = (
+        by_id::<web_sys::HtmlInputElement>("load-n"),
+        by_id::<web_sys::HtmlElement>("load-go"),
+    ) else {
+        return;
+    };
+    let (n0, n_cap, has_server) = {
+        let g = gfx.borrow();
+        (g.renderer.resident(), g.n_cap, !g.points_base.is_empty())
+    };
+    num.set_value(&n0.to_string());
+    let _ = num.set_attribute("max", &n_cap.to_string());
+    set_text("load-cap", &format!("≤ {}", group(n_cap)));
+    if !has_server {
+        let _ = num.set_attribute("disabled", "true");
+        let _ = btn.set_attribute("disabled", "true");
+        return;
+    }
+    let trigger = {
+        let (gfx, num) = (gfx.clone(), num.clone());
+        move || {
+            let v = num.value_as_number();
+            if v.is_finite() && v >= 1.0 {
+                let budget = (v as usize).min(n_cap).max(1);
+                wasm_bindgen_futures::spawn_local(reload(gfx.clone(), budget));
+            }
+        }
+    };
+    {
+        let trigger = trigger.clone();
+        add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| trigger());
+    }
+    add_listener(num.as_ref(), "change", move |_e: web_sys::Event| trigger());
+}
+
 /// Create the DOM label elements inside `#axis-labels`; returns `(element, cube-position)` pairs
 /// for per-frame projection. Empty when bounds are unknown (demo) or the container is missing.
 fn create_axis_labels(bounds: Option<[(f64, f64); 3]>) -> Vec<(web_sys::HtmlElement, [f32; 3])> {
@@ -993,16 +1190,8 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
     set_value_pair("opac", "opac-n", opac, 2);
     set_value_pair("expo", "expo-n", expo, 2);
     set_value_pair("floor", "floor-n", floor, 0);
-    // Crops start at full range; crop_apply also resets the fill bars + real-unit readouts.
-    for (axis, prefix) in [(0usize, "cmz"), (1, "cim"), (2, "crt")] {
-        if let Some(lo) = by_id::<web_sys::HtmlInputElement>(&format!("{prefix}-lo")) {
-            lo.set_value("0");
-        }
-        if let Some(hi) = by_id::<web_sys::HtmlInputElement>(&format!("{prefix}-hi")) {
-            hi.set_value("1000");
-        }
-        crop_apply(gfx, axis, prefix, 0.0, 1000.0);
-    }
+    // Crops start at the full range (thumbs, fills, readouts).
+    reset_crops(gfx);
 }
 
 /// Bind a radio/checkbox: call `f(g, checked)` on change.
