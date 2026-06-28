@@ -73,6 +73,13 @@
     .lbl { font-size: 12.5px; color: var(--ink); font-weight: 500; }
     .val { font-family: var(--mono); font-size: 11.5px; color: var(--accent-2);
       font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; }
+    /* editable numeric readout — type a value or use the slider */
+    .numin { font-family: var(--mono); font-size: 11.5px; color: var(--accent-2); width: 54px;
+      text-align: right; background: transparent; border: 1px solid transparent; border-radius: 5px;
+      padding: 2px 5px; font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield; }
+    .numin::-webkit-outer-spin-button, .numin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .numin:hover { border-color: var(--line); }
+    .numin:focus { border-color: var(--accent); outline: none; color: var(--ink); background: rgba(0,0,0,0.25); }
 
     /* range */
     .rng { -webkit-appearance: none; appearance: none; width: 150px; height: 3px; border-radius: 3px;
@@ -253,11 +260,11 @@
         <div class="row"><label class="lbl" for="psize">Point size</label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="psize" min="0.5" max="6" step="0.1" value="2.5" />
-            <output class="val" id="psize-v" for="psize">2.5</output></span></div>
+            <input type="number" class="numin" id="psize-n" min="0.5" max="6" step="0.1" value="2.5" aria-label="point size value" /></span></div>
         <div class="row"><label class="lbl" for="opac">Opacity</label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="opac" min="0.05" max="1" step="0.05" value="0.6" />
-            <output class="val" id="opac-v" for="opac">0.60</output></span></div>
+            <input type="number" class="numin" id="opac-n" min="0.05" max="1" step="0.05" value="0.60" aria-label="opacity value" /></span></div>
       </section>
 
       <section class="sec">
@@ -271,11 +278,11 @@
         <div class="row"><label class="lbl" for="expo">Exposure</label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="expo" min="0.02" max="4" step="0.02" value="1.00" />
-            <output class="val" id="expo-v" for="expo">1.00</output></span></div>
+            <input type="number" class="numin" id="expo-n" min="0.02" max="4" step="0.02" value="1.00" aria-label="exposure value" /></span></div>
         <div class="row"><label class="lbl" for="floor">Floor</label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="floor" min="0" max="5000" step="25" value="0" />
-            <output class="val" id="floor-v" for="floor">0</output></span></div>
+            <input type="number" class="numin" id="floor-n" min="0" max="5000" step="25" value="0" aria-label="intensity floor value" /></span></div>
       </section>
 
       <section class="sec">

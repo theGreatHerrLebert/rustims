@@ -43,8 +43,6 @@ pub fn start() {
 
 /// Live GPU + scene state, shared (single-threaded) between the render loop and resize handler.
 struct Gfx {
-    /// Kept alive so it outlives the surface/device (wgpu requires the instance to live longest).
-    _instance: wgpu::Instance,
     canvas: web_sys::HtmlCanvasElement,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -72,6 +70,9 @@ struct Gfx {
     hud_tick: u32,
     /// Real-unit axis ranges `[mz, im, rt]` from `/meta`, for crop labels; `None` => show %.
     axis_bounds: Option<[(f64, f64); 3]>,
+    /// Declared last so it drops AFTER the surface/device — wgpu requires the instance to outlive
+    /// everything created from it.
+    _instance: wgpu::Instance,
 }
 
 impl Gfx {
@@ -304,7 +305,6 @@ async fn run() -> Result<(), String> {
     if let Some(m) = &server_meta {
         apply_auto_transfer(&mut params, m);
     }
-    let applied_exposure = params.transfer[3];
 
     // The orientation box (cube + axis edges) + projected DOM tick labels.
     let mut axes = AnnotationRenderer::new(&device, format, DEPTH_FORMAT);
@@ -337,22 +337,19 @@ async fn run() -> Result<(), String> {
 
     wire_input(&gfx, &window, &canvas_for_input);
     wire_controls(&gfx);
-    // Browsers restore a control's previous state across reloads, which can leave the Auto-orbit
-    // switch out of sync with the code default — force it to match so the first click works.
-    set_checked("ar", gfx.borrow().auto_rotate);
-    // Reflect the auto-exposure on its slider, and scale the intensity-floor control to the data.
+    // Scale the intensity-floor controls (slider + number) to the data before syncing values.
     if let Some(m) = &server_meta {
-        if let Some(inp) = by_id::<web_sys::HtmlInputElement>("expo") {
-            inp.set_value(&format!("{applied_exposure:.2}"));
-        }
-        set_text("expo-v", &format!("{applied_exposure:.2}"));
         if m.i_p99 > 1.0 {
-            if let Some(inp) = by_id::<web_sys::HtmlInputElement>("floor") {
-                let _ = inp.set_attribute("max", &format!("{:.0}", m.i_p99));
-                let _ = inp.set_attribute("step", &format!("{:.0}", (m.i_p99 / 200.0).max(1.0)));
+            for id in ["floor", "floor-n"] {
+                if let Some(inp) = by_id::<web_sys::HtmlInputElement>(id) {
+                    let _ = inp.set_attribute("max", &format!("{:.0}", m.i_p99));
+                    let _ = inp.set_attribute("step", &format!("{:.0}", (m.i_p99 / 200.0).max(1.0)));
+                }
             }
         }
     }
+    // Push code state onto every DOM control (defeats the browser's cross-reload form restore).
+    sync_controls(&gfx);
 
     // Track CSS/DPR changes (window resize fires on zoom + monitor moves too).
     {
@@ -408,12 +405,14 @@ async fn init_gpu(canvas: &web_sys::HtmlCanvasElement) -> Result<Gpu, String> {
         Some(adapter) => {
             let limits = wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits());
             match adapter.request_device(&device_desc(limits), None).await {
-                Ok((device, queue)) => {
-                    let surface = wgpu_inst
-                        .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
-                        .map_err(|e| format!("create_surface (webgpu): {e}"))?;
-                    return Ok((wgpu_inst, surface, adapter, device, queue, false));
-                }
+                // Surface creation can also fail here — treat that like any WebGPU failure and
+                // fall through to WebGL2 rather than giving up (the canvas has no context yet).
+                Ok((device, queue)) => match wgpu_inst
+                    .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
+                {
+                    Ok(surface) => return Ok((wgpu_inst, surface, adapter, device, queue, false)),
+                    Err(e) => Some(format!("WebGPU create_surface: {e}")),
+                },
                 Err(e) => Some(format!("WebGPU requestDevice: {e:?}")),
             }
         }
@@ -790,13 +789,103 @@ fn group(n: usize) -> String {
     out
 }
 
-/// Bind an `<input type=range>`: call `f` with the live numeric value on every input.
-fn on_range(id: &str, gfx: &Rc<RefCell<Gfx>>, mut f: impl FnMut(&mut Gfx, f64) + 'static) {
-    if let Some(inp) = by_id::<web_sys::HtmlInputElement>(id) {
-        let (gfx, el) = (gfx.clone(), inp.clone());
-        add_listener(inp.as_ref(), "input", move |_e: web_sys::Event| {
-            f(&mut gfx.borrow_mut(), el.value_as_number());
+/// Bind a slider + its editable number field bidirectionally to a render parameter: dragging the
+/// slider updates the param and the number; typing a number clamps it to the slider's min/max,
+/// moves the slider, and updates the param. `prec` is the displayed decimal count.
+fn bind_value(
+    gfx: &Rc<RefCell<Gfx>>,
+    slider_id: &str,
+    num_id: &str,
+    prec: usize,
+    apply: impl Fn(&mut Gfx, f64) + 'static,
+) {
+    let (Some(slider), Some(num)) = (
+        by_id::<web_sys::HtmlInputElement>(slider_id),
+        by_id::<web_sys::HtmlInputElement>(num_id),
+    ) else {
+        return;
+    };
+    let apply = std::rc::Rc::new(apply);
+    {
+        let (gfx, apply, s, n) = (gfx.clone(), apply.clone(), slider.clone(), num.clone());
+        add_listener(slider.as_ref(), "input", move |_e: web_sys::Event| {
+            let v = s.value_as_number();
+            apply(&mut gfx.borrow_mut(), v);
+            n.set_value(&format!("{v:.prec$}"));
         });
+    }
+    {
+        let (gfx, apply, s, n) = (gfx.clone(), apply.clone(), slider.clone(), num.clone());
+        add_listener(num.as_ref(), "change", move |_e: web_sys::Event| {
+            let raw = n.value_as_number();
+            if raw.is_nan() {
+                return; // empty / non-numeric: leave state as-is
+            }
+            let lo = s.min().parse::<f64>().unwrap_or(f64::NEG_INFINITY);
+            let hi = s.max().parse::<f64>().unwrap_or(f64::INFINITY);
+            let v = raw.clamp(lo, hi);
+            n.set_value(&format!("{v:.prec$}"));
+            s.set_value(&v.to_string());
+            apply(&mut gfx.borrow_mut(), v);
+        });
+    }
+}
+
+/// Set a slider + its number field to `v` without firing handlers (for startup sync).
+fn set_value_pair(slider_id: &str, num_id: &str, v: f64, prec: usize) {
+    if let Some(s) = by_id::<web_sys::HtmlInputElement>(slider_id) {
+        s.set_value(&v.to_string());
+    }
+    if let Some(n) = by_id::<web_sys::HtmlInputElement>(num_id) {
+        n.set_value(&format!("{v:.prec$}"));
+    }
+}
+
+/// Push the current Rust render state onto every DOM control. Browsers restore a control's prior
+/// value across reloads, which can silently desync the radios/checkbox/select/sliders from the
+/// actual params (a checked-but-stale radio won't emit `change` when clicked); calling this after
+/// wiring re-asserts the truth so the panel always reflects what's rendering.
+fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
+    let (auto, rmode, xf, ms, cmap, psize, opac, expo, floor) = {
+        let g = gfx.borrow();
+        (
+            g.auto_rotate,
+            g.params.render_mode,
+            g.params.transfer[0] as i32,
+            g.params.ms_mask,
+            g.params.colormap_id,
+            g.params.point_size as f64,
+            g.params.opacity as f64,
+            g.params.transfer[3] as f64,
+            g.params.filter_min[3] as f64,
+        )
+    };
+    set_checked("ar", auto);
+    set_checked("m-add", rmode == 0);
+    set_checked("m-opq", rmode == 1);
+    set_checked("xf-lin", xf == 0);
+    set_checked("xf-sqrt", xf == 1);
+    set_checked("xf-log", xf == 2);
+    set_checked("ms-1", ms == 0b01);
+    set_checked("ms-2", ms == 0b10);
+    set_checked("ms-b", ms == 0b11);
+    if let Some(sel) = by_id::<web_sys::HtmlSelectElement>("cmap") {
+        sel.set_value(&cmap.to_string());
+    }
+    set_cbar(cmap);
+    set_value_pair("psize", "psize-n", psize, 1);
+    set_value_pair("opac", "opac-n", opac, 2);
+    set_value_pair("expo", "expo-n", expo, 2);
+    set_value_pair("floor", "floor-n", floor, 0);
+    // Crops start at full range; crop_apply also resets the fill bars + real-unit readouts.
+    for (axis, prefix) in [(0usize, "cmz"), (1, "cim"), (2, "crt")] {
+        if let Some(lo) = by_id::<web_sys::HtmlInputElement>(&format!("{prefix}-lo")) {
+            lo.set_value("0");
+        }
+        if let Some(hi) = by_id::<web_sys::HtmlInputElement>(&format!("{prefix}-hi")) {
+            hi.set_value("1000");
+        }
+        crop_apply(gfx, axis, prefix, 0.0, 1000.0);
     }
 }
 
@@ -856,27 +945,15 @@ fn wire_controls(gfx: &Rc<RefCell<Gfx>>) {
             set_cbar(id);
         });
     }
-    on_range("psize", gfx, |g, v| {
-        g.params.point_size = v as f32;
-        set_text("psize-v", &format!("{v:.1}"));
-    });
-    on_range("opac", gfx, |g, v| {
-        g.params.opacity = v as f32;
-        set_text("opac-v", &format!("{v:.2}"));
-    });
+    bind_value(gfx, "psize", "psize-n", 1, |g, v| g.params.point_size = v as f32);
+    bind_value(gfx, "opac", "opac-n", 2, |g, v| g.params.opacity = v as f32);
 
     // Intensity transfer
     on_toggle("xf-lin", gfx, |g, on| if on { g.params.transfer[0] = 0.0; });
     on_toggle("xf-sqrt", gfx, |g, on| if on { g.params.transfer[0] = 1.0; });
     on_toggle("xf-log", gfx, |g, on| if on { g.params.transfer[0] = 2.0; });
-    on_range("expo", gfx, |g, v| {
-        g.params.transfer[3] = v as f32;
-        set_text("expo-v", &format!("{v:.2}"));
-    });
-    on_range("floor", gfx, |g, v| {
-        g.params.filter_min[3] = v as f32; // intensity floor (real units)
-        set_text("floor-v", &format!("{v:.0}"));
-    });
+    bind_value(gfx, "expo", "expo-n", 2, |g, v| g.params.transfer[3] = v as f32);
+    bind_value(gfx, "floor", "floor-n", 0, |g, v| g.params.filter_min[3] = v as f32);
 
     // Filters
     on_toggle("ms-1", gfx, |g, on| if on { g.params.ms_mask = 0b01; });
@@ -902,6 +979,8 @@ fn bind_crop(gfx: &Rc<RefCell<Gfx>>, prefix: &str, axis: usize) {
     {
         let (gfx_c, lo_c, hi_c, p) = (gfx.clone(), lo.clone(), hi.clone(), prefix.to_string());
         add_listener(lo.as_ref(), "input", move |_e: web_sys::Event| {
+            let _ = lo_c.style().set_property("z-index", "5"); // active thumb on top
+            let _ = hi_c.style().set_property("z-index", "4");
             if lo_c.value_as_number() > hi_c.value_as_number() {
                 hi_c.set_value(&lo_c.value());
             }
@@ -912,6 +991,8 @@ fn bind_crop(gfx: &Rc<RefCell<Gfx>>, prefix: &str, axis: usize) {
     {
         let (gfx_c, lo_c, hi_c, p) = (gfx.clone(), lo.clone(), hi.clone(), prefix.to_string());
         add_listener(hi.as_ref(), "input", move |_e: web_sys::Event| {
+            let _ = hi_c.style().set_property("z-index", "5"); // active thumb on top
+            let _ = lo_c.style().set_property("z-index", "4");
             if hi_c.value_as_number() < lo_c.value_as_number() {
                 lo_c.set_value(&hi_c.value());
             }
