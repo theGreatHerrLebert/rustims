@@ -61,8 +61,9 @@ struct ClusterStats {
     noise_pts: u64,
     signal_int: f64,
     noise_int: f64,
-    /// Per-cluster point count + real-unit extent on each axis (for the histograms).
+    /// Per-cluster point count, intensity sum, and real-unit extent on each axis.
     sizes: Vec<f64>,
+    int_sum: Vec<f64>,
     mz_extent: Vec<f64>,
     im_extent: Vec<f64>,
     rt_extent: Vec<f64>,
@@ -150,6 +151,11 @@ struct Gfx {
     clustered: bool,
     /// The last clustering result's stats (for the right-hand panel); cleared on invalidate.
     cluster_stats: Option<ClusterStats>,
+    /// Retained DBSCAN result for isolation: the survivor `cpu_points` indices + their labels, and
+    /// which cluster is currently isolated (`None` = show all). Cleared on invalidate.
+    cluster_idx: Vec<usize>,
+    cluster_labels: Vec<i32>,
+    cluster_sel: Option<i32>,
     /// Declared last so it drops AFTER the surface/device — wgpu requires the instance to outlive
     /// everything created from it.
     _instance: wgpu::Instance,
@@ -542,6 +548,9 @@ async fn run() -> Result<(), String> {
         cluster_min_pts: 8,
         clustered: false,
         cluster_stats: None,
+        cluster_idx: Vec::new(),
+        cluster_labels: Vec::new(),
+        cluster_sel: None,
     }));
 
     wire_input(&gfx, &window, &canvas_for_input);
@@ -1107,6 +1116,9 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
         g.params.color_mode = 0; // the fresh buffer has no cluster ids
         g.clustered = false;
         g.cluster_stats = None;
+        g.cluster_idx = Vec::new();
+        g.cluster_labels = Vec::new();
+        g.cluster_sel = None;
         // Re-apply auto-transfer (exposure + floor range) and bounds from the new meta; keep the
         // user's colormap / point size / opacity / MS mask.
         if let Some(m) = &meta {
@@ -1418,6 +1430,9 @@ fn invalidate_clusters_mut(g: &mut Gfx) {
         g.params.color_mode = 0;
         g.clustered = false;
         g.cluster_stats = None;
+        g.cluster_idx = Vec::new();
+        g.cluster_labels = Vec::new();
+        g.cluster_sel = None;
         set_text("cl-readout", "—");
         set_checked("cl-color", false);
         set_body_class("has-clusters", false);
@@ -1474,17 +1489,26 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
     let gfx = gfx.clone();
     defer(move || {
         let (labels, k) = dbscan(&positions, eps, min_pts);
-        finish_clustering(&gfx, &idx, &labels, k);
+        finish_clustering(&gfx, idx, labels, k);
     });
 }
 
+/// Re-upload the resident `cpu_points` to the GPU (the only path to refresh the cluster ids).
+fn reupload_points(g: &mut Gfx) {
+    let pts = std::mem::take(&mut g.cpu_points);
+    g.renderer.reset();
+    g.renderer.append(&g.queue, &pts);
+    g.cpu_points = pts;
+}
+
 /// Write DBSCAN labels into the GPU buffer + recolor by cluster, compute stats, then update the UI.
-fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: &[usize], labels: &[i32], k: usize) {
+fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: Vec<usize>, labels: Vec<i32>, k: usize) {
     let noise = labels.iter().filter(|&&l| l < 0).count();
+    let n_in = idx.len();
     {
         let mut gb = gfx.borrow_mut();
         let g: &mut Gfx = &mut gb; // &mut Gfx so renderer/queue/cpu_points field-split
-        let stats = compute_cluster_stats(idx, labels, k, &g.cpu_points, g.axis_bounds);
+        let stats = compute_cluster_stats(&idx, &labels, k, &g.cpu_points, g.axis_bounds);
         for pt in g.cpu_points.iter_mut() {
             pt._pad[0] = GpuPoint::NO_CLUSTER;
         }
@@ -1493,13 +1517,13 @@ fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: &[usize], labels: &[i32], k: u
                 g.cpu_points[i]._pad[0] = labels[j] as u32;
             }
         }
-        let pts = std::mem::take(&mut g.cpu_points);
-        g.renderer.reset();
-        g.renderer.append(&g.queue, &pts);
-        g.cpu_points = pts;
+        reupload_points(g);
         g.params.color_mode = 1;
         g.clustered = true;
         g.cluster_stats = Some(stats);
+        g.cluster_idx = idx;
+        g.cluster_labels = labels;
+        g.cluster_sel = None;
         g.view_mode = ViewMode::Points; // cluster colour is a point concept
         g.filter_dirty = true; // refresh the displayed-count HUD
     }
@@ -1507,10 +1531,7 @@ fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: &[usize], labels: &[i32], k: u
     set_checked("v-vol", false);
     set_volmode(false);
     set_checked("cl-color", true);
-    set_text(
-        "cl-readout",
-        &format!("{k} clusters · {} noise · {} pts", group(noise), group(idx.len())),
-    );
+    set_text("cl-readout", &format!("{k} clusters · {} noise · {} pts", group(noise), group(n_in)));
     set_body_class("cluster-color", true); // cluster coloring active -> hide the intensity colorbar
     update_cluster_panel(gfx); // we ran from the Cluster tab, so this shows + renders the panel
     show_status("");
@@ -1526,6 +1547,7 @@ fn compute_cluster_stats(
     bounds: Option<[(f64, f64); 3]>,
 ) -> ClusterStats {
     let mut sizes = vec![0f64; k];
+    let mut int_sum = vec![0f64; k];
     let mut lo = vec![[f32::INFINITY; 3]; k];
     let mut hi = vec![[f32::NEG_INFINITY; 3]; k];
     let (mut signal_pts, mut noise_pts) = (0u64, 0u64);
@@ -1539,6 +1561,7 @@ fn compute_cluster_stats(
         } else {
             let c = l as usize;
             sizes[c] += 1.0;
+            int_sum[c] += contrib;
             signal_pts += 1;
             signal_int += contrib;
             for a in 0..3 {
@@ -1572,11 +1595,19 @@ fn compute_cluster_stats(
         im_extent: extent(1),
         rt_extent: extent(2),
         sizes,
+        int_sum,
     }
 }
 
-/// Fill the cluster stats panel: the summary table + four per-cluster histograms.
-fn render_cluster_panel(s: &ClusterStats) {
+/// CSS color matching the shader's per-cluster hue (`hsv2rgb(fract(id*0.618), 0.65, 1.0)`).
+fn cluster_css_color(id: usize) -> String {
+    let hue = (id as f64 * 0.618_033_988_75).fract() * 360.0;
+    format!("hsl({hue:.0}, 100%, 68%)")
+}
+
+/// Fill the cluster stats panel: summary table, four per-cluster histograms, and the clickable
+/// cluster list (top clusters by size; `sel` marks the isolated one).
+fn render_cluster_panel(s: &ClusterStats, sel: Option<i32>) {
     let total_pts = s.signal_pts + s.noise_pts;
     let total_int = s.signal_int + s.noise_int;
     set_text("cs-pts-t", &group_short(total_pts as usize));
@@ -1600,6 +1631,27 @@ fn render_cluster_panel(s: &ClusterStats) {
     set_hist_svg("csh-mz", &hist_bins(&s.mz_extent, 24));
     set_hist_svg("csh-im", &hist_bins(&s.im_extent, 24));
     set_hist_svg("csh-rt", &hist_bins(&s.rt_extent, 24));
+
+    // Clickable cluster list — top 50 by size, plus a "Show all" row when isolated.
+    let mut order: Vec<usize> = (0..s.k).collect();
+    order.sort_by(|&a, &b| s.sizes[b].total_cmp(&s.sizes[a]));
+    let mut html = String::new();
+    if sel.is_some() {
+        html.push_str("<button class=\"cs-row show-all\" data-cl=\"-1\">← Show all clusters</button>");
+    }
+    for &c in order.iter().take(50) {
+        let active = if sel == Some(c as i32) { " active" } else { "" };
+        html.push_str(&format!(
+            "<button class=\"cs-row{active}\" data-cl=\"{c}\"><span class=\"cs-dot\" style=\"background:{}\"></span>#{c}<span class=\"cs-meta\">{} · {}</span></button>",
+            cluster_css_color(c),
+            fmt_count(s.sizes[c]),
+            fmt_count(s.int_sum[c]),
+        ));
+    }
+    if s.k > 50 {
+        html.push_str(&format!("<div class=\"cs-more\">+{} more</div>", s.k - 50));
+    }
+    set_html("cs-list", &html);
 }
 
 /// Bin non-negative finite values into `n` equal-width bins over `[0, max]`. Everything collapses to
@@ -1668,6 +1720,24 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
             set_body_class("cluster-color", on); // toggles the intensity colorbar back on when off
         }
     });
+    // Click a row in the cluster list to isolate it (data-cl="-1" = show all).
+    if let Some(list) = by_id::<web_sys::HtmlElement>("cs-list") {
+        let gfx = gfx.clone();
+        add_listener(list.as_ref(), "click", move |e: web_sys::Event| {
+            let Some(t) = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else {
+                return;
+            };
+            if let Ok(Some(row)) = t.closest(".cs-row") {
+                if let Some(cl) = row.get_attribute("data-cl").and_then(|s| s.parse::<i32>().ok()) {
+                    isolate_cluster(&gfx, if cl < 0 { None } else { Some(cl) });
+                }
+            }
+        });
+    }
+    if let Some(btn) = by_id::<web_sys::HtmlElement>("cl-export") {
+        let gfx = gfx.clone();
+        add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| export_clusters(&gfx));
+    }
 }
 
 /// Wire the Focus / Back buttons; control enable/disable is driven by `refresh_controls`.
@@ -1778,9 +1848,73 @@ fn update_cluster_panel(gfx: &Rc<RefCell<Gfx>>) {
     let show = on_cluster_tab && gfx.borrow().clustered;
     set_body_class("has-clusters", show);
     if show {
-        if let Some(s) = gfx.borrow().cluster_stats.as_ref() {
-            render_cluster_panel(s);
+        let g = gfx.borrow();
+        if let Some(s) = g.cluster_stats.as_ref() {
+            render_cluster_panel(s, g.cluster_sel);
         }
+    }
+}
+
+/// Isolate one cluster on the cloud (others greyed to noise), or show all (`sel = None`). Clicking
+/// the already-isolated cluster toggles back to all.
+fn isolate_cluster(gfx: &Rc<RefCell<Gfx>>, sel: Option<i32>) {
+    {
+        let mut gb = gfx.borrow_mut();
+        let g: &mut Gfx = &mut gb;
+        if !g.clustered {
+            return;
+        }
+        let sel = if g.cluster_sel == sel { None } else { sel }; // toggle off if re-clicked
+        for (j, &i) in g.cluster_idx.iter().enumerate() {
+            let l = g.cluster_labels[j];
+            let shown = l >= 0 && sel.map_or(true, |s| l == s);
+            g.cpu_points[i]._pad[0] = if shown { l as u32 } else { GpuPoint::NO_CLUSTER };
+        }
+        reupload_points(g);
+        g.cluster_sel = sel;
+        g.params.color_mode = 1; // isolate is only visible under cluster coloring
+    }
+    set_checked("cl-color", true);
+    set_body_class("cluster-color", true);
+    update_cluster_panel(gfx); // re-render the list with the active row marked
+}
+
+/// Download the per-cluster summary as CSV (a data-URL anchor — no Blob/Url features needed).
+fn export_clusters(gfx: &Rc<RefCell<Gfx>>) {
+    let g = gfx.borrow();
+    let Some(s) = g.cluster_stats.as_ref() else {
+        return;
+    };
+    let mut csv = String::from("cluster,size,intensity,mz_extent,im_extent,rt_extent\n");
+    for c in 0..s.k {
+        csv.push_str(&format!(
+            "{c},{},{},{:.6},{:.6},{:.6}\n",
+            s.sizes[c] as u64, s.int_sum[c], s.mz_extent[c], s.im_extent[c], s.rt_extent[c]
+        ));
+    }
+    download_text("clusters.csv", "text/csv", &csv);
+}
+
+/// Trigger a file download of `content` via a `data:` URL anchor.
+fn download_text(filename: &str, mime: &str, content: &str) {
+    let Some(doc) = document() else {
+        return;
+    };
+    let Ok(a) = doc.create_element("a") else {
+        return;
+    };
+    let encoded = String::from(js_sys::encode_uri_component(content));
+    let _ = a.set_attribute("href", &format!("data:{mime};charset=utf-8,{encoded}"));
+    let _ = a.set_attribute("download", filename);
+    if let Ok(el) = a.dyn_into::<web_sys::HtmlElement>() {
+        el.click();
+    }
+}
+
+/// Set an element's inner HTML by id.
+fn set_html(id: &str, html: &str) {
+    if let Some(el) = by_id::<web_sys::HtmlElement>(id) {
+        el.set_inner_html(html);
     }
 }
 

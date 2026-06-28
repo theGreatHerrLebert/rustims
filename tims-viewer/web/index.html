@@ -96,6 +96,22 @@
     .cs-hist { margin-bottom: 10px; }
     .cs-hist .map-cap { font-size: 10.5px; color: var(--dim); font-family: var(--mono); margin-bottom: 3px; }
     .cs-hist .map-cap b { color: var(--ink); font-weight: 500; }
+    /* clickable cluster list (isolate on click) */
+    .cs-export { float: right; font-family: var(--sans); font-size: 10px; letter-spacing: .04em;
+      color: var(--accent); background: transparent; border: 1px solid var(--line); border-radius: 5px;
+      padding: 2px 8px; cursor: pointer; text-transform: none; transition: border-color .14s, color .14s; }
+    .cs-export:hover { border-color: var(--accent); }
+    .cs-list { display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; }
+    .cs-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+      font-family: var(--mono); font-size: 11.5px; color: var(--ink); background: transparent;
+      border: 1px solid transparent; border-radius: 6px; padding: 4px 8px; cursor: pointer;
+      transition: background .12s, border-color .12s; }
+    .cs-row:hover { background: rgba(150,172,205,0.06); }
+    .cs-row.active { border-color: var(--accent); background: var(--accent-dim); }
+    .cs-row.show-all { color: var(--accent); justify-content: center; font-family: var(--sans); }
+    .cs-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+    .cs-meta { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; }
+    .cs-more { font-family: var(--mono); font-size: 10.5px; color: var(--faint); padding: 5px 8px; }
 
     .sec { padding: 14px 18px 4px 20px; }
     .sec + .sec { border-top: 1px solid var(--line-2); }
@@ -477,6 +493,10 @@
         <div class="cs-hist"><div class="map-cap"><b>m/z</b> extent</div><div class="crop-hist" id="csh-mz"></div></div>
         <div class="cs-hist"><div class="map-cap"><b>1/K₀</b> extent</div><div class="crop-hist" id="csh-im"></div></div>
         <div class="cs-hist"><div class="map-cap"><b>RT</b> extent</div><div class="crop-hist" id="csh-rt"></div></div>
+      </section>
+      <section class="sec">
+        <div class="ey">Clusters <button class="cs-export" id="cl-export" type="button">Export CSV</button></div>
+        <div class="cs-list" id="cs-list"></div>
       </section>
     </div>
   </aside>
