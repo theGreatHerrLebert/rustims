@@ -38,9 +38,9 @@ pub fn serve(plan: Plan, port: u16) -> Result<()> {
     // Prefer the loader's systematic-base percentiles (matches the native viewer's Stats); fall
     // back to computing over the served points (incl. the peak tail) only if Stats never arrived.
     let (i_p1, i_p50, i_p99) = stats.unwrap_or_else(|| intensity_percentiles(&points));
-    // Cbrt-binned intensity histogram over [0, p99] for the floor control's distribution (log is
-    // too compressive; cbrt keeps the low-intensity region — where the noise floor sits — readable).
-    let i_hist = intensity_cbrt_hist(&points, i_p99);
+    // Linear intensity histogram over [0, p99], in real observed counts (the floor slider is linear
+    // in the same units, so both read in the values actually observed).
+    let i_hist = intensity_linear_hist(&points, i_p99);
     // One copy into an owned byte buffer, then share it (no per-request copy) via Arc + Cursor.
     let body: Arc<[u8]> =
         Arc::from(bytemuck::cast_slice::<GpuPoint, u8>(&points).to_vec().into_boxed_slice());
@@ -61,7 +61,7 @@ pub fn serve(plan: Plan, port: u16) -> Result<()> {
         },
         "intensity": {
             "p1": fin(i_p1 as f64), "p50": fin(i_p50 as f64), "p99": fin(i_p99 as f64),
-            // cbrt-binned distribution over [0, p99]; the client's floor slider is cbrt-mapped to it.
+            // Linear distribution over [0, p99] in real counts; the floor slider spans the same.
             "hist": i_hist,
         },
         // Per-axis density histograms (HIST_BINS bins over the full cube range, same mapping as the
@@ -192,16 +192,16 @@ fn intensity_percentiles(points: &[GpuPoint]) -> (f32, f32, f32) {
     (pct(0.01), pct(0.50), pct(0.99))
 }
 
-/// Cbrt-binned intensity histogram over `[0, hi]` (80 bins), so the client's cbrt-mapped floor
-/// slider aligns with it. Intensity 0 lands in bin 0; values above `hi` clamp to the last bin.
-fn intensity_cbrt_hist(points: &[GpuPoint], hi: f32) -> Vec<u32> {
+/// Linear intensity histogram over `[0, hi]` (80 bins) in real counts; values above `hi` clamp to
+/// the last bin. Aligns with the client's linear floor slider over the same range.
+fn intensity_linear_hist(points: &[GpuPoint], hi: f32) -> Vec<u32> {
     const BINS: usize = 80;
-    let cbrt_hi = hi.max(1.0).cbrt();
+    let hi = hi.max(1.0);
     let mut h = vec![0u32; BINS];
     for p in points {
         let i = p.intensity;
         let bin = if i.is_finite() && i > 0.0 {
-            ((i.cbrt() / cbrt_hi).clamp(0.0, 1.0) * (BINS as f32 - 1.0)) as usize
+            ((i / hi).clamp(0.0, 1.0) * (BINS as f32 - 1.0)) as usize
         } else {
             0
         };

@@ -279,7 +279,18 @@ async fn run() -> Result<(), String> {
             (demo_cloud(), true)
         }
     };
-    let capacity = pts.len() as u32;
+    // Cap to what the GPU buffer can hold (master is a vertex+storage buffer): on a 12M budget
+    // = 384 MB, clamp to the device's max so the allocation can't fail.
+    let stride = std::mem::size_of::<GpuPoint>() as u64;
+    let mut max_pts = (device.limits().max_buffer_size / stride) as usize;
+    if supports_compaction {
+        max_pts = max_pts.min((device.limits().max_storage_buffer_binding_size as u64 / stride) as usize);
+    }
+    let capacity = pts.len().min(max_pts).max(1) as u32;
+    if (capacity as usize) < pts.len() {
+        log::warn!("capping {} -> {capacity} points (GPU buffer limit {} MB)",
+            pts.len(), device.limits().max_buffer_size / (1 << 20));
+    }
     let mut renderer = PointCloudRenderer::new(
         &device,
         &queue,
@@ -337,15 +348,17 @@ async fn run() -> Result<(), String> {
 
     wire_input(&gfx, &window, &canvas_for_input);
     wire_controls(&gfx);
-    // Bind the cbrt-mapped intensity floor to the data range (number field is in real counts).
+    // Scale the linear intensity-floor controls (slider + number, both real counts) to the data.
     let floor_hi = server_meta.as_ref().map(|m| m.i_p99).filter(|x| *x > 1.0).unwrap_or(1000.0);
-    bind_floor(&gfx, floor_hi);
-    if let Some(n) = by_id::<web_sys::HtmlInputElement>("floor-n") {
-        let _ = n.set_attribute("max", &format!("{floor_hi:.0}"));
+    for id in ["floor", "floor-n"] {
+        if let Some(inp) = by_id::<web_sys::HtmlInputElement>(id) {
+            let _ = inp.set_attribute("max", &format!("{floor_hi:.0}"));
+            let _ = inp.set_attribute("step", &format!("{:.0}", (floor_hi / 200.0).max(1.0)));
+        }
     }
     // Push code state onto every DOM control (defeats the browser's cross-reload form restore).
     sync_controls(&gfx);
-    // Distribution strips: per-axis crops + the cbrt intensity floor.
+    // Distribution strips: per-axis crops + the linear intensity floor.
     if let Some(m) = &server_meta {
         if let Some(h) = &m.hist {
             draw_hist_backdrops(h);
@@ -388,6 +401,21 @@ fn device_desc(limits: wgpu::Limits) -> wgpu::DeviceDescriptor<'static> {
     }
 }
 
+/// Downlevel limits for the backend, but with the buffer-size limits raised to the adapter's real
+/// maximum so large point budgets (e.g. 12M points = 384 MB) can allocate where the GPU allows.
+fn web_limits(adapter: &wgpu::Adapter, is_webgl: bool) -> wgpu::Limits {
+    let base = if is_webgl {
+        wgpu::Limits::downlevel_webgl2_defaults()
+    } else {
+        wgpu::Limits::downlevel_defaults()
+    };
+    let a = adapter.limits();
+    let mut l = base.using_resolution(a.clone());
+    l.max_buffer_size = a.max_buffer_size;
+    l.max_storage_buffer_binding_size = a.max_storage_buffer_binding_size;
+    l
+}
+
 /// Create a wgpu surface + device, preferring WebGPU and falling back to WebGL2 if its
 /// `requestDevice` fails (see the `maxInterStageShaderComponents` note in `run`). WebGPU enumerates
 /// its adapter globally (no canvas context yet), so we only create the WebGPU surface once the
@@ -407,7 +435,7 @@ async fn init_gpu(canvas: &web_sys::HtmlCanvasElement) -> Result<Gpu, String> {
         .await
     {
         Some(adapter) => {
-            let limits = wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits());
+            let limits = web_limits(&adapter, false);
             match adapter.request_device(&device_desc(limits), None).await {
                 // Surface creation can also fail here — treat that like any WebGPU failure and
                 // fall through to WebGL2 rather than giving up (the canvas has no context yet).
@@ -442,7 +470,7 @@ async fn init_gpu(canvas: &web_sys::HtmlCanvasElement) -> Result<Gpu, String> {
         })
         .await
         .ok_or_else(|| format!("no WebGL2 adapter (after {webgpu_err:?})"))?;
-    let limits = wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
+    let limits = web_limits(&adapter, true);
     let (device, queue) = adapter
         .request_device(&device_desc(limits), None)
         .await
@@ -545,7 +573,7 @@ struct MetaInfo {
     /// Per-axis density histograms `[mz, im, rt]` (each over the full axis range), for the crop
     /// distribution strips. `None` if the server didn't provide them.
     hist: Option<[Vec<u32>; 3]>,
-    /// cbrt-binned intensity distribution over `[0, p99]`, for the floor control's strip.
+    /// Linear intensity distribution over `[0, p99]` (real counts), for the floor strip.
     i_hist: Option<Vec<u32>>,
 }
 
@@ -864,43 +892,6 @@ fn bind_value(
     }
 }
 
-/// Bind the intensity-floor control with a cbrt mapping: the slider's 0..1000 position is uniform
-/// in `cbrt(intensity)` over `[0, hi]` (so the low-intensity region gets fine control), while the
-/// number field stays in real counts. Both drive `filter_min[3]`.
-fn bind_floor(gfx: &Rc<RefCell<Gfx>>, hi: f64) {
-    let (Some(slider), Some(num)) = (
-        by_id::<web_sys::HtmlInputElement>("floor"),
-        by_id::<web_sys::HtmlInputElement>("floor-n"),
-    ) else {
-        return;
-    };
-    let hi = hi.max(1.0);
-    // slider position (0..1000) -> intensity = hi * (pos/1000)^3
-    {
-        let (gfx_c, s, n) = (gfx.clone(), slider.clone(), num.clone());
-        add_listener(slider.as_ref(), "input", move |_e: web_sys::Event| {
-            let pos = (s.value_as_number() / 1000.0).clamp(0.0, 1.0);
-            let intensity = hi * pos.powi(3);
-            gfx_c.borrow_mut().params.filter_min[3] = intensity as f32;
-            n.set_value(&format!("{intensity:.0}"));
-        });
-    }
-    // typed intensity -> pos = 1000 * cbrt(intensity/hi)
-    {
-        let (gfx_c, s, n) = (gfx.clone(), slider.clone(), num.clone());
-        add_listener(num.as_ref(), "change", move |_e: web_sys::Event| {
-            let raw = n.value_as_number();
-            if raw.is_nan() {
-                return;
-            }
-            let intensity = raw.clamp(0.0, hi);
-            s.set_value(&format!("{:.0}", 1000.0 * (intensity / hi).cbrt()));
-            n.set_value(&format!("{intensity:.0}"));
-            gfx_c.borrow_mut().params.filter_min[3] = intensity as f32;
-        });
-    }
-}
-
 /// Set a slider + its number field to `v` without firing handlers (for startup sync).
 fn set_value_pair(slider_id: &str, num_id: &str, v: f64, prec: usize) {
     if let Some(s) = by_id::<web_sys::HtmlInputElement>(slider_id) {
@@ -1023,7 +1014,8 @@ fn wire_controls(gfx: &Rc<RefCell<Gfx>>) {
     on_toggle("xf-sqrt", gfx, |g, on| if on { g.params.transfer[0] = 1.0; });
     on_toggle("xf-log", gfx, |g, on| if on { g.params.transfer[0] = 2.0; });
     bind_value(gfx, "expo", "expo-n", 2, |g, v| g.params.transfer[3] = v as f32);
-    // `floor` is bound separately (cbrt-mapped) once the intensity range is known — see bind_floor.
+    // Floor is linear in real counts; its slider/number range is scaled to the data in run().
+    bind_value(gfx, "floor", "floor-n", 0, |g, v| g.params.filter_min[3] = v as f32);
 
     // Filters
     on_toggle("ms-1", gfx, |g, on| if on { g.params.ms_mask = 0b01; });
