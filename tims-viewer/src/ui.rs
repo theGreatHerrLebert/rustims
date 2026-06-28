@@ -184,7 +184,7 @@ fn selection_section(ui: &mut egui::Ui, state: &mut AppState) {
                     for g in 1..=n.min(32) {
                         let bit = 1u32 << (g - 1);
                         let mut on = state.group_mask & bit != 0;
-                        let [r, gg, b] = crate::data::loader::group_color(g, n);
+                        let [r, gg, b] = crate::render::colormap::group_color(g, n);
                         let label = egui::RichText::new(format!("{g}")).color(
                             egui::Color32::from_rgb(
                                 (r * 255.0) as u8,
@@ -711,7 +711,7 @@ fn draw_group_legend(ctx: &egui::Context, state: &AppState) {
         let row = idx % ROWS_PER_COL;
         let x = panel.left() + PAD + col as f32 * COL_W;
         let y = panel.top() + PAD + title_h + row as f32 * ROW_H;
-        let [r, gg, b] = crate::data::loader::group_color(g, state.n_window_groups);
+        let [r, gg, b] = crate::render::colormap::group_color(g, state.n_window_groups);
         let sw = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(SWATCH, SWATCH));
         painter.rect_filled(
             sw,

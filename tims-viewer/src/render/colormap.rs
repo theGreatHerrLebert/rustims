@@ -125,6 +125,31 @@ pub fn create_lut_texture(
     (texture, view, sampler)
 }
 
+/// Distinct color per window group, by evenly spacing hue around the wheel. Shared by the
+/// annotation overlay (DIA isolation windows) and the egui group legend. Render-safe (no
+/// native deps), so it lives here rather than in the native loader.
+pub fn group_color(group: u32, n_groups: u32) -> [f32; 3] {
+    let h = (group.saturating_sub(1) as f32) / (n_groups.max(1) as f32);
+    hsv_to_rgb(h, 0.7, 1.0)
+}
+
+/// HSV (all in [0,1] except hue which wraps) to linear-ish RGB for line colors.
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
+    let i = (h * 6.0).floor();
+    let f = h * 6.0 - i;
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - f * s);
+    let t = v * (1.0 - (1.0 - f) * s);
+    match (i as i32).rem_euclid(6) {
+        0 => [v, t, p],
+        1 => [q, v, p],
+        2 => [p, v, t],
+        3 => [p, q, v],
+        4 => [t, p, v],
+        _ => [v, p, q],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

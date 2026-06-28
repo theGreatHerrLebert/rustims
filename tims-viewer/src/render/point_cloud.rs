@@ -26,10 +26,6 @@ const WORKGROUP_SIZE: u32 = 256;
 pub struct PointCloudRenderer {
     /// Master instance buffer (all resident points), sized to the budget.
     master: wgpu::Buffer,
-    /// Compacted visible points written by the compute pass (compaction path only).
-    compacted: wgpu::Buffer,
-    /// Indirect draw args: [vertex_count, instance_count, first_vertex, first_instance].
-    draw_args: wgpu::Buffer,
 
     capacity: u32,
     resident: u32,
@@ -49,9 +45,16 @@ pub struct PointCloudRenderer {
     _lut_texture: wgpu::Texture,
 }
 
+/// Compaction resources, present only when the device supports compute + indirect execution.
+/// These carry `STORAGE`/`INDIRECT` usage, which the WebGL2 fallback cannot allocate — so they
+/// (and `master`'s `STORAGE` usage) live here and are simply never created on that path.
 struct ComputeStage {
     pipeline: wgpu::ComputePipeline,
     bind_group: wgpu::BindGroup,
+    /// Compacted visible points written by the compute pass.
+    compacted: wgpu::Buffer,
+    /// Indirect draw args: [vertex_count, instance_count, first_vertex, first_instance].
+    draw_args: wgpu::Buffer,
 }
 
 impl PointCloudRenderer {
@@ -64,29 +67,21 @@ impl PointCloudRenderer {
         supports_compaction: bool,
     ) -> Self {
         let point_bytes = capacity as u64 * std::mem::size_of::<GpuPoint>() as u64;
-        // Master is read as storage by the compute pass and (in fallback) drawn as a
-        // vertex buffer; mark both usages.
+        // Master holds all resident points, always drawn as an instance buffer. With compaction
+        // it is ALSO read as a storage buffer by the compute pass; WebGL2 can't allocate storage
+        // buffers, so request STORAGE only on the compaction path.
+        let master_usage = wgpu::BufferUsages::VERTEX
+            | wgpu::BufferUsages::COPY_DST
+            | if supports_compaction {
+                wgpu::BufferUsages::STORAGE
+            } else {
+                wgpu::BufferUsages::empty()
+            };
         let master = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("point-master"),
             size: point_bytes,
-            usage: wgpu::BufferUsages::VERTEX
-                | wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST,
+            usage: master_usage,
             mapped_at_creation: false,
-        });
-        let compacted = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("point-compacted"),
-            size: point_bytes.max(std::mem::size_of::<GpuPoint>() as u64),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
-            mapped_at_creation: false,
-        });
-        let draw_args = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("point-draw-args"),
-            // vertex_count=4 (quad strip), instance_count=0, first_vertex=0, first_instance=0
-            contents: bytemuck::cast_slice(&[4u32, 0u32, 0u32, 0u32]),
-            usage: wgpu::BufferUsages::INDIRECT
-                | wgpu::BufferUsages::STORAGE
-                | wgpu::BufferUsages::COPY_DST,
         });
 
         let camera_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -231,11 +226,26 @@ impl PointCloudRenderer {
         );
 
         let compute = if supports_compaction {
+            // STORAGE/INDIRECT buffers: created only here, so the WebGL2 fallback allocates none.
+            let compacted = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("point-compacted"),
+                size: point_bytes.max(std::mem::size_of::<GpuPoint>() as u64),
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::STORAGE,
+                mapped_at_creation: false,
+            });
+            let draw_args = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("point-draw-args"),
+                // vertex_count=4 (quad strip), instance_count=0, first_vertex=0, first_instance=0
+                contents: bytemuck::cast_slice(&[4u32, 0u32, 0u32, 0u32]),
+                usage: wgpu::BufferUsages::INDIRECT
+                    | wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST,
+            });
             Some(build_compute_stage(
                 device,
                 &master,
-                &compacted,
-                &draw_args,
+                compacted,
+                draw_args,
                 &camera_buf,
                 &params_buf,
                 &compaction_buf,
@@ -246,8 +256,6 @@ impl PointCloudRenderer {
 
         PointCloudRenderer {
             master,
-            compacted,
-            draw_args,
             capacity,
             resident: 0,
             camera_buf,
@@ -311,7 +319,7 @@ impl PointCloudRenderer {
         }
         // Reset the survivor counter every frame (atomicAdd accumulates otherwise);
         // keep vertex_count=4 for the quad strip.
-        queue.write_buffer(&self.draw_args, 0, bytemuck::cast_slice(&[4u32, 0u32, 0u32, 0u32]));
+        queue.write_buffer(&compute.draw_args, 0, bytemuck::cast_slice(&[4u32, 0u32, 0u32, 0u32]));
         // 2D dispatch grid: a single dispatch dimension is capped at 65535 workgroups, which
         // a 1D dispatch exceeds once resident points pass ~65535*256 (~16.8M). Spread the
         // workgroups across x and y and let the shader rebuild the linear index from
@@ -349,12 +357,12 @@ impl PointCloudRenderer {
         };
         rpass.set_pipeline(pipeline);
         rpass.set_bind_group(0, &self.bind_group, &[]);
-        if self.compute.is_some() {
+        if let Some(compute) = &self.compute {
             // Draw only the compacted visible set; count comes from the indirect args.
-            rpass.set_vertex_buffer(0, self.compacted.slice(..));
-            rpass.draw_indirect(&self.draw_args, 0);
+            rpass.set_vertex_buffer(0, compute.compacted.slice(..));
+            rpass.draw_indirect(&compute.draw_args, 0);
         } else {
-            // Fallback: draw all resident points, cull in the vertex shader.
+            // Fallback (e.g. WebGL2): draw all resident points, cull in the vertex shader.
             rpass.set_vertex_buffer(0, self.master.slice(..));
             rpass.draw(0..4, 0..self.resident);
         }
@@ -404,8 +412,8 @@ fn compute_uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 fn build_compute_stage(
     device: &wgpu::Device,
     master: &wgpu::Buffer,
-    compacted: &wgpu::Buffer,
-    draw_args: &wgpu::Buffer,
+    compacted: wgpu::Buffer,
+    draw_args: wgpu::Buffer,
     camera_buf: &wgpu::Buffer,
     params_buf: &wgpu::Buffer,
     compaction_buf: &wgpu::Buffer,
@@ -471,6 +479,8 @@ fn build_compute_stage(
     ComputeStage {
         pipeline,
         bind_group,
+        compacted,
+        draw_args,
     }
 }
 
@@ -483,8 +493,10 @@ mod tests {
     /// Build the pipelines (forcing WGSL compilation for both the draw and, when
     /// supported, the compaction compute shader), upload points, run prepare() +
     /// render offscreen in both modes. Skips cleanly if no GPU adapter is available.
-    #[test]
-    fn offscreen_render_smoke() {
+    ///
+    /// `force_compaction`: `None` uses the device's real capability; `Some(false)` exercises the
+    /// WebGL2-shaped fallback (no storage/indirect buffers, plain instanced draw).
+    fn run_smoke(force_compaction: Option<bool>) {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY | wgpu::Backends::GL,
             ..Default::default()
@@ -511,8 +523,9 @@ mod tests {
         .expect("request_device failed");
 
         let flags = adapter.get_downlevel_capabilities().flags;
-        let supports_compaction = flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
+        let device_compaction = flags.contains(wgpu::DownlevelFlags::COMPUTE_SHADERS)
             && flags.contains(wgpu::DownlevelFlags::INDIRECT_EXECUTION);
+        let supports_compaction = force_compaction.unwrap_or(device_compaction);
 
         let color_format = wgpu::TextureFormat::Rgba8UnormSrgb;
         let depth_format = wgpu::TextureFormat::Depth32Float;
@@ -592,5 +605,18 @@ mod tests {
             queue.submit(std::iter::once(enc.finish()));
             device.poll(wgpu::Maintain::Wait);
         }
+    }
+
+    /// Smoke test on the device's real capabilities (compaction path where supported).
+    #[test]
+    fn offscreen_render_smoke() {
+        run_smoke(None);
+    }
+
+    /// Force the no-compute fallback (the WebGL2-shaped path): the renderer must build with no
+    /// storage/indirect buffers and the plain instanced draw must render without validation errors.
+    #[test]
+    fn offscreen_render_smoke_webgl2_fallback() {
+        run_smoke(Some(false));
     }
 }

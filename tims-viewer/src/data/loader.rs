@@ -605,7 +605,7 @@ fn build_annotations(
                     let im1 = ims.get(1).copied().unwrap_or(im0);
                     let mz0 = w.isolation_mz - w.isolation_width * 0.5;
                     let mz1 = w.isolation_mz + w.isolation_width * 0.5;
-                    let color = group_color(w.window_group, n_groups);
+                    let color = crate::render::colormap::group_color(w.window_group, n_groups);
                     for i in 0..N_SLICES {
                         let rt =
                             rt_lo + (rt_hi - rt_lo) * (i as f64 + 0.5) / N_SLICES as f64;
@@ -642,29 +642,6 @@ fn push_cross(
     v([c[0], c[1] + h, c[2]]);
     v([c[0], c[1], c[2] - h]);
     v([c[0], c[1], c[2] + h]);
-}
-
-/// Distinct color per window group, by evenly spacing hue around the wheel.
-pub fn group_color(group: u32, n_groups: u32) -> [f32; 3] {
-    let h = (group.saturating_sub(1) as f32) / (n_groups.max(1) as f32);
-    hsv_to_rgb(h, 0.7, 1.0)
-}
-
-/// HSV (all in [0,1] except hue which wraps) to linear-ish RGB for line colors.
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
-    let i = (h * 6.0).floor();
-    let f = h * 6.0 - i;
-    let p = v * (1.0 - s);
-    let q = v * (1.0 - f * s);
-    let t = v * (1.0 - (1.0 - f) * s);
-    match (i as i32).rem_euclid(6) {
-        0 => [v, t, p],
-        1 => [q, v, p],
-        2 => [p, v, t],
-        3 => [p, q, v],
-        4 => [t, p, v],
-        _ => [v, p, q],
-    }
 }
 
 /// Append the 4 edges of an axis-aligned rectangle in the m/z x mobility plane at a fixed

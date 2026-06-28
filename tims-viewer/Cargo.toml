@@ -11,44 +11,59 @@ rust-version = "1.84"
 [[bin]]
 name = "tims-viewer"
 path = "src/main.rs"
+# The binary is the native app (window + CLI + Bruker loader). The render library
+# (`src/lib.rs`) builds without these — see `native` below and NATIVE_WEB.md.
+required-features = ["native"]
 
 [dependencies]
-# Local data layer (zero-copy access to raw timsTOF frames)
-rustdf = { path = "../rustdf", version = "0.4.1" }
-mscore = { path = "../mscore", version = "0.4.1" }
-
-# GPU + windowing + UI. Pin the triple exactly: this is a known-compatible set
-# (egui-wgpu 0.29 -> wgpu 22, egui-winit 0.29 -> winit 0.30). Broad ranges risk a
-# resolution that mixes incompatible majors.
+# --- Render-safe core (compiles for wasm32 too): GPU, math, UI ---
+# Pin the GPU/UI versions exactly: a known-compatible set (egui-wgpu 0.29 -> wgpu 22).
 wgpu = "=22.1.0"
-winit = "=0.30.5"
 egui = "=0.29.1"
 egui-wgpu = "=0.29.1"
-egui-winit = { version = "=0.29.1", default-features = false, features = ["links", "wayland", "x11"] }
-
-# Math / GPU data
 bytemuck = { version = "1.21", features = ["derive"] }
 glam = { version = "0.29", features = ["bytemuck"] }
-
-# Async bridge for wgpu adapter/device requests
-pollster = "0.3"
-
-# Misc
-anyhow = "1"
 log = "0.4"
-env_logger = "0.11"
-clap = { version = "4.5", features = ["derive"] }
-rayon = "1.10"
-crossbeam-channel = "0.5"
-# f32 -> f16 conversion for the R16Float volume texture
+# f32 -> f16 conversion for the R16Float volume texture.
 half = { version = "2", features = ["bytemuck"] }
-# PNG screenshot export
-png = "0.17"
+
+# --- Native-only (gated behind `native`): Bruker .d loader, windowing, CLI, PNG export ---
+# These pull SQLite/filesystem/threads and can't run in a browser; excluded from the wasm
+# render lib. egui-winit 0.29 -> winit 0.30 (keep paired with the egui/wgpu triple above).
+# `pollster` (blocking adapter/device init) and `anyhow` are only used by native code; the
+# wasm shell will init async. (`pollster` is also a dev-dependency for the GPU smoke tests.)
+pollster = { version = "0.3", optional = true }
+anyhow = { version = "1", optional = true }
+rustdf = { path = "../rustdf", version = "0.4.1", optional = true }
+mscore = { path = "../mscore", version = "0.4.1", optional = true }
+winit = { version = "=0.30.5", optional = true }
+egui-winit = { version = "=0.29.1", default-features = false, features = ["links", "wayland", "x11"], optional = true }
+env_logger = { version = "0.11", optional = true }
+clap = { version = "4.5", features = ["derive"], optional = true }
+rayon = { version = "1.10", optional = true }
+crossbeam-channel = { version = "0.5", optional = true }
+png = { version = "0.17", optional = true }
+# Tiny synchronous HTTP server for the Phase-2 point-streaming endpoint (`--serve`).
+tiny_http = { version = "0.12", optional = true }
+serde_json = { version = "1", optional = true }
 
 [features]
-default = []
-# Pack positions/intensity as f16 to roughly double on-GPU point capacity.
+default = ["native"]
+# Everything that needs the OS / filesystem / threads. Off => the render-only library
+# (the wasm target builds with `--no-default-features`).
+native = [
+    "dep:pollster", "dep:anyhow", "dep:rustdf", "dep:mscore", "dep:winit", "dep:egui-winit",
+    "dep:env_logger", "dep:clap", "dep:rayon", "dep:crossbeam-channel", "dep:png",
+    "dep:tiny_http", "dep:serde_json",
+]
+# (reserved) Pack positions/intensity as f16 to roughly halve on-GPU/wire size. Not yet
+# implemented — see NATIVE_WEB.md Phase 3.
 compact = []
+
+[dev-dependencies]
+# The GPU smoke tests in render/{point_cloud,volume}.rs block on async adapter/device init,
+# so they need pollster even when building the render lib with --no-default-features.
+pollster = "0.3"
 
 # This crate is a leaf binary; keep its own release profile knobs consistent with the
 # workspace (panic=abort etc. are inherited from the workspace [profile.release]).

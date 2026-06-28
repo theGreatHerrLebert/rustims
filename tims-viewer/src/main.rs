@@ -5,22 +5,13 @@
 //!   tims-viewer DEMO                 synthetic point cloud (no Bruker data needed)
 //!   tims-viewer DEMO --budget 25000000
 
-mod app;
-mod camera;
-mod cluster;
-mod data;
-mod offscreen;
-mod render;
-mod state;
-mod ticks;
-mod ui;
-
 use anyhow::Result;
 use clap::Parser;
 use winit::event_loop::{ControlFlow, EventLoop};
 
-use app::{App, Plan};
-use data::meta::MetaIndex;
+use tims_viewer::app::{App, Plan};
+use tims_viewer::data::meta::MetaIndex;
+use tims_viewer::offscreen;
 
 /// Command-line arguments.
 #[derive(Parser, Debug)]
@@ -40,6 +31,10 @@ struct Args {
     /// Headless: render one frame to this PNG path and exit (no window needed).
     #[arg(long)]
     render_png: Option<String>,
+    /// Serve the loaded slice's packed points over HTTP on this port (for the web shell), then
+    /// block. No window/GPU needed; works with a `.d` path or `DEMO`.
+    #[arg(long)]
+    serve: Option<u16>,
     /// With --render-png: render the volume raycaster instead of the point cloud.
     #[arg(long)]
     volume: bool,
@@ -100,6 +95,11 @@ fn main() -> Result<()> {
     };
 
     let plan = Plan::new(meta, is_demo, args.budget);
+
+    // Point-streaming server mode (no window/GPU): serve packed points to the web shell.
+    if let Some(port) = args.serve {
+        return tims_viewer::serve::serve(plan, port);
+    }
 
     // Headless one-frame render mode (no window).
     if let Some(path) = args.render_png {

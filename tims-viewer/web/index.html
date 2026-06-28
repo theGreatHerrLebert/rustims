@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>tims·view — GPU ion-cloud viewer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #090c12; --bg2: #0c1018;
+      --ink: #cdd7e6; --dim: #7b8799; --faint: #515c70;
+      --line: rgba(150,172,205,0.11); --line-2: rgba(150,172,205,0.06);
+      --panel: rgba(13,18,27,0.66);
+      --accent: #35e0c4;       /* viridis teal — primary */
+      --accent-2: #ffb23e;     /* inferno amber — data highlight */
+      --accent-dim: rgba(53,224,196,0.16);
+      --sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --disp: 'Space Grotesk', var(--sans);
+      --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+      --r: 9px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+      font-family: var(--sans); overflow: hidden; }
+    body::before { /* faint instrument vignette + grid wash behind the canvas */
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(120% 90% at 70% 0%, rgba(53,224,196,0.05), transparent 55%),
+        radial-gradient(80% 70% at 0% 100%, rgba(255,178,62,0.04), transparent 60%); }
+
+    #tims-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block;
+      z-index: 1; background: radial-gradient(120% 100% at 50% 40%, #0b0f17 0%, #05070b 100%); }
+
+    /* ---- control rail (glass) ---- */
+    .rail { position: fixed; z-index: 3; top: 16px; left: 16px; bottom: 16px; width: 320px;
+      display: flex; flex-direction: column; border-radius: var(--r);
+      background: var(--panel); border: 1px solid var(--line);
+      backdrop-filter: blur(18px) saturate(1.3); -webkit-backdrop-filter: blur(18px) saturate(1.3);
+      box-shadow: 0 24px 60px -24px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04);
+      transition: transform .35s cubic-bezier(.4,.1,.2,1), opacity .3s; }
+    .rail::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 2px;
+      border-radius: 2px; background: linear-gradient(var(--accent), var(--accent-2)); opacity: .85; }
+
+    .head { padding: 18px 18px 14px 20px; border-bottom: 1px solid var(--line); }
+    .mark { font-family: var(--disp); font-weight: 700; font-size: 18px; letter-spacing: .02em;
+      display: flex; align-items: baseline; gap: 7px; }
+    .mark b { color: var(--accent); font-weight: 700; }
+    .mark span { color: var(--faint); font-weight: 500; }
+    .sub { margin-top: 3px; font-size: 11px; color: var(--dim); letter-spacing: .04em; }
+
+    /* ---- telemetry HUD ---- */
+    .hud { padding: 12px 18px 12px 20px; border-bottom: 1px solid var(--line);
+      display: grid; grid-template-columns: 1fr 1fr; gap: 9px 14px; font-family: var(--mono); }
+    .stat { display: flex; flex-direction: column; gap: 2px; }
+    .stat .k { font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+    .stat .v { font-size: 14px; font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .stat .v.accent { color: var(--accent); }
+
+    /* ---- scrolling sections ---- */
+    .body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 4px 0 14px; }
+    .body::-webkit-scrollbar { width: 8px; }
+    .body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
+    .sec { padding: 14px 18px 4px 20px; }
+    .sec + .sec { border-top: 1px solid var(--line-2); }
+    .ey { display: flex; align-items: center; gap: 8px; font-size: 10px; letter-spacing: .18em;
+      text-transform: uppercase; color: var(--dim); margin-bottom: 11px; }
+    .ey::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      min-height: 30px; margin-bottom: 9px; }
+    .lbl { font-size: 12.5px; color: var(--ink); font-weight: 500; }
+    .val { font-family: var(--mono); font-size: 11.5px; color: var(--accent-2);
+      font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; }
+
+    /* range */
+    .rng { -webkit-appearance: none; appearance: none; width: 150px; height: 3px; border-radius: 3px;
+      background: var(--line); outline: none; }
+    .rng::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%;
+      margin-top: -5px; /* center the thumb on the 3px track */
+      background: var(--ink); border: 2px solid var(--accent); cursor: pointer;
+      box-shadow: 0 0 0 3px transparent; transition: box-shadow .15s; }
+    .rng::-webkit-slider-thumb:hover { box-shadow: 0 0 0 4px var(--accent-dim); }
+    .rng::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--ink);
+      border: 2px solid var(--accent); cursor: pointer; }
+    .rng.wide { width: 100%; }
+
+    /* segmented (radios) */
+    .seg { display: inline-flex; background: rgba(0,0,0,0.25); border: 1px solid var(--line);
+      border-radius: 7px; padding: 2px; gap: 2px; }
+    .seg input { position: absolute; opacity: 0; pointer-events: none; }
+    .seg label { font-size: 11.5px; font-weight: 500; color: var(--dim); padding: 4px 10px;
+      border-radius: 5px; cursor: pointer; transition: all .14s; line-height: 1.2; }
+    .seg label:hover { color: var(--ink); }
+    .seg input:checked + label { background: var(--accent-dim); color: var(--accent); }
+    .seg.full { display: flex; } .seg.full label { flex: 1; text-align: center; }
+
+    /* select */
+    .sel { font-family: var(--sans); font-size: 12.5px; color: var(--ink); background: rgba(0,0,0,0.25);
+      border: 1px solid var(--line); border-radius: 7px; padding: 6px 28px 6px 10px; cursor: pointer;
+      appearance: none; -webkit-appearance: none; width: 150px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%237b8799' stroke-width='1.5'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 10px center; }
+    .sel:focus { border-color: var(--accent); outline: none; }
+
+    /* switch */
+    .sw { position: absolute; opacity: 0; }
+    .sw-l { width: 38px; height: 21px; border-radius: 21px; background: rgba(0,0,0,0.35);
+      border: 1px solid var(--line); position: relative; cursor: pointer; transition: all .18s; display: block; }
+    .sw-l::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+      border-radius: 50%; background: var(--dim); transition: all .18s; }
+    .sw:checked + .sw-l { background: var(--accent-dim); border-color: var(--accent); }
+    .sw:checked + .sw-l::after { left: 19px; background: var(--accent); }
+
+    /* button */
+    .btn { font-family: var(--sans); font-size: 12px; font-weight: 500; color: var(--ink);
+      background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 7px;
+      padding: 7px 12px; cursor: pointer; transition: all .14s; }
+    .btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+    .btn.mono { font-family: var(--mono); font-size: 11px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    /* axis crop dual-mini-sliders */
+    .crop { margin-bottom: 11px; }
+    .crop .clab { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim);
+      margin-bottom: 5px; font-family: var(--mono); }
+    .crop .clab b { color: var(--ink); font-weight: 500; }
+    /* dual-thumb range: two inputs overlaid on one track, fill between the thumbs */
+    .dual { position: relative; height: 20px; }
+    .dual-track, .dual-fill { position: absolute; top: 50%; transform: translateY(-50%);
+      height: 3px; border-radius: 3px; pointer-events: none; }
+    .dual-track { left: 0; right: 0; background: var(--line); }
+    .dual-fill { left: 0; width: 100%; background: var(--accent); opacity: .85; }
+    .dual input[type=range] { position: absolute; left: 0; top: 0; width: 100%; height: 20px; margin: 0;
+      -webkit-appearance: none; appearance: none; background: transparent; pointer-events: none; }
+    .dual input[type=range]::-webkit-slider-runnable-track { background: transparent; border: none; }
+    .dual input[type=range]::-moz-range-track { background: transparent; border: none; }
+    .dual input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; pointer-events: auto;
+      width: 13px; height: 13px; margin-top: -5px; border-radius: 50%; background: var(--ink);
+      border: 2px solid var(--accent); cursor: grab; box-shadow: 0 1px 3px rgba(0,0,0,.5); }
+    .dual input[type=range]::-webkit-slider-thumb:active { cursor: grabbing; box-shadow: 0 0 0 4px var(--accent-dim); }
+    .dual input[type=range]::-moz-range-thumb { pointer-events: auto; width: 12px; height: 12px;
+      border-radius: 50%; background: var(--ink); border: 2px solid var(--accent); cursor: grab; }
+    .dual input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px var(--accent-dim); }
+
+    /* colorbar */
+    .cbar { position: fixed; z-index: 3; right: 18px; bottom: 18px; width: 16px; height: 168px;
+      border-radius: 4px; border: 1px solid var(--line); display: flex; flex-direction: column;
+      box-shadow: 0 8px 24px -8px rgba(0,0,0,0.6); }
+    .cbar-track { flex: 1; border-radius: 3px; }
+    .cbar.v0 .cbar-track { background: linear-gradient(to top, #440154, #3b528b, #21918c, #5ec962, #fde725); }
+    .cbar.v1 .cbar-track { background: linear-gradient(to top, #000004, #57106e, #bc3754, #f98e09, #fcffa4); }
+    .cbar.v2 .cbar-track { background: linear-gradient(to top, #30123b, #4669db, #1ae4b6, #a4fc3c, #fb7e21, #7a0403); }
+    .cbar.v3 .cbar-track { background: linear-gradient(to top, #000, #fff); }
+    .cbar .caps { position: absolute; right: 22px; top: -2px; bottom: -2px; display: flex;
+      flex-direction: column; justify-content: space-between; font-family: var(--mono); font-size: 9px;
+      color: var(--faint); letter-spacing: .04em; white-space: nowrap; }
+
+    /* projected 3D axis tick labels (positioned by the wasm each frame) */
+    #axis-labels { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
+    .axlabel { position: absolute; left: 0; top: 0; font-family: var(--mono); font-size: 10.5px;
+      font-variant-numeric: tabular-nums; letter-spacing: .01em; white-space: nowrap;
+      text-shadow: 0 1px 3px #000, 0 0 3px #000; will-change: transform; }
+
+    /* collapse (pure CSS checkbox) */
+    .railtgl { position: absolute; opacity: 0; pointer-events: none; }
+    .railtgl:checked ~ .rail { transform: translateX(calc(-100% - 18px)); opacity: 0; }
+    .railtgl:checked ~ .railbtn { left: 16px; }
+    .railbtn { position: fixed; z-index: 4; top: 16px; left: 348px; transition: left .35s cubic-bezier(.4,.1,.2,1);
+      width: 34px; height: 34px; display: grid; place-items: center; cursor: pointer; border-radius: 8px;
+      background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(18px);
+      color: var(--dim); }
+    .railbtn:hover { color: var(--accent); border-color: var(--accent); }
+    .railbtn svg { width: 15px; height: 15px; }
+
+    .err { position: fixed; z-index: 5; left: 50%; bottom: 22px; transform: translateX(-50%);
+      font-family: var(--mono); font-size: 12px; color: var(--accent-2); background: rgba(20,12,4,0.9);
+      border: 1px solid rgba(255,178,62,0.3); border-radius: 8px; padding: 8px 14px; max-width: 80vw; }
+    .err:empty { display: none; }
+
+    /* keyboard focus — inputs hide native outlines, so proxy focus onto the visible control */
+    .rng:focus-visible { box-shadow: 0 0 0 4px var(--accent-dim); }
+    .seg input:focus-visible + label,
+    .sw:focus-visible + .sw-l,
+    .railtgl:focus-visible + .railbtn,
+    .btn:focus-visible, .sel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    /* HUD: keep long device names from breaking the 2-column grid */
+    .stat { min-width: 0; }
+    .stat .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* opaque fallback where backdrop-filter is unsupported (panel stays legible over data) */
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+      .rail, .railbtn, .cbar { background: #0d1119f2; }
+    }
+
+    @media (prefers-reduced-motion: reduce) { *, *::before { transition: none !important; } }
+
+    @media (max-width: 720px) {
+      .rail { width: calc(100vw - 32px); }
+      /* open: toggle parks at the rail's top-right (acts as close); collapsed: top-left to reopen */
+      .railbtn { left: auto; right: 16px; }
+      .railtgl:checked ~ .railbtn { left: 16px; right: auto; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="tims-canvas"></canvas>
+  <div id="axis-labels" aria-hidden="true"></div>
+
+  <input type="checkbox" id="railtgl" class="railtgl" />
+  <label for="railtgl" class="railbtn" title="Toggle panel" aria-label="Toggle panel">
+    <svg viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+  </label>
+
+  <aside class="rail">
+    <div class="head">
+      <div class="mark">tims<b>·</b>view <span>/ ion cloud</span></div>
+      <div class="sub">m/z × 1/K₀ × retention time — GPU point field</div>
+    </div>
+
+    <div class="hud">
+      <div class="stat"><span class="k">Source</span><span class="v accent" id="hud-backend">—</span></div>
+      <div class="stat"><span class="k">Device</span><span class="v" id="hud-adapter">—</span></div>
+      <div class="stat"><span class="k">Points</span><span class="v" id="hud-points">—</span></div>
+      <div class="stat"><span class="k">Frame</span><span class="v" id="hud-fps">— fps</span></div>
+    </div>
+
+    <div class="body">
+      <section class="sec">
+        <div class="ey">View</div>
+        <div class="row"><label class="lbl" for="ar">Auto-orbit</label>
+          <span><input type="checkbox" class="sw" id="ar" checked /><label for="ar" class="sw-l" aria-hidden="true"></label></span></div>
+        <div class="grid2">
+          <button class="btn" id="reset">Reset view</button>
+          <button class="btn mono" id="roll" title="Cycle which axis points up">up: 1/K₀</button>
+        </div>
+      </section>
+
+      <section class="sec">
+        <div class="ey">Render</div>
+        <div class="row"><span class="lbl" id="l-mode">Mode</span>
+          <span class="seg" role="radiogroup" aria-labelledby="l-mode">
+            <input type="radio" name="mode" id="m-add" checked /><label for="m-add">Density</label>
+            <input type="radio" name="mode" id="m-opq" /><label for="m-opq">Solid</label>
+          </span></div>
+        <div class="row"><label class="lbl" for="cmap">Colormap</label>
+          <select class="sel" id="cmap" aria-label="Colormap">
+            <option value="0">Viridis</option><option value="1" selected>Inferno</option>
+            <option value="2">Turbo</option><option value="3">Grayscale</option>
+          </select></div>
+        <div class="row"><label class="lbl" for="psize">Point size</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="psize" min="0.5" max="6" step="0.1" value="2.5" />
+            <output class="val" id="psize-v" for="psize">2.5</output></span></div>
+        <div class="row"><label class="lbl" for="opac">Opacity</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="opac" min="0.05" max="1" step="0.05" value="0.6" />
+            <output class="val" id="opac-v" for="opac">0.60</output></span></div>
+      </section>
+
+      <section class="sec">
+        <div class="ey">Intensity</div>
+        <div class="row"><span class="lbl" id="l-xf">Transfer</span>
+          <span class="seg" role="radiogroup" aria-labelledby="l-xf">
+            <input type="radio" name="xf" id="xf-lin" /><label for="xf-lin">Lin</label>
+            <input type="radio" name="xf" id="xf-sqrt" checked /><label for="xf-sqrt">√</label>
+            <input type="radio" name="xf" id="xf-log" /><label for="xf-log">Log</label>
+          </span></div>
+        <div class="row"><label class="lbl" for="expo">Exposure</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="expo" min="0.02" max="4" step="0.02" value="1.00" />
+            <output class="val" id="expo-v" for="expo">1.00</output></span></div>
+        <div class="row"><label class="lbl" for="floor">Floor</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="floor" min="0" max="5000" step="25" value="0" />
+            <output class="val" id="floor-v" for="floor">0</output></span></div>
+      </section>
+
+      <section class="sec">
+        <div class="ey">Filters</div>
+        <div class="row"><span class="lbl" id="l-ms">Show</span>
+          <span class="seg" role="radiogroup" aria-labelledby="l-ms">
+            <input type="radio" name="ms" id="ms-1" checked /><label for="ms-1">MS1</label>
+            <input type="radio" name="ms" id="ms-2" /><label for="ms-2">MS2</label>
+            <input type="radio" name="ms" id="ms-b" /><label for="ms-b">Both</label>
+          </span></div>
+        <div class="crop">
+          <div class="clab"><b>m/z</b><span id="cmz-v">full</span></div>
+          <div class="dual">
+            <div class="dual-track"></div><div class="dual-fill" id="cmz-fill"></div>
+            <input type="range" id="cmz-lo" min="0" max="1000" value="0" aria-label="m/z crop minimum" />
+            <input type="range" id="cmz-hi" min="0" max="1000" value="1000" aria-label="m/z crop maximum" />
+          </div>
+        </div>
+        <div class="crop">
+          <div class="clab"><b>1/K₀</b><span id="cim-v">full</span></div>
+          <div class="dual">
+            <div class="dual-track"></div><div class="dual-fill" id="cim-fill"></div>
+            <input type="range" id="cim-lo" min="0" max="1000" value="0" aria-label="ion mobility crop minimum" />
+            <input type="range" id="cim-hi" min="0" max="1000" value="1000" aria-label="ion mobility crop maximum" />
+          </div>
+        </div>
+        <div class="crop">
+          <div class="clab"><b>RT</b><span id="crt-v">full</span></div>
+          <div class="dual">
+            <div class="dual-track"></div><div class="dual-fill" id="crt-fill"></div>
+            <input type="range" id="crt-lo" min="0" max="1000" value="0" aria-label="retention time crop minimum" />
+            <input type="range" id="crt-hi" min="0" max="1000" value="1000" aria-label="retention time crop maximum" />
+          </div>
+        </div>
+      </section>
+    </div>
+  </aside>
+
+  <div class="cbar v1" id="cbar"><div class="cbar-track"></div>
+    <div class="caps"><span>hi</span><span>lo</span></div></div>
+
+  <div class="err" id="status"></div>
+</body>
+</html>
