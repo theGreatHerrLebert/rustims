@@ -98,6 +98,9 @@ struct Gfx {
     /// root's budget is `None` => loaded via no-query so it hits the server's pinned full-run cache.
     /// Focus pushes; Back pops. Empty in the demo fallback (focus disabled).
     focus_stack: Vec<(Region, Option<usize>)>,
+    /// Whether the projection maps reflect the current view (valid grids drawn); box-select is gated
+    /// on it so a drag never focuses against stale/blank maps.
+    maps_ok: bool,
     /// Declared last so it drops AFTER the surface/device — wgpu requires the instance to outlive
     /// everything created from it.
     _instance: wgpu::Instance,
@@ -393,6 +396,7 @@ async fn run() -> Result<(), String> {
         focus_stack: axis_bounds
             .map(|b| vec![(Region { mz: b[0], im: b[1], rt: b[2], imin: 0.0 }, None)])
             .unwrap_or_default(),
+        maps_ok: false, // set by the initial render_maps below
     }));
 
     wire_input(&gfx, &window, &canvas_for_input);
@@ -415,7 +419,8 @@ async fn run() -> Result<(), String> {
         if let Some(ih) = &m.i_hist {
             set_hist_svg("floor-hist", ih);
         }
-        render_maps(m);
+        let ok = render_maps(m);
+        gfx.borrow_mut().maps_ok = ok;
     }
     // Runtime detail/performance control over how many of the loaded points are drawn.
     bind_display(&gfx);
@@ -723,20 +728,24 @@ async fn fetch_meta(url: &str) -> Result<MetaInfo, String> {
     };
     let i_hist = js_u32_array(&it, "hist");
 
-    // 2D projections for the box-select maps.
+    // 2D projections for the box-select maps. Use the server's explicit `bins` and require all
+    // three grids to be exactly `bins²`, else drop them (so the maps never show a malformed grid).
     let pj = jget(&v, "proj");
+    let bins = jnum(&pj, "bins").filter(|x| x.is_finite() && *x >= 1.0).map(|x| x as usize);
     let proj = match (
+        bins,
         js_u32_array(&pj, "mz_im"),
         js_u32_array(&pj, "mz_rt"),
         js_u32_array(&pj, "im_rt"),
     ) {
-        (Some(a), Some(b), Some(c)) => Some([a, b, c]),
+        (Some(b), Some(a), Some(c), Some(d))
+            if a.len() == b * b && c.len() == b * b && d.len() == b * b =>
+        {
+            Some([a, c, d])
+        }
         _ => None,
     };
-    let proj_bins = proj
-        .as_ref()
-        .map(|p| (p[0].len() as f64).sqrt().round() as usize)
-        .unwrap_or(0);
+    let proj_bins = if proj.is_some() { bins.unwrap_or(0) } else { 0 };
 
     Ok(MetaInfo {
         bounds,
@@ -971,7 +980,8 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
         if let Some(ih) = &m.i_hist {
             set_hist_svg("floor-hist", ih);
         }
-        render_maps(m);
+        let ok = render_maps(m);
+        gfx.borrow_mut().maps_ok = ok;
     }
     for id in ["floor", "floor-n"] {
         if let Some(inp) = by_id::<web_sys::HtmlInputElement>(id) {
@@ -1277,12 +1287,38 @@ fn render_heatmap(canvas_id: &str, data: &[u32], bins: usize) {
     }
 }
 
-/// Render all three projection minimaps from a load's meta.
-fn render_maps(meta: &MetaInfo) {
-    if let Some(proj) = &meta.proj {
-        for (i, id) in ["map-0", "map-1", "map-2"].iter().enumerate() {
-            render_heatmap(id, &proj[i], meta.proj_bins);
+/// Render all three projection minimaps from a load's meta. Returns whether valid maps were drawn;
+/// when the meta lacks usable projections the stale canvases are cleared (so box-select can be
+/// disabled rather than acting on a previous view).
+fn render_maps(meta: &MetaInfo) -> bool {
+    match &meta.proj {
+        Some(proj) if meta.proj_bins > 0 => {
+            for (i, id) in ["map-0", "map-1", "map-2"].iter().enumerate() {
+                render_heatmap(id, &proj[i], meta.proj_bins);
+            }
+            true
         }
+        _ => {
+            for id in ["map-0", "map-1", "map-2"] {
+                clear_canvas(id);
+            }
+            false
+        }
+    }
+}
+
+/// Clear a canvas (so it can't show a stale view from a prior load).
+fn clear_canvas(id: &str) {
+    let Some(canvas) = by_id::<web_sys::HtmlCanvasElement>(id) else {
+        return;
+    };
+    if let Some(ctx) = canvas
+        .get_context("2d")
+        .ok()
+        .flatten()
+        .and_then(|c| c.dyn_into::<web_sys::CanvasRenderingContext2d>().ok())
+    {
+        ctx.clear_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
     }
 }
 
@@ -1359,6 +1395,12 @@ fn bind_maps(gfx: &Rc<RefCell<Gfx>>) {
             let Some((proj, x0, y0)) = *drag.borrow() else {
                 return;
             };
+            // No button held => the mouseup happened off-window; cancel the drag + overlay.
+            if e.buttons() == 0 {
+                *drag.borrow_mut() = None;
+                set_sel_box(proj, 0.0, 0.0, 0.0, 0.0, false);
+                return;
+            }
             if let Some(mw) = by_id::<web_sys::HtmlElement>(&format!("mw-{proj}")) {
                 let (nx, ny) = map_frac(&mw, &e);
                 set_sel_box(proj, x0, y0, nx, ny, true);
@@ -1378,8 +1420,14 @@ fn bind_maps(gfx: &Rc<RefCell<Gfx>>) {
             let (nx, ny) = map_frac(&mw, &e);
             let (xa, xb) = (x0.min(nx), x0.max(nx));
             let (ya, yb) = (y0.min(ny), y0.max(ny));
-            if (xb - xa) < 0.02 || (yb - ya) < 0.02 || gfx.borrow().reloading {
-                return; // ignore clicks / tiny drags / mid-load
+            if (xb - xa) < 0.02 || (yb - ya) < 0.02 {
+                return; // ignore clicks / tiny drags
+            }
+            {
+                let g = gfx.borrow();
+                if g.reloading || !g.maps_ok {
+                    return; // mid-load, or maps don't reflect the current view
+                }
             }
             if let Some(r) = region_from_box(&gfx.borrow(), proj, (xa, xb), (ya, yb)) {
                 let budget = gfx.borrow().n_cap;

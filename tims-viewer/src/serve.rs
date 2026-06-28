@@ -21,7 +21,7 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 use crate::app::Plan;
 use crate::data::demo::DemoSource;
-use crate::data::loader::{stride_for, LoadMsg, LoaderHandle, LoaderMode, RegionFilter};
+use crate::data::loader::{stride_for, LoadMsg, LoaderHandle, LoaderMode, RegionFilter, PROJ_BINS};
 use crate::data::meta::MetaIndex;
 use crate::data::point::{AxisBounds, AxisTransform, GpuPoint};
 
@@ -415,7 +415,7 @@ fn build_load_result(
         })),
         // Sample-based 2D density projections for the box-select minimaps.
         "proj": hist.as_ref().map(|h| serde_json::json!({
-            "bins": (h.proj_mz_im.len() as f64).sqrt().round() as u32,
+            "bins": PROJ_BINS,
             "mz_im": h.proj_mz_im, "mz_rt": h.proj_mz_rt, "im_rt": h.proj_im_rt,
         })),
     })
