@@ -21,7 +21,15 @@ use tims_viewer::render::annotation::{AnnotationRenderer, LineVertex};
 use tims_viewer::ticks::{fmt_tick, ticks_for, Axis, RT_MINUTES_SPAN};
 use tims_viewer::render::colormap::{sample as colormap_sample, COLORMAP_NAMES};
 use tims_viewer::render::point_cloud::{PointCloudRenderer, PointMode};
-use tims_viewer::render::uniforms::ParamsUniform;
+use tims_viewer::render::uniforms::{ParamsUniform, VolumeUniform};
+use tims_viewer::render::volume::{VolumeGrid, VolumeRenderer, VOLUME_DIMS};
+
+/// Points (the splat cloud) vs Volume (raymarched density grid).
+#[derive(Clone, Copy, PartialEq)]
+enum ViewMode {
+    Points,
+    Volume,
+}
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const CANVAS_ID: &str = "tims-canvas";
@@ -101,6 +109,17 @@ struct Gfx {
     /// Whether the projection maps reflect the current view (valid grids drawn); box-select is gated
     /// on it so a drag never focuses against stale/blank maps.
     maps_ok: bool,
+    // ---- volume rendering (VOLUME_WEB_IDEA.md) ----
+    view_mode: ViewMode,
+    /// The raymarcher; `None` when the GPU can't host a 256³-ish 3D R16Float texture.
+    volume: Option<VolumeRenderer>,
+    /// CPU density grid, allocated on first volume use; rebuilt from `cpu_points` when stale.
+    vol_grid: Option<VolumeGrid>,
+    /// Rebuild the grid from `cpu_points` (set on load and MS-mask change).
+    vol_needs_grid: bool,
+    /// Raymarch samples; composite (0) vs max-intensity-projection (1).
+    vol_steps: u32,
+    vol_style: u32,
     /// Declared last so it drops AFTER the surface/device — wgpu requires the instance to outlive
     /// everything created from it.
     _instance: wgpu::Instance,
@@ -146,6 +165,51 @@ impl Gfx {
         }
     }
 
+    /// Rebuild the density grid from `cpu_points` if stale, upload it, and refresh the volume
+    /// uniform for this frame. No-op when volume is unsupported.
+    fn ensure_volume(&mut self, aspect: f32) {
+        if self.volume.is_none() {
+            return;
+        }
+        if self.vol_grid.is_none() {
+            self.vol_grid = Some(VolumeGrid::new(VOLUME_DIMS));
+            self.vol_needs_grid = true;
+        }
+        let grid = self.vol_grid.as_mut().unwrap();
+        if self.vol_needs_grid {
+            // Density of all resident points, filtered by the current MS mask (the spatial crop is
+            // applied in the shader via box_min/max). Deposit intensity*weight so the density is
+            // independent of the downsample ratio.
+            grid.clear();
+            let ms = self.params.ms_mask;
+            for pt in &self.cpu_points {
+                let is_ms2 = pt.flags & GpuPoint::MS2_FLAG != 0;
+                if if is_ms2 { ms & 0b10 != 0 } else { ms & 0b01 != 0 } {
+                    grid.deposit(pt.pos, pt.intensity * pt.weight);
+                }
+            }
+            self.volume.as_ref().unwrap().upload(&self.queue, grid.to_f16_scaled());
+            self.vol_needs_grid = false;
+            show_status(""); // clear the "building volume…" notice
+        }
+        let p = &self.params;
+        let inv = self.camera.view_proj(aspect).inverse().to_cols_array_2d();
+        let vu = VolumeUniform {
+            inv_view_proj: inv,
+            box_min: [p.filter_min[0], p.filter_min[1], p.filter_min[2], 0.0],
+            box_max: [p.filter_max[0], p.filter_max[1], p.filter_max[2], 0.0],
+            transfer: p.transfer,
+            steps: self.vol_steps.max(1),
+            style: self.vol_style,
+            colormap_id: p.colormap_id,
+            n_colormaps: p.n_colormaps.max(1),
+            density_scale: grid.density_scale(),
+            focus: 0.0,
+            _pad: [0.0; 2],
+        };
+        self.volume.as_ref().unwrap().update_uniform(&self.queue, &vu);
+    }
+
     /// Render one frame. `now` is the RAF timestamp (ms). Returns `false` if the loop should stop.
     fn frame(&mut self, now: f64) -> bool {
         // Smoothed FPS, pushed to the HUD a few times a second.
@@ -184,7 +248,12 @@ impl Gfx {
         self.renderer.update_camera(&self.queue, &cam);
         self.axes.update_camera(&self.queue, &cam);
         self.update_labels(w / h);
-        self.renderer.update_params(&self.queue, &self.params);
+        let volume_view = self.view_mode == ViewMode::Volume && self.volume.is_some();
+        if volume_view {
+            self.ensure_volume(w / h);
+        } else {
+            self.renderer.update_params(&self.queue, &self.params);
+        }
 
         let surface_tex = match self.surface.get_current_texture() {
             Ok(t) => t,
@@ -203,7 +272,9 @@ impl Gfx {
         };
         let view = surface_tex.texture.create_view(&Default::default());
         let mut enc = self.device.create_command_encoder(&Default::default());
-        self.renderer.prepare(&self.queue, &mut enc);
+        if !volume_view {
+            self.renderer.prepare(&self.queue, &mut enc);
+        }
         {
             let mut rpass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scene"),
@@ -231,7 +302,11 @@ impl Gfx {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            self.renderer.render(&mut rpass, self.point_mode);
+            if volume_view {
+                self.volume.as_ref().unwrap().render(&mut rpass);
+            } else {
+                self.renderer.render(&mut rpass, self.point_mode);
+            }
             self.axes.render(&mut rpass);
         }
         self.queue.submit(std::iter::once(enc.finish()));
@@ -345,6 +420,18 @@ async fn run() -> Result<(), String> {
     // true, so the first frame fills it).
     log::info!("uploaded {n} points (compaction: {supports_compaction})");
 
+    // Volume raymarcher, if the GPU can host the 3D R16Float density texture.
+    let vol_max = *VOLUME_DIMS.iter().max().unwrap();
+    let volume = if device.limits().max_texture_dimension_3d >= vol_max {
+        Some(VolumeRenderer::new(&device, &queue, format, DEPTH_FORMAT, VOLUME_DIMS))
+    } else {
+        log::warn!(
+            "volume disabled: max_texture_dimension_3d {} < {vol_max}",
+            device.limits().max_texture_dimension_3d
+        );
+        None
+    };
+
     // Native-matching defaults: MS1-only, sqrt transfer, additive density. When the server gave
     // intensity percentiles, auto-expose so the cloud isn't blown out (mirrors the native viewer).
     let mut params = ParamsUniform::default();
@@ -397,6 +484,12 @@ async fn run() -> Result<(), String> {
             .map(|b| vec![(Region { mz: b[0], im: b[1], rt: b[2], imin: 0.0 }, None)])
             .unwrap_or_default(),
         maps_ok: false, // set by the initial render_maps below
+        view_mode: ViewMode::Points,
+        volume,
+        vol_grid: None,
+        vol_needs_grid: true,
+        vol_steps: 256,
+        vol_style: 0,
     }));
 
     wire_input(&gfx, &window, &canvas_for_input);
@@ -430,6 +523,8 @@ async fn run() -> Result<(), String> {
     bind_focus(&gfx);
     // 2D projection minimaps: drag a box to focus a region.
     bind_maps(&gfx);
+    // Points/Volume view mode + volume controls.
+    bind_volume(&gfx);
     // Collapsible section headers + tab switching.
     bind_panel_chrome();
 
@@ -954,6 +1049,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
         let mut cpu = pts;
         cpu.truncate(cap as usize);
         g.cpu_points = cpu;
+        g.vol_needs_grid = true; // the volume density grid is rebuilt from the new points
         // Re-apply auto-transfer (exposure + floor range) and bounds from the new meta; keep the
         // user's colormap / point size / opacity / MS mask.
         if let Some(m) = &meta {
@@ -1196,6 +1292,39 @@ fn refresh_controls(gfx: &Rc<RefCell<Gfx>>) {
             String::new()
         },
     );
+}
+
+/// Toggle the `volmode` body class (reveals the volume-only controls).
+fn set_volmode(on: bool) {
+    if let Some(body) = document().and_then(|d| d.body()) {
+        let _ = body.class_list().toggle_with_force("volmode", on);
+    }
+}
+
+/// Wire the Points/Volume view-mode toggle + volume controls (style, steps). Disables Volume when
+/// the GPU can't host the 3D density texture.
+fn bind_volume(gfx: &Rc<RefCell<Gfx>>) {
+    if gfx.borrow().volume.is_none() {
+        set_disabled("v-vol", true);
+        return; // leave Points selected; volume unsupported on this GPU
+    }
+    on_toggle("v-pts", gfx, |g, on| {
+        if on {
+            g.view_mode = ViewMode::Points;
+            set_volmode(false);
+        }
+    });
+    on_toggle("v-vol", gfx, |g, on| {
+        if on {
+            g.view_mode = ViewMode::Volume;
+            g.vol_needs_grid = true;
+            set_volmode(true);
+            show_status("building volume…");
+        }
+    });
+    on_toggle("vs-comp", gfx, |g, on| if on { g.vol_style = 0 });
+    on_toggle("vs-mip", gfx, |g, on| if on { g.vol_style = 1 });
+    bind_value(gfx, "vsteps", "vsteps-n", 0, |g, v| g.vol_steps = (v as u32).max(1));
 }
 
 /// Wire the Focus / Back buttons; control enable/disable is driven by `refresh_controls`.
@@ -1814,9 +1943,9 @@ fn wire_controls(gfx: &Rc<RefCell<Gfx>>) {
     });
 
     // Filters
-    on_toggle("ms-1", gfx, |g, on| if on { g.params.ms_mask = 0b01; g.filter_dirty = true; });
-    on_toggle("ms-2", gfx, |g, on| if on { g.params.ms_mask = 0b10; g.filter_dirty = true; });
-    on_toggle("ms-b", gfx, |g, on| if on { g.params.ms_mask = 0b11; g.filter_dirty = true; });
+    on_toggle("ms-1", gfx, |g, on| if on { g.params.ms_mask = 0b01; g.filter_dirty = true; g.vol_needs_grid = true; });
+    on_toggle("ms-2", gfx, |g, on| if on { g.params.ms_mask = 0b10; g.filter_dirty = true; g.vol_needs_grid = true; });
+    on_toggle("ms-b", gfx, |g, on| if on { g.params.ms_mask = 0b11; g.filter_dirty = true; g.vol_needs_grid = true; });
     bind_crop(gfx, "cmz", 0);
     bind_crop(gfx, "cim", 1);
     bind_crop(gfx, "crt", 2);

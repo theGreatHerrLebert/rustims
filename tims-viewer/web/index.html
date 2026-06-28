@@ -71,6 +71,9 @@
     .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
     .tabpane { display: none; }
     .tabpane.active { display: block; }
+    /* volume-only controls, shown when View = Volume */
+    .vol-only { display: none; }
+    body.volmode .vol-only { display: flex; }
 
     .sec { padding: 14px 18px 4px 20px; }
     .sec + .sec { border-top: 1px solid var(--line-2); }
@@ -288,6 +291,20 @@
 
       <section class="sec">
         <div class="ey">Render</div>
+        <div class="row"><span class="lbl" id="l-view">View</span>
+          <span class="seg" role="radiogroup" aria-labelledby="l-view">
+            <input type="radio" name="viewm" id="v-pts" checked /><label for="v-pts">Points</label>
+            <input type="radio" name="viewm" id="v-vol" /><label for="v-vol">Volume</label>
+          </span></div>
+        <div class="row vol-only"><span class="lbl" id="l-vstyle">Volume</span>
+          <span class="seg" role="radiogroup" aria-labelledby="l-vstyle">
+            <input type="radio" name="vstyle" id="vs-comp" checked /><label for="vs-comp">Composite</label>
+            <input type="radio" name="vstyle" id="vs-mip" /><label for="vs-mip">MIP</label>
+          </span></div>
+        <div class="row vol-only"><label class="lbl" for="vsteps">Steps</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="vsteps" min="32" max="512" step="16" value="256" aria-label="raymarch steps" />
+            <input type="number" class="numin" id="vsteps-n" min="32" max="512" step="16" value="256" aria-label="raymarch steps value" /></span></div>
         <div class="row"><label class="lbl" for="disp">Display</label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="disp" min="1" max="100" step="1" value="100" aria-label="fraction of points to display" />
