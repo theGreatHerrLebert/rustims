@@ -264,9 +264,14 @@
       text-shadow: 0 1px 3px #000, 0 0 3px #000; will-change: transform; }
 
     /* collapse (pure CSS checkbox) */
-    .railtgl { position: absolute; opacity: 0; pointer-events: none; }
-    .railtgl:checked ~ .rail { transform: translateX(calc(-100% - 18px)); opacity: 0; }
-    .railtgl:checked ~ .railbtn { left: 16px; }
+    .railtgl, .railtgl-r { position: absolute; opacity: 0; pointer-events: none; }
+    .railtgl:checked ~ .rail:not(.right) { transform: translateX(calc(-100% - 18px)); opacity: 0; }
+    .railtgl:checked ~ .railbtn:not(.railbtn-r) { left: 16px; }
+    /* right rail (cluster panel) collapse — its own toggle, slides off to the right */
+    .railbtn-r { left: auto; right: 348px; display: none; transition: right .35s cubic-bezier(.4,.1,.2,1); }
+    body.has-clusters .railbtn-r { display: flex; } /* only exists when the panel does */
+    .railtgl-r:checked ~ .rail.right { transform: translateX(calc(100% + 18px)); opacity: 0; }
+    .railtgl-r:checked ~ .railbtn-r { right: 16px; }
     .railbtn { position: fixed; z-index: 4; top: 16px; left: 348px; transition: left .35s cubic-bezier(.4,.1,.2,1);
       width: 34px; height: 34px; display: grid; place-items: center; cursor: pointer; border-radius: 8px;
       background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(18px);
@@ -481,6 +486,8 @@
         <div class="cl-prog" id="cl-prog"><div class="cl-bar" id="cl-bar"></div></div>
         <div class="row"><label class="lbl" for="cl-color">Color by cluster</label>
           <span><input type="checkbox" class="sw" id="cl-color" checked /><label for="cl-color" class="sw-l" aria-hidden="true"></label></span></div>
+        <div class="row"><label class="lbl" for="hide-noise">Hide noise</label>
+          <span><input type="checkbox" class="sw" id="hide-noise" /><label for="hide-noise" class="sw-l" aria-hidden="true"></label></span></div>
         <div class="row"><span class="lbl">Result</span><span class="val" id="cl-readout" style="min-width:auto">—</span></div>
         <div class="sub" style="padding:0 0 4px; color:var(--faint)">DBSCAN on the filtered points (Focus a region for big runs).</div>
       </section>
@@ -489,6 +496,10 @@
   </aside>
 
   <!-- cluster stats (right rail, shown when a clustering result exists) -->
+  <input type="checkbox" id="railtgl-r" class="railtgl-r" />
+  <label for="railtgl-r" class="railbtn railbtn-r" title="Toggle cluster panel" aria-label="Toggle cluster panel">
+    <svg viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+  </label>
   <aside class="rail right" id="cluster-panel" aria-label="cluster statistics">
     <div class="head">
       <div class="mark"><b>clusters</b> <span>stats</span></div>

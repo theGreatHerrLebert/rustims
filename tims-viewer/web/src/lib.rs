@@ -209,6 +209,8 @@ struct Gfx {
     cluster_idx: Vec<usize>,
     cluster_labels: Vec<i32>,
     cluster_sel: Option<i32>,
+    /// When clustered + colouring, hide the un-clustered (noise) points (color_mode 2 vs 1).
+    hide_noise: bool,
     /// Persistent DBSCAN worker (lazily created; `None` if workers are unavailable → main-thread
     /// fallback), and the in-flight job's (survivor idx, data generation, job id) awaiting its reply.
     /// `job_id` distinguishes a superseded job's late reply; `worker_failed` latches a runtime failure
@@ -419,7 +421,7 @@ impl Gfx {
                 self.volume.as_ref().unwrap().render(&mut rpass);
             } else {
                 // Cluster hues mush under additive blending — force opaque while cluster-colored.
-                let pm = if self.params.color_mode == 1 {
+                let pm = if self.params.color_mode >= 1 {
                     PointMode::StructuralOpaque
                 } else {
                     self.point_mode
@@ -630,6 +632,7 @@ async fn run() -> Result<(), String> {
         cluster_idx: Vec::new(),
         cluster_labels: Vec::new(),
         cluster_sel: None,
+        hide_noise: false,
         cluster_worker: None,
         cluster_pending: None,
         next_cluster_job: 0,
@@ -1936,7 +1939,7 @@ fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: Vec<usize>, labels: Vec<i32>, 
             }
         }
         reupload_points(g);
-        g.params.color_mode = 1;
+        g.params.color_mode = if g.hide_noise { 2 } else { 1 };
         g.clustered = true;
         g.cluster_stats = Some(stats);
         g.cluster_idx = idx;
@@ -2135,8 +2138,19 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     }
     on_toggle("cl-color", gfx, |g, on| {
         if g.clustered {
-            g.params.color_mode = if on { 1 } else { 0 };
+            g.params.color_mode = if on {
+                if g.hide_noise { 2 } else { 1 }
+            } else {
+                0
+            };
             set_body_class("cluster-color", on); // toggles the intensity colorbar back on when off
+        }
+    });
+    on_toggle("hide-noise", gfx, |g, on| {
+        g.hide_noise = on;
+        // Only meaningful while cluster-colouring; flips between color_mode 1 (show) and 2 (hide).
+        if g.clustered && g.params.color_mode != 0 {
+            g.params.color_mode = if on { 2 } else { 1 };
         }
     });
     // Click a row in the cluster list to isolate it (data-cl="-1" = show all).
@@ -2331,7 +2345,8 @@ fn isolate_cluster(gfx: &Rc<RefCell<Gfx>>, sel: Option<i32>) {
         }
         reupload_points(g);
         g.cluster_sel = sel;
-        g.params.color_mode = 1; // isolate is only visible under cluster coloring
+        g.params.color_mode = if g.hide_noise { 2 } else { 1 }; // isolate needs cluster colouring
+
         g.view_mode = ViewMode::Points; // cluster ids are invisible in Volume
     }
     set_checked("cl-color", true);
@@ -2839,6 +2854,7 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
     set_value_pair("cl-eps", "cl-eps-n", cl_eps, 3);
     set_value_pair("cl-min", "cl-min-n", cl_min, 0);
     set_checked("cl-color", true); // colour by cluster is on by default (applies after a Run)
+    set_checked("hide-noise", false);
     set_checked("show-windows", false); // off by default (defeats browser form-restore)
     // Crops start at the full range (thumbs, fills, readouts).
     reset_crops(gfx);

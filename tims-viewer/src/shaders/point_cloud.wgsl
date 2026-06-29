@@ -96,6 +96,15 @@ fn vs_main(
         out.weight = 0.0;
         return out;
     }
+    // Hide-noise mode (color_mode == 2): cull points that didn't cluster (NO_CLUSTER sentinel).
+    if (params.color_mode == 2u && cluster == 0xffffffffu) {
+        out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        out.visible = 0.0;
+        out.uv = vec2<f32>(0.0, 0.0);
+        out.intensity = 0.0;
+        out.weight = 0.0;
+        return out;
+    }
 
     // Quad corners for a 4-vertex triangle strip.
     var corners = array<vec2<f32>, 4>(
@@ -136,7 +145,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         discard;
     }
     var color : vec3<f32>;
-    if (params.color_mode == 1u) {
+    if (params.color_mode >= 1u) {
         color = cluster_color(in.cluster);
     } else {
         let t = transfer(in.intensity);
@@ -146,7 +155,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     // Cluster coloring always renders opaque: additive blending would mix distinct cluster
     // hues into mush and dim them by the 1/p weight, so cluster ids would read as noise.
-    if (params.render_mode == 1u || params.color_mode == 1u) {
+    if (params.render_mode == 1u || params.color_mode >= 1u) {
         // Structural opaque: round point via alpha cutout, depth-written.
         if (falloff < 0.5) {
             discard;
