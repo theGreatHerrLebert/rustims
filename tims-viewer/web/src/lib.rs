@@ -37,6 +37,12 @@ const WORKER_THRESHOLD: usize = 300_000;
 /// RT is scaled so a cluster's elution stays connected across cycles regardless of the RT zoom.
 const CLUSTER_RT_CYCLES: f64 = 2.0;
 
+/// Nominal TOF resolution for the m/z peak-width transform (peak width ≈ m/z / resolution).
+const MZ_RESOLUTION: f64 = 50_000.0;
+/// Cap on how many m/z peak-widths `eps` may span: the m/z axis is expanded so `eps` never bridges
+/// more than this, keeping adjacent isotopes (tens of peak-widths apart) as separate clusters.
+const CLUSTER_MZ_PEAK_WIDTHS: f64 = 6.0;
+
 /// Hard ceiling on points loaded into the (32-bit) wasm heap, regardless of the server `--budget` or
 /// the GPU buffer limit: ~32M × 32 B ≈ 1 GB resident, well clear of the ~4 GB wasm address space.
 const MAX_WEB_POINTS: usize = 32_000_000;
@@ -1751,6 +1757,12 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         show_status("clustering already running…");
         return;
     }
+    // MS1 (precursors) and MS2 (fragments) live in different m/z spaces — clustering them together is
+    // meaningless. Require a single MS level.
+    if gfx.borrow().params.ms_mask == 0b11 {
+        show_status("pick MS1 or MS2 to cluster — clustering both levels together isn't meaningful");
+        return;
+    }
     // Gather the filtered survivors (spatial crop + intensity floor + MS) and their cube positions.
     let (idx, positions, eps, min_pts, gen) = {
         let g = gfx.borrow();
@@ -1791,9 +1803,28 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
             }
             _ => 1.0,
         };
-        if rt_scale != 1.0 {
-            for p in positions.iter_mut() {
+        // Expand the m/z axis into ~peak-width units so eps spans only a few peak-widths and can't
+        // bridge across isotopes (tens of peak-widths apart). Linear over the region (peak width at
+        // the m/z center); max(1) so a narrow focus only ever sharpens m/z, never loosens it.
+        let mz_scale = match g.axis_bounds {
+            Some(b) => {
+                let mz_center = ((b[0].0 + b[0].1) * 0.5).abs();
+                let mz_range = (b[0].1 - b[0].0).abs();
+                let peak_width = mz_center / MZ_RESOLUTION;
+                if mz_center > 0.0 && mz_range > 0.0 && peak_width > 0.0 {
+                    (eps as f64 * mz_range / (2.0 * CLUSTER_MZ_PEAK_WIDTHS * peak_width)).max(1.0) as f32
+                } else {
+                    1.0
+                }
+            }
+            _ => 1.0,
+        };
+        for p in positions.iter_mut() {
+            if rt_scale != 1.0 {
                 p[2] *= rt_scale;
+            }
+            if mz_scale != 1.0 {
+                p[0] *= mz_scale;
             }
         }
         (idx, positions, eps, g.cluster_min_pts, g.data_gen)
