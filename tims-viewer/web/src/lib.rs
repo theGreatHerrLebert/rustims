@@ -25,9 +25,9 @@ use tims_viewer::render::point_cloud::{PointCloudRenderer, PointMode};
 use tims_viewer::render::uniforms::{ParamsUniform, VolumeUniform};
 use tims_viewer::render::volume::{VolumeGrid, VolumeRenderer, VOLUME_DIMS};
 
-/// Max points DBSCAN runs on in the browser (it blocks the main thread). Beyond this, Focus a region
-/// first. Mirrors the native CLUSTER_CAP.
-const CLUSTER_CAP: usize = 2_000_000;
+/// Max points DBSCAN runs on (the in-wasm worker, or the Python service). Beyond this, Focus a region
+/// first. Large runs go to the off-main-thread worker with a progress bar.
+const CLUSTER_CAP: usize = 6_000_000;
 
 /// Below this many filtered points, DBSCAN runs on the main thread (instant, no worker spin-up);
 /// at/above it, the off-main-thread worker is used so the tab doesn't freeze.
