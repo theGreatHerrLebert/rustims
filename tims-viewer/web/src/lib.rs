@@ -37,10 +37,16 @@ const WORKER_THRESHOLD: usize = 300_000;
 /// RT is scaled so a cluster's elution stays connected across cycles regardless of the RT zoom.
 const CLUSTER_RT_CYCLES: f64 = 2.0;
 
+/// Reference eps the RT/m/z axis scalings are calibrated to (the slider default). The scalings use
+/// this fixed value — not the live eps — so the live eps still scales the reach on every axis
+/// proportionally (otherwise eps cancels out on the transformed axes).
+const CLUSTER_EPS_REF: f64 = 0.012;
+
 /// Nominal TOF resolution for the m/z peak-width transform (peak width ≈ m/z / resolution).
 const MZ_RESOLUTION: f64 = 50_000.0;
-/// Cap on how many m/z peak-widths `eps` may span: the m/z axis is expanded so `eps` never bridges
-/// more than this, keeping adjacent isotopes (tens of peak-widths apart) as separate clusters.
+/// Default for the m/z-peak-width lever (`Gfx::cluster_mz_peak_widths`): how many m/z peak-widths
+/// `eps` may span. The m/z axis is expanded so `eps` never bridges more than this, keeping adjacent
+/// isotopes (tens of peak-widths apart) as separate clusters.
 const CLUSTER_MZ_PEAK_WIDTHS: f64 = 6.0;
 
 /// Hard ceiling on points loaded into the (32-bit) wasm heap, regardless of the server `--budget` or
@@ -215,6 +221,8 @@ struct Gfx {
     // ---- clustering (CLUSTERING_WEB_PLAN.md) ----
     cluster_eps: f32,
     cluster_min_pts: usize,
+    /// User lever: max m/z peak-widths `eps` may span (lower = isotopes separate harder).
+    cluster_mz_peak_widths: f64,
     /// True while a DBSCAN result is colouring the cloud (`params.color_mode == 1`). Invalidated on
     /// reload / focus / filter change.
     clustered: bool,
@@ -647,6 +655,7 @@ async fn run() -> Result<(), String> {
         vol_i_max: 2.0,
         cluster_eps: 0.012,
         cluster_min_pts: 8,
+        cluster_mz_peak_widths: CLUSTER_MZ_PEAK_WIDTHS,
         clustered: false,
         cluster_stats: None,
         cluster_idx: Vec::new(),
@@ -865,13 +874,26 @@ fn points_url() -> String {
         .and_then(|w| w.location().search().ok())
         .unwrap_or_default();
     let params = search.trim_start_matches('?');
-    // Explicit full-URL override (percent-decoded).
+    // Explicit full-URL override (percent-decoded). Strip any baked-in `n=` so our budget caps stay
+    // authoritative (with_query appends `n=n_cap`; a leftover n would double up).
     if let Some(v) = params.split('&').find_map(|kv| kv.strip_prefix("points=")) {
         if !v.is_empty() {
-            return js_sys::decode_uri_component(v)
+            let decoded = js_sys::decode_uri_component(v)
                 .ok()
                 .and_then(|s| s.as_string())
                 .unwrap_or_else(|| v.to_string());
+            return match decoded.split_once('?') {
+                Some((path, query)) => {
+                    let kept: Vec<&str> =
+                        query.split('&').filter(|kv| !kv.starts_with("n=")).collect();
+                    if kept.is_empty() {
+                        path.to_string()
+                    } else {
+                        format!("{path}?{}", kept.join("&"))
+                    }
+                }
+                None => decoded,
+            };
         }
     }
     let port = params
@@ -1460,11 +1482,15 @@ async fn load_region(gfx: Rc<RefCell<Gfx>>, region: Region, budget: Option<usize
         g.reloading = true;
     }
     refresh_controls(&gfx); // disable focus/back/load while a load is in flight
-    let base = gfx.borrow().points_base.clone();
-    let q = budget.map(|b| region_query(&region, b));
-    let purl = q.as_ref().map_or_else(|| base.clone(), |q| with_query(&base, q));
-    let mbase = meta_url(&base);
-    let murl = q.as_ref().map_or(mbase.clone(), |q| with_query(&mbase, q));
+    let (base, n_cap) = {
+        let g = gfx.borrow();
+        (g.points_base.clone(), g.n_cap)
+    };
+    // Always cap n (None = the root entry) so Back-to-root can't fetch the server's full --budget
+    // uncapped and OOM the wasm heap, mirroring the initial load.
+    let q = region_query(&region, budget.unwrap_or(n_cap).min(n_cap));
+    let purl = with_query(&base, &q);
+    let murl = with_query(&meta_url(&base), &q);
     show_status("loading…");
     // Require BOTH meta and points: applying points without their matching meta would leave
     // axis_bounds stale while the buffer is normalized to the new region (breaks nested Focus).
@@ -1729,7 +1755,13 @@ fn bind_volume(gfx: &Rc<RefCell<Gfx>>) {
 /// Revert cluster colouring (a filter/load changed the set, so the labels are stale). Cheap — just
 /// flips `color_mode` back to intensity; the stale `_pad[0]` ids stay unused until the next Run.
 fn invalidate_clusters_mut(g: &mut Gfx) {
-    g.cluster_pending = None; // abandon any in-flight worker job (its reply will be ignored)
+    // Abandon any in-flight worker job AND terminate the worker, so it doesn't keep computing a
+    // now-stale result with the next Run queued behind it. The next Run rebuilds a fresh worker.
+    if g.cluster_pending.take().is_some() {
+        if let Some(w) = g.cluster_worker.take() {
+            w.terminate();
+        }
+    }
     set_cluster_progress(None);
     set_cluster_running(false);
     if g.clustered {
@@ -1789,30 +1821,31 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
             idx.push(i);
             positions.push(pos);
         }
-        // Compress the RT axis into ~cycle units so eps bridges several cycles. Precursor RT is
-        // quantized at the cycle period (one MS1 per cycle); after a focus the per-cycle gap can
-        // exceed eps in normalized space and shatter every elution into one-cycle clusters. Scaling
-        // RT down (<=1) makes eps reach CLUSTER_RT_CYCLES cycles regardless of the RT zoom; m/z and
-        // 1/K0 keep the user's eps. (The metric only; labels/stats use the unscaled points.)
+        // Per-axis equi-distancing, calibrated to CLUSTER_EPS_REF (not the live eps) so the live eps
+        // still scales the reach on every axis proportionally. (The metric only; labels/stats use the
+        // unscaled points.)
         let eps = g.cluster_eps;
+        // RT: compress into ~cycle units so eps bridges CLUSTER_RT_CYCLES cycles regardless of the RT
+        // zoom — precursor RT is quantized at the cycle period, so an un-scaled eps shatters elutions.
         let rt_scale = match g.axis_bounds {
             Some(b) if g.cycle_duration > 0.0 && (b[2].1 - b[2].0).abs() > 0.0 => {
                 let cycle_gap_norm = 2.0 * g.cycle_duration / (b[2].1 - b[2].0).abs();
-                let desired = (CLUSTER_RT_CYCLES * cycle_gap_norm).max(eps as f64);
-                (eps as f64 / desired) as f32
+                let desired = (CLUSTER_RT_CYCLES * cycle_gap_norm).max(CLUSTER_EPS_REF);
+                (CLUSTER_EPS_REF / desired) as f32
             }
             _ => 1.0,
         };
-        // Expand the m/z axis into ~peak-width units so eps spans only a few peak-widths and can't
-        // bridge across isotopes (tens of peak-widths apart). Linear over the region (peak width at
-        // the m/z center); max(1) so a narrow focus only ever sharpens m/z, never loosens it.
+        // m/z: expand into ~peak-width units so eps spans at most `cluster_mz_peak_widths` peak-widths
+        // (peak width ≈ m/z / resolution) and can't bridge across isotopes. The cap is a user lever,
+        // independent of eps; max(1) so a narrow focus only sharpens m/z, never loosens it.
         let mz_scale = match g.axis_bounds {
             Some(b) => {
                 let mz_center = ((b[0].0 + b[0].1) * 0.5).abs();
                 let mz_range = (b[0].1 - b[0].0).abs();
                 let peak_width = mz_center / MZ_RESOLUTION;
+                let pw = g.cluster_mz_peak_widths.max(0.1);
                 if mz_center > 0.0 && mz_range > 0.0 && peak_width > 0.0 {
-                    (eps as f64 * mz_range / (2.0 * CLUSTER_MZ_PEAK_WIDTHS * peak_width)).max(1.0) as f32
+                    (CLUSTER_EPS_REF * mz_range / (2.0 * pw * peak_width)).max(1.0) as f32
                 } else {
                     1.0
                 }
@@ -2228,6 +2261,7 @@ fn defer<F: FnOnce() + 'static>(f: F) {
 fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     bind_value(gfx, "cl-eps", "cl-eps-n", 3, |g, v| g.cluster_eps = v as f32);
     bind_value(gfx, "cl-min", "cl-min-n", 0, |g, v| g.cluster_min_pts = (v as usize).max(2));
+    bind_value(gfx, "cl-mzw", "cl-mzw-n", 1, |g, v| g.cluster_mz_peak_widths = v.max(0.1));
     if let Some(btn) = by_id::<web_sys::HtmlElement>("cl-run") {
         let gfx = gfx.clone();
         add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| {
@@ -2920,7 +2954,7 @@ fn set_value_pair(slider_id: &str, num_id: &str, v: f64, prec: usize) {
 /// actual params (a checked-but-stale radio won't emit `change` when clicked); calling this after
 /// wiring re-asserts the truth so the panel always reflects what's rendering.
 fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
-    let (auto, rmode, xf, ms, cmap, psize, opac, expo, floor, cl_eps, cl_min) = {
+    let (auto, rmode, xf, ms, cmap, psize, opac, expo, floor, cl_eps, cl_min, cl_mzw) = {
         let g = gfx.borrow();
         (
             g.auto_rotate,
@@ -2934,6 +2968,7 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
             g.params.filter_min[3] as f64,
             g.cluster_eps as f64,
             g.cluster_min_pts as f64,
+            g.cluster_mz_peak_widths,
         )
     };
     set_checked("ar", auto);
@@ -2956,6 +2991,7 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
     // Cluster controls (defeat browser form-restore; no result yet, so colour off).
     set_value_pair("cl-eps", "cl-eps-n", cl_eps, 3);
     set_value_pair("cl-min", "cl-min-n", cl_min, 0);
+    set_value_pair("cl-mzw", "cl-mzw-n", cl_mzw, 1);
     set_checked("cl-color", true); // colour by cluster is on by default (applies after a Run)
     set_checked("hide-noise", false);
     set_checked("show-windows", false); // off by default (defeats browser form-restore)
