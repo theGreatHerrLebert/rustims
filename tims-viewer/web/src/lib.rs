@@ -231,6 +231,9 @@ struct Gfx {
     clustered: bool,
     /// The last clustering result's stats (for the right-hand panel); cleared on invalidate.
     cluster_stats: Option<ClusterStats>,
+    /// JSON of the parameters used for the last clustering (snapshotted at Run); exported alongside
+    /// the per-cluster CSV. Cleared on invalidate.
+    cluster_params_json: Option<String>,
     /// Retained DBSCAN result for isolation: the survivor `cpu_points` indices + their labels, and
     /// which cluster is currently isolated (`None` = show all). Cleared on invalidate.
     cluster_idx: Vec<usize>,
@@ -662,6 +665,7 @@ async fn run() -> Result<(), String> {
         cluster_mz_peak_widths: CLUSTER_MZ_PEAK_WIDTHS,
         clustered: false,
         cluster_stats: None,
+        cluster_params_json: None,
         cluster_idx: Vec::new(),
         cluster_labels: Vec::new(),
         cluster_sel: None,
@@ -1407,6 +1411,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
         g.params.color_mode = 0; // the fresh buffer has no cluster ids
         g.clustered = false;
         g.cluster_stats = None;
+        g.cluster_params_json = None;
         g.cluster_idx = Vec::new();
         g.cluster_labels = Vec::new();
         g.cluster_sel = None;
@@ -1772,6 +1777,7 @@ fn invalidate_clusters_mut(g: &mut Gfx) {
         g.params.color_mode = 0;
         g.clustered = false;
         g.cluster_stats = None;
+        g.cluster_params_json = None;
         g.cluster_idx = Vec::new();
         g.cluster_labels = Vec::new();
         g.cluster_sel = None;
@@ -2073,6 +2079,7 @@ fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: Vec<usize>, labels: Vec<i32>, 
         reupload_points(g);
         g.params.color_mode = if g.hide_noise { 2 } else { 1 };
         g.clustered = true;
+        g.cluster_params_json = Some(cluster_params_json(g, k, noise, n_in));
         g.cluster_stats = Some(stats);
         g.cluster_idx = idx;
         g.cluster_labels = labels;
@@ -2499,7 +2506,44 @@ fn isolate_cluster(gfx: &Rc<RefCell<Gfx>>, sel: Option<i32>) {
     update_cluster_panel(gfx); // re-render the list with the active row marked
 }
 
-/// Download the per-cluster summary as CSV (a data-URL anchor — no Blob/Url features needed).
+/// JSON snapshot of the parameters used for a clustering run, so the export is reproducible.
+fn cluster_params_json(g: &Gfx, k: usize, noise: usize, n_in: usize) -> String {
+    let obj = js_sys::Object::new();
+    let set = |key: &str, v: &JsValue| {
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(key), v);
+    };
+    let ms_level = if g.params.ms_mask == 0b10 { "MS2" } else { "MS1" };
+    set("ms_level", &JsValue::from_str(ms_level));
+    set("eps", &JsValue::from_f64(g.cluster_eps as f64));
+    set("min_points", &JsValue::from_f64(g.cluster_min_pts as f64));
+    set("rt_cycles", &JsValue::from_f64(g.cluster_rt_cycles));
+    set("mz_peak_widths", &JsValue::from_f64(g.cluster_mz_peak_widths));
+    set("mz_resolution", &JsValue::from_f64(MZ_RESOLUTION));
+    set("cycle_duration_s", &JsValue::from_f64(g.cycle_duration));
+    set("intensity_floor", &JsValue::from_f64(g.params.filter_min[3] as f64));
+    set("clusters", &JsValue::from_f64(k as f64));
+    set("noise_points", &JsValue::from_f64(noise as f64));
+    set("input_points", &JsValue::from_f64(n_in as f64));
+    if let Some(b) = g.axis_bounds {
+        let region = js_sys::Object::new();
+        let pair = |lo: f64, hi: f64| {
+            let a = js_sys::Array::new();
+            a.push(&JsValue::from_f64(lo));
+            a.push(&JsValue::from_f64(hi));
+            a
+        };
+        let _ = js_sys::Reflect::set(&region, &JsValue::from_str("mz"), &pair(b[0].0, b[0].1));
+        let _ = js_sys::Reflect::set(&region, &JsValue::from_str("im"), &pair(b[1].0, b[1].1));
+        let _ = js_sys::Reflect::set(&region, &JsValue::from_str("rt"), &pair(b[2].0, b[2].1));
+        set("region", &region);
+    }
+    js_sys::JSON::stringify_with_replacer_and_space(&obj, &JsValue::NULL, &JsValue::from_f64(2.0))
+        .ok()
+        .and_then(|s| s.as_string())
+        .unwrap_or_default()
+}
+
+/// Download the per-cluster summary as CSV plus the run's parameters as JSON (two data-URL anchors).
 fn export_clusters(gfx: &Rc<RefCell<Gfx>>) {
     let g = gfx.borrow();
     let Some(s) = g.cluster_stats.as_ref() else {
@@ -2513,6 +2557,9 @@ fn export_clusters(gfx: &Rc<RefCell<Gfx>>) {
         ));
     }
     download_text("clusters.csv", "text/csv", &csv);
+    if let Some(pj) = g.cluster_params_json.as_ref() {
+        download_text("cluster_params.json", "application/json", pj);
+    }
 }
 
 /// Trigger a file download of `content` via a `data:` URL anchor (attached to the DOM for the click
