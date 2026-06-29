@@ -26,6 +26,9 @@ glam = { version = "0.29", features = ["bytemuck"] }
 log = "0.4"
 # f32 -> f16 conversion for the R16Float volume texture.
 half = { version = "2", features = ["bytemuck"] }
+# Fast (non-DoS-resistant) hasher for the DBSCAN spatial-hash grid; pure Rust, wasm-safe, already in
+# the tree via wgpu/naga.
+rustc-hash = "2"
 
 # --- Native-only (gated behind `native`): Bruker .d loader, windowing, CLI, PNG export ---
 # These pull SQLite/filesystem/threads and can't run in a browser; excluded from the wasm

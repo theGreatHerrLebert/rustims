@@ -6,7 +6,7 @@
 //! makes each neighborhood query touch only the 27 adjacent cells, so the whole pass is about
 //! O(n) for the moderate point counts the viewer clusters (it is gated to a cap by the caller).
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::collections::VecDeque;
 
 /// Label assigned to noise / unclustered points.
@@ -27,8 +27,10 @@ pub fn dbscan(points: &[[f32; 3]], eps: f32, min_pts: usize) -> (Vec<i32>, usize
             (p[2] * inv).floor() as i32,
         )
     };
-    // Spatial hash: cell -> point indices.
-    let mut grid: HashMap<(i32, i32, i32), Vec<u32>> = HashMap::with_capacity(n / 4 + 1);
+    // Spatial hash: cell -> point indices. FxHashMap (not SipHash) — the grid is hashed n times on
+    // build and 27n times in neighbour queries, so the hash is a hot path, especially in wasm.
+    let mut grid: FxHashMap<(i32, i32, i32), Vec<u32>> =
+        FxHashMap::with_capacity_and_hasher(n / 4 + 1, Default::default());
     for (i, p) in points.iter().enumerate() {
         grid.entry(cell(p)).or_default().push(i as u32);
     }
@@ -60,6 +62,10 @@ pub fn dbscan(points: &[[f32; 3]], eps: f32, min_pts: usize) -> (Vec<i32>, usize
 
     let mut labels = vec![NOISE; n];
     let mut visited = vec![false; n];
+    // `queued` dedups the BFS frontier: each point is enqueued at most once across the whole run, so
+    // the queue stays O(n) instead of O(sum of neighbourhood sizes) — which, on dense MS peaks, would
+    // otherwise balloon to billions of (mostly duplicate) entries.
+    let mut queued = vec![false; n];
     let mut cid: i32 = 0;
     let mut nb: Vec<u32> = Vec::new();
     let mut nbj: Vec<u32> = Vec::new();
@@ -77,18 +83,29 @@ pub fn dbscan(points: &[[f32; 3]], eps: f32, min_pts: usize) -> (Vec<i32>, usize
         // Seed a new cluster and flood-fill density-reachable points.
         labels[i] = cid;
         queue.clear();
-        queue.extend(nb.iter().copied());
+        for &j in &nb {
+            if !queued[j as usize] {
+                queued[j as usize] = true;
+                queue.push_back(j);
+            }
+        }
         while let Some(j) = queue.pop_front() {
             let j = j as usize;
+            if labels[j] == NOISE {
+                labels[j] = cid; // claim border (or previously-noise) point; first cluster wins
+            }
             if !visited[j] {
                 visited[j] = true;
                 neighbors(j, &mut nbj);
                 if nbj.len() >= min_pts {
-                    queue.extend(nbj.iter().copied()); // j is a core point -> expand
+                    // j is a core point -> add its not-yet-queued neighbours to the frontier.
+                    for &m in &nbj {
+                        if !queued[m as usize] {
+                            queued[m as usize] = true;
+                            queue.push_back(m);
+                        }
+                    }
                 }
-            }
-            if labels[j] == NOISE {
-                labels[j] = cid; // claim border (or previously-noise) point
             }
         }
         cid += 1;
