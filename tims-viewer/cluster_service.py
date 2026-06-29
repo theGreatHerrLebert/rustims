@@ -79,24 +79,36 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         pts = np.frombuffer(bytes(buf), dtype="<f4").reshape(-1, 3).astype(np.float64)
+        n_pts = pts.shape[0]
         t = time.perf_counter()
+        # Never drop the connection on a bad/degenerate input: clamp params to the point count and,
+        # on any sklearn error, fall back to all-noise so the client always gets valid labels.
         with _DBSCAN_LOCK:  # serialize the heavy compute across overlapping requests
-            if method == "hdbscan":
-                mcs = int(q.get("mcs", ["7"])[0])
-                ms = int(q.get("ms", ["0"])[0])
-                cse = float(q.get("cse", ["0"])[0])
-                labels = HDBSCAN(
-                    min_cluster_size=max(2, mcs),
-                    min_samples=(ms if ms > 0 else None),
-                    cluster_selection_epsilon=cse,
-                    copy=True,  # don't mutate our buffer (and silence the 1.10 FutureWarning)
-                ).fit(pts).labels_
-                desc = f"HDBSCAN mcs={mcs} ms={ms or 'auto'} cse={cse}"
-            else:
-                eps = float(q.get("eps", ["0.012"])[0])
-                min_samples = int(q.get("min", ["8"])[0])
-                labels = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1).fit(pts).labels_
-                desc = f"DBSCAN eps={eps} min={min_samples}"
+            try:
+                if method == "hdbscan":
+                    mcs = max(2, min(int(q.get("mcs", ["7"])[0]), n_pts))
+                    ms_raw = int(q.get("ms", ["0"])[0])
+                    ms = min(ms_raw, n_pts) if ms_raw > 0 else None
+                    cse = float(q.get("cse", ["0"])[0])
+                    if n_pts < 2:
+                        labels = np.full(n_pts, -1, dtype="<i4")
+                    else:
+                        labels = HDBSCAN(
+                            min_cluster_size=mcs,
+                            min_samples=ms,
+                            cluster_selection_epsilon=cse,
+                            copy=True,  # don't mutate our buffer (+ silence the 1.10 FutureWarning)
+                        ).fit(pts).labels_
+                    desc = f"HDBSCAN mcs={mcs} ms={ms or 'auto'} cse={cse}"
+                else:
+                    eps = float(q.get("eps", ["0.012"])[0])
+                    min_samples = int(q.get("min", ["8"])[0])
+                    labels = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1).fit(pts).labels_
+                    desc = f"DBSCAN eps={eps} min={min_samples}"
+            except Exception as exc:  # degenerate input, etc. — return all-noise, don't 500
+                print(f"clustering failed ({method}, {n_pts} pts): {exc}", flush=True)
+                labels = np.full(n_pts, -1, dtype="<i4")
+                desc = f"{method} (fallback all-noise)"
         k = int(labels.max()) + 1 if labels.size else 0
         dt = time.perf_counter() - t
         print(f"{desc}: {pts.shape[0]} pts -> {k} clusters in {dt:.2f}s", flush=True)
