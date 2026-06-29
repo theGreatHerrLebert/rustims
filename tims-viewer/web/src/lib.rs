@@ -929,6 +929,42 @@ fn points_url() -> String {
     format!("http://localhost:{port}/points")
 }
 
+/// Optional Python clustering service URL from `?cluster=<url>` — when set, Run posts points to it
+/// (sklearn DBSCAN) instead of the in-wasm DBSCAN.
+fn cluster_service_url() -> Option<String> {
+    let search = web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default();
+    search
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("cluster="))
+        .filter(|v| !v.is_empty())
+        .and_then(|v| js_sys::decode_uri_component(v).ok().and_then(|s| s.as_string()))
+}
+
+/// POST the (already axis-scaled) flat positions to the Python clustering service and read back the
+/// per-point labels. Same wire format as the wasm worker: float32 xyz triples in, int32 labels out.
+async fn fetch_cluster(svc: &str, flat: &[f32], eps: f32, min_pts: usize) -> Result<Vec<i32>, String> {
+    let window = web_sys::window().ok_or("no window")?;
+    let arr = js_sys::Float32Array::from(flat);
+    let opts = web_sys::RequestInit::new();
+    opts.set_method("POST");
+    opts.set_body(&arr.buffer());
+    let url = with_query(svc, &format!("eps={eps}&min={min_pts}"));
+    let resp_val = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str_and_init(&url, &opts))
+        .await
+        .map_err(|e| format!("fetch failed: {e:?}"))?;
+    let resp: web_sys::Response = resp_val.dyn_into().map_err(|_| "not a Response".to_string())?;
+    if !resp.ok() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let buf = wasm_bindgen_futures::JsFuture::from(
+        resp.array_buffer().map_err(|e| format!("array_buffer: {e:?}"))?,
+    )
+    .await
+    .map_err(|e| format!("body read failed: {e:?}"))?;
+    Ok(js_sys::Int32Array::new(&buf).to_vec())
+}
+
 /// Fetch packed `GpuPoint` bytes from the server and reinterpret them (the server already
 /// normalized positions to the `[-1, 1]` cube, so they upload as-is).
 async fn fetch_points(url: &str) -> Result<Vec<GpuPoint>, String> {
@@ -1923,6 +1959,39 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         return;
     }
     gfx.borrow_mut().cluster_run_params = Some(run_params); // before dispatch, for the export JSON
+
+    // Python backend (if `?cluster=<url>` is set): POST the scaled points to the sklearn service and
+    // colour by its labels. The wasm path below is the default when no service is configured.
+    if let Some(svc) = cluster_service_url() {
+        let flat: Vec<f32> = positions.iter().flatten().copied().collect();
+        gfx.borrow_mut().cluster_pending = Some((idx, gen, 0));
+        set_cluster_running(true);
+        show_status("clustering (python)…");
+        let gfx2 = gfx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = fetch_cluster(&svc, &flat, eps, min_pts).await;
+            // Pair with the pending job (cleared by invalidate/reload -> drop a stale reply).
+            let Some((idx, gen, _)) = gfx2.borrow_mut().cluster_pending.take() else {
+                return;
+            };
+            match result {
+                Ok(labels) if labels.len() == idx.len() => {
+                    let k = labels.iter().copied().max().map_or(0, |m| (m + 1).max(0) as usize);
+                    finish_clustering(&gfx2, idx, labels, k, gen);
+                }
+                Ok(_) => {
+                    set_cluster_running(false);
+                    show_status("python clustering: label/point count mismatch");
+                }
+                Err(e) => {
+                    set_cluster_running(false);
+                    show_status(&format!("python clustering failed: {e}"));
+                }
+            }
+        });
+        return;
+    }
+
     show_status("clustering…");
     // Small inputs cluster in well under a second, so run them on the main thread (deferred one
     // macrotask so the status paints): instant, with none of the worker's one-time wasm spin-up
