@@ -81,6 +81,7 @@ struct ClusterRunParams {
     floor: f32,
     region: Option<[(f64, f64); 3]>,
     cycle_duration: f64,
+    im_per_scan: f64,
 }
 
 /// A DIA isolation-window footprint in real units (from `/windows`); re-normalized to the focused
@@ -1748,6 +1749,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
             g.floor_hi = m.i_p99.max(1.0);
             g.axis_bounds = m.bounds;
             g.cycle_duration = m.cycle_duration;
+            g.im_per_scan = m.im_per_scan;
         }
         // The new load defines the view: reset spatial crops + the intensity floor to "show all".
         for a in 0..3 {
@@ -2215,6 +2217,7 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
             floor: g.params.filter_min[3],
             region: g.axis_bounds,
             cycle_duration: g.cycle_duration,
+            im_per_scan: g.im_per_scan,
         };
         (idx, positions, eps, g.cluster_min_pts, g.data_gen, run_params)
     };
@@ -2959,6 +2962,7 @@ fn cluster_params_json(p: &ClusterRunParams, k: usize, noise: usize, n_in: usize
     set("mz_peak_widths", &JsValue::from_f64(p.mz_peak_widths));
     set("mz_resolution", &JsValue::from_f64(MZ_RESOLUTION));
     set("cycle_duration_s", &JsValue::from_f64(p.cycle_duration));
+    set("im_per_scan_1k0", &JsValue::from_f64(p.im_per_scan));
     set("intensity_floor", &JsValue::from_f64(p.floor as f64));
     set("clusters", &JsValue::from_f64(k as f64));
     set("noise_points", &JsValue::from_f64(noise as f64));
@@ -3050,6 +3054,9 @@ fn cluster_config_json(g: &Gfx) -> String {
     set("im_scans", &JsValue::from_f64(g.cluster_im_scans));
     set("mz_peak_widths", &JsValue::from_f64(g.cluster_mz_peak_widths));
     set("mz_resolution", &JsValue::from_f64(MZ_RESOLUTION));
+    // The run-level metric anchors, so the config reproduces the exact scaling on its own.
+    set("cycle_duration_s", &JsValue::from_f64(g.cycle_duration));
+    set("im_per_scan_1k0", &JsValue::from_f64(g.im_per_scan));
     if let Some(b) = g.axis_bounds {
         let region = js_sys::Object::new();
         let pair = |lo: f64, hi: f64| {

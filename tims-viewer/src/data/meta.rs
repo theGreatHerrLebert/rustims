@@ -108,8 +108,18 @@ impl MetaIndex {
             rt: AxisTransform::new(rt_min, rt_max),
         };
 
-        // The mobility ramp length (constant across frames); take the max to be robust to a stray 0.
-        let num_scans = meta.iter().map(|m| m.num_scans.max(0) as u32).max().unwrap_or(0);
+        // The mobility ramp length (constant across frames). Use the mode (most common value) so a
+        // single corrupt frame — a stray 0 or an absurdly high count — can't skew the anchor.
+        let num_scans = {
+            let mut counts: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+            for m in &meta {
+                let s = m.num_scans.max(0) as u32;
+                if s > 0 {
+                    *counts.entry(s).or_default() += 1;
+                }
+            }
+            counts.into_iter().max_by_key(|&(_, c)| c).map(|(s, _)| s).unwrap_or(0)
+        };
 
         Ok(MetaIndex {
             data_path: data_path.to_string(),

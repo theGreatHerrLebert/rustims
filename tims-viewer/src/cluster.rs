@@ -178,7 +178,12 @@ pub fn cluster_axis_scales(inp: &ScaleInputs) -> AxisScales {
     // scale so the target real-unit reach maps to exactly `eps_ref` after normalize+scale.
     let scale = |range: f64, target_reach: f64| -> f32 {
         if range.is_finite() && range > 0.0 && target_reach.is_finite() && target_reach > 0.0 {
-            (inp.eps_ref * range / (2.0 * target_reach)) as f32
+            let s = (inp.eps_ref * range / (2.0 * target_reach)) as f32;
+            if s.is_finite() && s > 0.0 {
+                s
+            } else {
+                1.0 // guard a malformed eps_ref (NaN / <=0) from producing a degenerate scale
+            }
         } else {
             1.0 // anchor unavailable / degenerate range -> normalized (region-relative) fallback
         }
@@ -323,6 +328,25 @@ mod scale_tests {
         let lt = cluster_real(&real, [(500.0, 520.0), tight, (30.0, 60.0)], uncal, 0.012, 2);
         // wide: spacing 2·0.004/0.9 ≈ 0.0089 < eps -> chains; tight: 2·0.004/0.03 ≈ 0.27 > eps -> shatters
         assert_ne!(canonical(&lw), canonical(&lt), "uncalibrated 1/K0 is focus-dependent (the bug)");
+    }
+
+    /// The live eps (not eps_ref) scales the reach proportionally: 2x eps -> 2x reach on every axis.
+    #[test]
+    fn live_eps_scales_reach_proportionally() {
+        let s = cluster_axis_scales(&base((0.60, 1.50)));
+        for (range, scale) in [(0.9, s.im), (30.0, s.rt), (20.0, s.mz)] {
+            let r1 = axis_reach(0.012, range, scale);
+            let r2 = axis_reach(0.024, range, scale);
+            assert!((r2 / r1 - 2.0).abs() < 1e-4, "reach should scale with eps");
+        }
+    }
+
+    /// A missing run-level anchor (`im_per_scan = 0`) falls back to the unscaled (normalized) axis.
+    #[test]
+    fn missing_im_anchor_falls_back_to_unscaled() {
+        let mut inp = base((0.60, 1.50));
+        inp.im_per_scan = 0.0;
+        assert_eq!(cluster_axis_scales(&inp).im, 1.0);
     }
 }
 
