@@ -1,6 +1,6 @@
 # tims-viewer web — Flow restructure PLAN
 
-Status: **proposed, codex-reviewed (revisions incorporated)**
+Status: **codex-reviewed ×2 — buildable as written**
 Scope: `tims-viewer/web/index.html` + `tims-viewer/web/src/lib.rs`. One small server addition
 (frame count in `/meta`) is **optional** — see §4.
 
@@ -64,7 +64,9 @@ histograms, projections, `cycle_duration` — but **not** `n_points`, dataset na
 ([lib.rs:1121]). `/meta` exposes `n_points` + `cycle_duration` but **not** name/frame count
 ([serve.rs:609]); the name lives only in `/datasets`. So the summary will show **only what we can
 source cheaply**:
-- **name** — from the selected `/datasets` entry (stash it in `populate_datasets`),
+- **name** — from the selected `/datasets` entry. **[must-fix]** stash it **before**
+  `populate_datasets`' `arr.length() <= 1` early return ([lib.rs:1215]), or single-dataset runs
+  never get a name. (Move the name-stash above the "reveal picker only if >1" guard.)
 - **points** — add `n_points` to `MetaInfo` parsing (already in the `/meta` JSON),
 - **m/z · 1/K₀ · RT ranges** — from `MetaInfo.bounds`,
 - **cycle duration** — from `MetaInfo.cycle_duration`.
@@ -89,14 +91,19 @@ Two distinct artifacts, two buttons, distinct enable rules:
 So the post-run `cluster_params.json` stays tied to results; the new live `config.json` is the
 anytime recipe. (`cluster_params_json` gains a `dataset` field so both agree.)
 
+**[risk] `ClusterRunParams` is `Copy`** ([lib.rs] snapshot struct). Add the dataset **id** (`usize`,
+Copy-safe) there — **not** the name (a `String` would break `Copy`). Resolve the name at serialize
+time (it's already in client state from the picker), keeping the snapshot `Copy`.
+
 ## 6. Implementation steps (revised)
 
 1. **Tabs bar** (`index.html`): 5 buttons, `data-tab` = `data|region|cluster|save|display`; gear
    right-aligned (`margin-left:auto`), four numbered `①…④`.
 2. **`switch_tab` is NOT generic today** — it hard-codes `["view","focus","cluster"]`
    ([lib.rs:2800]). **Must** update that list to `["data","region","cluster","save","display"]`
-   (or derive it from `document.querySelectorAll(".tab[data-tab]")`). Update the **default active
-   tab** in both HTML (`.active`) and this list.
+   (or derive it from `document.querySelectorAll(".tab[data-tab]")`). The **default active tab** is
+   set purely by the HTML `.active` class on the tab button + pane (`switch_tab`'s list only needs to
+   *contain* the names) — set `.active` on the **② Region** button+pane in markup.
 3. **① Data pane** (`#tab-data`): move `#dspick` here; add summary nodes
    (`#data-name`, `#data-points`, `#data-mz`, `#data-im`, `#data-rt`, `#data-cycle`).
 4. **② Region**: rename `#tab-focus` → `#tab-region`, `data-tab="region"`. Content as-is (maps stay
@@ -139,6 +146,12 @@ anytime recipe. (`cluster_params_json` gains a `dataset` field so both agree.)
 - Carry these **companion ids** with their controls so markup moves don't orphan them:
   `#load-cap`+`#load-n`; `#cl-algo-status`/`#opt-sklearn`/`#opt-hdbscan`+`#cl-algo`;
   `#floor-src`+Floor; `#railtgl-r`/`.railbtn-r` stay with the (unchanged) cluster panel.
+- **[risk] Rail toggles are CSS sibling-structure dependent**, not listener-dependent: `#railtgl` /
+  `#railtgl-r` must keep their position **relative to their rails/buttons** (the `:checked ~` sibling
+  selectors). Don't relocate them — they sit outside the tab panes already, so the tab work won't
+  touch them, but note it.
+- Map drag is id-bound to `#mw-*` (+ window move/up) and dual crop sliders are id-bound, so moving
+  the maps **within** Region is a no-op for their handlers. *(codex pass 2 confirmed.)*
 
 ## 8. Out of scope (future)
 
