@@ -48,7 +48,15 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
 
+    def do_GET(self) -> None:  # health probe — the web auto-enables the Python backend if this is 200
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self._cors()
+        self.end_headers()
+        self.wfile.write(b"tims-viewer sklearn cluster service: ok\n")
+
     def do_POST(self) -> None:
+        print(f"POST {self.path}  ({self.headers.get('Content-Length', '?')} bytes)", flush=True)
         if urlparse(self.path).path != "/cluster":
             self.send_response(404)
             self._cors()
@@ -76,7 +84,10 @@ class Handler(BaseHTTPRequestHandler):
             labels = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1).fit(pts).labels_
         k = int(labels.max()) + 1 if labels.size else 0
         dt = time.perf_counter() - t
-        print(f"DBSCAN: {pts.shape[0]} pts, eps={eps} min={min_samples} -> {k} clusters in {dt:.2f}s")
+        print(
+            f"DBSCAN: {pts.shape[0]} pts, eps={eps} min={min_samples} -> {k} clusters in {dt:.2f}s",
+            flush=True,
+        )
         out = labels.astype("<i4").tobytes()
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")

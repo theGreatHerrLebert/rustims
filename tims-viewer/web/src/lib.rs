@@ -94,6 +94,9 @@ const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const CANVAS_ID: &str = "tims-canvas";
 /// Default point-server port (`tims-viewer DEMO --serve 8090`). Override with `?port=N` in the URL.
 const DEFAULT_SERVER_PORT: u16 = 8090;
+/// Default Python (sklearn) clustering-service port (`cluster_service.py --port 8091`). Override with
+/// `?clusterport=N`, or a full URL via `?cluster=<url>`.
+const DEFAULT_CLUSTER_PORT: u16 = 8091;
 
 /// wasm entry point — Trunk/wasm-bindgen call this on load.
 #[wasm_bindgen(start)]
@@ -258,6 +261,9 @@ struct Gfx {
     cluster_sel: Option<i32>,
     /// When clustered + colouring, hide the un-clustered (noise) points (color_mode 2 vs 1).
     hide_noise: bool,
+    /// Route Run through the Python (sklearn) service instead of the in-wasm DBSCAN. Auto-enabled by
+    /// the startup probe when the service is reachable; toggleable in the Cluster tab.
+    use_python_cluster: bool,
     /// Persistent DBSCAN worker (lazily created; `None` if workers are unavailable → main-thread
     /// fallback), and the in-flight job's (survivor idx, data generation, job id) awaiting its reply.
     /// `job_id` distinguishes a superseded job's late reply; `worker_failed` latches a runtime failure
@@ -688,6 +694,7 @@ async fn run() -> Result<(), String> {
         cluster_labels: Vec::new(),
         cluster_sel: None,
         hide_noise: false,
+        use_python_cluster: false,
         cluster_worker: None,
         cluster_pending: None,
         next_cluster_job: 0,
@@ -731,6 +738,8 @@ async fn run() -> Result<(), String> {
     bind_cluster(&gfx);
     // DIA isolation-window overlay.
     bind_windows(&gfx);
+    // Probe the Python clustering service; auto-enable the backend toggle if it's up.
+    wasm_bindgen_futures::spawn_local(probe_cluster_service(gfx.clone()));
     // Collapsible section headers + tab switching.
     bind_panel_chrome(&gfx);
 
@@ -929,16 +938,44 @@ fn points_url() -> String {
     format!("http://localhost:{port}/points")
 }
 
-/// Optional Python clustering service URL from `?cluster=<url>` — when set, Run posts points to it
-/// (sklearn DBSCAN) instead of the in-wasm DBSCAN.
-fn cluster_service_url() -> Option<String> {
+/// The Python clustering service URL: a `?cluster=<url>` override, else the default
+/// `http://localhost:<DEFAULT_CLUSTER_PORT>/cluster` (or `?clusterport=N`). Always returns a URL so
+/// the Python backend is reachable from the plain page — a startup probe decides if it's actually up.
+fn cluster_service_url() -> String {
     let search = web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default();
-    search
-        .trim_start_matches('?')
+    let params = search.trim_start_matches('?');
+    if let Some(v) = params.split('&').find_map(|kv| kv.strip_prefix("cluster=")).filter(|v| !v.is_empty())
+    {
+        if let Some(decoded) = js_sys::decode_uri_component(v).ok().and_then(|s| s.as_string()) {
+            return decoded;
+        }
+    }
+    let port = params
         .split('&')
-        .find_map(|kv| kv.strip_prefix("cluster="))
-        .filter(|v| !v.is_empty())
-        .and_then(|v| js_sys::decode_uri_component(v).ok().and_then(|s| s.as_string()))
+        .find_map(|kv| kv.strip_prefix("clusterport=").and_then(|v| v.parse::<u16>().ok()))
+        .unwrap_or(DEFAULT_CLUSTER_PORT);
+    format!("http://localhost:{port}/cluster")
+}
+
+/// Probe the cluster service (GET its health route); on success enable + auto-select the Python
+/// backend so it's a ready option from the plain page (no `?cluster=` needed).
+async fn probe_cluster_service(gfx: Rc<RefCell<Gfx>>) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let ok = match wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&cluster_service_url())).await {
+        Ok(v) => v.dyn_into::<web_sys::Response>().map(|r| r.ok()).unwrap_or(false),
+        Err(_) => false,
+    };
+    if ok {
+        gfx.borrow_mut().use_python_cluster = true; // prefer sklearn when it's available
+        set_checked("cl-python", true);
+        set_disabled("cl-python", false);
+        set_text("cl-python-status", "sklearn ✓");
+    } else {
+        set_disabled("cl-python", true);
+        set_text("cl-python-status", "not running");
+    }
 }
 
 /// POST the (already axis-scaled) flat positions to the Python clustering service and read back the
@@ -1965,9 +2002,10 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
     }
     gfx.borrow_mut().cluster_run_params = Some(run_params); // before dispatch, for the export JSON
 
-    // Python backend (if `?cluster=<url>` is set): POST the scaled points to the sklearn service and
-    // colour by its labels. The wasm path below is the default when no service is configured.
-    if let Some(svc) = cluster_service_url() {
+    // Python backend (when the "Python (sklearn)" toggle is on — auto-enabled by the startup probe):
+    // POST the scaled points to the service and colour by its labels. Else the wasm path below.
+    if gfx.borrow().use_python_cluster {
+        let svc = cluster_service_url();
         let flat: Vec<f32> = positions.iter().flatten().copied().collect();
         let job = {
             let mut g = gfx.borrow_mut();
@@ -2403,6 +2441,7 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     bind_value(gfx, "cl-min", "cl-min-n", 0, |g, v| g.cluster_min_pts = (v as usize).max(2));
     bind_value(gfx, "cl-rtc", "cl-rtc-n", 0, |g, v| g.cluster_rt_cycles = v.round().max(1.0));
     bind_value(gfx, "cl-mzw", "cl-mzw-n", 1, |g, v| g.cluster_mz_peak_widths = v.max(0.1));
+    on_toggle("cl-python", gfx, |g, on| g.use_python_cluster = on);
     if let Some(btn) = by_id::<web_sys::HtmlElement>("cl-run") {
         let gfx = gfx.clone();
         add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| {
@@ -3178,6 +3217,8 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
     set_checked("cl-color", true); // colour by cluster is on by default (applies after a Run)
     set_checked("hide-noise", false);
     set_checked("show-windows", false); // off by default (defeats browser form-restore)
+    set_checked("cl-python", false); // enabled + auto-checked by the startup service probe
+    set_disabled("cl-python", true);
     // Crops start at the full range (thumbs, fills, readouts).
     reset_crops(gfx);
 }
