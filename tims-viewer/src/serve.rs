@@ -184,6 +184,10 @@ struct Hub {
     entries: Vec<DatasetEntry>,
     budget: Option<usize>,
     states: Mutex<StateCache>,
+    /// Per-dataset build locks: a dataset switch fires `/meta` + `/points` + `/windows` near-
+    /// simultaneously, so serialize concurrent builds of the *same* id (the rest re-check the cache
+    /// and hit it) — without serializing builds of *different* datasets.
+    build_locks: Mutex<HashMap<usize, Arc<Mutex<()>>>>,
     datasets_json: Arc<[u8]>,
 }
 
@@ -206,6 +210,20 @@ impl Hub {
 /// Resolve the `State` for dataset `id`, building (and caching, LRU-evicting) it on first request.
 /// The build runs outside the lock so a multi-second load can't block other datasets' requests.
 fn get_or_build_state(hub: &Hub, id: usize) -> Result<Arc<State>> {
+    if let Some(s) = hub.states.lock().unwrap().get(id) {
+        return Ok(s);
+    }
+    // Single-flight per dataset: hold this id's build lock so concurrent first-touches (a switch's
+    // /meta + /points + /windows) don't each build the same hundreds-of-MB state.
+    let build_lock = hub
+        .build_locks
+        .lock()
+        .unwrap()
+        .entry(id)
+        .or_default()
+        .clone();
+    let _guard = build_lock.lock().unwrap();
+    // Re-check: another thread may have built it while we waited on the build lock.
     if let Some(s) = hub.states.lock().unwrap().get(id) {
         return Ok(s);
     }
@@ -255,29 +273,15 @@ fn dataset_name(path: &std::path::Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-/// `/datasets` JSON: `[{"id":0,"name":"run5"}, ...]`.
+/// `/datasets` JSON: `[{"id":0,"name":"run5"}, ...]`. Built via serde_json so any folder name
+/// (control chars, quotes, unicode) is escaped correctly.
 fn build_datasets_json(entries: &[DatasetEntry]) -> Arc<[u8]> {
-    let items: Vec<String> = entries
+    let items: Vec<serde_json::Value> = entries
         .iter()
         .enumerate()
-        .map(|(i, e)| format!("{{\"id\":{i},\"name\":{}}}", json_str(&e.name)))
+        .map(|(i, e)| serde_json::json!({ "id": i, "name": e.name }))
         .collect();
-    format!("[{}]", items.join(",")).into_bytes().into()
-}
-
-/// Minimal JSON string escaping (quotes + backslashes) for dataset names.
-fn json_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
+    serde_json::to_vec(&items).unwrap_or_else(|_| b"[]".to_vec()).into()
 }
 
 /// Build the registry, eagerly build the default dataset (fast first paint), then serve region
@@ -303,6 +307,7 @@ pub fn serve(source: ServeSource, budget: Option<usize>, port: u16) -> Result<()
         entries,
         budget,
         states: Mutex::new(StateCache::default()),
+        build_locks: Mutex::new(HashMap::new()),
         datasets_json,
     });
 

@@ -78,6 +78,9 @@ fn collect_datasets(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
     }
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for p in entries.filter_map(|e| e.ok().map(|e| e.path())) {
+        if p.is_symlink() {
+            continue; // don't follow symlinks — keeps discovery within the real root (no escape/loops)
+        }
         if is_dataset_dir(&p) {
             out.push(p); // a .d — collect it, don't descend
         } else if p.is_dir() {

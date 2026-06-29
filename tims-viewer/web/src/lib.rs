@@ -954,8 +954,9 @@ fn points_base_url() -> String {
         .and_then(|w| w.location().search().ok())
         .unwrap_or_default();
     let params = search.trim_start_matches('?');
-    // Explicit full-URL override (percent-decoded). Strip any baked-in `n=` so our budget caps stay
-    // authoritative (with_query appends `n=n_cap`; a leftover n would double up).
+    // Explicit full-URL override (percent-decoded). Strip any baked-in `n=` (so our budget caps stay
+    // authoritative) and `dataset=` (so `points_url` is the sole source of the dataset param — else
+    // /points and /windows could disagree, and picker switches wouldn't take).
     if let Some(v) = params.split('&').find_map(|kv| kv.strip_prefix("points=")) {
         if !v.is_empty() {
             let decoded = js_sys::decode_uri_component(v)
@@ -964,8 +965,10 @@ fn points_base_url() -> String {
                 .unwrap_or_else(|| v.to_string());
             return match decoded.split_once('?') {
                 Some((path, query)) => {
-                    let kept: Vec<&str> =
-                        query.split('&').filter(|kv| !kv.starts_with("n=")).collect();
+                    let kept: Vec<&str> = query
+                        .split('&')
+                        .filter(|kv| !kv.starts_with("n=") && !kv.starts_with("dataset="))
+                        .collect();
                     if kept.is_empty() {
                         path.to_string()
                     } else {
@@ -1214,7 +1217,9 @@ async fn populate_datasets() {
     }
     let Some(sel) = by_id::<web_sys::HtmlSelectElement>("dataset-sel") else { return };
     sel.set_inner_html("");
-    let cur = dataset_id();
+    // The server clamps an out-of-range ?dataset to the last id, so clamp here too — else the picker
+    // would highlight the wrong (first) option while a different dataset is actually loaded.
+    let cur = dataset_id().min(arr.length() as usize - 1);
     for i in 0..arr.length() {
         let item = arr.get(i);
         let id = jnum(&item, "id").unwrap_or(i as f64) as usize;
