@@ -58,6 +58,20 @@ const MAX_WEB_POINTS: usize = 32_000_000;
 /// which lives in the native-only loader module).
 const DIA_WINDOW_RT_SLICES: usize = 6;
 
+/// Parameters of a clustering Run, snapshotted at gather time (so the exported JSON reflects what
+/// was actually used, not later slider edits while the worker runs).
+#[derive(Clone, Copy)]
+struct ClusterRunParams {
+    eps: f32,
+    min_pts: usize,
+    rt_cycles: f64,
+    mz_peak_widths: f64,
+    ms_mask: u32,
+    floor: f32,
+    region: Option<[(f64, f64); 3]>,
+    cycle_duration: f64,
+}
+
 /// A DIA isolation-window footprint in real units (from `/windows`); re-normalized to the focused
 /// region each load to draw the precursor-selection overlay in the m/z × 1/K0 (scan) plane.
 #[derive(Clone, Copy)]
@@ -231,8 +245,11 @@ struct Gfx {
     clustered: bool,
     /// The last clustering result's stats (for the right-hand panel); cleared on invalidate.
     cluster_stats: Option<ClusterStats>,
-    /// JSON of the parameters used for the last clustering (snapshotted at Run); exported alongside
-    /// the per-cluster CSV. Cleared on invalidate.
+    /// Parameters captured at the last Run (gather time); the export JSON is built from this, not
+    /// live fields. Cleared on invalidate.
+    cluster_run_params: Option<ClusterRunParams>,
+    /// JSON of the parameters used for the last clustering (built at finish from cluster_run_params);
+    /// exported alongside the per-cluster CSV. Cleared on invalidate.
     cluster_params_json: Option<String>,
     /// Retained DBSCAN result for isolation: the survivor `cpu_points` indices + their labels, and
     /// which cluster is currently isolated (`None` = show all). Cleared on invalidate.
@@ -665,6 +682,7 @@ async fn run() -> Result<(), String> {
         cluster_mz_peak_widths: CLUSTER_MZ_PEAK_WIDTHS,
         clustered: false,
         cluster_stats: None,
+        cluster_run_params: None,
         cluster_params_json: None,
         cluster_idx: Vec::new(),
         cluster_labels: Vec::new(),
@@ -1412,10 +1430,17 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
         g.clustered = false;
         g.cluster_stats = None;
         g.cluster_params_json = None;
+        g.cluster_run_params = None;
         g.cluster_idx = Vec::new();
         g.cluster_labels = Vec::new();
         g.cluster_sel = None;
-        g.cluster_pending = None;
+        // Terminate a worker job in flight (a reload abandons it) so it doesn't keep computing with
+        // the next Run queued behind it; the next Run rebuilds a fresh worker.
+        if g.cluster_pending.take().is_some() {
+            if let Some(w) = g.cluster_worker.take() {
+                w.terminate();
+            }
+        }
         // Re-apply auto-transfer (exposure + floor range) and bounds from the new meta; keep the
         // user's colormap / point size / opacity / MS mask.
         if let Some(m) = &meta {
@@ -1479,9 +1504,10 @@ enum StackOp {
 }
 
 /// The focus-lens load primitive: re-fetch a region and rebuild the GPU buffer. `budget == None`
-/// loads the pinned full run via no-query (cache hit for Back-to-root); `Some(b)` is an explicit
-/// region+budget query. The stack op is applied only after the load succeeds, so a debounced or
-/// failed load never desyncs the stack from the displayed view. Debounced via `reloading`.
+/// (the root stack entry) clamps to `n_cap` — the request is always a capped region query, never a
+/// bare `/points`, so Back-to-root can't pull the server's full `--budget` and OOM the wasm heap.
+/// The stack op is applied only after the load succeeds, so a debounced or failed load never desyncs
+/// the stack from the displayed view. Debounced via `reloading`.
 async fn load_region(gfx: Rc<RefCell<Gfx>>, region: Region, budget: Option<usize>, op: StackOp) {
     {
         let mut g = gfx.borrow_mut();
@@ -1778,6 +1804,7 @@ fn invalidate_clusters_mut(g: &mut Gfx) {
         g.clustered = false;
         g.cluster_stats = None;
         g.cluster_params_json = None;
+        g.cluster_run_params = None;
         g.cluster_idx = Vec::new();
         g.cluster_labels = Vec::new();
         g.cluster_sel = None;
@@ -1806,7 +1833,7 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         return;
     }
     // Gather the filtered survivors (spatial crop + intensity floor + MS) and their cube positions.
-    let (idx, positions, eps, min_pts, gen) = {
+    let (idx, positions, eps, min_pts, gen, run_params) = {
         let g = gfx.borrow();
         let p = &g.params;
         let (fmin, fmax, ms) = (p.filter_min, p.filter_max, p.ms_mask);
@@ -1870,7 +1897,18 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
                 p[0] *= mz_scale;
             }
         }
-        (idx, positions, eps, g.cluster_min_pts, g.data_gen)
+        // Snapshot the parameters used (for the export JSON), so a slider edit mid-run can't skew it.
+        let run_params = ClusterRunParams {
+            eps,
+            min_pts: g.cluster_min_pts,
+            rt_cycles: g.cluster_rt_cycles,
+            mz_peak_widths: g.cluster_mz_peak_widths,
+            ms_mask: g.params.ms_mask,
+            floor: g.params.filter_min[3],
+            region: g.axis_bounds,
+            cycle_duration: g.cycle_duration,
+        };
+        (idx, positions, eps, g.cluster_min_pts, g.data_gen, run_params)
     };
     if idx.is_empty() {
         show_status("nothing to cluster — adjust the filter");
@@ -1884,6 +1922,7 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         ));
         return;
     }
+    gfx.borrow_mut().cluster_run_params = Some(run_params); // before dispatch, for the export JSON
     show_status("clustering…");
     // Small inputs cluster in well under a second, so run them on the main thread (deferred one
     // macrotask so the status paints): instant, with none of the worker's one-time wasm spin-up
@@ -2079,7 +2118,7 @@ fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: Vec<usize>, labels: Vec<i32>, 
         reupload_points(g);
         g.params.color_mode = if g.hide_noise { 2 } else { 1 };
         g.clustered = true;
-        g.cluster_params_json = Some(cluster_params_json(g, k, noise, n_in));
+        g.cluster_params_json = g.cluster_run_params.map(|p| cluster_params_json(&p, k, noise, n_in));
         g.cluster_stats = Some(stats);
         g.cluster_idx = idx;
         g.cluster_labels = labels;
@@ -2507,24 +2546,24 @@ fn isolate_cluster(gfx: &Rc<RefCell<Gfx>>, sel: Option<i32>) {
 }
 
 /// JSON snapshot of the parameters used for a clustering run, so the export is reproducible.
-fn cluster_params_json(g: &Gfx, k: usize, noise: usize, n_in: usize) -> String {
+fn cluster_params_json(p: &ClusterRunParams, k: usize, noise: usize, n_in: usize) -> String {
     let obj = js_sys::Object::new();
     let set = |key: &str, v: &JsValue| {
         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(key), v);
     };
-    let ms_level = if g.params.ms_mask == 0b10 { "MS2" } else { "MS1" };
+    let ms_level = if p.ms_mask == 0b10 { "MS2" } else { "MS1" };
     set("ms_level", &JsValue::from_str(ms_level));
-    set("eps", &JsValue::from_f64(g.cluster_eps as f64));
-    set("min_points", &JsValue::from_f64(g.cluster_min_pts as f64));
-    set("rt_cycles", &JsValue::from_f64(g.cluster_rt_cycles));
-    set("mz_peak_widths", &JsValue::from_f64(g.cluster_mz_peak_widths));
+    set("eps", &JsValue::from_f64(p.eps as f64));
+    set("min_points", &JsValue::from_f64(p.min_pts as f64));
+    set("rt_cycles", &JsValue::from_f64(p.rt_cycles));
+    set("mz_peak_widths", &JsValue::from_f64(p.mz_peak_widths));
     set("mz_resolution", &JsValue::from_f64(MZ_RESOLUTION));
-    set("cycle_duration_s", &JsValue::from_f64(g.cycle_duration));
-    set("intensity_floor", &JsValue::from_f64(g.params.filter_min[3] as f64));
+    set("cycle_duration_s", &JsValue::from_f64(p.cycle_duration));
+    set("intensity_floor", &JsValue::from_f64(p.floor as f64));
     set("clusters", &JsValue::from_f64(k as f64));
     set("noise_points", &JsValue::from_f64(noise as f64));
     set("input_points", &JsValue::from_f64(n_in as f64));
-    if let Some(b) = g.axis_bounds {
+    if let Some(b) = p.region {
         let region = js_sys::Object::new();
         let pair = |lo: f64, hi: f64| {
             let a = js_sys::Array::new();
