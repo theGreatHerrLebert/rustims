@@ -988,8 +988,20 @@ async fn probe_cluster_service(gfx: Rc<RefCell<Gfx>>) {
     let Some(window) = web_sys::window() else {
         return;
     };
+    // Abort the probe after 3s so a half-open service (200 then a stalled body) can't pin the UI at
+    // "checking…" forever.
+    let opts = web_sys::RequestInit::new();
+    if let Ok(controller) = web_sys::AbortController::new() {
+        opts.set_signal(Some(&controller.signal()));
+        let cb = wasm_bindgen::closure::Closure::once_into_js(move || controller.abort());
+        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(cb.unchecked_ref(), 3000);
+    }
     // Verify it's actually our service (a 200 from some other process on the port isn't enough).
-    let ok = match wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&cluster_service_url())).await {
+    let ok = match wasm_bindgen_futures::JsFuture::from(
+        window.fetch_with_str_and_init(&cluster_service_url(), &opts),
+    )
+    .await
+    {
         Ok(v) => match v.dyn_into::<web_sys::Response>() {
             Ok(r) if r.ok() => match r.text() {
                 Ok(p) => wasm_bindgen_futures::JsFuture::from(p)
