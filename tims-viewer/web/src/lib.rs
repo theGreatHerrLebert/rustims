@@ -20,7 +20,7 @@ use tims_viewer::data::point::{AxisTransform, GpuPoint};
 use tims_viewer::render::annotation::{AnnotationRenderer, LineVertex};
 use tims_viewer::ticks::{fmt_tick, ticks_for, Axis, RT_MINUTES_SPAN};
 use tims_viewer::render::colormap::{sample as colormap_sample, COLORMAP_NAMES};
-use tims_viewer::cluster::{dbscan, dbscan_with_progress};
+use tims_viewer::cluster::{cluster_axis_scales, dbscan, dbscan_with_progress, AxisScales, ScaleInputs};
 use tims_viewer::render::point_cloud::{PointCloudRenderer, PointMode};
 use tims_viewer::render::uniforms::{ParamsUniform, VolumeUniform};
 use tims_viewer::render::volume::{VolumeGrid, VolumeRenderer, VOLUME_DIMS};
@@ -37,6 +37,10 @@ const WORKER_THRESHOLD: usize = 300_000;
 /// along RT. Precursor RT is quantized at the cycle period, so RT is scaled to span this many cycles
 /// regardless of the RT zoom.
 const CLUSTER_RT_CYCLES: f64 = 2.0;
+
+/// Default for the 1/K0-scans lever (`Gfx::cluster_im_scans`): how many TIMS scans `eps` bridges
+/// along mobility. ~2 scans matches the old MIDIA scan-index reach (`1.7·2^0.4 ≈ 2.2`).
+const CLUSTER_IM_SCANS: f64 = 2.0;
 
 /// Reference eps the RT/m/z axis scalings are calibrated to (the slider default). The scalings use
 /// this fixed value — not the live eps — so the live eps still scales the reach on every axis
@@ -71,6 +75,7 @@ struct ClusterRunParams {
     hdb_min_samples: usize,
     selection_eps: f64,
     rt_cycles: f64,
+    im_scans: f64,
     mz_peak_widths: f64,
     ms_mask: u32,
     floor: f32,
@@ -254,8 +259,12 @@ struct Gfx {
     cluster_min_pts: usize,
     /// User lever: how many MS1 cycles `eps` bridges along RT (integer; higher = looser RT).
     cluster_rt_cycles: f64,
+    /// User lever: how many TIMS scans `eps` bridges along 1/K0 (higher = looser mobility).
+    cluster_im_scans: f64,
     /// User lever: max m/z peak-widths `eps` may span (lower = isotopes separate harder).
     cluster_mz_peak_widths: f64,
+    /// Run-level 1/K0 per TIMS scan (from `/meta`); 0 if unknown. Anchors the 1/K0 cluster reach.
+    im_per_scan: f64,
     /// True while a DBSCAN result is colouring the cloud (`params.color_mode == 1`). Invalidated on
     /// reload / focus / filter change.
     clustered: bool,
@@ -711,7 +720,9 @@ async fn run() -> Result<(), String> {
         cluster_eps: 0.012,
         cluster_min_pts: 8,
         cluster_rt_cycles: CLUSTER_RT_CYCLES,
+        cluster_im_scans: CLUSTER_IM_SCANS,
         cluster_mz_peak_widths: CLUSTER_MZ_PEAK_WIDTHS,
+        im_per_scan: server_meta.as_ref().map(|m| m.im_per_scan).unwrap_or(0.0),
         clustered: false,
         cluster_stats: None,
         cluster_run_params: None,
@@ -1146,6 +1157,9 @@ struct MetaInfo {
     cycle_duration: f64,
     /// Total resident points the server holds for this region/run (for the Data summary).
     n_points: f64,
+    /// Run-level 1/K0 per TIMS scan (full mobility span / ramp length); 0 if unknown. Anchors the
+    /// clustering's 1/K0 reach to a fixed number of scans, focus-independent.
+    im_per_scan: f64,
 }
 
 /// Derive the `/meta` URL from the `/points` URL: replace only the trailing path endpoint and keep
@@ -1511,6 +1525,7 @@ async fn fetch_meta(url: &str) -> Result<MetaInfo, String> {
         proj_bins,
         cycle_duration: jnum(&v, "cycle_duration").filter(|x| x.is_finite() && *x > 0.0).unwrap_or(0.0),
         n_points: jnum(&v, "n_points").filter(|x| x.is_finite() && *x >= 0.0).unwrap_or(0.0),
+        im_per_scan: jnum(&v, "im_per_scan_1k0").filter(|x| x.is_finite() && *x > 0.0).unwrap_or(0.0),
     })
 }
 
@@ -2160,44 +2175,28 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
             idx.push(i);
             positions.push(pos);
         }
-        // Per-axis equi-distancing, calibrated to CLUSTER_EPS_REF (not the live eps) so the live eps
-        // still scales the reach on every axis proportionally. (The metric only; labels/stats use the
-        // unscaled points.)
+        // Per-axis equi-distancing (the shared, unit-tested helper in tims_viewer::cluster): calibrated
+        // to CLUSTER_EPS_REF so the live eps scales the reach proportionally, and — crucially —
+        // region-INDEPENDENT, so eps spans a fixed physical reach on every axis (cycles / scans /
+        // peak-widths) regardless of focus crop. (The metric only; labels/stats use unscaled points.)
         let eps = g.cluster_eps;
-        // RT: compress into ~cycle units so eps bridges CLUSTER_RT_CYCLES cycles regardless of the RT
-        // zoom — precursor RT is quantized at the cycle period, so an un-scaled eps shatters elutions.
-        let rt_scale = match g.axis_bounds {
-            Some(b) if g.cycle_duration > 0.0 && (b[2].1 - b[2].0).abs() > 0.0 => {
-                let cycle_gap_norm = 2.0 * g.cycle_duration / (b[2].1 - b[2].0).abs();
-                let desired = (g.cluster_rt_cycles.max(1.0) * cycle_gap_norm).max(CLUSTER_EPS_REF);
-                (CLUSTER_EPS_REF / desired) as f32
-            }
-            _ => 1.0,
-        };
-        // m/z: expand into ~peak-width units so eps spans at most `cluster_mz_peak_widths` peak-widths
-        // (peak width ≈ m/z / resolution) and can't bridge across isotopes. The cap is a user lever,
-        // independent of eps; max(1) so a narrow focus only sharpens m/z, never loosens it.
-        let mz_scale = match g.axis_bounds {
-            Some(b) => {
-                let mz_center = ((b[0].0 + b[0].1) * 0.5).abs();
-                let mz_range = (b[0].1 - b[0].0).abs();
-                let peak_width = mz_center / MZ_RESOLUTION;
-                let pw = g.cluster_mz_peak_widths.max(0.1);
-                if mz_center > 0.0 && mz_range > 0.0 && peak_width > 0.0 {
-                    (CLUSTER_EPS_REF * mz_range / (2.0 * pw * peak_width)).max(1.0) as f32
-                } else {
-                    1.0
-                }
-            }
-            _ => 1.0,
+        let scales = match g.axis_bounds {
+            Some(bounds) => cluster_axis_scales(&ScaleInputs {
+                bounds,
+                eps_ref: CLUSTER_EPS_REF,
+                cycle_duration: g.cycle_duration,
+                im_per_scan: g.im_per_scan,
+                mz_resolution: MZ_RESOLUTION,
+                rt_cycles: g.cluster_rt_cycles,
+                im_scans: g.cluster_im_scans,
+                mz_peak_widths: g.cluster_mz_peak_widths,
+            }),
+            None => AxisScales { mz: 1.0, im: 1.0, rt: 1.0 },
         };
         for p in positions.iter_mut() {
-            if rt_scale != 1.0 {
-                p[2] *= rt_scale;
-            }
-            if mz_scale != 1.0 {
-                p[0] *= mz_scale;
-            }
+            p[0] *= scales.mz;
+            p[1] *= scales.im;
+            p[2] *= scales.rt;
         }
         // Snapshot the parameters used (for the export JSON), so a slider edit mid-run can't skew it.
         let run_params = ClusterRunParams {
@@ -2210,6 +2209,7 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
             hdb_min_samples: g.cluster_hdb_min_samples,
             selection_eps: g.cluster_selection_eps,
             rt_cycles: g.cluster_rt_cycles,
+            im_scans: g.cluster_im_scans,
             mz_peak_widths: g.cluster_mz_peak_widths,
             ms_mask: g.params.ms_mask,
             floor: g.params.filter_min[3],
@@ -2678,6 +2678,7 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     bind_value(gfx, "cl-eps", "cl-eps-n", 3, |g, v| g.cluster_eps = v as f32);
     bind_value(gfx, "cl-min", "cl-min-n", 0, |g, v| g.cluster_min_pts = (v as usize).max(2));
     bind_value(gfx, "cl-rtc", "cl-rtc-n", 0, |g, v| g.cluster_rt_cycles = v.round().max(1.0));
+    bind_value(gfx, "cl-ims", "cl-ims-n", 1, |g, v| g.cluster_im_scans = v.max(0.1));
     bind_value(gfx, "cl-mzw", "cl-mzw-n", 1, |g, v| g.cluster_mz_peak_widths = v.max(0.1));
     // HDBSCAN parameters (Python only).
     bind_value(gfx, "cl-mcs", "cl-mcs-n", 0, |g, v| g.cluster_min_cluster_size = (v as usize).max(2));
@@ -2954,6 +2955,7 @@ fn cluster_params_json(p: &ClusterRunParams, k: usize, noise: usize, n_in: usize
         set("min_points", &JsValue::from_f64(p.min_pts as f64));
     }
     set("rt_cycles", &JsValue::from_f64(p.rt_cycles));
+    set("im_scans", &JsValue::from_f64(p.im_scans));
     set("mz_peak_widths", &JsValue::from_f64(p.mz_peak_widths));
     set("mz_resolution", &JsValue::from_f64(MZ_RESOLUTION));
     set("cycle_duration_s", &JsValue::from_f64(p.cycle_duration));
@@ -3045,6 +3047,7 @@ fn cluster_config_json(g: &Gfx) -> String {
         set("min_points", &JsValue::from_f64(g.cluster_min_pts as f64));
     }
     set("rt_cycles", &JsValue::from_f64(g.cluster_rt_cycles));
+    set("im_scans", &JsValue::from_f64(g.cluster_im_scans));
     set("mz_peak_widths", &JsValue::from_f64(g.cluster_mz_peak_widths));
     set("mz_resolution", &JsValue::from_f64(MZ_RESOLUTION));
     if let Some(b) = g.axis_bounds {
@@ -3516,7 +3519,7 @@ fn set_value_pair(slider_id: &str, num_id: &str, v: f64, prec: usize) {
 /// actual params (a checked-but-stale radio won't emit `change` when clicked); calling this after
 /// wiring re-asserts the truth so the panel always reflects what's rendering.
 fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
-    let (auto, rmode, xf, ms, cmap, psize, opac, expo, floor, cl_eps, cl_min, cl_rtc, cl_mzw, cl_mcs, cl_hms, cl_cse) = {
+    let (auto, rmode, xf, ms, cmap, psize, opac, expo, floor, cl_eps, cl_min, cl_rtc, cl_ims, cl_mzw, cl_mcs, cl_hms, cl_cse) = {
         let g = gfx.borrow();
         (
             g.auto_rotate,
@@ -3531,6 +3534,7 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
             g.cluster_eps as f64,
             g.cluster_min_pts as f64,
             g.cluster_rt_cycles,
+            g.cluster_im_scans,
             g.cluster_mz_peak_widths,
             g.cluster_min_cluster_size as f64,
             g.cluster_hdb_min_samples as f64,
@@ -3558,6 +3562,7 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
     set_value_pair("cl-eps", "cl-eps-n", cl_eps, 3);
     set_value_pair("cl-min", "cl-min-n", cl_min, 0);
     set_value_pair("cl-rtc", "cl-rtc-n", cl_rtc, 0);
+    set_value_pair("cl-ims", "cl-ims-n", cl_ims, 1);
     set_value_pair("cl-mzw", "cl-mzw-n", cl_mzw, 1);
     set_value_pair("cl-mcs", "cl-mcs-n", cl_mcs, 0);
     set_value_pair("cl-hms", "cl-hms-n", cl_hms, 0);

@@ -29,6 +29,9 @@ pub struct MetaIndex {
     pub frames: Vec<FrameInfo>,
     pub bounds: AxisBounds,
     pub total_points_estimate: u64,
+    /// TIMS scans per frame (the mobility ramp length; constant across frames). Used to anchor the
+    /// clustering's 1/K0 reach to a fixed number of scans (run-level, focus-independent).
+    pub num_scans: u32,
 }
 
 impl MetaIndex {
@@ -105,11 +108,15 @@ impl MetaIndex {
             rt: AxisTransform::new(rt_min, rt_max),
         };
 
+        // The mobility ramp length (constant across frames); take the max to be robust to a stray 0.
+        let num_scans = meta.iter().map(|m| m.num_scans.max(0) as u32).max().unwrap_or(0);
+
         Ok(MetaIndex {
             data_path: data_path.to_string(),
             frames,
             bounds,
             total_points_estimate: total,
+            num_scans,
         })
     }
 
@@ -135,6 +142,7 @@ impl MetaIndex {
             frames,
             bounds,
             total_points_estimate: total_points,
+            num_scans: 709, // a typical timsTOF mobility ramp length
         }
     }
 }

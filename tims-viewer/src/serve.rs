@@ -606,12 +606,21 @@ fn build_load_result(
     };
 
     let fin = |x: f64| if x.is_finite() { x } else { 0.0 };
+    // Run-level 1/K0 per TIMS scan: the FULL-run mobility span over the ramp length. Run-level (not
+    // region-scoped) so the client's IM clustering reach is focus-independent.
+    let im_per_scan = if meta.num_scans > 1 {
+        (meta.bounds.im.max - meta.bounds.im.min).abs() / (meta.num_scans as f64 - 1.0)
+    } else {
+        0.0
+    };
     let meta_json = serde_json::json!({
         "version": 1,
         "point_stride": std::mem::size_of::<GpuPoint>(),
         "n_points": n_points,
         "downsample_stride": stride,
         "cycle_duration": fin(cycle_duration),
+        "im_per_scan_1k0": fin(im_per_scan),
+        "num_scans": meta.num_scans,
         // Region bounds in real units — the client re-normalizes axes/crops/strips to these.
         "bounds": {
             "mz": [fin(region.mz.0), fin(region.mz.1)],
