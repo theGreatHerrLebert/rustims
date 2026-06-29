@@ -96,6 +96,8 @@
     .cs-hist { margin-bottom: 10px; }
     .cs-hist .map-cap { font-size: 10.5px; color: var(--dim); font-family: var(--mono); margin-bottom: 3px; }
     .cs-hist .map-cap b { color: var(--ink); font-weight: 500; }
+    .cs-axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9.5px;
+      color: var(--faint); margin-top: 2px; }
     /* clickable cluster list (isolate on click) */
     .cs-export { float: right; font-family: var(--sans); font-size: 10px; letter-spacing: .04em;
       color: var(--accent); background: transparent; border: 1px solid var(--line); border-radius: 5px;
@@ -532,10 +534,14 @@
       </section>
       <section class="sec">
         <div class="ey">Per-cluster</div>
-        <div class="cs-hist"><div class="map-cap">Size (points)</div><div class="crop-hist" id="csh-size"></div></div>
-        <div class="cs-hist"><div class="map-cap"><b>m/z</b> extent</div><div class="crop-hist" id="csh-mz"></div></div>
-        <div class="cs-hist"><div class="map-cap"><b>1/K₀</b> extent</div><div class="crop-hist" id="csh-im"></div></div>
-        <div class="cs-hist"><div class="map-cap"><b>RT</b> extent</div><div class="crop-hist" id="csh-rt"></div></div>
+        <div class="cs-hist"><div class="map-cap">Size (points)</div><div class="crop-hist" id="csh-size"></div>
+          <div class="cs-axis"><span>0</span><span id="csx-size"></span></div></div>
+        <div class="cs-hist"><div class="map-cap"><b>m/z</b> extent</div><div class="crop-hist" id="csh-mz"></div>
+          <div class="cs-axis"><span>0</span><span id="csx-mz"></span></div></div>
+        <div class="cs-hist"><div class="map-cap"><b>1/K₀</b> extent</div><div class="crop-hist" id="csh-im"></div>
+          <div class="cs-axis"><span>0</span><span id="csx-im"></span></div></div>
+        <div class="cs-hist"><div class="map-cap"><b>RT</b> extent</div><div class="crop-hist" id="csh-rt"></div>
+          <div class="cs-axis"><span>0</span><span id="csx-rt"></span></div></div>
       </section>
       <section class="sec">
         <div class="ey">Clusters <button class="cs-export" id="cl-export" type="button">Export CSV</button></div>

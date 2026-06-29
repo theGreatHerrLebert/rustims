@@ -32,5 +32,5 @@ web-sys = { version = "0.3", features = [
     # Off-main-thread DBSCAN: a module Web Worker built from a Blob that re-imports this same wasm.
     "Worker", "WorkerOptions", "WorkerType", "MessageEvent", "Blob", "BlobPropertyBag", "Url",
     # POST points to an optional Python (sklearn) clustering service.
-    "Request", "RequestInit",
+    "RequestInit",
 ] }

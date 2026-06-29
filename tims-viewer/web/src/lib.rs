@@ -962,6 +962,11 @@ async fn fetch_cluster(svc: &str, flat: &[f32], eps: f32, min_pts: usize) -> Res
     )
     .await
     .map_err(|e| format!("body read failed: {e:?}"))?;
+    if let Some(ab) = buf.dyn_ref::<js_sys::ArrayBuffer>() {
+        if ab.byte_length() % 4 != 0 {
+            return Err("cluster response not int32-aligned".to_string());
+        }
+    }
     Ok(js_sys::Int32Array::new(&buf).to_vec())
 }
 
@@ -1964,16 +1969,25 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
     // colour by its labels. The wasm path below is the default when no service is configured.
     if let Some(svc) = cluster_service_url() {
         let flat: Vec<f32> = positions.iter().flatten().copied().collect();
-        gfx.borrow_mut().cluster_pending = Some((idx, gen, 0));
+        let job = {
+            let mut g = gfx.borrow_mut();
+            g.next_cluster_job = g.next_cluster_job.wrapping_add(1);
+            g.cluster_pending = Some((idx, gen, g.next_cluster_job));
+            g.next_cluster_job
+        };
         set_cluster_running(true);
         show_status("clustering (python)…");
         let gfx2 = gfx.clone();
         wasm_bindgen_futures::spawn_local(async move {
             let result = fetch_cluster(&svc, &flat, eps, min_pts).await;
-            // Pair with the pending job (cleared by invalidate/reload -> drop a stale reply).
-            let Some((idx, gen, _)) = gfx2.borrow_mut().cluster_pending.take() else {
+            // Only consume the reply if it's still THIS job — a Stop / invalidate / newer Run
+            // supersedes it (the un-aborted fetch would otherwise steal the new pending job).
+            let mut g = gfx2.borrow_mut();
+            if !matches!(&g.cluster_pending, Some((_, _, pj)) if *pj == job) {
                 return;
-            };
+            }
+            let (idx, gen, _) = g.cluster_pending.take().unwrap();
+            drop(g);
             match result {
                 Ok(labels) if labels.len() == idx.len() => {
                     let k = labels.iter().copied().max().map_or(0, |m| (m + 1).max(0) as usize);
@@ -2301,6 +2315,13 @@ fn render_cluster_panel(s: &ClusterStats, sel: Option<i32>) {
     set_hist_svg("csh-mz", &hist_bins(&s.mz_extent, 24));
     set_hist_svg("csh-im", &hist_bins(&s.im_extent, 24));
     set_hist_svg("csh-rt", &hist_bins(&s.rt_extent, 24));
+    // X-axis right edge = the max extent (the bins span [0, max]); show it in real units so the
+    // spread is physically meaningful.
+    let max_of = |v: &[f64]| v.iter().cloned().fold(0.0f64, f64::max);
+    set_text("csx-size", &format!("{} pts", max_of(&s.sizes) as u64));
+    set_text("csx-mz", &format!("{:.3} m/z", max_of(&s.mz_extent)));
+    set_text("csx-im", &format!("{:.4} 1/K₀", max_of(&s.im_extent)));
+    set_text("csx-rt", &format!("{:.1} s", max_of(&s.rt_extent)));
 
     // Clickable cluster list — top 50 by size, plus a "Show all" row when isolated.
     let mut order: Vec<usize> = (0..s.k).collect();

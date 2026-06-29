@@ -23,12 +23,17 @@ through this service; without that query param the viewer uses its built-in wasm
 from __future__ import annotations
 
 import argparse
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 from sklearn.cluster import DBSCAN
+
+# Single-flight: DBSCAN(n_jobs=-1) already uses every core, so serialize requests (the browser does
+# not abort superseded fetches) to avoid oversubscribing the CPU with overlapping runs.
+_DBSCAN_LOCK = threading.Lock()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -53,16 +58,22 @@ class Handler(BaseHTTPRequestHandler):
         eps = float(q.get("eps", ["0.012"])[0])
         min_samples = int(q.get("min", ["8"])[0])
         n = int(self.headers.get("Content-Length", 0))
-        buf = self.rfile.read(n) if n else b""
-        pts = np.frombuffer(buf, dtype="<f4")
-        if pts.size == 0 or pts.size % 3 != 0:
+        buf = bytearray()
+        while len(buf) < n:  # the socket can hand back the body in chunks
+            chunk = self.rfile.read(n - len(buf))
+            if not chunk:
+                break
+            buf.extend(chunk)
+        pts = np.frombuffer(bytes(buf), dtype="<f4")
+        if len(buf) != n or pts.size == 0 or pts.size % 3 != 0:
             self.send_response(400)
             self._cors()
             self.end_headers()
             return
         pts = pts.reshape(-1, 3).astype(np.float64)
         t = time.perf_counter()
-        labels = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1).fit(pts).labels_
+        with _DBSCAN_LOCK:  # serialize the heavy compute across overlapping requests
+            labels = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1).fit(pts).labels_
         k = int(labels.max()) + 1 if labels.size else 0
         dt = time.perf_counter() - t
         print(f"DBSCAN: {pts.shape[0]} pts, eps={eps} min={min_samples} -> {k} clusters in {dt:.2f}s")
