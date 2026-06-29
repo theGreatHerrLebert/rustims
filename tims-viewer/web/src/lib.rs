@@ -765,6 +765,8 @@ async fn run() -> Result<(), String> {
     bind_windows(&gfx);
     // Probe the Python clustering service; auto-enable the backend toggle if it's up.
     wasm_bindgen_futures::spawn_local(probe_cluster_service(gfx.clone()));
+    // Populate the dataset picker (reveals it only when the server offers more than one).
+    wasm_bindgen_futures::spawn_local(populate_datasets());
     // Collapsible section headers + tab switching.
     bind_panel_chrome(&gfx);
 
@@ -927,9 +929,27 @@ fn show_status(msg: &str) {
     }
 }
 
-/// The point-server URL. `?points=<url>` overrides it outright (for proxied/same-origin
-/// deploys); else `?port=N` selects `http://localhost:N/points`; else [`DEFAULT_SERVER_PORT`].
+/// Selected dataset id from `?dataset=N` (default 0). The frontend switches datasets by reloading
+/// the page with this param, so a fresh `run()` re-inits cleanly for the new dataset.
+fn dataset_id() -> usize {
+    web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .unwrap_or_default()
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("dataset=").and_then(|v| v.parse::<usize>().ok()))
+        .unwrap_or(0)
+}
+
+/// The point-server `/points` URL for the selected dataset (base + `?dataset=N`). `/meta` inherits
+/// the query via `meta_url`; `/windows` re-appends it.
 fn points_url() -> String {
+    with_query(&points_base_url(), &format!("dataset={}", dataset_id()))
+}
+
+/// The point-server base URL. `?points=<url>` overrides it outright (for proxied/same-origin
+/// deploys); else `?port=N` selects `http://localhost:N/points`; else [`DEFAULT_SERVER_PORT`].
+fn points_base_url() -> String {
     let search = web_sys::window()
         .and_then(|w| w.location().search().ok())
         .unwrap_or_default();
@@ -1131,12 +1151,93 @@ fn meta_url(points: &str) -> String {
     }
 }
 
-/// The run-level `/windows` URL (strip the `/points` query — windows are region-independent).
+/// The run-level `/windows` URL (region-independent, but per-dataset: re-append `?dataset=N`).
 fn windows_url(points: &str) -> String {
     let path = points.split('?').next().unwrap_or(points);
-    path.strip_suffix("/points")
+    let base = path
+        .strip_suffix("/points")
         .map(|base| format!("{base}/windows"))
+        .unwrap_or_else(|| path.to_string());
+    with_query(&base, &format!("dataset={}", dataset_id()))
+}
+
+/// The `/datasets` registry URL (derived from the points base; dataset-independent).
+fn datasets_url() -> String {
+    let base = points_base_url();
+    let path = base.split('?').next().unwrap_or(&base);
+    path.strip_suffix("/points")
+        .map(|b| format!("{b}/datasets"))
         .unwrap_or_else(|| path.to_string())
+}
+
+/// Switch the active dataset by reloading the page with `?dataset=N` — a fresh `run()` re-inits the
+/// scene (camera, focus, clusters, bounds) cleanly for the new dataset.
+fn switch_dataset(id: usize) {
+    let Some(w) = web_sys::window() else { return };
+    let loc = w.location();
+    let search = loc.search().unwrap_or_default();
+    let mut parts: Vec<String> = search
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|kv| !kv.is_empty() && !kv.starts_with("dataset="))
+        .map(|s| s.to_string())
+        .collect();
+    parts.push(format!("dataset={id}"));
+    let _ = loc.set_search(&parts.join("&")); // navigates -> fresh load for the new dataset
+}
+
+/// Fetch the dataset registry; if more than one, reveal + populate the header picker (selecting one
+/// reloads with `?dataset=N`). Silent no-op when the server is absent or offers a single dataset.
+async fn populate_datasets() {
+    let Some(window) = web_sys::window() else { return };
+    let Some(doc) = window.document() else { return };
+    let resp_val = match wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&datasets_url())).await
+    {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+    let Ok(resp) = resp_val.dyn_into::<web_sys::Response>() else { return };
+    if !resp.ok() {
+        return;
+    }
+    let text = match resp.text() {
+        Ok(p) => match wasm_bindgen_futures::JsFuture::from(p).await {
+            Ok(t) => t.as_string().unwrap_or_default(),
+            Err(_) => return,
+        },
+        Err(_) => return,
+    };
+    let Ok(v) = js_sys::JSON::parse(&text) else { return };
+    let arr = js_sys::Array::from(&v);
+    if arr.length() <= 1 {
+        return; // nothing to choose between
+    }
+    let Some(sel) = by_id::<web_sys::HtmlSelectElement>("dataset-sel") else { return };
+    sel.set_inner_html("");
+    let cur = dataset_id();
+    for i in 0..arr.length() {
+        let item = arr.get(i);
+        let id = jnum(&item, "id").unwrap_or(i as f64) as usize;
+        let name = jget(&item, "name").as_string().unwrap_or_else(|| format!("dataset {id}"));
+        if let Ok(opt) = doc.create_element("option") {
+            opt.set_attribute("value", &id.to_string()).ok();
+            opt.set_text_content(Some(&name));
+            if id == cur {
+                opt.set_attribute("selected", "selected").ok();
+            }
+            let _ = sel.append_child(&opt);
+        }
+    }
+    // Reveal the picker (hidden by default for the single-dataset case).
+    if let Some(pick) = by_id::<web_sys::HtmlElement>("dspick") {
+        let _ = pick.style().set_property("display", "flex");
+    }
+    let s2 = sel.clone();
+    add_listener(sel.as_ref(), "change", move |_e: web_sys::Event| {
+        if let Ok(id) = s2.value().parse::<usize>() {
+            switch_dataset(id);
+        }
+    });
 }
 
 /// Fetch the run's DIA isolation-window footprints (real units) + the max group id.

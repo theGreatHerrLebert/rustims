@@ -98,6 +98,9 @@
     .cs-hist .map-cap b { color: var(--ink); font-weight: 500; }
     .cs-axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9.5px;
       color: var(--faint); margin-top: 2px; }
+    .dspick { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+    .dspick .lbl { white-space: nowrap; }
+    .dspick .sel { flex: 1; min-width: 0; }
     /* per-algorithm parameter rows: DBSCAN params by default; HDBSCAN params under body.algo-hdb */
     .algo-hdb { display: none; }
     body.algo-hdb .algo-hdb { display: flex; }
@@ -336,6 +339,10 @@
     <div class="head">
       <div class="mark">tims<b>·</b>view <span>/ ion cloud</span></div>
       <div class="sub">m/z × 1/K₀ × retention time — GPU point field</div>
+      <div class="dspick" id="dspick" style="display:none">
+        <label class="lbl" for="dataset-sel">Dataset</label>
+        <select class="sel" id="dataset-sel" aria-label="dataset"></select>
+      </div>
     </div>
 
     <div class="hud">
