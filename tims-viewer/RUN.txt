@@ -1,0 +1,34 @@
+tims-viewer — start commands (3 terminals)
+==========================================
+
+Open http://localhost:8080/?port=8090  → go to the ① Data tab to pick a dataset.
+Point the server at a FOLDER of .d datasets to get the picker (a single .d works
+too, the picker just stays hidden). Example folder below holds 3 datasets.
+
+
+1) POINT SERVER  (multi-dataset; the folder is the confinement root)
+-------------------------------------------------------------------
+cd /Users/davidteschner/Promotion/rustims
+# (rebuild only if Rust changed since last time)
+cargo build -p tims-viewer --release
+./target/release/tims-viewer /Users/davidteschner/Promotion/midia/timsim --serve 8090 --budget 12000000
+
+
+2) WEB APP  (release = the fast wasm)
+-------------------------------------
+cd /Users/davidteschner/Promotion/rustims/tims-viewer/web
+trunk serve --release
+
+
+3) CLUSTER SERVICE  (optional — sklearn DBSCAN + HDBSCAN; auto-detected by the UI)
+---------------------------------------------------------------------------------
+cd /Users/davidteschner/Promotion/rustims
+python tims-viewer/cluster_service.py --port 8091
+
+
+Notes
+-----
+- Swap the /midia/timsim path for any directory of .d folders (scanned recursively).
+- ?port=8090 tells the web where the point server is. ?cluster=<url> / ?clusterport=N
+  override the cluster service (default http://localhost:8091/cluster).
+- Switching datasets reloads the page with ?dataset=N — a clean re-init.
