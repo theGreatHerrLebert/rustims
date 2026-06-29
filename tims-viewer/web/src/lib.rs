@@ -29,6 +29,10 @@ use tims_viewer::render::volume::{VolumeGrid, VolumeRenderer, VOLUME_DIMS};
 /// first. Mirrors the native CLUSTER_CAP.
 const CLUSTER_CAP: usize = 2_000_000;
 
+/// Below this many filtered points, DBSCAN runs on the main thread (instant, no worker spin-up);
+/// at/above it, the off-main-thread worker is used so the tab doesn't freeze.
+const WORKER_THRESHOLD: usize = 300_000;
+
 /// RT slices each DIA window footprint is drawn at (mirrors the native loader's `DIA_WINDOW_RT_SLICES`,
 /// which lives in the native-only loader module).
 const DIA_WINDOW_RT_SLICES: usize = 6;
@@ -1742,22 +1746,28 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         return;
     }
     show_status("clustering…");
-    // Off-main-thread: post to the persistent DBSCAN worker so the tab stays responsive. The worker
-    // replies via its onmessage handler, which calls finish_clustering.
-    if let Some(worker) = ensure_cluster_worker(gfx) {
-        let flat: Vec<f32> = positions.iter().flatten().copied().collect();
-        let job = {
-            let mut g = gfx.borrow_mut();
-            g.next_cluster_job = g.next_cluster_job.wrapping_add(1);
-            g.next_cluster_job
-        };
-        if post_cluster_job(&worker, &flat, eps, min_pts, job) {
-            gfx.borrow_mut().cluster_pending = Some((idx, gen, job));
-            set_cluster_progress(Some(0.0)); // worker reports ticks back; bar advances live
-            return;
+    // Small inputs cluster in well under a second, so run them on the main thread (deferred one
+    // macrotask so the status paints): instant, with none of the worker's one-time wasm spin-up
+    // latency. Only large inputs — where DBSCAN would freeze the tab for seconds — go to the worker,
+    // whose init cost is then negligible against the run and whose progress bar actually has time to
+    // move.
+    if idx.len() > WORKER_THRESHOLD {
+        if let Some(worker) = ensure_cluster_worker(gfx) {
+            let flat: Vec<f32> = positions.iter().flatten().copied().collect();
+            let job = {
+                let mut g = gfx.borrow_mut();
+                g.next_cluster_job = g.next_cluster_job.wrapping_add(1);
+                g.next_cluster_job
+            };
+            if post_cluster_job(&worker, &flat, eps, min_pts, job) {
+                gfx.borrow_mut().cluster_pending = Some((idx, gen, job));
+                set_cluster_progress(Some(0.0)); // worker reports ticks back; bar advances live
+                return;
+            }
         }
     }
-    // Fallback (no worker): defer the blocking DBSCAN one macrotask so the status paints first.
+    // Main thread (small input, or worker unavailable): defer one macrotask so the status paints,
+    // then run the (brief) blocking DBSCAN.
     let gfx = gfx.clone();
     defer(move || {
         let (labels, k) = dbscan(&positions, eps, min_pts);
@@ -2828,7 +2838,7 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
     // Cluster controls (defeat browser form-restore; no result yet, so colour off).
     set_value_pair("cl-eps", "cl-eps-n", cl_eps, 3);
     set_value_pair("cl-min", "cl-min-n", cl_min, 0);
-    set_checked("cl-color", false);
+    set_checked("cl-color", true); // colour by cluster is on by default (applies after a Run)
     set_checked("show-windows", false); // off by default (defeats browser form-restore)
     // Crops start at the full range (thumbs, fills, readouts).
     reset_crops(gfx);
