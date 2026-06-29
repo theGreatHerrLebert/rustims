@@ -33,8 +33,9 @@ const CLUSTER_CAP: usize = 2_000_000;
 /// at/above it, the off-main-thread worker is used so the tab doesn't freeze.
 const WORKER_THRESHOLD: usize = 300_000;
 
-/// How many MS1 cycles `eps` should bridge along RT (precursor RT is quantized at the cycle period).
-/// RT is scaled so a cluster's elution stays connected across cycles regardless of the RT zoom.
+/// Default for the RT-cycles lever (`Gfx::cluster_rt_cycles`): how many MS1 cycles `eps` bridges
+/// along RT. Precursor RT is quantized at the cycle period, so RT is scaled to span this many cycles
+/// regardless of the RT zoom.
 const CLUSTER_RT_CYCLES: f64 = 2.0;
 
 /// Reference eps the RT/m/z axis scalings are calibrated to (the slider default). The scalings use
@@ -221,6 +222,8 @@ struct Gfx {
     // ---- clustering (CLUSTERING_WEB_PLAN.md) ----
     cluster_eps: f32,
     cluster_min_pts: usize,
+    /// User lever: how many MS1 cycles `eps` bridges along RT (integer; higher = looser RT).
+    cluster_rt_cycles: f64,
     /// User lever: max m/z peak-widths `eps` may span (lower = isotopes separate harder).
     cluster_mz_peak_widths: f64,
     /// True while a DBSCAN result is colouring the cloud (`params.color_mode == 1`). Invalidated on
@@ -655,6 +658,7 @@ async fn run() -> Result<(), String> {
         vol_i_max: 2.0,
         cluster_eps: 0.012,
         cluster_min_pts: 8,
+        cluster_rt_cycles: CLUSTER_RT_CYCLES,
         cluster_mz_peak_widths: CLUSTER_MZ_PEAK_WIDTHS,
         clustered: false,
         cluster_stats: None,
@@ -1830,7 +1834,7 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         let rt_scale = match g.axis_bounds {
             Some(b) if g.cycle_duration > 0.0 && (b[2].1 - b[2].0).abs() > 0.0 => {
                 let cycle_gap_norm = 2.0 * g.cycle_duration / (b[2].1 - b[2].0).abs();
-                let desired = (CLUSTER_RT_CYCLES * cycle_gap_norm).max(CLUSTER_EPS_REF);
+                let desired = (g.cluster_rt_cycles.max(1.0) * cycle_gap_norm).max(CLUSTER_EPS_REF);
                 (CLUSTER_EPS_REF / desired) as f32
             }
             _ => 1.0,
@@ -2261,6 +2265,7 @@ fn defer<F: FnOnce() + 'static>(f: F) {
 fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     bind_value(gfx, "cl-eps", "cl-eps-n", 3, |g, v| g.cluster_eps = v as f32);
     bind_value(gfx, "cl-min", "cl-min-n", 0, |g, v| g.cluster_min_pts = (v as usize).max(2));
+    bind_value(gfx, "cl-rtc", "cl-rtc-n", 0, |g, v| g.cluster_rt_cycles = v.round().max(1.0));
     bind_value(gfx, "cl-mzw", "cl-mzw-n", 1, |g, v| g.cluster_mz_peak_widths = v.max(0.1));
     if let Some(btn) = by_id::<web_sys::HtmlElement>("cl-run") {
         let gfx = gfx.clone();
@@ -2954,7 +2959,7 @@ fn set_value_pair(slider_id: &str, num_id: &str, v: f64, prec: usize) {
 /// actual params (a checked-but-stale radio won't emit `change` when clicked); calling this after
 /// wiring re-asserts the truth so the panel always reflects what's rendering.
 fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
-    let (auto, rmode, xf, ms, cmap, psize, opac, expo, floor, cl_eps, cl_min, cl_mzw) = {
+    let (auto, rmode, xf, ms, cmap, psize, opac, expo, floor, cl_eps, cl_min, cl_rtc, cl_mzw) = {
         let g = gfx.borrow();
         (
             g.auto_rotate,
@@ -2968,6 +2973,7 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
             g.params.filter_min[3] as f64,
             g.cluster_eps as f64,
             g.cluster_min_pts as f64,
+            g.cluster_rt_cycles,
             g.cluster_mz_peak_widths,
         )
     };
@@ -2991,6 +2997,7 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
     // Cluster controls (defeat browser form-restore; no result yet, so colour off).
     set_value_pair("cl-eps", "cl-eps-n", cl_eps, 3);
     set_value_pair("cl-min", "cl-min-n", cl_min, 0);
+    set_value_pair("cl-rtc", "cl-rtc-n", cl_rtc, 0);
     set_value_pair("cl-mzw", "cl-mzw-n", cl_mzw, 1);
     set_checked("cl-color", true); // colour by cluster is on by default (applies after a Run)
     set_checked("hide-noise", false);
