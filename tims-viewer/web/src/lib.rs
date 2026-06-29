@@ -33,6 +33,10 @@ const CLUSTER_CAP: usize = 2_000_000;
 /// at/above it, the off-main-thread worker is used so the tab doesn't freeze.
 const WORKER_THRESHOLD: usize = 300_000;
 
+/// How many MS1 cycles `eps` should bridge along RT (precursor RT is quantized at the cycle period).
+/// RT is scaled so a cluster's elution stays connected across cycles regardless of the RT zoom.
+const CLUSTER_RT_CYCLES: f64 = 2.0;
+
 /// RT slices each DIA window footprint is drawn at (mirrors the native loader's `DIA_WINDOW_RT_SLICES`,
 /// which lives in the native-only loader module).
 const DIA_WINDOW_RT_SLICES: usize = 6;
@@ -157,6 +161,8 @@ struct Gfx {
     hud_tick: u32,
     /// Real-unit axis ranges `[mz, im, rt]` from `/meta`, for crop labels; `None` => show %.
     axis_bounds: Option<[(f64, f64); 3]>,
+    /// Mean RT seconds per cycle (from `/meta`); 0 if unknown. Clusters RT in cycle units.
+    cycle_duration: f64,
     // ---- reload state (focus-lens A3): re-fetch a region/budget and rebuild the GPU buffer ----
     /// Base `/points` URL of the server (query appended per load); empty in the demo fallback.
     points_base: String,
@@ -605,6 +611,7 @@ async fn run() -> Result<(), String> {
         fps_t: 0.0,
         hud_tick: 0,
         axis_bounds,
+        cycle_duration: server_meta.as_ref().map(|m| m.cycle_duration).unwrap_or(0.0),
         points_base: if is_demo_fallback { String::new() } else { url.clone() },
         n_cap,
         supports_compaction,
@@ -910,6 +917,9 @@ struct MetaInfo {
     /// 2D density projections `[mz×im, mz×rt, im×rt]` (each `proj_bins²`) for the box-select maps.
     proj: Option<[Vec<u32>; 3]>,
     proj_bins: usize,
+    /// Mean RT gap (seconds) between consecutive MS1 frames; 0 if unknown. Used to cluster RT in
+    /// cycle units so precursors stay connected across cycles regardless of focus.
+    cycle_duration: f64,
 }
 
 /// Derive the `/meta` URL from the `/points` URL: replace only the trailing path endpoint and keep
@@ -1155,6 +1165,7 @@ async fn fetch_meta(url: &str) -> Result<MetaInfo, String> {
         i_hist,
         proj,
         proj_bins,
+        cycle_duration: jnum(&v, "cycle_duration").filter(|x| x.is_finite() && *x > 0.0).unwrap_or(0.0),
     })
 }
 
@@ -1367,6 +1378,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
             apply_auto_transfer(&mut g.params, m);
             g.floor_hi = m.i_p99.max(1.0);
             g.axis_bounds = m.bounds;
+            g.cycle_duration = m.cycle_duration;
         }
         // The new load defines the view: reset spatial crops + the intensity floor to "show all".
         for a in 0..3 {
@@ -1758,7 +1770,26 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
             idx.push(i);
             positions.push(pos);
         }
-        (idx, positions, g.cluster_eps, g.cluster_min_pts, g.data_gen)
+        // Compress the RT axis into ~cycle units so eps bridges several cycles. Precursor RT is
+        // quantized at the cycle period (one MS1 per cycle); after a focus the per-cycle gap can
+        // exceed eps in normalized space and shatter every elution into one-cycle clusters. Scaling
+        // RT down (<=1) makes eps reach CLUSTER_RT_CYCLES cycles regardless of the RT zoom; m/z and
+        // 1/K0 keep the user's eps. (The metric only; labels/stats use the unscaled points.)
+        let eps = g.cluster_eps;
+        let rt_scale = match g.axis_bounds {
+            Some(b) if g.cycle_duration > 0.0 && (b[2].1 - b[2].0).abs() > 0.0 => {
+                let cycle_gap_norm = 2.0 * g.cycle_duration / (b[2].1 - b[2].0).abs();
+                let desired = (CLUSTER_RT_CYCLES * cycle_gap_norm).max(eps as f64);
+                (eps as f64 / desired) as f32
+            }
+            _ => 1.0,
+        };
+        if rt_scale != 1.0 {
+            for p in positions.iter_mut() {
+                p[2] *= rt_scale;
+            }
+        }
+        (idx, positions, eps, g.cluster_min_pts, g.data_gen)
     };
     if idx.is_empty() {
         show_status("nothing to cluster — adjust the filter");

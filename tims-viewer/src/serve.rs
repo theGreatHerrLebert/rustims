@@ -423,12 +423,23 @@ fn build_load_result(
         Arc::from(bytemuck::cast_slice::<GpuPoint, u8>(&points).to_vec().into_boxed_slice());
     drop(points);
 
+    // Cycle duration: the run-level mean RT gap between consecutive MS1 (precursor) frames. The web
+    // uses it to cluster RT in cycle units, so precursor points across cycles stay density-connected
+    // regardless of how tightly the RT range is focused. 0 when unknown (demo / no MS1 frames).
+    let ms1_rt: Vec<f64> = meta.frames.iter().filter(|f| !f.is_ms2).map(|f| f.retention_time).collect();
+    let cycle_duration = if ms1_rt.len() >= 2 {
+        (ms1_rt[ms1_rt.len() - 1] - ms1_rt[0]) / (ms1_rt.len() - 1) as f64
+    } else {
+        0.0
+    };
+
     let fin = |x: f64| if x.is_finite() { x } else { 0.0 };
     let meta_json = serde_json::json!({
         "version": 1,
         "point_stride": std::mem::size_of::<GpuPoint>(),
         "n_points": n_points,
         "downsample_stride": stride,
+        "cycle_duration": fin(cycle_duration),
         // Region bounds in real units — the client re-normalizes axes/crops/strips to these.
         "bounds": {
             "mz": [fin(region.mz.0), fin(region.mz.1)],
