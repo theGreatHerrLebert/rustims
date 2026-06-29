@@ -71,13 +71,14 @@ class Handler(BaseHTTPRequestHandler):
             if not chunk:
                 break
             buf.extend(chunk)
-        pts = np.frombuffer(bytes(buf), dtype="<f4")
-        if len(buf) != n or pts.size == 0 or pts.size % 3 != 0:
+        # Guard the length BEFORE np.frombuffer (which raises on non-4-byte-aligned input): xyz f4
+        # triples = 12 bytes/point, so a valid body is a non-empty multiple of 12.
+        if len(buf) != n or len(buf) == 0 or len(buf) % 12 != 0:
             self.send_response(400)
             self._cors()
             self.end_headers()
             return
-        pts = pts.reshape(-1, 3).astype(np.float64)
+        pts = np.frombuffer(bytes(buf), dtype="<f4").reshape(-1, 3).astype(np.float64)
         t = time.perf_counter()
         with _DBSCAN_LOCK:  # serialize the heavy compute across overlapping requests
             if method == "hdbscan":

@@ -276,6 +276,9 @@ struct Gfx {
     /// Route Run through the Python (sklearn) service instead of the in-wasm DBSCAN. Auto-enabled by
     /// the startup probe when the service is reachable; toggleable in the Cluster tab.
     use_python_cluster: bool,
+    /// Set once the user picks an algorithm from the dropdown, so the async service probe won't
+    /// stomp their choice with its auto-select.
+    cluster_algo_user_set: bool,
     /// Algorithm (Python service only; wasm is always DBSCAN) + its HDBSCAN parameters.
     cluster_method: ClusterMethod,
     cluster_min_cluster_size: usize,
@@ -712,6 +715,7 @@ async fn run() -> Result<(), String> {
         cluster_sel: None,
         hide_noise: false,
         use_python_cluster: false,
+        cluster_algo_user_set: false,
         cluster_method: ClusterMethod::Dbscan,
         cluster_min_cluster_size: 7,
         cluster_hdb_min_samples: 0,
@@ -984,17 +988,31 @@ async fn probe_cluster_service(gfx: Rc<RefCell<Gfx>>) {
     let Some(window) = web_sys::window() else {
         return;
     };
+    // Verify it's actually our service (a 200 from some other process on the port isn't enough).
     let ok = match wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&cluster_service_url())).await {
-        Ok(v) => v.dyn_into::<web_sys::Response>().map(|r| r.ok()).unwrap_or(false),
+        Ok(v) => match v.dyn_into::<web_sys::Response>() {
+            Ok(r) if r.ok() => match r.text() {
+                Ok(p) => wasm_bindgen_futures::JsFuture::from(p)
+                    .await
+                    .ok()
+                    .and_then(|t| t.as_string())
+                    .is_some_and(|s| s.contains("cluster service")),
+                Err(_) => false,
+            },
+            _ => false,
+        },
         Err(_) => false,
     };
     if ok {
         set_disabled("opt-sklearn", false);
         set_disabled("opt-hdbscan", false);
-        if let Some(sel) = by_id::<web_sys::HtmlSelectElement>("cl-algo") {
-            sel.set_value("sklearn"); // prefer sklearn DBSCAN when the service is up
+        // Prefer sklearn DBSCAN when the service is up — unless the user already picked an algorithm.
+        if !gfx.borrow().cluster_algo_user_set {
+            if let Some(sel) = by_id::<web_sys::HtmlSelectElement>("cl-algo") {
+                sel.set_value("sklearn");
+            }
+            apply_cluster_algo(&gfx, "sklearn");
         }
-        apply_cluster_algo(&gfx, "sklearn");
         set_text("cl-algo-status", "sklearn ✓");
     } else {
         set_text("cl-algo-status", "offline · built-in");
@@ -2500,6 +2518,7 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     if let Some(sel) = by_id::<web_sys::HtmlSelectElement>("cl-algo") {
         let (gfx, el) = (gfx.clone(), sel.clone());
         add_listener(sel.as_ref(), "change", move |_e: web_sys::Event| {
+            gfx.borrow_mut().cluster_algo_user_set = true; // the probe must not override a manual pick
             apply_cluster_algo(&gfx, &el.value());
         });
     }
