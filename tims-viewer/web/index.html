@@ -114,6 +114,12 @@
     .cs-hist .map-cap b { color: var(--ink); font-weight: 500; }
     .cs-axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9.5px;
       color: var(--faint); margin-top: 2px; }
+    /* inline help affordance: a small ⓘ whose native tooltip (title) escapes the rail overflow clip */
+    .tip { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px;
+      border-radius: 50%; border: 1px solid var(--line); color: var(--faint); font-size: 9px;
+      font-weight: 700; font-style: normal; font-family: var(--sans); cursor: help; margin-left: 5px;
+      vertical-align: middle; }
+    .tip:hover, .tip:focus-visible { color: var(--accent); border-color: var(--accent-dim); outline: none; }
     .dspick { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
     .dspick .lbl { white-space: nowrap; }
     .dspick .sel { flex: 1; min-width: 0; }
@@ -462,7 +468,7 @@
       <section class="sec">
         <div class="ey">Filters</div>
         <div class="row" style="gap:8px">
-          <button class="btn" id="focus-go" type="button" style="flex:1">⊕ Focus selection</button>
+          <button class="btn" id="focus-go" type="button" style="flex:1" title="Re-load just the boxed region from the full dataset at higher detail — densifies the sampling so isotopes and fine structure resolve. Back returns to the previous view.">⊕ Focus selection</button>
           <button class="btn mono" id="focus-back" type="button" disabled>← Back <span id="focus-depth" class="dim"></span></button>
         </div>
         <div class="row"><span class="lbl" id="l-ms">Show</span>
@@ -502,7 +508,7 @@
           </div>
         </div>
         <div class="crop">
-          <div class="clab"><b>Floor</b><span>intensity ≥ (counts) <span id="floor-src" class="acc"></span></span></div>
+          <div class="clab"><b>Floor</b><span class="tip" tabindex="0" role="img" aria-label="help" title="Drop points below this intensity (raw counts) before clustering and rendering — removes background noise so clusters stand out.">i</span><span>intensity ≥ (counts) <span id="floor-src" class="acc"></span></span></div>
           <div class="crop-hist" id="floor-hist"></div>
           <div class="frow">
             <input type="range" class="rng wide" id="floor" min="0" max="1000" step="1" value="0" aria-label="intensity floor" />
@@ -523,43 +529,43 @@
       <div class="tabpane" id="tab-cluster">
       <section class="sec">
         <div class="ey">Cluster</div>
-        <div class="row"><label class="lbl" for="cl-algo">Algorithm <span class="dim" id="cl-algo-status" style="font-weight:400">checking…</span></label>
+        <div class="row"><label class="lbl" for="cl-algo">Algorithm <span class="dim" id="cl-algo-status" style="font-weight:400">checking…</span><span class="tip" tabindex="0" role="img" aria-label="help" title="DBSCAN groups points denser than a fixed radius (ε); HDBSCAN finds clusters of varying density with no ε. ‘built-in’ runs in your browser; the others use the local Python service.">i</span></label>
           <select class="sel" id="cl-algo" aria-label="clustering algorithm">
             <option value="wasm">DBSCAN (built-in)</option>
             <option value="sklearn" id="opt-sklearn" disabled>DBSCAN (sklearn)</option>
             <option value="hdbscan" id="opt-hdbscan" disabled>HDBSCAN (sklearn)</option>
           </select></div>
-        <div class="row algo-dbscan"><label class="lbl" for="cl-eps">ε radius <span class="dim" style="font-weight:400">(norm.)</span></label>
+        <div class="row algo-dbscan"><label class="lbl" for="cl-eps">ε radius <span class="dim" style="font-weight:400">(norm.)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="DBSCAN neighbourhood radius in the calibrated metric. Larger ε → looser, bigger clusters. It scales all three axis reaches (RT / 1/K₀ / m/z) together.">i</span></label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="cl-eps" min="0.002" max="0.1" step="0.001" value="0.012" aria-label="cluster radius" />
             <input type="number" class="numin" id="cl-eps-n" min="0.002" max="0.1" step="0.001" value="0.012" aria-label="cluster radius value" /></span></div>
-        <div class="row algo-dbscan"><label class="lbl" for="cl-min">Min points</label>
+        <div class="row algo-dbscan"><label class="lbl" for="cl-min">Min points<span class="tip" tabindex="0" role="img" aria-label="help" title="Fewest neighbours (including itself) a point needs within ε to anchor a cluster. Higher → more points left as noise.">i</span></label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="cl-min" min="2" max="50" step="1" value="8" aria-label="cluster min points" />
             <input type="number" class="numin" id="cl-min-n" min="2" max="50" step="1" value="8" aria-label="cluster min points value" /></span></div>
-        <div class="row algo-hdb"><label class="lbl" for="cl-mcs">Min cluster size</label>
+        <div class="row algo-hdb"><label class="lbl" for="cl-mcs">Min cluster size<span class="tip" tabindex="0" role="img" aria-label="help" title="Smallest group HDBSCAN will report as a cluster. Smaller → more, finer clusters; larger → fewer, broader ones.">i</span></label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="cl-mcs" min="2" max="100" step="1" value="7" aria-label="HDBSCAN min cluster size" />
             <input type="number" class="numin" id="cl-mcs-n" min="2" max="100" step="1" value="7" aria-label="HDBSCAN min cluster size value" /></span></div>
-        <div class="row algo-hdb"><label class="lbl" for="cl-hms">Min samples <span class="dim" style="font-weight:400">(0=auto)</span></label>
+        <div class="row algo-hdb"><label class="lbl" for="cl-hms">Min samples <span class="dim" style="font-weight:400">(0=auto)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="How conservative HDBSCAN is: higher → denser cores and more points called noise. 0 = auto (uses min cluster size).">i</span></label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="cl-hms" min="0" max="50" step="1" value="0" aria-label="HDBSCAN min samples" />
             <input type="number" class="numin" id="cl-hms-n" min="0" max="50" step="1" value="0" aria-label="HDBSCAN min samples value" /></span></div>
-        <div class="row algo-hdb"><label class="lbl" for="cl-cse">Selection ε <span class="dim" style="font-weight:400">(scaled)</span></label>
+        <div class="row algo-hdb"><label class="lbl" for="cl-cse">Selection ε <span class="dim" style="font-weight:400">(scaled)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="Optional: merge HDBSCAN clusters closer than this in the scaled metric (0 = off). Coarsens an over-split result.">i</span></label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="cl-cse" min="0" max="0.1" step="0.001" value="0" aria-label="HDBSCAN cluster selection epsilon" />
             <input type="number" class="numin" id="cl-cse-n" min="0" max="0.1" step="0.001" value="0" aria-label="HDBSCAN cluster selection epsilon value" /></span></div>
         <details class="adv">
           <summary>Advanced · metric</summary>
-          <div class="row"><label class="lbl" for="cl-rtc">RT width <span class="dim" style="font-weight:400">(cycles)</span></label>
+          <div class="row"><label class="lbl" for="cl-rtc">RT width <span class="dim" style="font-weight:400">(cycles)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="How many MS1 cycles ε spans along retention time. A precursor elutes over several cycles — raise to keep an elution together, lower to split co-eluting species. Independent of how you crop the view.">i</span></label>
             <span style="display:flex;align-items:center;gap:10px">
               <input type="range" class="rng" id="cl-rtc" min="1" max="12" step="1" value="2" aria-label="cluster RT reach in cycles" />
               <input type="number" class="numin" id="cl-rtc-n" min="1" max="12" step="1" value="2" aria-label="cluster RT reach in cycles value" /></span></div>
-          <div class="row"><label class="lbl" for="cl-ims">1/K₀ width <span class="dim" style="font-weight:400">(scans)</span></label>
+          <div class="row"><label class="lbl" for="cl-ims">1/K₀ width <span class="dim" style="font-weight:400">(scans)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="How many TIMS mobility scans ε spans along 1/K₀. Anchored to the run’s scans-per-1/K₀, so it stays fixed no matter how you crop the view. ~2 ≈ the classic default.">i</span></label>
             <span style="display:flex;align-items:center;gap:10px">
               <input type="range" class="rng" id="cl-ims" min="1" max="20" step="0.5" value="2" aria-label="cluster 1/K0 reach in scans" />
               <input type="number" class="numin" id="cl-ims-n" min="1" max="20" step="0.5" value="2" aria-label="cluster 1/K0 reach in scans value" /></span></div>
-          <div class="row"><label class="lbl" for="cl-mzw">m/z width <span class="dim" style="font-weight:400">(peak-widths)</span></label>
+          <div class="row"><label class="lbl" for="cl-mzw">m/z width <span class="dim" style="font-weight:400">(peak-widths)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="How many TOF peak-widths ε spans along m/z. Keep it small (≈1–2) so neighbouring isotopes — tens of peak-widths apart — don’t merge into one cluster.">i</span></label>
             <span style="display:flex;align-items:center;gap:10px">
               <input type="range" class="rng" id="cl-mzw" min="1" max="40" step="0.5" value="1.5" aria-label="cluster m/z peak-width reach" />
               <input type="number" class="numin" id="cl-mzw-n" min="1" max="40" step="0.5" value="1.5" aria-label="cluster m/z peak-width reach value" /></span></div>
