@@ -412,14 +412,6 @@
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="expo" min="0.02" max="4" step="0.02" value="1.00" />
             <input type="number" class="numin" id="expo-n" min="0.02" max="4" step="0.02" value="1.00" aria-label="exposure value" /></span></div>
-        <div class="crop">
-          <div class="clab"><b>Floor</b><span>intensity ≥ (counts) <span id="floor-src" class="acc"></span></span></div>
-          <div class="crop-hist" id="floor-hist"></div>
-          <div class="frow">
-            <input type="range" class="rng wide" id="floor" min="0" max="1000" step="1" value="0" aria-label="intensity floor" />
-            <input type="number" class="numin" id="floor-n" min="0" max="5000" step="1" value="0" aria-label="intensity floor value in counts" />
-          </div>
-        </div>
       </section>
       </div>
       <div class="tabpane" id="tab-focus">
@@ -463,6 +455,14 @@
             <div class="dual-track"></div><div class="dual-fill" id="crt-fill"></div>
             <input type="range" id="crt-lo" min="0" max="1000" value="0" aria-label="retention time crop minimum" />
             <input type="range" id="crt-hi" min="0" max="1000" value="1000" aria-label="retention time crop maximum" />
+          </div>
+        </div>
+        <div class="crop">
+          <div class="clab"><b>Floor</b><span>intensity ≥ (counts) <span id="floor-src" class="acc"></span></span></div>
+          <div class="crop-hist" id="floor-hist"></div>
+          <div class="frow">
+            <input type="range" class="rng wide" id="floor" min="0" max="1000" step="1" value="0" aria-label="intensity floor" />
+            <input type="number" class="numin" id="floor-n" min="0" max="5000" step="1" value="0" aria-label="intensity floor value in counts" />
           </div>
         </div>
       </section>
