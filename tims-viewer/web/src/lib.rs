@@ -20,7 +20,7 @@ use tims_viewer::data::point::{AxisTransform, GpuPoint};
 use tims_viewer::render::annotation::{AnnotationRenderer, LineVertex};
 use tims_viewer::ticks::{fmt_tick, ticks_for, Axis, RT_MINUTES_SPAN};
 use tims_viewer::render::colormap::{sample as colormap_sample, COLORMAP_NAMES};
-use tims_viewer::cluster::dbscan;
+use tims_viewer::cluster::{dbscan, dbscan_with_progress};
 use tims_viewer::render::point_cloud::{PointCloudRenderer, PointMode};
 use tims_viewer::render::uniforms::{ParamsUniform, VolumeUniform};
 use tims_viewer::render::volume::{VolumeGrid, VolumeRenderer, VOLUME_DIMS};
@@ -75,11 +75,20 @@ pub fn start() {
 }
 
 /// DBSCAN over a flat `[x,y,z, x,y,z, …]` buffer, returning per-point labels (`-1` = noise). The
-/// Web Worker calls this; exported so its wasm instance has it too.
+/// Web Worker calls this; exported so its wasm instance has it too. `progress` (if a JS function) is
+/// called `(visited, total)` ~every 1% so the worker can post progress back to the main thread.
 #[wasm_bindgen]
-pub fn cluster_dbscan_flat(flat: &[f32], min_pts: usize, eps: f32) -> Vec<i32> {
+pub fn cluster_dbscan_flat(flat: &[f32], min_pts: usize, eps: f32, progress: &JsValue) -> Vec<i32> {
     let pts: Vec<[f32; 3]> = flat.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
-    dbscan(&pts, eps, min_pts).0
+    let total = pts.len() as f64;
+    let cb = progress.dyn_ref::<js_sys::Function>();
+    dbscan_with_progress(&pts, eps, min_pts, |visited| {
+        if let Some(f) = cb {
+            let _ =
+                f.call2(&JsValue::NULL, &JsValue::from_f64(visited as f64), &JsValue::from_f64(total));
+        }
+    })
+    .0
 }
 
 /// Summary of a clustering result, for the MIDIA-style stats panel.
@@ -1594,6 +1603,18 @@ fn refresh_controls(gfx: &Rc<RefCell<Gfx>>) {
     );
 }
 
+/// Show the clustering progress bar at `frac` (0..1), or hide it with `None`.
+fn set_cluster_progress(frac: Option<f32>) {
+    if let Some(el) = by_id::<web_sys::HtmlElement>("cl-prog") {
+        let _ = el.style().set_property("display", if frac.is_some() { "block" } else { "none" });
+    }
+    if let Some(f) = frac {
+        if let Some(bar) = by_id::<web_sys::HtmlElement>("cl-bar") {
+            let _ = bar.style().set_property("width", &format!("{:.0}%", f.clamp(0.0, 1.0) * 100.0));
+        }
+    }
+}
+
 /// Toggle the `volmode` body class (reveals the volume-only controls).
 fn set_volmode(on: bool) {
     if let Some(body) = document().and_then(|d| d.body()) {
@@ -1654,6 +1675,7 @@ fn bind_volume(gfx: &Rc<RefCell<Gfx>>) {
 /// flips `color_mode` back to intensity; the stale `_pad[0]` ids stay unused until the next Run.
 fn invalidate_clusters_mut(g: &mut Gfx) {
     g.cluster_pending = None; // abandon any in-flight worker job (its reply will be ignored)
+    set_cluster_progress(None);
     if g.clustered {
         g.params.color_mode = 0;
         g.clustered = false;
@@ -1731,6 +1753,7 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         };
         if post_cluster_job(&worker, &flat, eps, min_pts, job) {
             gfx.borrow_mut().cluster_pending = Some((idx, gen, job));
+            set_cluster_progress(Some(0.0)); // worker reports ticks back; bar advances live
             return;
         }
     }
@@ -1749,7 +1772,8 @@ import init, { cluster_dbscan_flat } from '__GLUE__';
 await init({ module_or_path: '__WASM__' });
 self.onmessage = (e) => {
   const { flat, eps, min_pts, job } = e.data;
-  const labels = cluster_dbscan_flat(new Float32Array(flat), min_pts, eps);
+  const onProgress = (visited, total) => self.postMessage({ progress: visited / total, job });
+  const labels = cluster_dbscan_flat(new Float32Array(flat), min_pts, eps, onProgress);
   self.postMessage({ labels, job }, [labels.buffer]);
 };
 "#;
@@ -1804,22 +1828,25 @@ fn create_cluster_worker(gfx: &Rc<RefCell<Gfx>>) -> Option<web_sys::Worker> {
         move |e: web_sys::MessageEvent| {
             let data = e.data();
             let get = |k: &str| js_sys::Reflect::get(&data, &JsValue::from_str(k)).ok();
+            let reply_job = get("job").and_then(|v| v.as_f64()).map(|f| f as u64);
+            let job_matches = |g: &Gfx| {
+                matches!((&g.cluster_pending, reply_job), (Some((_, _, pj)), Some(rj)) if *pj == rj)
+            };
+            // Progress tick (no labels): advance the bar if it's for the current job.
+            if let Some(p) = get("progress").and_then(|v| v.as_f64()) {
+                if job_matches(&gfx_msg.borrow()) {
+                    set_cluster_progress(Some(p as f32));
+                }
+                return;
+            }
             let Some(labels) = get("labels")
                 .and_then(|v| v.dyn_into::<js_sys::Int32Array>().ok())
                 .map(|a| a.to_vec())
             else {
                 return;
             };
-            let reply_job = get("job").and_then(|v| v.as_f64()).map(|f| f as u64);
-            let job = {
-                let g = gfx_msg.borrow();
-                match (&g.cluster_pending, reply_job) {
-                    (Some((_, _, pj)), Some(rj)) if *pj == rj => Some(rj),
-                    _ => None, // no pending / superseded job — drop this reply
-                }
-            };
-            if job.is_none() {
-                return;
+            if !job_matches(&gfx_msg.borrow()) {
+                return; // no pending / superseded job — drop this reply
             }
             if let Some((idx, gen, _)) = gfx_msg.borrow_mut().cluster_pending.take() {
                 if labels.len() != idx.len() {
@@ -1844,6 +1871,7 @@ fn create_cluster_worker(gfx: &Rc<RefCell<Gfx>>) -> Option<web_sys::Worker> {
             g.cluster_worker = None;
             g.cluster_worker_failed = true;
             drop(g);
+            set_cluster_progress(None);
             show_status("clustering worker unavailable — runs on the main thread");
         });
     }
@@ -1913,6 +1941,7 @@ fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: Vec<usize>, labels: Vec<i32>, 
     set_checked("cl-color", true);
     set_text("cl-readout", &format!("{k} clusters · {} noise · {} pts", group(noise), group(n_in)));
     set_body_class("cluster-color", true); // cluster coloring active -> hide the intensity colorbar
+    set_cluster_progress(None); // done — hide the progress bar
     update_cluster_panel(gfx); // we ran from the Cluster tab, so this shows + renders the panel
     show_status("");
 }

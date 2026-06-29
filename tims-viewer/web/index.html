@@ -121,6 +121,11 @@
     .wg.on { opacity: 1; color: var(--ink); border-color: var(--line-2); }
     .wg:hover { border-color: var(--accent); }
     .wg-dot { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+    /* clustering progress bar (worker reports visited-point ticks) */
+    .cl-prog { display: none; height: 4px; border-radius: 4px; margin: 0 0 9px; overflow: hidden;
+      background: var(--line); }
+    .cl-bar { height: 100%; width: 0; border-radius: 4px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .2s ease-out; }
 
     .sec { padding: 14px 18px 4px 20px; }
     .sec + .sec { border-top: 1px solid var(--line-2); }
@@ -473,6 +478,7 @@
             <input type="range" class="rng" id="cl-min" min="2" max="50" step="1" value="8" aria-label="cluster min points" />
             <input type="number" class="numin" id="cl-min-n" min="2" max="50" step="1" value="8" aria-label="cluster min points value" /></span></div>
         <div class="row"><button class="btn" id="cl-run" type="button" style="flex:1">⬡ Run clustering</button></div>
+        <div class="cl-prog" id="cl-prog"><div class="cl-bar" id="cl-bar"></div></div>
         <div class="row"><label class="lbl" for="cl-color">Color by cluster</label>
           <span><input type="checkbox" class="sw" id="cl-color" /><label for="cl-color" class="sw-l" aria-hidden="true"></label></span></div>
         <div class="row"><span class="lbl">Result</span><span class="val" id="cl-readout" style="min-width:auto">—</span></div>

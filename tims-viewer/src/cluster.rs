@@ -15,6 +15,18 @@ pub const NOISE: i32 = -1;
 /// Run DBSCAN on `points` (normalized cube positions). Returns a per-point label
 /// (`NOISE` for noise, otherwise a 0-based contiguous cluster id) and the cluster count.
 pub fn dbscan(points: &[[f32; 3]], eps: f32, min_pts: usize) -> (Vec<i32>, usize) {
+    dbscan_with_progress(points, eps, min_pts, |_| {})
+}
+
+/// Like [`dbscan`], but invokes `progress(visited_so_far)` roughly every 1% of points (and once at
+/// the end with `points.len()`). The visited count climbs monotonically — even inside one big
+/// cluster's flood-fill — so it's a smooth progress proxy for a long run.
+pub fn dbscan_with_progress(
+    points: &[[f32; 3]],
+    eps: f32,
+    min_pts: usize,
+    mut progress: impl FnMut(usize),
+) -> (Vec<i32>, usize) {
     let n = points.len();
     if n == 0 || eps <= 0.0 {
         return (vec![NOISE; n], 0);
@@ -71,11 +83,25 @@ pub fn dbscan(points: &[[f32; 3]], eps: f32, min_pts: usize) -> (Vec<i32>, usize
     let mut nbj: Vec<u32> = Vec::new();
     let mut queue: VecDeque<u32> = VecDeque::new();
 
+    // Throttled progress on the visited count (~1% granularity).
+    let report_step = (n / 100).max(1);
+    let mut visited_count = 0usize;
+    let mut since_report = 0usize;
+    let bump = |count: &mut usize, since: &mut usize, progress: &mut dyn FnMut(usize)| {
+        *count += 1;
+        *since += 1;
+        if *since >= report_step {
+            *since = 0;
+            progress(*count);
+        }
+    };
+
     for i in 0..n {
         if visited[i] {
             continue;
         }
         visited[i] = true;
+        bump(&mut visited_count, &mut since_report, &mut progress);
         neighbors(i, &mut nb);
         if nb.len() < min_pts {
             continue; // noise (may still be claimed as a border point later)
@@ -96,6 +122,7 @@ pub fn dbscan(points: &[[f32; 3]], eps: f32, min_pts: usize) -> (Vec<i32>, usize
             }
             if !visited[j] {
                 visited[j] = true;
+                bump(&mut visited_count, &mut since_report, &mut progress);
                 neighbors(j, &mut nbj);
                 if nbj.len() >= min_pts {
                     // j is a core point -> add its not-yet-queued neighbours to the frontier.
@@ -110,6 +137,7 @@ pub fn dbscan(points: &[[f32; 3]], eps: f32, min_pts: usize) -> (Vec<i32>, usize
         }
         cid += 1;
     }
+    progress(n); // final 100%
     (labels, cid as usize)
 }
 
