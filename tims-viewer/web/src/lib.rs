@@ -48,7 +48,7 @@ const MZ_RESOLUTION: f64 = 50_000.0;
 /// Default for the m/z-peak-width lever (`Gfx::cluster_mz_peak_widths`): how many m/z peak-widths
 /// `eps` may span. The m/z axis is expanded so `eps` never bridges more than this, keeping adjacent
 /// isotopes (tens of peak-widths apart) as separate clusters.
-const CLUSTER_MZ_PEAK_WIDTHS: f64 = 6.0;
+const CLUSTER_MZ_PEAK_WIDTHS: f64 = 1.5;
 
 /// Hard ceiling on points loaded into the (32-bit) wasm heap, regardless of the server `--budget` or
 /// the GPU buffer limit: ~32M × 32 B ≈ 1 GB resident, well clear of the ~4 GB wasm address space.
