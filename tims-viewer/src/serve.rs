@@ -14,6 +14,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::io::Cursor;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -130,31 +131,108 @@ struct State {
     cache: Mutex<Cache>,
 }
 
-/// Build the full run eagerly (fast first paint + the estimate reference), then serve region
-/// queries on demand from `WORKERS` threads.
-pub fn serve(plan: Plan, port: u16) -> Result<()> {
-    anyhow::ensure!(
-        cfg!(target_endian = "little"),
-        "the point wire format is little-endian; --serve is unsupported on this big-endian target"
-    );
+/// What the server can offer: a single synthetic dataset, or a set of discovered `.d` paths
+/// (confined to the launch root) the frontend can choose between via `/datasets` + `?dataset=N`.
+pub enum ServeSource {
+    Demo(MetaIndex),
+    Datasets(Vec<PathBuf>),
+}
+
+/// One selectable dataset in the registry (the paths themselves live in `Hub::source`).
+struct DatasetEntry {
+    name: String,
+}
+
+/// Max datasets kept resident at once — each holds a full-run load (hundreds of MB) plus its region
+/// cache, so switching evicts the least-recently-built (it rebuilds in seconds if revisited).
+const MAX_RESIDENT_DATASETS: usize = 2;
+
+/// LRU of built per-dataset `State`s, keyed by dataset id.
+#[derive(Default)]
+struct StateCache {
+    map: HashMap<usize, Arc<State>>,
+    order: VecDeque<usize>,
+}
+
+impl StateCache {
+    fn get(&mut self, id: usize) -> Option<Arc<State>> {
+        let s = self.map.get(&id).cloned();
+        if s.is_some() {
+            self.order.retain(|&x| x != id);
+            self.order.push_back(id); // mark most-recently-used
+        }
+        s
+    }
+    fn insert(&mut self, id: usize, s: Arc<State>) {
+        if self.map.insert(id, s).is_none() {
+            self.order.push_back(id);
+        }
+        while self.map.len() > MAX_RESIDENT_DATASETS {
+            match self.order.pop_front() {
+                Some(old) if old != id => {
+                    self.map.remove(&old);
+                }
+                Some(_) | None => break,
+            }
+        }
+    }
+}
+
+/// The multi-dataset server: a registry + a lazily-built, LRU-bounded set of per-dataset states.
+struct Hub {
+    source: ServeSource,
+    entries: Vec<DatasetEntry>,
+    budget: Option<usize>,
+    states: Mutex<StateCache>,
+    datasets_json: Arc<[u8]>,
+}
+
+impl Hub {
+    /// Build the load Plan for dataset `id` (loads its metadata; cheap relative to the full build).
+    fn plan_for(&self, id: usize) -> Result<Plan> {
+        match &self.source {
+            ServeSource::Demo(meta) => Ok(Plan::new(meta.clone(), true, self.budget)),
+            ServeSource::Datasets(paths) => {
+                let p = paths
+                    .get(id)
+                    .ok_or_else(|| anyhow::anyhow!("dataset {id} out of range"))?;
+                let meta = MetaIndex::load(&p.display().to_string())?;
+                Ok(Plan::new(meta, false, self.budget))
+            }
+        }
+    }
+}
+
+/// Resolve the `State` for dataset `id`, building (and caching, LRU-evicting) it on first request.
+/// The build runs outside the lock so a multi-second load can't block other datasets' requests.
+fn get_or_build_state(hub: &Hub, id: usize) -> Result<Arc<State>> {
+    if let Some(s) = hub.states.lock().unwrap().get(id) {
+        return Ok(s);
+    }
+    let state = Arc::new(build_state(hub.plan_for(id)?)?);
+    hub.states.lock().unwrap().insert(id, state.clone());
+    Ok(state)
+}
+
+/// Eagerly build one dataset's `State`: the full-run load (first paint + intensity reference), the
+/// DIA window footprints, and a fresh region cache pinned on the full run.
+fn build_state(plan: Plan) -> Result<State> {
     let Plan { meta, is_demo, budget } = plan;
     // Snap the eager full region onto the cache grid so a client's explicit full-bounds query
     // (also snapped in parse_query) resolves to this same cached entry instead of rebuilding.
     let full = snap_region(full_region(&meta));
-
-    // Eager full-run build (filter=None): seeds the cache and the intensity reference.
     let built = build_load_result(&meta, is_demo, &full, budget, None)?;
-    let n0 = built.result.n_points;
-    let bytes0 = built.result.points.len();
+    log::info!(
+        "built dataset '{}': {} points ({:.1} MB)",
+        meta.data_path,
+        built.result.n_points,
+        built.result.points.len() as f64 / 1e6,
+    );
     let full_key = LoadKey::of(&full, budget);
     let mut map = HashMap::new();
     map.insert(full_key, Arc::new(built.result));
-
-    // The DIA isolation-window footprints are run-level — read them once (opening one dataset) and
-    // serve them statically from `/windows`. Demo / non-DIA runs serve an empty set.
     let windows_json = build_windows_json(is_demo, &meta.data_path);
-
-    let state = Arc::new(State {
+    Ok(State {
         meta,
         is_demo,
         default_budget: budget,
@@ -166,20 +244,83 @@ pub fn serve(plan: Plan, port: u16) -> Result<()> {
             order: VecDeque::new(),
             pinned: full_key,
         }),
+    })
+}
+
+/// Display name for a dataset path: the `.d` folder's stem (e.g. `/data/run5.d` → `run5`).
+fn dataset_name(path: &std::path::Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// `/datasets` JSON: `[{"id":0,"name":"run5"}, ...]`.
+fn build_datasets_json(entries: &[DatasetEntry]) -> Arc<[u8]> {
+    let items: Vec<String> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, e)| format!("{{\"id\":{i},\"name\":{}}}", json_str(&e.name)))
+        .collect();
+    format!("[{}]", items.join(",")).into_bytes().into()
+}
+
+/// Minimal JSON string escaping (quotes + backslashes) for dataset names.
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Build the registry, eagerly build the default dataset (fast first paint), then serve region
+/// queries — and dataset switches — on demand from `WORKERS` threads.
+pub fn serve(source: ServeSource, budget: Option<usize>, port: u16) -> Result<()> {
+    anyhow::ensure!(
+        cfg!(target_endian = "little"),
+        "the point wire format is little-endian; --serve is unsupported on this big-endian target"
+    );
+    let entries: Vec<DatasetEntry> = match &source {
+        ServeSource::Demo(_) => vec![DatasetEntry { name: "DEMO".into() }],
+        ServeSource::Datasets(paths) => {
+            anyhow::ensure!(!paths.is_empty(), "no datasets to serve");
+            paths.iter().map(|p| DatasetEntry { name: dataset_name(p) }).collect()
+        }
+    };
+    let datasets_json = build_datasets_json(&entries);
+    let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
+    log::info!("registry: {} dataset(s): {}", entries.len(), names.join(", "));
+
+    let hub = Arc::new(Hub {
+        source,
+        entries,
+        budget,
+        states: Mutex::new(StateCache::default()),
+        datasets_json,
     });
+
+    // Eagerly build the default dataset so its first paint is instant.
+    get_or_build_state(&hub, 0)?;
 
     let server = Arc::new(
         Server::http(("127.0.0.1", port)).map_err(|e| anyhow::anyhow!("bind {port}: {e}"))?,
     );
     log::info!(
-        "serving {n0} points ({:.1} MB) + on-demand region queries on http://localhost:{port} (localhost only)",
-        bytes0 as f64 / 1e6,
+        "serving default '{}' + on-demand region/dataset queries on http://localhost:{port} (localhost only)",
+        hub.entries[0].name,
     );
 
     let mut handles = Vec::with_capacity(WORKERS);
     for _ in 0..WORKERS {
-        let (server, state) = (server.clone(), state.clone());
-        handles.push(std::thread::spawn(move || worker(&server, &state)));
+        let (server, hub) = (server.clone(), hub.clone());
+        handles.push(std::thread::spawn(move || worker(&server, &hub)));
     }
     for h in handles {
         let _ = h.join();
@@ -187,15 +328,24 @@ pub fn serve(plan: Plan, port: u16) -> Result<()> {
     Ok(())
 }
 
-fn worker(server: &Server, state: &State) {
+fn worker(server: &Server, hub: &Hub) {
     while let Ok(req) = server.recv() {
-        if let Err(e) = handle(req, state) {
+        if let Err(e) = handle(req, hub) {
             log::warn!("HTTP respond failed: {e}");
         }
     }
 }
 
-fn handle(req: Request, state: &State) -> std::io::Result<()> {
+/// Dataset id from `?dataset=N` (default 0), clamped to the registry size.
+fn parse_dataset_id(url: &str, n_datasets: usize) -> usize {
+    let q = url.split('?').nth(1).unwrap_or("");
+    q.split('&')
+        .find_map(|kv| kv.strip_prefix("dataset=").and_then(|v| v.parse::<usize>().ok()))
+        .unwrap_or(0)
+        .min(n_datasets.saturating_sub(1))
+}
+
+fn handle(req: Request, hub: &Hub) -> std::io::Result<()> {
     if *req.method() == Method::Options {
         // CORS preflight (the trunk page is served from a different origin).
         return req.respond(
@@ -207,14 +357,31 @@ fn handle(req: Request, state: &State) -> std::io::Result<()> {
     }
     let url = req.url().to_string();
     let path = url.split('?').next().unwrap_or("");
-    if *req.method() == Method::Get && path == "/windows" {
-        // Run-level DIA isolation-window footprints (static JSON; region-independent).
-        return respond_bytes(req, state.windows_json.clone(), "application/json");
+    if *req.method() == Method::Get && path == "/datasets" {
+        // The selectable-dataset registry (the frontend renders this as a dropdown).
+        return respond_bytes(req, hub.datasets_json.clone(), "application/json");
     }
+    let want_windows = path == "/windows";
     let (want_points, want_meta) = (path == "/points", path == "/meta");
-    if *req.method() == Method::Get && (want_points || want_meta) {
-        let (region, budget) = parse_query(&url, state);
-        return match get_or_build(state, &region, budget) {
+    if *req.method() == Method::Get && (want_windows || want_points || want_meta) {
+        // Resolve (and lazily build) the selected dataset's state.
+        let id = parse_dataset_id(&url, hub.entries.len());
+        let state = match get_or_build_state(hub, id) {
+            Ok(s) => s,
+            Err(e) => {
+                return req.respond(
+                    Response::from_string(format!("dataset load failed: {e}"))
+                        .with_status_code(StatusCode(500))
+                        .with_header(cors()),
+                );
+            }
+        };
+        if want_windows {
+            // Run-level DIA isolation-window footprints (static JSON; region-independent).
+            return respond_bytes(req, state.windows_json.clone(), "application/json");
+        }
+        let (region, budget) = parse_query(&url, &state);
+        return match get_or_build(&state, &region, budget) {
             Ok(lr) if want_points => {
                 respond_bytes(req, lr.points.clone(), "application/octet-stream")
             }
