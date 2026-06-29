@@ -279,6 +279,9 @@ struct Gfx {
     use_python_cluster: bool,
     /// Selected dataset's display name (from `/datasets`), for the Data summary + exported config.
     dataset_name: String,
+    /// Resolved (registry-clamped) dataset id — what the server actually loaded. Seeded from the URL,
+    /// corrected by `populate_datasets`; exports use this, not the raw `?dataset=` value.
+    dataset_id: usize,
     /// Set once the user picks an algorithm from the dropdown, so the async service probe won't
     /// stomp their choice with its auto-select.
     cluster_algo_user_set: bool,
@@ -718,6 +721,7 @@ async fn run() -> Result<(), String> {
         cluster_sel: None,
         hide_noise: false,
         dataset_name: String::new(),
+        dataset_id: dataset_id(), // raw URL value; clamped to the registry by populate_datasets
         use_python_cluster: false,
         cluster_algo_user_set: false,
         cluster_method: ClusterMethod::Dbscan,
@@ -1229,9 +1233,13 @@ async fn populate_datasets(gfx: Rc<RefCell<Gfx>>) {
     // Stash + show the active dataset's name BEFORE the single-dataset early return, so even a
     // one-entry registry fills the Data summary.
     let cur_name = jget(&arr.get(cur as u32), "name").as_string().unwrap_or_default();
-    if !cur_name.is_empty() {
-        set_text("data-name", &cur_name);
-        gfx.borrow_mut().dataset_name = cur_name;
+    {
+        let mut g = gfx.borrow_mut();
+        g.dataset_id = cur; // the registry-clamped id the server actually loaded
+        if !cur_name.is_empty() {
+            set_text("data-name", &cur_name);
+            g.dataset_name = cur_name;
+        }
     }
     if arr.length() <= 1 {
         return; // only one — name is set, but no picker to show
@@ -2193,7 +2201,7 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         }
         // Snapshot the parameters used (for the export JSON), so a slider edit mid-run can't skew it.
         let run_params = ClusterRunParams {
-            dataset_id: dataset_id(),
+            dataset_id: g.dataset_id, // resolved/clamped id, not the raw URL value
             method: g.cluster_method,
             python: g.use_python_cluster,
             eps,
@@ -3006,8 +3014,13 @@ fn cluster_config_json(g: &Gfx) -> String {
         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(key), v);
     };
     let dataset = js_sys::Object::new();
-    let _ = js_sys::Reflect::set(&dataset, &"id".into(), &JsValue::from_f64(dataset_id() as f64));
-    let _ = js_sys::Reflect::set(&dataset, &"name".into(), &JsValue::from_str(&g.dataset_name));
+    let name = if g.dataset_name.is_empty() {
+        format!("dataset {}", g.dataset_id) // /datasets not resolved yet / demo — never emit ""
+    } else {
+        g.dataset_name.clone()
+    };
+    let _ = js_sys::Reflect::set(&dataset, &"id".into(), &JsValue::from_f64(g.dataset_id as f64));
+    let _ = js_sys::Reflect::set(&dataset, &"name".into(), &JsValue::from_str(&name));
     set("dataset", &dataset);
     let ms_level = match g.params.ms_mask {
         0b10 => "MS2",
