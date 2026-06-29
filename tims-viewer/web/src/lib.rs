@@ -123,6 +123,9 @@ struct Gfx {
     window_rects: Vec<WinRect>,
     max_window_group: u32,
     show_windows: bool,
+    /// Per-group visibility bitmask (bit g-1 = group g, for g in 1..=32); groups >32 and ungrouped
+    /// are always shown. Mirrors the native `group_mask`.
+    window_group_mask: u32,
     /// DOM tick/axis labels (element + its world position in the `[-1,1]` cube), projected each
     /// frame onto the canvas. Empty when real-unit bounds are unknown (demo fallback).
     labels: Vec<(web_sys::HtmlElement, [f32; 3])>,
@@ -576,6 +579,7 @@ async fn run() -> Result<(), String> {
         window_rects: Vec::new(),
         max_window_group: 0,
         show_windows: false,
+        window_group_mask: u32::MAX,
         labels,
         camera: OrbitCamera::default(),
         params,
@@ -671,6 +675,7 @@ async fn run() -> Result<(), String> {
                     g.max_window_group = max_group;
                 }
                 rebuild_window_overlay(&gfx);
+                render_window_legend(&gfx);
                 set_disabled("show-windows", gfx.borrow().max_window_group == 0);
             }
         });
@@ -945,7 +950,12 @@ async fn fetch_windows(url: &str) -> Result<(Vec<WinRect>, u32), String> {
 
 /// Build the window-overlay line vertices: each footprint as an `(m/z × 1/K0)` rectangle at
 /// `DIA_WINDOW_RT_SLICES` RT slices, normalized to the focused region's `bounds` and colored by group.
-fn build_window_verts(rects: &[WinRect], bounds: [(f64, f64); 3], max_group: u32) -> Vec<LineVertex> {
+fn build_window_verts(
+    rects: &[WinRect],
+    bounds: [(f64, f64); 3],
+    max_group: u32,
+    mask: u32,
+) -> Vec<LineVertex> {
     let norm = |val: f64, axis: usize| -> f32 {
         let (lo, hi) = bounds[axis];
         (((val - lo) / (hi - lo).max(1e-12)) * 2.0 - 1.0) as f32
@@ -953,6 +963,10 @@ fn build_window_verts(rects: &[WinRect], bounds: [(f64, f64); 3], max_group: u32
     let mut v: Vec<LineVertex> = Vec::new();
     let denom = max_group.max(1);
     for r in rects {
+        // Per-group visibility: groups 1..=32 gate on their mask bit; >32 and group 0 always show.
+        if r.g >= 1 && r.g <= 32 && (mask & (1u32 << (r.g - 1))) == 0 {
+            continue;
+        }
         // Clamp the axis-aligned footprint to the region so a partly-off-region window clips cleanly
         // (the per-vertex shader cull would otherwise leave stubs); drop windows fully outside.
         let (mz0r, mz1r) = (r.mz0.max(bounds[0].0), r.mz1.min(bounds[0].1));
@@ -984,7 +998,7 @@ fn rebuild_window_overlay(gfx: &Rc<RefCell<Gfx>>) {
         let g = gfx.borrow();
         match g.axis_bounds {
             Some(b) if !g.window_rects.is_empty() => {
-                build_window_verts(&g.window_rects, b, g.max_window_group)
+                build_window_verts(&g.window_rects, b, g.max_window_group, g.window_group_mask)
             }
             _ => Vec::new(),
         }
@@ -992,6 +1006,39 @@ fn rebuild_window_overlay(gfx: &Rc<RefCell<Gfx>>) {
     let mut g = gfx.borrow_mut();
     let g = &mut *g;
     g.windows.upload(&g.device, &verts);
+}
+
+/// CSS color matching the rendered window's `group_color` (so the legend swatch is exact).
+fn group_css(g: u32, n: u32) -> String {
+    let [r, gg, b] = tims_viewer::render::colormap::group_color(g, n.max(1));
+    format!("rgb({},{},{})", (r * 255.0) as u8, (gg * 255.0) as u8, (b * 255.0) as u8)
+}
+
+/// (Re)render the per-group window legend: a toggleable colored chip per group (capped at 32, like
+/// the native mask). Groups beyond 32 are always shown.
+fn render_window_legend(gfx: &Rc<RefCell<Gfx>>) {
+    let (max_g, mask) = {
+        let g = gfx.borrow();
+        (g.max_window_group, g.window_group_mask)
+    };
+    if max_g == 0 {
+        set_html("win-groups", "");
+        return;
+    }
+    let n = max_g.min(32);
+    let mut html = String::new();
+    for g in 1..=n {
+        let on = (mask & (1u32 << (g - 1))) != 0;
+        let cls = if on { "wg on" } else { "wg" };
+        html.push_str(&format!(
+            "<button class=\"{cls}\" data-g=\"{g}\"><span class=\"wg-dot\" style=\"background:{}\"></span>{g}</button>",
+            group_css(g, max_g)
+        ));
+    }
+    if max_g > 32 {
+        html.push_str(&format!("<span class=\"cs-more\">+{} more (shown)</span>", max_g - 32));
+    }
+    set_html("win-groups", &html);
 }
 
 fn jget(obj: &JsValue, key: &str) -> JsValue {
@@ -2073,9 +2120,37 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     }
 }
 
-/// Wire the "Show DIA windows" toggle (enabled only once `/windows` returns groups).
+/// Wire the "Show DIA windows" toggle + the per-group legend (enabled once `/windows` returns groups).
 fn bind_windows(gfx: &Rc<RefCell<Gfx>>) {
-    on_toggle("show-windows", gfx, |g, on| g.show_windows = on);
+    if let Some(inp) = by_id::<web_sys::HtmlInputElement>("show-windows") {
+        let (gfx, el) = (gfx.clone(), inp.clone());
+        add_listener(inp.as_ref(), "change", move |_e: web_sys::Event| {
+            let on = el.checked();
+            gfx.borrow_mut().show_windows = on;
+            set_body_class("show-windows", on); // reveals the group legend
+            if on {
+                render_window_legend(&gfx);
+            }
+        });
+    }
+    // Click a group chip to toggle that group's windows.
+    if let Some(list) = by_id::<web_sys::HtmlElement>("win-groups") {
+        let gfx = gfx.clone();
+        add_listener(list.as_ref(), "click", move |e: web_sys::Event| {
+            let Some(t) = e.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) else {
+                return;
+            };
+            if let Ok(Some(chip)) = t.closest(".wg") {
+                if let Some(g) = chip.get_attribute("data-g").and_then(|s| s.parse::<u32>().ok()) {
+                    if (1..=32).contains(&g) {
+                        gfx.borrow_mut().window_group_mask ^= 1u32 << (g - 1);
+                    }
+                    rebuild_window_overlay(&gfx);
+                    render_window_legend(&gfx);
+                }
+            }
+        });
+    }
 }
 
 /// Wire the Focus / Back buttons; control enable/disable is driven by `refresh_controls`.

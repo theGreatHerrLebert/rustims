@@ -112,6 +112,15 @@
     .cs-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
     .cs-meta { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; }
     .cs-more { font-family: var(--mono); font-size: 10.5px; color: var(--faint); padding: 5px 8px; }
+    /* DIA window per-group legend (toggle a group's windows); shown only when DIA windows are on */
+    .win-legend { display: none; flex-wrap: wrap; gap: 5px; margin: 2px 0 10px; }
+    body.show-windows .win-legend { display: flex; }
+    .wg { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 11px;
+      color: var(--dim); background: transparent; border: 1px solid var(--line); border-radius: 6px;
+      padding: 2px 7px; cursor: pointer; opacity: .45; transition: opacity .12s, border-color .12s; }
+    .wg.on { opacity: 1; color: var(--ink); border-color: var(--line-2); }
+    .wg:hover { border-color: var(--accent); }
+    .wg-dot { width: 9px; height: 9px; border-radius: 2px; flex: none; }
 
     .sec { padding: 14px 18px 4px 20px; }
     .sec + .sec { border-top: 1px solid var(--line-2); }
@@ -412,6 +421,7 @@
           </span></div>
         <div class="row"><label class="lbl" for="show-windows">DIA windows</label>
           <span><input type="checkbox" class="sw" id="show-windows" /><label for="show-windows" class="sw-l" aria-hidden="true"></label></span></div>
+        <div class="win-legend" id="win-groups"></div>
         <div class="crop">
           <div class="clab"><b>m/z</b><span id="cmz-v">full</span></div>
           <div class="crop-hist" id="cmz-hist"></div>
