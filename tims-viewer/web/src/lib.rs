@@ -62,6 +62,7 @@ const DIA_WINDOW_RT_SLICES: usize = 6;
 /// was actually used, not later slider edits while the worker runs).
 #[derive(Clone, Copy)]
 struct ClusterRunParams {
+    dataset_id: usize, // name (a String) is resolved at serialize time — keeps this struct Copy
     method: ClusterMethod,
     python: bool,
     eps: f32,
@@ -276,6 +277,8 @@ struct Gfx {
     /// Route Run through the Python (sklearn) service instead of the in-wasm DBSCAN. Auto-enabled by
     /// the startup probe when the service is reachable; toggleable in the Cluster tab.
     use_python_cluster: bool,
+    /// Selected dataset's display name (from `/datasets`), for the Data summary + exported config.
+    dataset_name: String,
     /// Set once the user picks an algorithm from the dropdown, so the async service probe won't
     /// stomp their choice with its auto-select.
     cluster_algo_user_set: bool,
@@ -714,6 +717,7 @@ async fn run() -> Result<(), String> {
         cluster_labels: Vec::new(),
         cluster_sel: None,
         hide_noise: false,
+        dataset_name: String::new(),
         use_python_cluster: false,
         cluster_algo_user_set: false,
         cluster_method: ClusterMethod::Dbscan,
@@ -765,8 +769,9 @@ async fn run() -> Result<(), String> {
     bind_windows(&gfx);
     // Probe the Python clustering service; auto-enable the backend toggle if it's up.
     wasm_bindgen_futures::spawn_local(probe_cluster_service(gfx.clone()));
-    // Populate the dataset picker (reveals it only when the server offers more than one).
-    wasm_bindgen_futures::spawn_local(populate_datasets());
+    // ① Data: fill the meta summary now (points/ranges/cycle); the dataset name arrives via /datasets.
+    fill_data_summary(server_meta.as_ref());
+    wasm_bindgen_futures::spawn_local(populate_datasets(gfx.clone()));
     // Collapsible section headers + tab switching.
     bind_panel_chrome(&gfx);
 
@@ -1135,6 +1140,8 @@ struct MetaInfo {
     /// Mean RT gap (seconds) between consecutive MS1 frames; 0 if unknown. Used to cluster RT in
     /// cycle units so precursors stay connected across cycles regardless of focus.
     cycle_duration: f64,
+    /// Total resident points the server holds for this region/run (for the Data summary).
+    n_points: f64,
 }
 
 /// Derive the `/meta` URL from the `/points` URL: replace only the trailing path endpoint and keep
@@ -1189,9 +1196,10 @@ fn switch_dataset(id: usize) {
     let _ = loc.set_search(&parts.join("&")); // navigates -> fresh load for the new dataset
 }
 
-/// Fetch the dataset registry; if more than one, reveal + populate the header picker (selecting one
-/// reloads with `?dataset=N`). Silent no-op when the server is absent or offers a single dataset.
-async fn populate_datasets() {
+/// Fetch the dataset registry: always stash the active dataset's name (for the Data summary +
+/// config export), and — if more than one — reveal + populate the picker (selecting one reloads
+/// with `?dataset=N`). Silent no-op when the server is absent.
+async fn populate_datasets(gfx: Rc<RefCell<Gfx>>) {
     let Some(window) = web_sys::window() else { return };
     let Some(doc) = window.document() else { return };
     let resp_val = match wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&datasets_url())).await
@@ -1212,14 +1220,24 @@ async fn populate_datasets() {
     };
     let Ok(v) = js_sys::JSON::parse(&text) else { return };
     let arr = js_sys::Array::from(&v);
-    if arr.length() <= 1 {
-        return; // nothing to choose between
+    if arr.length() == 0 {
+        return;
     }
-    let Some(sel) = by_id::<web_sys::HtmlSelectElement>("dataset-sel") else { return };
-    sel.set_inner_html("");
     // The server clamps an out-of-range ?dataset to the last id, so clamp here too — else the picker
     // would highlight the wrong (first) option while a different dataset is actually loaded.
     let cur = dataset_id().min(arr.length() as usize - 1);
+    // Stash + show the active dataset's name BEFORE the single-dataset early return, so even a
+    // one-entry registry fills the Data summary.
+    let cur_name = jget(&arr.get(cur as u32), "name").as_string().unwrap_or_default();
+    if !cur_name.is_empty() {
+        set_text("data-name", &cur_name);
+        gfx.borrow_mut().dataset_name = cur_name;
+    }
+    if arr.length() <= 1 {
+        return; // only one — name is set, but no picker to show
+    }
+    let Some(sel) = by_id::<web_sys::HtmlSelectElement>("dataset-sel") else { return };
+    sel.set_inner_html("");
     for i in 0..arr.length() {
         let item = arr.get(i);
         let id = jnum(&item, "id").unwrap_or(i as f64) as usize;
@@ -1243,6 +1261,26 @@ async fn populate_datasets() {
             switch_dataset(id);
         }
     });
+}
+
+/// Fill the ① Data summary (points / ranges / cycle) from the loaded meta. The dataset NAME is set
+/// separately by `populate_datasets` (it comes from `/datasets`).
+fn fill_data_summary(meta: Option<&MetaInfo>) {
+    let Some(m) = meta else {
+        for id in ["data-points", "data-mz", "data-im", "data-rt", "data-cycle"] {
+            set_text(id, "—");
+        }
+        return;
+    };
+    set_text("data-points", &group(m.n_points as usize));
+    if let Some(b) = m.bounds {
+        set_text("data-mz", &format!("{:.1} – {:.1}", b[0].0, b[0].1));
+        set_text("data-im", &format!("{:.3} – {:.3}", b[1].0, b[1].1));
+        set_text("data-rt", &format!("{:.1} – {:.1} s", b[2].0, b[2].1));
+    }
+    if m.cycle_duration > 0.0 {
+        set_text("data-cycle", &format!("{:.3} s", m.cycle_duration));
+    }
 }
 
 /// Fetch the run's DIA isolation-window footprints (real units) + the max group id.
@@ -1464,6 +1502,7 @@ async fn fetch_meta(url: &str) -> Result<MetaInfo, String> {
         proj,
         proj_bins,
         cycle_duration: jnum(&v, "cycle_duration").filter(|x| x.is_finite() && *x > 0.0).unwrap_or(0.0),
+        n_points: jnum(&v, "n_points").filter(|x| x.is_finite() && *x >= 0.0).unwrap_or(0.0),
     })
 }
 
@@ -1668,6 +1707,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
         g.cluster_stats = None;
         g.cluster_params_json = None;
         g.cluster_run_params = None;
+        set_save_ready(false); // ④ Save: results gone with the clustering
         g.cluster_idx = Vec::new();
         g.cluster_labels = Vec::new();
         g.cluster_sel = None;
@@ -2058,6 +2098,7 @@ fn invalidate_clusters_mut(g: &mut Gfx) {
         g.cluster_stats = None;
         g.cluster_params_json = None;
         g.cluster_run_params = None;
+        set_save_ready(false); // ④ Save: results gone with the clustering
         g.cluster_idx = Vec::new();
         g.cluster_labels = Vec::new();
         g.cluster_sel = None;
@@ -2152,6 +2193,7 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         }
         // Snapshot the parameters used (for the export JSON), so a slider edit mid-run can't skew it.
         let run_params = ClusterRunParams {
+            dataset_id: dataset_id(),
             method: g.cluster_method,
             python: g.use_python_cluster,
             eps,
@@ -2442,6 +2484,7 @@ fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: Vec<usize>, labels: Vec<i32>, 
     set_body_class("cluster-color", true); // cluster coloring active -> hide the intensity colorbar
     set_cluster_progress(None); // done — hide the progress bar
     set_cluster_running(false); // restore the Run button
+    set_save_ready(true); // ④ Save: results are now exportable
     update_cluster_panel(gfx); // we ran from the Cluster tab, so this shows + renders the panel
     show_status("");
 }
@@ -2684,9 +2727,14 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     }
     if let Some(btn) = by_id::<web_sys::HtmlElement>("cl-export") {
         let gfx = gfx.clone();
-        add_listener(btn.as_ref(), "click", move |e: web_sys::Event| {
-            e.stop_propagation(); // the button sits in an .ey header — don't toggle collapse
+        add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| {
             export_clusters(&gfx);
+        });
+    }
+    if let Some(btn) = by_id::<web_sys::HtmlElement>("cfg-export") {
+        let gfx = gfx.clone();
+        add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| {
+            export_config(&gfx);
         });
     }
 }
@@ -2796,9 +2844,9 @@ fn set_class(id: &str, class: &str, on: bool) {
     }
 }
 
-/// Show one tab pane (`view`/`focus`) and highlight its button; hide the others.
+/// Show one flow tab pane + highlight its button; hide the others.
 fn switch_tab(name: &str) {
-    for t in ["view", "focus", "cluster"] {
+    for t in ["data", "region", "cluster", "save", "display"] {
         set_class(&format!("tabbtn-{t}"), "active", t == name);
         set_class(&format!("tab-{t}"), "active", t == name);
     }
@@ -2878,6 +2926,7 @@ fn cluster_params_json(p: &ClusterRunParams, k: usize, noise: usize, n_in: usize
     let set = |key: &str, v: &JsValue| {
         let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(key), v);
     };
+    set("dataset_id", &JsValue::from_f64(p.dataset_id as f64));
     let ms_level = if p.ms_mask == 0b10 { "MS2" } else { "MS1" };
     set("ms_level", &JsValue::from_str(ms_level));
     let (algo, engine) = match (p.method, p.python) {
@@ -2940,6 +2989,74 @@ fn export_clusters(gfx: &Rc<RefCell<Gfx>>) {
     if let Some(pj) = g.cluster_params_json.as_ref() {
         download_text("cluster_params.json", "application/json", pj);
     }
+}
+
+/// Enable the results export + reflect Save status. Results need a finished clustering; the config
+/// export is always available.
+fn set_save_ready(ready: bool) {
+    set_disabled("cl-export", !ready);
+    set_text("save-status", if ready { "results ready" } else { "no clustering yet" });
+}
+
+/// The reproducible *recipe* as JSON — dataset + region + algorithm + params — built live from the
+/// current state, so it works before any clustering (unlike the post-run `cluster_params.json`).
+fn cluster_config_json(g: &Gfx) -> String {
+    let obj = js_sys::Object::new();
+    let set = |key: &str, v: &JsValue| {
+        let _ = js_sys::Reflect::set(&obj, &JsValue::from_str(key), v);
+    };
+    let dataset = js_sys::Object::new();
+    let _ = js_sys::Reflect::set(&dataset, &"id".into(), &JsValue::from_f64(dataset_id() as f64));
+    let _ = js_sys::Reflect::set(&dataset, &"name".into(), &JsValue::from_str(&g.dataset_name));
+    set("dataset", &dataset);
+    let ms_level = match g.params.ms_mask {
+        0b10 => "MS2",
+        0b01 => "MS1",
+        _ => "both",
+    };
+    set("ms_level", &JsValue::from_str(ms_level));
+    set("intensity_floor", &JsValue::from_f64(g.params.filter_min[3] as f64));
+    let (algo, engine) = match (g.cluster_method, g.use_python_cluster) {
+        (ClusterMethod::Hdbscan, _) => ("hdbscan", "python-sklearn"),
+        (ClusterMethod::Dbscan, true) => ("dbscan", "python-sklearn"),
+        (ClusterMethod::Dbscan, false) => ("dbscan", "wasm"),
+    };
+    set("algorithm", &JsValue::from_str(algo));
+    set("engine", &JsValue::from_str(engine));
+    if g.cluster_method == ClusterMethod::Hdbscan {
+        set("min_cluster_size", &JsValue::from_f64(g.cluster_min_cluster_size as f64));
+        set("min_samples", &JsValue::from_f64(g.cluster_hdb_min_samples as f64));
+        set("cluster_selection_epsilon", &JsValue::from_f64(g.cluster_selection_eps));
+    } else {
+        set("eps", &JsValue::from_f64(g.cluster_eps as f64));
+        set("min_points", &JsValue::from_f64(g.cluster_min_pts as f64));
+    }
+    set("rt_cycles", &JsValue::from_f64(g.cluster_rt_cycles));
+    set("mz_peak_widths", &JsValue::from_f64(g.cluster_mz_peak_widths));
+    set("mz_resolution", &JsValue::from_f64(MZ_RESOLUTION));
+    if let Some(b) = g.axis_bounds {
+        let region = js_sys::Object::new();
+        let pair = |lo: f64, hi: f64| {
+            let a = js_sys::Array::new();
+            a.push(&JsValue::from_f64(lo));
+            a.push(&JsValue::from_f64(hi));
+            a
+        };
+        let _ = js_sys::Reflect::set(&region, &"mz".into(), &pair(b[0].0, b[0].1));
+        let _ = js_sys::Reflect::set(&region, &"im".into(), &pair(b[1].0, b[1].1));
+        let _ = js_sys::Reflect::set(&region, &"rt".into(), &pair(b[2].0, b[2].1));
+        set("region", &region);
+    }
+    js_sys::JSON::stringify_with_replacer_and_space(&obj, &JsValue::NULL, &JsValue::from_f64(2.0))
+        .ok()
+        .and_then(|s| s.as_string())
+        .unwrap_or_default()
+}
+
+/// Download the live config recipe (`config.json`).
+fn export_config(gfx: &Rc<RefCell<Gfx>>) {
+    let json = cluster_config_json(&gfx.borrow());
+    download_text("config.json", "application/json", &json);
 }
 
 /// Trigger a file download of `content` via a `data:` URL anchor (attached to the DOM for the click

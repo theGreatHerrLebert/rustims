@@ -63,14 +63,30 @@
     .body::-webkit-scrollbar { width: 8px; }
     .body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
     /* tabs */
-    .tabs { display: flex; gap: 4px; padding: 8px 16px 0 18px; border-bottom: 1px solid var(--line); }
-    .tab { flex: 1; font-family: var(--sans); font-size: 12px; font-weight: 500; color: var(--dim);
+    .tabs { display: flex; gap: 2px; padding: 8px 14px 0 16px; border-bottom: 1px solid var(--line); }
+    .tab { flex: 1; font-family: var(--sans); font-size: 11.5px; font-weight: 500; color: var(--dim);
       background: transparent; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
-      padding: 7px 4px 8px; cursor: pointer; transition: color .14s, border-color .14s; }
+      padding: 7px 3px 8px; cursor: pointer; transition: color .14s, border-color .14s; white-space: nowrap; }
     .tab:hover { color: var(--ink); }
     .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab .tn { font-size: .92em; opacity: .55; margin-right: 3px; }
+    .tab.active .tn { opacity: .85; }
+    .tab-gear { flex: 0 0 auto; margin-left: auto; font-size: 13px; padding-left: 8px; padding-right: 6px; }
     .tabpane { display: none; }
     .tabpane.active { display: block; }
+    /* Advanced disclosure inside a flow tab (collapsed by default) */
+    .adv { margin: 2px 0 6px; }
+    .adv > summary { font-size: 11px; color: var(--dim); cursor: pointer; padding: 4px 0; list-style: none;
+      user-select: none; }
+    .adv > summary::-webkit-details-marker { display: none; }
+    .adv > summary::before { content: "▸"; color: var(--faint); margin-right: 5px; }
+    .adv[open] > summary::before { content: "▾"; }
+    /* ① Data meta summary */
+    .dsum { margin-top: 8px; }
+    .dsum-row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; font-size: 12px;
+      border-bottom: 1px solid var(--line); }
+    .dsum-row .k { color: var(--dim); }
+    .dsum-row .v { color: var(--ink); font-family: var(--mono); text-align: right; }
     /* volume-only controls, shown when View = Volume */
     .vol-only { display: none; }
     body.volmode .vol-only { display: flex; }
@@ -339,10 +355,6 @@
     <div class="head">
       <div class="mark">tims<b>·</b>view <span>/ ion cloud</span></div>
       <div class="sub">m/z × 1/K₀ × retention time — GPU point field</div>
-      <div class="dspick" id="dspick" style="display:none">
-        <label class="lbl" for="dataset-sel">Dataset</label>
-        <select class="sel" id="dataset-sel" aria-label="dataset"></select>
-      </div>
     </div>
 
     <div class="hud">
@@ -354,11 +366,30 @@
 
     <div class="body">
       <div class="tabs">
-        <button class="tab active" id="tabbtn-view" data-tab="view" type="button">View</button>
-        <button class="tab" id="tabbtn-focus" data-tab="focus" type="button">Focus</button>
-        <button class="tab" id="tabbtn-cluster" data-tab="cluster" type="button">Cluster</button>
+        <button class="tab" id="tabbtn-data" data-tab="data" type="button"><span class="tn">①</span>Data</button>
+        <button class="tab active" id="tabbtn-region" data-tab="region" type="button"><span class="tn">②</span>Region</button>
+        <button class="tab" id="tabbtn-cluster" data-tab="cluster" type="button"><span class="tn">③</span>Cluster</button>
+        <button class="tab" id="tabbtn-save" data-tab="save" type="button"><span class="tn">④</span>Save</button>
+        <button class="tab tab-gear" id="tabbtn-display" data-tab="display" type="button" title="Display & exploration" aria-label="Display">⚙</button>
       </div>
-      <div class="tabpane active" id="tab-view">
+      <div class="tabpane" id="tab-data">
+      <section class="sec">
+        <div class="ey">Dataset</div>
+        <div class="dspick" id="dspick" style="display:none">
+          <label class="lbl" for="dataset-sel">Dataset</label>
+          <select class="sel" id="dataset-sel" aria-label="dataset"></select>
+        </div>
+        <div class="dsum">
+          <div class="dsum-row"><span class="k">Name</span><span class="v" id="data-name">—</span></div>
+          <div class="dsum-row"><span class="k">Points</span><span class="v" id="data-points">—</span></div>
+          <div class="dsum-row"><span class="k">m/z</span><span class="v" id="data-mz">—</span></div>
+          <div class="dsum-row"><span class="k">1/K₀</span><span class="v" id="data-im">—</span></div>
+          <div class="dsum-row"><span class="k">RT</span><span class="v" id="data-rt">—</span></div>
+          <div class="dsum-row"><span class="k">Cycle</span><span class="v" id="data-cycle">—</span></div>
+        </div>
+      </section>
+      </div>
+      <div class="tabpane" id="tab-display">
       <section class="sec">
         <div class="ey">View</div>
         <div class="row"><label class="lbl" for="ar">Auto-orbit</label>
@@ -427,7 +458,7 @@
             <input type="number" class="numin" id="expo-n" min="0.02" max="4" step="0.02" value="1.00" aria-label="exposure value" /></span></div>
       </section>
       </div>
-      <div class="tabpane" id="tab-focus">
+      <div class="tabpane active" id="tab-region">
       <section class="sec">
         <div class="ey">Filters</div>
         <div class="row" style="gap:8px">
@@ -518,14 +549,17 @@
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="cl-cse" min="0" max="0.1" step="0.001" value="0" aria-label="HDBSCAN cluster selection epsilon" />
             <input type="number" class="numin" id="cl-cse-n" min="0" max="0.1" step="0.001" value="0" aria-label="HDBSCAN cluster selection epsilon value" /></span></div>
-        <div class="row"><label class="lbl" for="cl-rtc">RT width <span class="dim" style="font-weight:400">(cycles)</span></label>
-          <span style="display:flex;align-items:center;gap:10px">
-            <input type="range" class="rng" id="cl-rtc" min="1" max="12" step="1" value="2" aria-label="cluster RT reach in cycles" />
-            <input type="number" class="numin" id="cl-rtc-n" min="1" max="12" step="1" value="2" aria-label="cluster RT reach in cycles value" /></span></div>
-        <div class="row"><label class="lbl" for="cl-mzw">m/z width <span class="dim" style="font-weight:400">(peak-widths)</span></label>
-          <span style="display:flex;align-items:center;gap:10px">
-            <input type="range" class="rng" id="cl-mzw" min="1" max="40" step="0.5" value="6" aria-label="cluster m/z peak-width reach" />
-            <input type="number" class="numin" id="cl-mzw-n" min="1" max="40" step="0.5" value="6" aria-label="cluster m/z peak-width reach value" /></span></div>
+        <details class="adv">
+          <summary>Advanced · metric</summary>
+          <div class="row"><label class="lbl" for="cl-rtc">RT width <span class="dim" style="font-weight:400">(cycles)</span></label>
+            <span style="display:flex;align-items:center;gap:10px">
+              <input type="range" class="rng" id="cl-rtc" min="1" max="12" step="1" value="2" aria-label="cluster RT reach in cycles" />
+              <input type="number" class="numin" id="cl-rtc-n" min="1" max="12" step="1" value="2" aria-label="cluster RT reach in cycles value" /></span></div>
+          <div class="row"><label class="lbl" for="cl-mzw">m/z width <span class="dim" style="font-weight:400">(peak-widths)</span></label>
+            <span style="display:flex;align-items:center;gap:10px">
+              <input type="range" class="rng" id="cl-mzw" min="1" max="40" step="0.5" value="6" aria-label="cluster m/z peak-width reach" />
+              <input type="number" class="numin" id="cl-mzw-n" min="1" max="40" step="0.5" value="6" aria-label="cluster m/z peak-width reach value" /></span></div>
+        </details>
         <div class="row"><button class="btn" id="cl-run" type="button" style="flex:1">⬡ Run clustering</button></div>
         <div class="cl-prog" id="cl-prog"><div class="cl-bar" id="cl-bar"></div></div>
         <div class="row"><label class="lbl" for="cl-color">Color by cluster</label>
@@ -533,7 +567,16 @@
         <div class="row"><label class="lbl" for="hide-noise">Hide noise</label>
           <span><input type="checkbox" class="sw" id="hide-noise" /><label for="hide-noise" class="sw-l" aria-hidden="true"></label></span></div>
         <div class="row"><span class="lbl">Result</span><span class="val" id="cl-readout" style="min-width:auto">—</span></div>
-        <div class="sub" style="padding:0 0 4px; color:var(--faint)">DBSCAN on the filtered points (Focus a region for big runs).</div>
+        <div class="sub" style="padding:0 0 4px; color:var(--faint)">Clusters the filtered points in the focused region.</div>
+      </section>
+      </div>
+      <div class="tabpane" id="tab-save">
+      <section class="sec">
+        <div class="ey">Save</div>
+        <div class="sub" style="padding:0 0 8px; color:var(--faint)">Export the reproducible setup anytime; export results once a clustering exists.</div>
+        <div class="row"><button class="btn" id="cfg-export" type="button" style="flex:1">⬡ Export config (JSON)</button></div>
+        <div class="row"><button class="btn" id="cl-export" type="button" style="flex:1" disabled>⬡ Export results (CSV + JSON)</button></div>
+        <div class="row"><span class="lbl">Status</span><span class="val" id="save-status" style="min-width:auto">no clustering yet</span></div>
       </section>
       </div>
     </div>
@@ -573,7 +616,7 @@
           <div class="cs-axis"><span>0</span><span id="csx-rt"></span></div></div>
       </section>
       <section class="sec">
-        <div class="ey">Clusters <button class="cs-export" id="cl-export" type="button">Export CSV</button></div>
+        <div class="ey">Clusters</div>
         <div class="cs-list" id="cs-list"></div>
       </section>
     </div>
