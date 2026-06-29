@@ -62,8 +62,13 @@ const DIA_WINDOW_RT_SLICES: usize = 6;
 /// was actually used, not later slider edits while the worker runs).
 #[derive(Clone, Copy)]
 struct ClusterRunParams {
+    method: ClusterMethod,
+    python: bool,
     eps: f32,
     min_pts: usize,
+    min_cluster_size: usize,
+    hdb_min_samples: usize,
+    selection_eps: f64,
     rt_cycles: f64,
     mz_peak_widths: f64,
     ms_mask: u32,
@@ -88,6 +93,13 @@ struct WinRect {
 enum ViewMode {
     Points,
     Volume,
+}
+
+/// Clustering algorithm. The in-wasm path is DBSCAN only; the Python service does both.
+#[derive(Clone, Copy, PartialEq)]
+enum ClusterMethod {
+    Dbscan,
+    Hdbscan,
 }
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -264,6 +276,11 @@ struct Gfx {
     /// Route Run through the Python (sklearn) service instead of the in-wasm DBSCAN. Auto-enabled by
     /// the startup probe when the service is reachable; toggleable in the Cluster tab.
     use_python_cluster: bool,
+    /// Algorithm (Python service only; wasm is always DBSCAN) + its HDBSCAN parameters.
+    cluster_method: ClusterMethod,
+    cluster_min_cluster_size: usize,
+    cluster_hdb_min_samples: usize, // 0 = auto (defaults to min_cluster_size)
+    cluster_selection_eps: f64,
     /// Persistent DBSCAN worker (lazily created; `None` if workers are unavailable → main-thread
     /// fallback), and the in-flight job's (survivor idx, data generation, job id) awaiting its reply.
     /// `job_id` distinguishes a superseded job's late reply; `worker_failed` latches a runtime failure
@@ -695,6 +712,10 @@ async fn run() -> Result<(), String> {
         cluster_sel: None,
         hide_noise: false,
         use_python_cluster: false,
+        cluster_method: ClusterMethod::Dbscan,
+        cluster_min_cluster_size: 7,
+        cluster_hdb_min_samples: 0,
+        cluster_selection_eps: 0.0,
         cluster_worker: None,
         cluster_pending: None,
         next_cluster_job: 0,
@@ -968,25 +989,27 @@ async fn probe_cluster_service(gfx: Rc<RefCell<Gfx>>) {
         Err(_) => false,
     };
     if ok {
-        gfx.borrow_mut().use_python_cluster = true; // prefer sklearn when it's available
-        set_checked("cl-python", true);
-        set_disabled("cl-python", false);
-        set_text("cl-python-status", "sklearn ✓");
+        set_disabled("opt-sklearn", false);
+        set_disabled("opt-hdbscan", false);
+        if let Some(sel) = by_id::<web_sys::HtmlSelectElement>("cl-algo") {
+            sel.set_value("sklearn"); // prefer sklearn DBSCAN when the service is up
+        }
+        apply_cluster_algo(&gfx, "sklearn");
+        set_text("cl-algo-status", "sklearn ✓");
     } else {
-        set_disabled("cl-python", true);
-        set_text("cl-python-status", "not running");
+        set_text("cl-algo-status", "offline · built-in");
     }
 }
 
 /// POST the (already axis-scaled) flat positions to the Python clustering service and read back the
 /// per-point labels. Same wire format as the wasm worker: float32 xyz triples in, int32 labels out.
-async fn fetch_cluster(svc: &str, flat: &[f32], eps: f32, min_pts: usize) -> Result<Vec<i32>, String> {
+async fn fetch_cluster(svc: &str, flat: &[f32], query: &str) -> Result<Vec<i32>, String> {
     let window = web_sys::window().ok_or("no window")?;
     let arr = js_sys::Float32Array::from(flat);
     let opts = web_sys::RequestInit::new();
     opts.set_method("POST");
     opts.set_body(&arr.buffer());
-    let url = with_query(svc, &format!("eps={eps}&min={min_pts}"));
+    let url = with_query(svc, query);
     let resp_val = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str_and_init(&url, &opts))
         .await
         .map_err(|e| format!("fetch failed: {e:?}"))?;
@@ -1776,6 +1799,22 @@ fn refresh_controls(gfx: &Rc<RefCell<Gfx>>) {
     );
 }
 
+/// Apply a clustering-algorithm dropdown value: set the engine (wasm vs Python) + method, and reveal
+/// that algorithm's parameter rows.
+fn apply_cluster_algo(gfx: &Rc<RefCell<Gfx>>, value: &str) {
+    let (python, method) = match value {
+        "sklearn" => (true, ClusterMethod::Dbscan),
+        "hdbscan" => (true, ClusterMethod::Hdbscan),
+        _ => (false, ClusterMethod::Dbscan), // "wasm"
+    };
+    {
+        let mut g = gfx.borrow_mut();
+        g.use_python_cluster = python;
+        g.cluster_method = method;
+    }
+    set_body_class("algo-hdb", method == ClusterMethod::Hdbscan);
+}
+
 /// Flip the Run/Stop button: while a (worker) clustering is in flight it becomes a red "Stop".
 fn set_cluster_running(running: bool) {
     set_text("cl-run", if running { "⬡ Stop clustering" } else { "⬡ Run clustering" });
@@ -1977,8 +2016,13 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         }
         // Snapshot the parameters used (for the export JSON), so a slider edit mid-run can't skew it.
         let run_params = ClusterRunParams {
+            method: g.cluster_method,
+            python: g.use_python_cluster,
             eps,
             min_pts: g.cluster_min_pts,
+            min_cluster_size: g.cluster_min_cluster_size,
+            hdb_min_samples: g.cluster_hdb_min_samples,
+            selection_eps: g.cluster_selection_eps,
             rt_cycles: g.cluster_rt_cycles,
             mz_peak_widths: g.cluster_mz_peak_widths,
             ms_mask: g.params.ms_mask,
@@ -2007,17 +2051,24 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
     if gfx.borrow().use_python_cluster {
         let svc = cluster_service_url();
         let flat: Vec<f32> = positions.iter().flatten().copied().collect();
-        let job = {
+        let (job, query) = {
             let mut g = gfx.borrow_mut();
             g.next_cluster_job = g.next_cluster_job.wrapping_add(1);
+            let q = match g.cluster_method {
+                ClusterMethod::Hdbscan => format!(
+                    "method=hdbscan&mcs={}&ms={}&cse={}",
+                    g.cluster_min_cluster_size, g.cluster_hdb_min_samples, g.cluster_selection_eps
+                ),
+                ClusterMethod::Dbscan => format!("method=dbscan&eps={eps}&min={min_pts}"),
+            };
             g.cluster_pending = Some((idx, gen, g.next_cluster_job));
-            g.next_cluster_job
+            (g.next_cluster_job, q)
         };
         set_cluster_running(true);
         show_status("clustering (python)…");
         let gfx2 = gfx.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let result = fetch_cluster(&svc, &flat, eps, min_pts).await;
+            let result = fetch_cluster(&svc, &flat, &query).await;
             // Only consume the reply if it's still THIS job — a Stop / invalidate / newer Run
             // supersedes it (the un-aborted fetch would otherwise steal the new pending job).
             let mut g = gfx2.borrow_mut();
@@ -2441,7 +2492,17 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     bind_value(gfx, "cl-min", "cl-min-n", 0, |g, v| g.cluster_min_pts = (v as usize).max(2));
     bind_value(gfx, "cl-rtc", "cl-rtc-n", 0, |g, v| g.cluster_rt_cycles = v.round().max(1.0));
     bind_value(gfx, "cl-mzw", "cl-mzw-n", 1, |g, v| g.cluster_mz_peak_widths = v.max(0.1));
-    on_toggle("cl-python", gfx, |g, on| g.use_python_cluster = on);
+    // HDBSCAN parameters (Python only).
+    bind_value(gfx, "cl-mcs", "cl-mcs-n", 0, |g, v| g.cluster_min_cluster_size = (v as usize).max(2));
+    bind_value(gfx, "cl-hms", "cl-hms-n", 0, |g, v| g.cluster_hdb_min_samples = v.max(0.0) as usize);
+    bind_value(gfx, "cl-cse", "cl-cse-n", 3, |g, v| g.cluster_selection_eps = v.max(0.0));
+    // Algorithm dropdown: maps to (engine, method) + reveals that algorithm's params.
+    if let Some(sel) = by_id::<web_sys::HtmlSelectElement>("cl-algo") {
+        let (gfx, el) = (gfx.clone(), sel.clone());
+        add_listener(sel.as_ref(), "change", move |_e: web_sys::Event| {
+            apply_cluster_algo(&gfx, &el.value());
+        });
+    }
     if let Some(btn) = by_id::<web_sys::HtmlElement>("cl-run") {
         let gfx = gfx.clone();
         add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| {
@@ -2682,8 +2743,22 @@ fn cluster_params_json(p: &ClusterRunParams, k: usize, noise: usize, n_in: usize
     };
     let ms_level = if p.ms_mask == 0b10 { "MS2" } else { "MS1" };
     set("ms_level", &JsValue::from_str(ms_level));
-    set("eps", &JsValue::from_f64(p.eps as f64));
-    set("min_points", &JsValue::from_f64(p.min_pts as f64));
+    let (algo, engine) = match (p.method, p.python) {
+        (ClusterMethod::Hdbscan, _) => ("hdbscan", "python-sklearn"),
+        (ClusterMethod::Dbscan, true) => ("dbscan", "python-sklearn"),
+        (ClusterMethod::Dbscan, false) => ("dbscan", "wasm"),
+    };
+    set("algorithm", &JsValue::from_str(algo));
+    set("engine", &JsValue::from_str(engine));
+    // Each algorithm exports only its own parameters.
+    if p.method == ClusterMethod::Hdbscan {
+        set("min_cluster_size", &JsValue::from_f64(p.min_cluster_size as f64));
+        set("min_samples", &JsValue::from_f64(p.hdb_min_samples as f64)); // 0 = auto
+        set("cluster_selection_epsilon", &JsValue::from_f64(p.selection_eps));
+    } else {
+        set("eps", &JsValue::from_f64(p.eps as f64));
+        set("min_points", &JsValue::from_f64(p.min_pts as f64));
+    }
     set("rt_cycles", &JsValue::from_f64(p.rt_cycles));
     set("mz_peak_widths", &JsValue::from_f64(p.mz_peak_widths));
     set("mz_resolution", &JsValue::from_f64(MZ_RESOLUTION));
@@ -3174,7 +3249,7 @@ fn set_value_pair(slider_id: &str, num_id: &str, v: f64, prec: usize) {
 /// actual params (a checked-but-stale radio won't emit `change` when clicked); calling this after
 /// wiring re-asserts the truth so the panel always reflects what's rendering.
 fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
-    let (auto, rmode, xf, ms, cmap, psize, opac, expo, floor, cl_eps, cl_min, cl_rtc, cl_mzw) = {
+    let (auto, rmode, xf, ms, cmap, psize, opac, expo, floor, cl_eps, cl_min, cl_rtc, cl_mzw, cl_mcs, cl_hms, cl_cse) = {
         let g = gfx.borrow();
         (
             g.auto_rotate,
@@ -3190,6 +3265,9 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
             g.cluster_min_pts as f64,
             g.cluster_rt_cycles,
             g.cluster_mz_peak_widths,
+            g.cluster_min_cluster_size as f64,
+            g.cluster_hdb_min_samples as f64,
+            g.cluster_selection_eps,
         )
     };
     set_checked("ar", auto);
@@ -3214,11 +3292,19 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
     set_value_pair("cl-min", "cl-min-n", cl_min, 0);
     set_value_pair("cl-rtc", "cl-rtc-n", cl_rtc, 0);
     set_value_pair("cl-mzw", "cl-mzw-n", cl_mzw, 1);
+    set_value_pair("cl-mcs", "cl-mcs-n", cl_mcs, 0);
+    set_value_pair("cl-hms", "cl-hms-n", cl_hms, 0);
+    set_value_pair("cl-cse", "cl-cse-n", cl_cse, 3);
     set_checked("cl-color", true); // colour by cluster is on by default (applies after a Run)
     set_checked("hide-noise", false);
     set_checked("show-windows", false); // off by default (defeats browser form-restore)
-    set_checked("cl-python", false); // enabled + auto-checked by the startup service probe
-    set_disabled("cl-python", true);
+    // Clustering algorithm: default to built-in; the Python options are enabled by the startup probe.
+    if let Some(sel) = by_id::<web_sys::HtmlSelectElement>("cl-algo") {
+        sel.set_value("wasm");
+    }
+    set_disabled("opt-sklearn", true);
+    set_disabled("opt-hdbscan", true);
+    set_body_class("algo-hdb", false);
     // Crops start at the full range (thumbs, fills, readouts).
     reset_crops(gfx);
 }

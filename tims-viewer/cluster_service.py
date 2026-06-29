@@ -29,7 +29,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import numpy as np
-from sklearn.cluster import DBSCAN
+from sklearn.cluster import DBSCAN, HDBSCAN
 
 # Single-flight: DBSCAN(n_jobs=-1) already uses every core, so serialize requests (the browser does
 # not abort superseded fetches) to avoid oversubscribing the CPU with overlapping runs.
@@ -63,8 +63,7 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         q = parse_qs(urlparse(self.path).query)
-        eps = float(q.get("eps", ["0.012"])[0])
-        min_samples = int(q.get("min", ["8"])[0])
+        method = q.get("method", ["dbscan"])[0]
         n = int(self.headers.get("Content-Length", 0))
         buf = bytearray()
         while len(buf) < n:  # the socket can hand back the body in chunks
@@ -81,13 +80,25 @@ class Handler(BaseHTTPRequestHandler):
         pts = pts.reshape(-1, 3).astype(np.float64)
         t = time.perf_counter()
         with _DBSCAN_LOCK:  # serialize the heavy compute across overlapping requests
-            labels = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1).fit(pts).labels_
+            if method == "hdbscan":
+                mcs = int(q.get("mcs", ["7"])[0])
+                ms = int(q.get("ms", ["0"])[0])
+                cse = float(q.get("cse", ["0"])[0])
+                labels = HDBSCAN(
+                    min_cluster_size=max(2, mcs),
+                    min_samples=(ms if ms > 0 else None),
+                    cluster_selection_epsilon=cse,
+                    copy=True,  # don't mutate our buffer (and silence the 1.10 FutureWarning)
+                ).fit(pts).labels_
+                desc = f"HDBSCAN mcs={mcs} ms={ms or 'auto'} cse={cse}"
+            else:
+                eps = float(q.get("eps", ["0.012"])[0])
+                min_samples = int(q.get("min", ["8"])[0])
+                labels = DBSCAN(eps=eps, min_samples=min_samples, n_jobs=-1).fit(pts).labels_
+                desc = f"DBSCAN eps={eps} min={min_samples}"
         k = int(labels.max()) + 1 if labels.size else 0
         dt = time.perf_counter() - t
-        print(
-            f"DBSCAN: {pts.shape[0]} pts, eps={eps} min={min_samples} -> {k} clusters in {dt:.2f}s",
-            flush=True,
-        )
+        print(f"{desc}: {pts.shape[0]} pts -> {k} clusters in {dt:.2f}s", flush=True)
         out = labels.astype("<i4").tobytes()
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")

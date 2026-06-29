@@ -98,6 +98,10 @@
     .cs-hist .map-cap b { color: var(--ink); font-weight: 500; }
     .cs-axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9.5px;
       color: var(--faint); margin-top: 2px; }
+    /* per-algorithm parameter rows: DBSCAN params by default; HDBSCAN params under body.algo-hdb */
+    .algo-hdb { display: none; }
+    body.algo-hdb .algo-hdb { display: flex; }
+    body.algo-hdb .algo-dbscan { display: none; }
     /* clickable cluster list (isolate on click) */
     .cs-export { float: right; font-family: var(--sans); font-size: 10px; letter-spacing: .04em;
       color: var(--accent); background: transparent; border: 1px solid var(--line); border-radius: 5px;
@@ -480,17 +484,33 @@
       </div>
       <div class="tabpane" id="tab-cluster">
       <section class="sec">
-        <div class="ey">Cluster · DBSCAN</div>
-        <div class="row"><label class="lbl" for="cl-python">Python (sklearn) <span class="dim" id="cl-python-status" style="font-weight:400">checking…</span></label>
-          <span><input type="checkbox" class="sw" id="cl-python" /><label for="cl-python" class="sw-l" aria-hidden="true"></label></span></div>
-        <div class="row"><label class="lbl" for="cl-eps">ε radius <span class="dim" style="font-weight:400">(norm.)</span></label>
+        <div class="ey">Cluster</div>
+        <div class="row"><label class="lbl" for="cl-algo">Algorithm <span class="dim" id="cl-algo-status" style="font-weight:400">checking…</span></label>
+          <select class="sel" id="cl-algo" aria-label="clustering algorithm">
+            <option value="wasm">DBSCAN (built-in)</option>
+            <option value="sklearn" id="opt-sklearn" disabled>DBSCAN (sklearn)</option>
+            <option value="hdbscan" id="opt-hdbscan" disabled>HDBSCAN (sklearn)</option>
+          </select></div>
+        <div class="row algo-dbscan"><label class="lbl" for="cl-eps">ε radius <span class="dim" style="font-weight:400">(norm.)</span></label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="cl-eps" min="0.002" max="0.1" step="0.001" value="0.012" aria-label="cluster radius" />
             <input type="number" class="numin" id="cl-eps-n" min="0.002" max="0.1" step="0.001" value="0.012" aria-label="cluster radius value" /></span></div>
-        <div class="row"><label class="lbl" for="cl-min">Min points</label>
+        <div class="row algo-dbscan"><label class="lbl" for="cl-min">Min points</label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="cl-min" min="2" max="50" step="1" value="8" aria-label="cluster min points" />
             <input type="number" class="numin" id="cl-min-n" min="2" max="50" step="1" value="8" aria-label="cluster min points value" /></span></div>
+        <div class="row algo-hdb"><label class="lbl" for="cl-mcs">Min cluster size</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="cl-mcs" min="2" max="100" step="1" value="7" aria-label="HDBSCAN min cluster size" />
+            <input type="number" class="numin" id="cl-mcs-n" min="2" max="500" step="1" value="7" aria-label="HDBSCAN min cluster size value" /></span></div>
+        <div class="row algo-hdb"><label class="lbl" for="cl-hms">Min samples <span class="dim" style="font-weight:400">(0=auto)</span></label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="cl-hms" min="0" max="50" step="1" value="0" aria-label="HDBSCAN min samples" />
+            <input type="number" class="numin" id="cl-hms-n" min="0" max="200" step="1" value="0" aria-label="HDBSCAN min samples value" /></span></div>
+        <div class="row algo-hdb"><label class="lbl" for="cl-cse">Selection ε</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="cl-cse" min="0" max="0.1" step="0.001" value="0" aria-label="HDBSCAN cluster selection epsilon" />
+            <input type="number" class="numin" id="cl-cse-n" min="0" max="0.5" step="0.001" value="0" aria-label="HDBSCAN cluster selection epsilon value" /></span></div>
         <div class="row"><label class="lbl" for="cl-rtc">RT width <span class="dim" style="font-weight:400">(cycles)</span></label>
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="cl-rtc" min="1" max="12" step="1" value="2" aria-label="cluster RT reach in cycles" />
