@@ -37,6 +37,10 @@ const WORKER_THRESHOLD: usize = 300_000;
 /// RT is scaled so a cluster's elution stays connected across cycles regardless of the RT zoom.
 const CLUSTER_RT_CYCLES: f64 = 2.0;
 
+/// Hard ceiling on points loaded into the (32-bit) wasm heap, regardless of the server `--budget` or
+/// the GPU buffer limit: ~32M × 32 B ≈ 1 GB resident, well clear of the ~4 GB wasm address space.
+const MAX_WEB_POINTS: usize = 32_000_000;
+
 /// RT slices each DIA window footprint is drawn at (mirrors the native loader's `DIA_WINDOW_RT_SLICES`,
 /// which lives in the native-only loader module).
 const DIA_WINDOW_RT_SLICES: usize = 6;
@@ -502,12 +506,17 @@ async fn run() -> Result<(), String> {
     // Phase 2: stream real (or server-side DEMO) points from the tims-viewer point server; fall
     // back to a synthetic cloud so the page still works standalone.
     let url = points_url();
+    // Cap the request to what the GPU buffer can hold AND a wasm-memory-safe ceiling: the initial
+    // load must request `n=n_cap`, or a large server `--budget` (e.g. 90M pts ≈ 2.9 GB) is fetched
+    // whole into the 32-bit wasm heap and OOMs before the later GPU-cap clamp — a black screen.
+    let n_cap = gpu_point_cap(&device, supports_compaction).min(MAX_WEB_POINTS);
+    let initial = with_query(&url, &format!("n={n_cap}"));
     // Fetch /meta first to validate the wire contract and pick up real-unit axis/intensity ranges,
     // then the binary points; fall back to a synthetic cloud if the server is absent/incompatible.
     let mut axis_bounds: Option<[(f64, f64); 3]> = None;
     let mut server_meta: Option<MetaInfo> = None;
-    let (pts, is_demo_fallback) = match fetch_meta(&meta_url(&url)).await {
-        Ok(m) => match fetch_points(&url).await {
+    let (pts, is_demo_fallback) = match fetch_meta(&meta_url(&initial)).await {
+        Ok(m) => match fetch_points(&initial).await {
             Ok(p) if !p.is_empty() => {
                 axis_bounds = m.bounds;
                 server_meta = Some(m);
@@ -529,9 +538,7 @@ async fn run() -> Result<(), String> {
             (demo_cloud(), true)
         }
     };
-    // Cap to what the GPU buffer can hold (master is a vertex+storage buffer): on a 12M budget
-    // = 384 MB, clamp to the device's max so the allocation can't fail.
-    let n_cap = gpu_point_cap(&device, supports_compaction);
+    // `n_cap` (computed above, before the fetch) already bounds the request; clamp the buffer too.
     let capacity = pts.len().min(n_cap).max(1) as u32;
     if (capacity as usize) < pts.len() {
         log::warn!("capping {} -> {capacity} points (GPU buffer limit {} MB)",
