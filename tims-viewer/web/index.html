@@ -198,6 +198,7 @@
       border-radius: 50%; background: var(--dim); transition: all .18s; }
     .sw:checked + .sw-l { background: var(--accent-dim); border-color: var(--accent); }
     .sw:checked + .sw-l::after { left: 19px; background: var(--accent); }
+    .sw:disabled + .sw-l { opacity: .35; cursor: default; pointer-events: none; }
 
     /* button */
     .btn { font-family: var(--sans); font-size: 12px; font-weight: 500; color: var(--ink);

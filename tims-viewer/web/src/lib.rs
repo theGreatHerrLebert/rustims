@@ -663,20 +663,23 @@ async fn run() -> Result<(), String> {
     // Collapsible section headers + tab switching.
     bind_panel_chrome(&gfx);
 
-    // Fetch the run-level DIA windows once; build the overlay + enable the toggle when they arrive.
+    // Fetch the run-level DIA windows once; build the overlay + legend when they arrive. The toggle
+    // stays clickable regardless (it reports "no windows" on click if the fetch failed / non-DIA).
     if !url.is_empty() {
         let gfx = gfx.clone();
         let wurl = windows_url(&url);
         wasm_bindgen_futures::spawn_local(async move {
-            if let Ok((rects, max_group)) = fetch_windows(&wurl).await {
-                {
-                    let mut g = gfx.borrow_mut();
-                    g.window_rects = rects;
-                    g.max_window_group = max_group;
+            match fetch_windows(&wurl).await {
+                Ok((rects, max_group)) => {
+                    {
+                        let mut g = gfx.borrow_mut();
+                        g.window_rects = rects;
+                        g.max_window_group = max_group;
+                    }
+                    rebuild_window_overlay(&gfx);
+                    render_window_legend(&gfx);
                 }
-                rebuild_window_overlay(&gfx);
-                render_window_legend(&gfx);
-                set_disabled("show-windows", gfx.borrow().max_window_group == 0);
+                Err(e) => log::warn!("/windows fetch failed (restart the point server?): {e}"),
             }
         });
     }
@@ -2129,7 +2132,11 @@ fn bind_windows(gfx: &Rc<RefCell<Gfx>>) {
             gfx.borrow_mut().show_windows = on;
             set_body_class("show-windows", on); // reveals the group legend
             if on {
-                render_window_legend(&gfx);
+                if gfx.borrow().window_rects.is_empty() {
+                    show_status("no DIA windows for this run (not DIA, or restart the point server)");
+                } else {
+                    render_window_legend(&gfx);
+                }
             }
         });
     }
@@ -2793,8 +2800,7 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
     set_value_pair("cl-eps", "cl-eps-n", cl_eps, 3);
     set_value_pair("cl-min", "cl-min-n", cl_min, 0);
     set_checked("cl-color", false);
-    set_checked("show-windows", false); // off until /windows loads (then enabled if groups exist)
-    set_disabled("show-windows", true);
+    set_checked("show-windows", false); // off by default (defeats browser form-restore)
     // Crops start at the full range (thumbs, fills, readouts).
     reset_crops(gfx);
 }
