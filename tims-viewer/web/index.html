@@ -213,6 +213,8 @@
     .btn:disabled, .btn:disabled:hover { opacity: .4; cursor: default; color: var(--dim);
       border-color: var(--line); background: rgba(255,255,255,0.03); }
     .btn.mono { font-family: var(--mono); font-size: 11px; }
+    .btn.stop { color: #ff6b6b; border-color: rgba(255,107,107,0.5); background: rgba(255,107,107,0.08); }
+    .btn.stop:hover { color: #ff8585; border-color: #ff6b6b; background: rgba(255,107,107,0.14); }
     .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 
     /* axis crop dual-mini-sliders */
@@ -267,11 +269,13 @@
     .railtgl, .railtgl-r { position: absolute; opacity: 0; pointer-events: none; }
     .railtgl:checked ~ .rail:not(.right) { transform: translateX(calc(-100% - 18px)); opacity: 0; }
     .railtgl:checked ~ .railbtn:not(.railbtn-r) { left: 16px; }
-    /* right rail (cluster panel) collapse — its own toggle, slides off to the right */
-    .railbtn-r { left: auto; right: 348px; display: none; transition: right .35s cubic-bezier(.4,.1,.2,1); }
-    body.has-clusters .railbtn-r { display: flex; } /* only exists when the panel does */
+    /* right rail (cluster panel) collapse — its own toggle, slides off to the right. Two-class
+       selectors (.railbtn.railbtn-r) beat the generic .railbtn rule below regardless of order. */
+    .railbtn.railbtn-r { left: auto; right: 348px; display: none;
+      transition: right .35s cubic-bezier(.4,.1,.2,1); }
+    body.has-clusters .railbtn.railbtn-r { display: grid; } /* only exists when the panel does */
     .railtgl-r:checked ~ .rail.right { transform: translateX(calc(100% + 18px)); opacity: 0; }
-    .railtgl-r:checked ~ .railbtn-r { right: 16px; }
+    .railtgl-r:checked ~ .railbtn.railbtn-r { right: 16px; }
     .railbtn { position: fixed; z-index: 4; top: 16px; left: 348px; transition: left .35s cubic-bezier(.4,.1,.2,1);
       width: 34px; height: 34px; display: grid; place-items: center; cursor: pointer; border-radius: 8px;
       background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(18px);
@@ -304,11 +308,12 @@
 
     @media (max-width: 720px) {
       .rail { width: calc(100vw - 32px); }
-      /* the stats rail would cover the controls full-width — hide it on narrow viewports */
+      /* the stats rail (and its toggle) would cover the controls full-width — hide on narrow */
       body.has-clusters .rail.right { display: none; }
+      body.has-clusters .railbtn.railbtn-r { display: none; }
       /* open: toggle parks at the rail's top-right (acts as close); collapsed: top-left to reopen */
-      .railbtn { left: auto; right: 16px; }
-      .railtgl:checked ~ .railbtn { left: 16px; right: auto; }
+      .railbtn:not(.railbtn-r) { left: auto; right: 16px; }
+      .railtgl:checked ~ .railbtn:not(.railbtn-r) { left: 16px; right: auto; }
     }
   </style>
 </head>

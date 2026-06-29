@@ -1398,9 +1398,11 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
     reset_crops(gfx);
     reset_display(gfx, n);
     set_text("cl-readout", "—"); // clustering is invalidated by a new load
-    set_checked("cl-color", false);
+    set_checked("cl-color", true); // back to the default (applies once re-clustered)
     set_body_class("has-clusters", false);
     set_body_class("cluster-color", false);
+    set_cluster_progress(None); // a load mid-run abandons it — clear the bar + Run button
+    set_cluster_running(false);
     rebuild_window_overlay(gfx); // re-normalize the DIA windows to the new region
 }
 
@@ -1610,6 +1612,27 @@ fn refresh_controls(gfx: &Rc<RefCell<Gfx>>) {
     );
 }
 
+/// Flip the Run/Stop button: while a (worker) clustering is in flight it becomes a red "Stop".
+fn set_cluster_running(running: bool) {
+    set_text("cl-run", if running { "⬡ Stop clustering" } else { "⬡ Run clustering" });
+    set_class("cl-run", "stop", running);
+}
+
+/// Cancel an in-flight worker clustering: terminate the worker (taking it so the next Run rebuilds a
+/// fresh one), drop the pending job, and reset the UI.
+fn stop_clustering(gfx: &Rc<RefCell<Gfx>>) {
+    {
+        let mut g = gfx.borrow_mut();
+        if let Some(w) = g.cluster_worker.take() {
+            w.terminate();
+        }
+        g.cluster_pending = None;
+    }
+    set_cluster_progress(None);
+    set_cluster_running(false);
+    show_status("clustering stopped");
+}
+
 /// Show the clustering progress bar at `frac` (0..1), or hide it with `None`.
 fn set_cluster_progress(frac: Option<f32>) {
     if let Some(el) = by_id::<web_sys::HtmlElement>("cl-prog") {
@@ -1683,6 +1706,7 @@ fn bind_volume(gfx: &Rc<RefCell<Gfx>>) {
 fn invalidate_clusters_mut(g: &mut Gfx) {
     g.cluster_pending = None; // abandon any in-flight worker job (its reply will be ignored)
     set_cluster_progress(None);
+    set_cluster_running(false);
     if g.clustered {
         g.params.color_mode = 0;
         g.clustered = false;
@@ -1765,6 +1789,7 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
             if post_cluster_job(&worker, &flat, eps, min_pts, job) {
                 gfx.borrow_mut().cluster_pending = Some((idx, gen, job));
                 set_cluster_progress(Some(0.0)); // worker reports ticks back; bar advances live
+                set_cluster_running(true); // button becomes "Stop clustering"
                 return;
             }
         }
@@ -1885,6 +1910,7 @@ fn create_cluster_worker(gfx: &Rc<RefCell<Gfx>>) -> Option<web_sys::Worker> {
             g.cluster_worker_failed = true;
             drop(g);
             set_cluster_progress(None);
+            set_cluster_running(false);
             show_status("clustering worker unavailable — runs on the main thread");
         });
     }
@@ -1955,6 +1981,7 @@ fn finish_clustering(gfx: &Rc<RefCell<Gfx>>, idx: Vec<usize>, labels: Vec<i32>, 
     set_text("cl-readout", &format!("{k} clusters · {} noise · {} pts", group(noise), group(n_in)));
     set_body_class("cluster-color", true); // cluster coloring active -> hide the intensity colorbar
     set_cluster_progress(None); // done — hide the progress bar
+    set_cluster_running(false); // restore the Run button
     update_cluster_panel(gfx); // we ran from the Cluster tab, so this shows + renders the panel
     show_status("");
 }
@@ -2134,7 +2161,14 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     bind_value(gfx, "cl-min", "cl-min-n", 0, |g, v| g.cluster_min_pts = (v as usize).max(2));
     if let Some(btn) = by_id::<web_sys::HtmlElement>("cl-run") {
         let gfx = gfx.clone();
-        add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| run_clustering(&gfx));
+        add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| {
+            // Run, or Stop if a worker clustering is in flight.
+            if gfx.borrow().cluster_pending.is_some() {
+                stop_clustering(&gfx);
+            } else {
+                run_clustering(&gfx);
+            }
+        });
     }
     on_toggle("cl-color", gfx, |g, on| {
         if g.clustered {
