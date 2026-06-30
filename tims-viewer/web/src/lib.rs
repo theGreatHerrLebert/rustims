@@ -119,6 +119,9 @@ const DEFAULT_CLUSTER_PORT: u16 = 8091;
 /// Default acquisition-sidecar port (`acquisition_service.py --port 8092`). Override with
 /// `?acqport=N`, or a full base URL via `?acq=<url>`.
 const DEFAULT_ACQ_PORT: u16 = 8092;
+/// Trailing-window size for acquisition playback: the renderer keeps only the last this-many points
+/// (ring buffer), so an unbounded stream can't grind the GPU. Clamped to the GPU cap.
+const ACQ_RING_POINTS: usize = 1_200_000;
 
 /// wasm entry point — Trunk/wasm-bindgen call this on load.
 #[wasm_bindgen(start)]
@@ -1170,11 +1173,12 @@ fn toggle_acquisition(gfx: &Rc<RefCell<Gfx>>) {
         }
         g.acq_playing = !g.acq_playing;
         if g.acq_playing {
-            // Re-create the buffer at the full GPU capacity: the initial buffer was sized to the
-            // loaded (or demo) cloud, which would fill in a few frames as acquisition accumulates.
-            let cap = g.n_cap.max(1) as u32;
+            // Fresh ring buffer bounded to a trailing window: the initial buffer was sized to the
+            // loaded (or demo) cloud, and unbounded accumulation would grind the GPU after ~1 min.
+            let cap = g.n_cap.min(ACQ_RING_POINTS).max(1) as u32;
             g.renderer =
                 PointCloudRenderer::new(&g.device, &g.queue, g.config.format, DEPTH_FORMAT, cap, g.supports_compaction);
+            g.renderer.enable_ring(); // append wraps + overwrites oldest -> bounded resident
             g.renderer.set_draw_count(u32::MAX);
             g.cpu_points.clear(); // acquisition drives the GPU buffer directly
             g.params.color_mode = 3; // colour by _pad[0] = peptide_id + size-by-intensity (acq shader path)

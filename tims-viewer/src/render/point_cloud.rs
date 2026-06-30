@@ -32,6 +32,12 @@ pub struct PointCloudRenderer {
     /// How many of the resident points to actually draw (perf vs. detail at runtime). `u32::MAX`
     /// means "all". Points are stored shuffled, so any prefix is a representative subsample.
     draw_count: u32,
+    /// Ring mode (acquisition playback): `append` wraps and overwrites the oldest points instead of
+    /// stopping at capacity, so an unbounded stream stays bounded to the last `capacity` points.
+    ring: bool,
+    /// Cumulative points *written* in ring mode = the wrap cursor (next write offset is
+    /// `write_total % capacity`). Over-capacity batches contribute only their retained tail.
+    write_total: u64,
 
     camera_buf: wgpu::Buffer,
     params_buf: wgpu::Buffer,
@@ -262,6 +268,8 @@ impl PointCloudRenderer {
             capacity,
             resident: 0,
             draw_count: u32::MAX,
+            ring: false,
+            write_total: 0,
             camera_buf,
             params_buf,
             compaction_buf,
@@ -287,17 +295,46 @@ impl PointCloudRenderer {
     #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.resident = 0;
+        self.write_total = 0;
     }
 
-    /// Append packed points at the running offset, clamping to capacity. Returns the
-    /// number actually written.
+    /// Switch to ring mode: subsequent `append`s wrap and overwrite the oldest points (for the
+    /// unbounded acquisition stream). Resets the buffer.
+    pub fn enable_ring(&mut self) {
+        self.ring = true;
+        self.resident = 0;
+        self.write_total = 0;
+    }
+
+    /// Append packed points. In normal mode, writes at the running offset and clamps to capacity. In
+    /// ring mode, wraps at capacity (overwriting the oldest), so a long stream stays bounded to the
+    /// last `capacity` points. Returns the number written.
     pub fn append(&mut self, queue: &wgpu::Queue, points: &[GpuPoint]) -> usize {
-        if points.is_empty() || self.resident >= self.capacity {
+        if points.is_empty() {
+            return 0;
+        }
+        let stride = std::mem::size_of::<GpuPoint>() as u64;
+        if self.ring {
+            let cap = self.capacity as usize;
+            // Only the last `cap` points of a too-large batch can survive the wrap; keep its tail.
+            let pts = if points.len() > cap { &points[points.len() - cap..] } else { points };
+            let n = pts.len();
+            let start = (self.write_total % self.capacity as u64) as usize;
+            let first = (cap - start).min(n); // up to the buffer end…
+            queue.write_buffer(&self.master, start as u64 * stride, bytemuck::cast_slice(&pts[..first]));
+            if first < n {
+                // …then wrap the remainder to the front.
+                queue.write_buffer(&self.master, 0, bytemuck::cast_slice(&pts[first..n]));
+            }
+            self.write_total += n as u64;
+            self.resident = self.capacity.min(self.write_total.min(u32::MAX as u64) as u32);
+            return n;
+        }
+        if self.resident >= self.capacity {
             return 0;
         }
         let room = (self.capacity - self.resident) as usize;
         let n = points.len().min(room);
-        let stride = std::mem::size_of::<GpuPoint>() as u64;
         let offset = self.resident as u64 * stride; // checked-range: resident <= capacity
         queue.write_buffer(&self.master, offset, bytemuck::cast_slice(&points[..n]));
         self.resident += n as u32;
