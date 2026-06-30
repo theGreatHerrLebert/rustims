@@ -123,10 +123,6 @@
     .dspick { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
     .dspick .lbl { white-space: nowrap; }
     .dspick .sel { flex: 1; min-width: 0; }
-    /* per-algorithm parameter rows: DBSCAN params by default; HDBSCAN params under body.algo-hdb */
-    .algo-hdb { display: none; }
-    body.algo-hdb .algo-hdb { display: flex; }
-    body.algo-hdb .algo-dbscan { display: none; }
     /* clickable cluster list (isolate on click) */
     .cs-export { float: right; font-family: var(--sans); font-size: 10px; letter-spacing: .04em;
       color: var(--accent); background: transparent; border: 1px solid var(--line); border-radius: 5px;
@@ -545,7 +541,6 @@
           <select class="sel" id="cl-algo" aria-label="clustering algorithm">
             <option value="wasm">DBSCAN (built-in)</option>
             <option value="sklearn" id="opt-sklearn" disabled>DBSCAN (sklearn)</option>
-            <option value="hdbscan" id="opt-hdbscan" disabled>HDBSCAN (sklearn)</option>
           </select></div>
         <div class="row algo-dbscan"><label class="lbl" for="cl-eps">ε radius <span class="dim" style="font-weight:400">(norm.)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="DBSCAN neighbourhood radius in the calibrated metric. Larger ε → looser, bigger clusters. It scales all three axis reaches (RT / 1/K₀ / m/z) together.">i</span></label>
           <span style="display:flex;align-items:center;gap:10px">
@@ -555,18 +550,6 @@
           <span style="display:flex;align-items:center;gap:10px">
             <input type="range" class="rng" id="cl-min" min="2" max="50" step="1" value="8" aria-label="cluster min points" />
             <input type="number" class="numin" id="cl-min-n" min="2" max="50" step="1" value="8" aria-label="cluster min points value" /></span></div>
-        <div class="row algo-hdb"><label class="lbl" for="cl-mcs">Min cluster size<span class="tip" tabindex="0" role="img" aria-label="help" title="Smallest group HDBSCAN will report as a cluster. Smaller → more, finer clusters; larger → fewer, broader ones.">i</span></label>
-          <span style="display:flex;align-items:center;gap:10px">
-            <input type="range" class="rng" id="cl-mcs" min="2" max="100" step="1" value="7" aria-label="HDBSCAN min cluster size" />
-            <input type="number" class="numin" id="cl-mcs-n" min="2" max="100" step="1" value="7" aria-label="HDBSCAN min cluster size value" /></span></div>
-        <div class="row algo-hdb"><label class="lbl" for="cl-hms">Min samples <span class="dim" style="font-weight:400">(0=auto)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="How conservative HDBSCAN is: higher → denser cores and more points called noise. 0 = auto (uses min cluster size).">i</span></label>
-          <span style="display:flex;align-items:center;gap:10px">
-            <input type="range" class="rng" id="cl-hms" min="0" max="50" step="1" value="0" aria-label="HDBSCAN min samples" />
-            <input type="number" class="numin" id="cl-hms-n" min="0" max="50" step="1" value="0" aria-label="HDBSCAN min samples value" /></span></div>
-        <div class="row algo-hdb"><label class="lbl" for="cl-cse">Selection ε <span class="dim" style="font-weight:400">(scaled)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="Optional: merge HDBSCAN clusters closer than this in the scaled metric (0 = off). Coarsens an over-split result.">i</span></label>
-          <span style="display:flex;align-items:center;gap:10px">
-            <input type="range" class="rng" id="cl-cse" min="0" max="0.1" step="0.001" value="0" aria-label="HDBSCAN cluster selection epsilon" />
-            <input type="number" class="numin" id="cl-cse-n" min="0" max="0.1" step="0.001" value="0" aria-label="HDBSCAN cluster selection epsilon value" /></span></div>
         <details class="adv">
           <summary>Advanced · metric</summary>
           <div class="row"><label class="lbl" for="cl-rtc">RT width <span class="dim" style="font-weight:400">(cycles)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="How many MS1 cycles ε spans along retention time. A precursor elutes over several cycles — raise to keep an elution together, lower to split co-eluting species. Independent of how you crop the view.">i</span></label>

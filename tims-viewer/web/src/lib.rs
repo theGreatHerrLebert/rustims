@@ -1541,7 +1541,6 @@ async fn probe_cluster_service(gfx: Rc<RefCell<Gfx>>) {
     };
     if ok {
         set_disabled("opt-sklearn", false);
-        set_disabled("opt-hdbscan", false);
         // Prefer sklearn DBSCAN when the service is up — unless the user already picked an algorithm.
         if !gfx.borrow().cluster_algo_user_set {
             if let Some(sel) = by_id::<web_sys::HtmlSelectElement>("cl-algo") {
@@ -2492,20 +2491,17 @@ fn refresh_controls(gfx: &Rc<RefCell<Gfx>>) {
     );
 }
 
-/// Apply a clustering-algorithm dropdown value: set the engine (wasm vs Python) + method, and reveal
-/// that algorithm's parameter rows.
+/// Apply a clustering-algorithm dropdown value: set the engine (wasm DBSCAN vs Python sklearn DBSCAN).
+/// HDBSCAN was removed from the UI (it blacked the canvas on selection via a compositor-layer drop on
+/// the param-row reflow, and added nothing for the demo); the backend plumbing stays dormant.
 fn apply_cluster_algo(gfx: &Rc<RefCell<Gfx>>, value: &str) {
     let (python, method) = match value {
         "sklearn" => (true, ClusterMethod::Dbscan),
-        "hdbscan" => (true, ClusterMethod::Hdbscan),
         _ => (false, ClusterMethod::Dbscan), // "wasm"
     };
-    {
-        let mut g = gfx.borrow_mut();
-        g.use_python_cluster = python;
-        g.cluster_method = method;
-    }
-    set_body_class("algo-hdb", method == ClusterMethod::Hdbscan);
+    let mut g = gfx.borrow_mut();
+    g.use_python_cluster = python;
+    g.cluster_method = method;
 }
 
 /// Flip the Run/Stop button: while a (worker) clustering is in flight it becomes a red "Stop".
@@ -3179,11 +3175,8 @@ fn bind_cluster(gfx: &Rc<RefCell<Gfx>>) {
     bind_value(gfx, "cl-rtc", "cl-rtc-n", 0, |g, v| g.cluster_rt_cycles = v.round().max(1.0));
     bind_value(gfx, "cl-ims", "cl-ims-n", 1, |g, v| g.cluster_im_scans = v.max(0.1));
     bind_value(gfx, "cl-mzw", "cl-mzw-n", 1, |g, v| g.cluster_mz_peak_widths = v.max(0.1));
-    // HDBSCAN parameters (Python only).
-    bind_value(gfx, "cl-mcs", "cl-mcs-n", 0, |g, v| g.cluster_min_cluster_size = (v as usize).max(2));
-    bind_value(gfx, "cl-hms", "cl-hms-n", 0, |g, v| g.cluster_hdb_min_samples = v.max(0.0) as usize);
-    bind_value(gfx, "cl-cse", "cl-cse-n", 3, |g, v| g.cluster_selection_eps = v.max(0.0));
-    // Algorithm dropdown: maps to (engine, method) + reveals that algorithm's params.
+    // (HDBSCAN params removed from the UI; the cl-mcs/cl-hms/cl-cse rows no longer exist.)
+    // Algorithm dropdown: maps to (engine, method).
     if let Some(sel) = by_id::<web_sys::HtmlSelectElement>("cl-algo") {
         let (gfx, el) = (gfx.clone(), sel.clone());
         add_listener(sel.as_ref(), "change", move |_e: web_sys::Event| {
@@ -4078,8 +4071,6 @@ fn sync_controls(gfx: &Rc<RefCell<Gfx>>) {
         sel.set_value("wasm");
     }
     set_disabled("opt-sklearn", true);
-    set_disabled("opt-hdbscan", true);
-    set_body_class("algo-hdb", false);
     // Crops start at the full range (thumbs, fills, readouts).
     reset_crops(gfx);
 }
