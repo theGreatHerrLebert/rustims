@@ -116,6 +116,9 @@ const DEFAULT_SERVER_PORT: u16 = 8090;
 /// Default Python (sklearn) clustering-service port (`cluster_service.py --port 8091`). Override with
 /// `?clusterport=N`, or a full URL via `?cluster=<url>`.
 const DEFAULT_CLUSTER_PORT: u16 = 8091;
+/// Default acquisition-sidecar port (`acquisition_service.py --port 8092`). Override with
+/// `?acqport=N`, or a full base URL via `?acq=<url>`.
+const DEFAULT_ACQ_PORT: u16 = 8092;
 
 /// wasm entry point — Trunk/wasm-bindgen call this on load.
 #[wasm_bindgen(start)]
@@ -284,6 +287,9 @@ struct Gfx {
     cluster_sel: Option<i32>,
     /// When clustered + colouring, hide the un-clustered (noise) points (color_mode 2 vs 1).
     hide_noise: bool,
+    /// Acquisition-playback metadata from the sidecar's `/acq/meta` (None = no sidecar). Drives the
+    /// (next-slice) live playback engine; populated by the startup probe.
+    acq_meta: Option<AcqMeta>,
     /// Route Run through the Python (sklearn) service instead of the in-wasm DBSCAN. Auto-enabled by
     /// the startup probe when the service is reachable; toggleable in the Cluster tab.
     use_python_cluster: bool,
@@ -732,6 +738,7 @@ async fn run() -> Result<(), String> {
         cluster_labels: Vec::new(),
         cluster_sel: None,
         hide_noise: false,
+        acq_meta: None,
         dataset_name: String::new(),
         dataset_id: dataset_id(), // raw URL value; clamped to the registry by populate_datasets
         use_python_cluster: false,
@@ -785,6 +792,8 @@ async fn run() -> Result<(), String> {
     bind_windows(&gfx);
     // Probe the Python clustering service; auto-enable the backend toggle if it's up.
     wasm_bindgen_futures::spawn_local(probe_cluster_service(gfx.clone()));
+    // Probe the acquisition sidecar; stash /acq/meta for the (next-slice) live playback engine.
+    wasm_bindgen_futures::spawn_local(probe_acq_service(gfx.clone()));
     // ① Data: fill the meta summary now (points/ranges/cycle); the dataset name arrives via /datasets.
     fill_data_summary(server_meta.as_ref());
     wasm_bindgen_futures::spawn_local(populate_datasets(gfx.clone()));
@@ -1024,6 +1033,137 @@ fn cluster_service_url() -> String {
         .find_map(|kv| kv.strip_prefix("clusterport=").and_then(|v| v.parse::<u16>().ok()))
         .unwrap_or(DEFAULT_CLUSTER_PORT);
     format!("http://localhost:{port}/cluster")
+}
+
+/// Acquisition-playback metadata from the sidecar's `/acq/meta` (real-unit axis ranges as
+/// `AxisTransform`s for normalizing streamed frame points, plus the run's frame count / cadence).
+#[derive(Clone)]
+struct AcqMeta {
+    n_frames: u32,
+    rt_cycle_length: f64,
+    mz: AxisTransform,
+    im: AxisTransform,
+    rt: AxisTransform,
+    // Used by the playback engine (next slice): auto-exposure reference + per-frame MS1/MS2 timeline.
+    #[allow(dead_code)]
+    i_p99: f32,
+    #[allow(dead_code)]
+    ms_types: Vec<i32>, // per-frame ms_type (0 = MS1, 9 = MS2)
+}
+
+/// Acquisition-sidecar base URL: `?acq=<url>` override, else `http://localhost:<DEFAULT_ACQ_PORT>`
+/// (or `?acqport=N`). Endpoints are `<base>/acq/meta` and `<base>/acq/frame?id=N`.
+fn acq_service_url() -> String {
+    let search = web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default();
+    let params = search.trim_start_matches('?');
+    if let Some(v) = params.split('&').find_map(|kv| kv.strip_prefix("acq=")).filter(|v| !v.is_empty()) {
+        if let Some(decoded) = js_sys::decode_uri_component(v).ok().and_then(|s| s.as_string()) {
+            return decoded;
+        }
+    }
+    let port = params
+        .split('&')
+        .find_map(|kv| kv.strip_prefix("acqport=").and_then(|v| v.parse::<u16>().ok()))
+        .unwrap_or(DEFAULT_ACQ_PORT);
+    format!("http://localhost:{port}")
+}
+
+/// Fetch `<base>/acq/meta` and parse it; `None` if the sidecar is absent/incompatible.
+async fn fetch_acq_meta(base: &str) -> Option<AcqMeta> {
+    let window = web_sys::window()?;
+    let resp_val = wasm_bindgen_futures::JsFuture::from(
+        window.fetch_with_str(&format!("{base}/acq/meta")),
+    )
+    .await
+    .ok()?;
+    let resp: web_sys::Response = resp_val.dyn_into().ok()?;
+    if !resp.ok() {
+        return None;
+    }
+    let text = wasm_bindgen_futures::JsFuture::from(resp.text().ok()?).await.ok()?.as_string()?;
+    let v = js_sys::JSON::parse(&text).ok()?;
+    let num = |k: &str| jnum(&v, k);
+    let arr = js_sys::Array::from(&jget(&v, "ms_types"));
+    let ms_types = (0..arr.length()).map(|i| arr.get(i).as_f64().unwrap_or(0.0) as i32).collect();
+    Some(AcqMeta {
+        n_frames: num("n_frames").unwrap_or(0.0).max(0.0) as u32,
+        rt_cycle_length: num("rt_cycle_length").filter(|x| x.is_finite() && *x > 0.0).unwrap_or(0.1),
+        i_p99: num("i_p99").filter(|x| x.is_finite() && *x > 0.0).unwrap_or(1000.0) as f32,
+        mz: AxisTransform::new(num("mz_min").unwrap_or(100.0), num("mz_max").unwrap_or(1700.0)),
+        im: AxisTransform::new(num("im_min").unwrap_or(0.6), num("im_max").unwrap_or(1.6)),
+        rt: AxisTransform::new(num("rt_min").unwrap_or(0.0), num("rt_max").unwrap_or(1.0)),
+        ms_types,
+    })
+}
+
+/// Fetch `<base>/acq/frame?id=N` (24-byte/peak records) and build normalized `GpuPoint`s:
+/// `_pad[0]` = peptide_id (color key), `flags` bit0 = fragment. Wired by the playback engine (next).
+#[allow(dead_code)]
+async fn fetch_acq_frame(base: &str, id: u32, m: &AcqMeta) -> Result<Vec<GpuPoint>, String> {
+    let window = web_sys::window().ok_or("no window")?;
+    let resp_val = wasm_bindgen_futures::JsFuture::from(
+        window.fetch_with_str(&format!("{base}/acq/frame?id={id}")),
+    )
+    .await
+    .map_err(|e| format!("fetch failed: {e:?}"))?;
+    let resp: web_sys::Response = resp_val.dyn_into().map_err(|_| "not a Response".to_string())?;
+    if !resp.ok() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    let buf = wasm_bindgen_futures::JsFuture::from(
+        resp.array_buffer().map_err(|e| format!("array_buffer: {e:?}"))?,
+    )
+    .await
+    .map_err(|e| format!("body read failed: {e:?}"))?;
+    let bytes = js_sys::Uint8Array::new(&buf).to_vec();
+    let mut pts = Vec::with_capacity(bytes.len() / 24);
+    for c in bytes.chunks_exact(24) {
+        let f = |o: usize| f32::from_le_bytes([c[o], c[o + 1], c[o + 2], c[o + 3]]);
+        let u = |o: usize| u32::from_le_bytes([c[o], c[o + 1], c[o + 2], c[o + 3]]);
+        pts.push(GpuPoint {
+            pos: [
+                m.mz.normalize(f(0) as f64),
+                m.im.normalize(f(4) as f64),
+                m.rt.normalize(f(8) as f64),
+            ],
+            intensity: f(12),
+            weight: 1.0,
+            flags: u(20),
+            _pad: [u(16), 0],
+        });
+    }
+    Ok(pts)
+}
+
+/// Probe the acquisition sidecar (GET its health route); on success stash `/acq/meta` on `Gfx` so the
+/// playback engine (next slice) can offer "Live acquisition" mode.
+async fn probe_acq_service(gfx: Rc<RefCell<Gfx>>) {
+    let base = acq_service_url();
+    let Some(window) = web_sys::window() else { return };
+    let healthy = match wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&base)).await {
+        Ok(v) => match v.dyn_into::<web_sys::Response>() {
+            Ok(r) if r.ok() => match r.text() {
+                Ok(p) => wasm_bindgen_futures::JsFuture::from(p)
+                    .await
+                    .ok()
+                    .and_then(|t| t.as_string())
+                    .is_some_and(|s| s.contains("acquisition service")),
+                Err(_) => false,
+            },
+            _ => false,
+        },
+        Err(_) => false,
+    };
+    if !healthy {
+        return;
+    }
+    if let Some(meta) = fetch_acq_meta(&base).await {
+        log::info!(
+            "acquisition sidecar: {} frames, cadence {:.3}s/frame, mz [{:.0},{:.0}] 1/K0 [{:.3},{:.3}]",
+            meta.n_frames, meta.rt_cycle_length, meta.mz.min, meta.mz.max, meta.im.min, meta.im.max
+        );
+        gfx.borrow_mut().acq_meta = Some(meta);
+    }
 }
 
 /// Probe the cluster service (GET its health route); on success enable + auto-select the Python
