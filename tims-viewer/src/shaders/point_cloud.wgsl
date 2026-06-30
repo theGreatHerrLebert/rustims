@@ -15,7 +15,7 @@ struct Params {
     point_size : f32,
     opacity    : f32,
     focus      : f32,
-    color_mode : u32,   // 0 = intensity colormap, 1 = cluster id
+    color_mode : u32,   // 0 = intensity colormap, 1 = cluster id, 2 = hide-noise, 3 = acquisition (id + size-by-intensity)
     ms_mask     : u32,
     colormap_id : u32,
     render_mode : u32,
@@ -124,7 +124,12 @@ fn vs_main(
     }
 
     // World-space billboard so size attenuates with distance (perspective).
-    let bb = params.point_size * 0.0015;
+    var bb = params.point_size * 0.0015;
+    // Acquisition playback (color_mode 3): scale the splat by intensity so faint peaks recede and
+    // the bright precursor/fragment signals stand out as the run builds up.
+    if (params.color_mode == 3u) {
+        bb = bb * mix(0.18, 1.0, transfer(intensity));
+    }
     let world = fpos + (corner.x * cam.right.xyz + corner.y * cam.up.xyz) * bb;
     out.clip = cam.view_proj * vec4<f32>(world, 1.0);
     out.uv = corner;

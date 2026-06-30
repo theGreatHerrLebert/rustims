@@ -287,9 +287,14 @@ struct Gfx {
     cluster_sel: Option<i32>,
     /// When clustered + colouring, hide the un-clustered (noise) points (color_mode 2 vs 1).
     hide_noise: bool,
-    /// Acquisition-playback metadata from the sidecar's `/acq/meta` (None = no sidecar). Drives the
-    /// (next-slice) live playback engine; populated by the startup probe.
+    /// Acquisition-playback metadata from the sidecar's `/acq/meta` (None = no sidecar). Populated by
+    /// the startup probe; drives the live playback engine.
     acq_meta: Option<AcqMeta>,
+    /// Live-acquisition playback state. `acq_playing` gates the async play-loop; `acq_cursor` is the
+    /// next frame index to fetch; `acq_speed` multiplies the real device cadence.
+    acq_playing: bool,
+    acq_cursor: u32,
+    acq_speed: f64,
     /// Route Run through the Python (sklearn) service instead of the in-wasm DBSCAN. Auto-enabled by
     /// the startup probe when the service is reachable; toggleable in the Cluster tab.
     use_python_cluster: bool,
@@ -739,6 +744,9 @@ async fn run() -> Result<(), String> {
         cluster_sel: None,
         hide_noise: false,
         acq_meta: None,
+        acq_playing: false,
+        acq_cursor: 0,
+        acq_speed: 20.0, // chunk-1 default: lively build-up (no speed slider yet; ~fetch-limited)
         dataset_name: String::new(),
         dataset_id: dataset_id(), // raw URL value; clamped to the registry by populate_datasets
         use_python_cluster: false,
@@ -792,8 +800,12 @@ async fn run() -> Result<(), String> {
     bind_windows(&gfx);
     // Probe the Python clustering service; auto-enable the backend toggle if it's up.
     wasm_bindgen_futures::spawn_local(probe_cluster_service(gfx.clone()));
-    // Probe the acquisition sidecar; stash /acq/meta for the (next-slice) live playback engine.
+    // Probe the acquisition sidecar; reveals the Live-acquisition control if it's up.
     wasm_bindgen_futures::spawn_local(probe_acq_service(gfx.clone()));
+    if let Some(btn) = by_id::<web_sys::HtmlElement>("acq-play") {
+        let gfx = gfx.clone();
+        add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| toggle_acquisition(&gfx));
+    }
     // ① Data: fill the meta summary now (points/ranges/cycle); the dataset name arrives via /datasets.
     fill_data_summary(server_meta.as_ref());
     wasm_bindgen_futures::spawn_local(populate_datasets(gfx.clone()));
@@ -1098,8 +1110,7 @@ async fn fetch_acq_meta(base: &str) -> Option<AcqMeta> {
 
 /// Fetch `<base>/acq/frame?id=N` (24-byte/peak records) and build normalized `GpuPoint`s:
 /// `_pad[0]` = peptide_id (color key), `flags` bit0 = fragment. `id` is a 0-based frame INDEX
-/// (`0..n_frames`). Wired by the playback engine (next slice).
-#[allow(dead_code)]
+/// (`0..n_frames`). Used by the playback loop.
 async fn fetch_acq_frame(base: &str, id: u32, m: &AcqMeta) -> Result<Vec<GpuPoint>, String> {
     let window = web_sys::window().ok_or("no window")?;
     let resp_val = wasm_bindgen_futures::JsFuture::from(
@@ -1139,6 +1150,124 @@ async fn fetch_acq_frame(base: &str, id: u32, m: &AcqMeta) -> Result<Vec<GpuPoin
     Ok(pts)
 }
 
+/// Await `ms` milliseconds (wasm has no blocking sleep): a `setTimeout`-backed Promise.
+async fn sleep_ms(ms: i32) {
+    let Some(window) = web_sys::window() else { return };
+    let p = js_sys::Promise::new(&mut |resolve, _reject| {
+        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, ms.max(0));
+    });
+    let _ = wasm_bindgen_futures::JsFuture::from(p).await;
+}
+
+/// Enter live-acquisition playback: clear the cloud, colour by peptide id (`_pad[0]`), and start the
+/// async play-loop. Toggling again stops it. (Re-uses the cluster-colour shader path; the cube bounds
+/// stay as-is for now — points are already normalized to the acq ranges by `fetch_acq_frame`.)
+fn toggle_acquisition(gfx: &Rc<RefCell<Gfx>>) {
+    let start = {
+        let g = &mut *gfx.borrow_mut();
+        if g.acq_meta.is_none() {
+            return;
+        }
+        g.acq_playing = !g.acq_playing;
+        if g.acq_playing {
+            // Re-create the buffer at the full GPU capacity: the initial buffer was sized to the
+            // loaded (or demo) cloud, which would fill in a few frames as acquisition accumulates.
+            let cap = g.n_cap.max(1) as u32;
+            g.renderer =
+                PointCloudRenderer::new(&g.device, &g.queue, g.config.format, DEPTH_FORMAT, cap, g.supports_compaction);
+            g.renderer.set_draw_count(u32::MAX);
+            g.cpu_points.clear(); // acquisition drives the GPU buffer directly
+            g.params.color_mode = 3; // colour by _pad[0] = peptide_id + size-by-intensity (acq shader path)
+            g.params.ms_mask = 0b11; // show BOTH MS1 (precursors) and MS2 (fragments) — the whole point
+            // Intensity transfer so faint peaks shrink/recede: sqrt over [1, i_p99].
+            let i_p99 = g.acq_meta.as_ref().map(|m| m.i_p99.max(2.0)).unwrap_or(1000.0);
+            g.params.transfer = [1.0, 1.0, i_p99, 1.0];
+            g.acq_cursor = 0;
+            g.filter_dirty = true;
+        }
+        g.acq_playing
+    };
+    set_body_class("cluster-color", start); // the intensity colorbar is meaningless while peptide-coloured
+    set_text("acq-play", if start { "⏸ Stop playback" } else { "▶ Live acquisition" });
+    if start {
+        wasm_bindgen_futures::spawn_local(play_loop(gfx.clone()));
+    }
+}
+
+/// The async playback loop: fetch the cursor's frame, append it, advance, sleep one (speed-scaled)
+/// device cadence, repeat — until stopped or the run ends. No prefetch ring yet, so dense frames play
+/// "build-limited" (slower than real time); that's the accepted v1 behaviour.
+async fn play_loop(gfx: Rc<RefCell<Gfx>>) {
+    let base = acq_service_url();
+    let mut errors = 0u32;
+    loop {
+        // Snapshot the run state without holding the borrow across the await.
+        let snap = {
+            let g = gfx.borrow();
+            match g.acq_meta.clone() {
+                Some(m) if g.acq_playing && g.acq_cursor < m.n_frames => {
+                    Some((m, g.acq_cursor, g.acq_speed.max(0.05)))
+                }
+                _ => None,
+            }
+        };
+        let Some((meta, cursor, speed)) = snap else {
+            // Stopped, or ran off the end — settle the UI and exit.
+            let done = {
+                let g = gfx.borrow();
+                g.acq_meta.as_ref().is_some_and(|m| g.acq_cursor >= m.n_frames)
+            };
+            if done {
+                gfx.borrow_mut().acq_playing = false;
+                set_text("acq-play", "▶ Live acquisition");
+                show_status("acquisition complete");
+            }
+            return;
+        };
+        match fetch_acq_frame(&base, cursor, &meta).await {
+            Ok(pts) => {
+                errors = 0;
+                let resident = {
+                    let g = &mut *gfx.borrow_mut();
+                    if !g.acq_playing {
+                        return; // stopped while the fetch was in flight
+                    }
+                    if !pts.is_empty() {
+                        g.renderer.append(&g.queue, &pts);
+                        g.renderer.set_draw_count(u32::MAX);
+                        g.filter_dirty = true;
+                    }
+                    g.acq_cursor = cursor + 1;
+                    g.renderer.resident()
+                };
+                // Live readout (doubles as a timeline until chunk 2's scrubber); also overwrites the
+                // stale "demo cloud" status.
+                show_status(&format!(
+                    "▶ frame {} / {} · RT {:.0}s · {} pts",
+                    cursor + 1,
+                    meta.n_frames,
+                    (cursor as f64 + 1.0) * meta.rt_cycle_length,
+                    group_short(resident as usize),
+                ));
+            }
+            Err(e) => {
+                // Skip a bad/transient frame rather than killing the whole run; bail only if it's
+                // clearly broken (many in a row).
+                errors += 1;
+                log::warn!("acq frame {cursor} failed ({e}); skipping");
+                if errors > 8 {
+                    show_status("acquisition stopped (repeated frame errors)");
+                    gfx.borrow_mut().acq_playing = false;
+                    set_text("acq-play", "▶ Live acquisition");
+                    return;
+                }
+                gfx.borrow_mut().acq_cursor = cursor + 1;
+            }
+        }
+        sleep_ms((meta.rt_cycle_length * 1000.0 / speed) as i32).await;
+    }
+}
+
 /// Probe the acquisition sidecar (GET its health route); on success stash `/acq/meta` on `Gfx` so the
 /// playback engine (next slice) can offer "Live acquisition" mode.
 async fn probe_acq_service(gfx: Rc<RefCell<Gfx>>) {
@@ -1175,6 +1304,10 @@ async fn probe_acq_service(gfx: Rc<RefCell<Gfx>>) {
             meta.n_frames, meta.rt_cycle_length, meta.mz.min, meta.mz.max, meta.im.min, meta.im.max
         );
         gfx.borrow_mut().acq_meta = Some(meta);
+        // Reveal the Live-acquisition control now that the sidecar is confirmed.
+        if let Some(row) = by_id::<web_sys::HtmlElement>("acq-row") {
+            let _ = row.style().set_property("display", "flex");
+        }
     }
 }
 
