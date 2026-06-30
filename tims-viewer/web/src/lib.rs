@@ -929,9 +929,16 @@ fn web_limits(adapter: &wgpu::Adapter, is_webgl: bool) -> wgpu::Limits {
 }
 
 /// Create a wgpu surface + device, preferring WebGPU and falling back to WebGL2 if its
-/// `requestDevice` fails (see the `maxInterStageShaderComponents` note in `run`). WebGPU enumerates
-/// its adapter globally (no canvas context yet), so we only create the WebGPU surface once the
-/// device succeeds; WebGL2 instead needs the canvas surface to find its adapter at all.
+/// `requestDevice` fails. WebGPU enumerates its adapter globally (no canvas context yet), so we only
+/// create the WebGPU surface once the device succeeds; WebGL2 instead needs the canvas surface to
+/// find its adapter at all.
+///
+/// KNOWN ISSUE (deferred): on current Chrome/Firefox the WebGPU `requestDevice` always fails with
+/// `The limit "maxInterStageShaderComponents" ... is not recognized`, so we silently run on WebGL2.
+/// wgpu 22.1.0 sends that spec-removed limit and the value can't be suppressed via its API; the fix
+/// requires bumping to wgpu 23+ (latest 29), which forces a coordinated egui/egui-wgpu/egui-winit
+/// (0.29 -> matching) + winit upgrade across the whole render stack and the native GUI. WebGL2 is
+/// fully functional, so this is a post-demo upgrade, not a blocker.
 async fn init_gpu(canvas: &web_sys::HtmlCanvasElement) -> Result<Gpu, String> {
     // 1) WebGPU — global adapter; create the surface only if the device is actually obtained.
     let wgpu_inst = wgpu::Instance::new(wgpu::InstanceDescriptor {
