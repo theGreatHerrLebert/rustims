@@ -1257,6 +1257,12 @@ fn toggle_acquisition(gfx: &Rc<RefCell<Gfx>>) {
             g.renderer.enable_ring(); // append wraps + overwrites oldest -> bounded resident
             g.renderer.set_draw_count(u32::MAX);
             g.cpu_points.clear(); // acquisition drives the GPU buffer directly
+            g.view_mode = ViewMode::Points; // acquisition is a point cloud; never the volume path
+            // Acquisition replaces cpu_points/_pad[0], so any clustering is now invalid: a stale
+            // cluster Run or a clicked cluster row would index the emptied cpu_points and panic.
+            // Invalidate + clear it (and bump data_gen so an already-posted worker result is dropped).
+            g.data_gen = g.data_gen.wrapping_add(1);
+            invalidate_clusters_mut(g);
             g.params.color_mode = 3; // colour by _pad[0] = peptide_id + size-by-intensity (acq shader path)
             g.params.ms_mask = 0b11; // show BOTH MS1 (precursors) and MS2 (fragments) — the whole point
             // Intensity transfer so faint peaks shrink/recede: sqrt over [1, i_p99].
@@ -1271,10 +1277,19 @@ fn toggle_acquisition(gfx: &Rc<RefCell<Gfx>>) {
         }
         g.acq_playing
     };
+    if start {
+        // Tear down the cluster panel/results UI and the save-ready state alongside the state reset.
+        set_body_class("has-clusters", false);
+        set_save_ready(false);
+    }
     set_body_class("cluster-color", start); // the intensity colorbar is meaningless while peptide-coloured
     set_text("acq-play", if start { "⏸ Stop playback" } else { "▶ Live acquisition" });
     if start {
         wasm_bindgen_futures::spawn_local(play_loop(gfx.clone()));
+    } else {
+        // Stop leaves the acquisition cloud frozen; a full in-place return to the static dataset is a
+        // chunk-2d transition — for now, reload/switch dataset to get it back.
+        show_status("playback stopped — switch dataset or reload to return to the static view");
     }
 }
 
@@ -1365,8 +1380,8 @@ async fn play_loop(gfx: Rc<RefCell<Gfx>>) {
             }
             Next::Wait => sleep_ms(8).await,
             Next::Done(n) => {
-                let g = &mut *gfx.borrow_mut();
-                g.acq_playing = false;
+                gfx.borrow_mut().acq_playing = false;
+                set_body_class("cluster-color", false); // restore the intensity colorbar (manual stop does too)
                 set_text("acq-play", "▶ Live acquisition");
                 show_status(&format!("acquisition complete — {n} frames"));
                 return;
@@ -1406,6 +1421,10 @@ async fn probe_acq_service(gfx: Rc<RefCell<Gfx>>) {
         return;
     }
     if let Some(meta) = fetch_acq_meta(&base).await {
+        if meta.n_frames == 0 {
+            log::warn!("acquisition sidecar reports 0 frames — not offering Live");
+            return;
+        }
         log::info!(
             "acquisition sidecar: {} frames, cadence {:.3}s/frame, mz [{:.0},{:.0}] 1/K0 [{:.3},{:.3}]",
             meta.n_frames, meta.rt_cycle_length, meta.mz.min, meta.mz.max, meta.im.min, meta.im.max
@@ -2529,6 +2548,10 @@ fn invalidate_clusters_mut(g: &mut Gfx) {
 /// Run DBSCAN on the filtered resident points, write cluster ids into the GPU buffer, and colour by
 /// cluster. Synchronous (blocks the main thread) — Focus first if the filtered set is large.
 fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
+    if gfx.borrow().acq_playing {
+        show_status("stop live acquisition before clustering");
+        return;
+    }
     if gfx.borrow().reloading {
         show_status("loading — try clustering again in a moment");
         return;
