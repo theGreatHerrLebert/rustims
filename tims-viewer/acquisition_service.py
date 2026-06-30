@@ -60,47 +60,73 @@ class Acquisition:
         self.builder = DIAFrameBuilder(db_path, num_threads=num_threads, with_annotations=True)
         print(f"builder ready in {time.perf_counter() - t:.1f}s", flush=True)
 
-        # Frame metadata from the synthetic DB's `frames` table (frame_id, time, ms_type).
+        # Frame metadata from the synthetic DB's `frames` table — detect columns FIRST (some DBs use
+        # `id`/`rt`), then order by the detected id column.
         con = sqlite3.connect(db_path)
         con.row_factory = sqlite3.Row
         try:
-            rows = con.execute("SELECT * FROM frames ORDER BY frame_id").fetchall()
+            fcols = {r[1] for r in con.execute("PRAGMA table_info(frames)").fetchall()}
+            if not fcols:
+                raise SystemExit("no `frames` table — is this a prepared TimSim synthetic DB?")
+            id_col = next((c for c in ("frame_id", "id") if c in fcols), None)
+            time_col = next((c for c in ("time", "rt", "retention_time") if c in fcols), None)
+            ms_col = next((c for c in ("ms_type", "ms_ms_type", "scan_mode") if c in fcols), None)
+            if not id_col or not time_col:
+                raise SystemExit(f"`frames` missing id/time column (have: {sorted(fcols)})")
+            rows = con.execute(f"SELECT * FROM frames ORDER BY {id_col}").fetchall()
+            # Authoritative full 1/K0 range from the `scans` table (mobility per scan), if present —
+            # far more reliable than sampling a few frames.
+            im_range = None
+            scols = {r[1] for r in con.execute("PRAGMA table_info(scans)").fetchall()}
+            if "mobility" in scols:
+                lo, hi = con.execute("SELECT MIN(mobility), MAX(mobility) FROM scans").fetchone()
+                if lo is not None and hi is not None:
+                    im_range = (float(lo), float(hi))
         finally:
             con.close()
         if not rows:
-            raise SystemExit("no rows in the `frames` table — is this a prepared TimSim synthetic DB?")
-        cols = set(rows[0].keys())
-        id_col = "frame_id" if "frame_id" in cols else "id"
-        time_col = "time" if "time" in cols else ("rt" if "rt" in cols else "retention_time")
-        ms_col = next((c for c in ("ms_type", "ms_ms_type", "scan_mode") if c in cols), None)
+            raise SystemExit("the `frames` table is empty")
         self.frame_ids = [int(r[id_col]) for r in rows]
+        self._frame_id_set = set(self.frame_ids)
         times = [float(r[time_col]) for r in rows]
         self.ms_types = [int(r[ms_col]) for r in rows] if ms_col else [0] * len(rows)
         self.n_frames = len(self.frame_ids)
+        # Per-FRAME interval = the playback cadence (reveal one frame every rt_cycle_length seconds).
         self.rt_cycle_length = float(np.mean(np.diff(times))) if len(times) > 1 else 0.0
         self.rt_min, self.rt_max = (min(times), max(times)) if times else (0.0, 1.0)
 
-        # Sample a few frames for axis bounds + an intensity p99 (the eager builder is already loaded).
-        self._compute_bounds()
+        # m/z + intensity p99 from a spread of sampled frames; 1/K0 from the scans table when available.
+        self._compute_bounds(im_range)
 
     def _build(self, frame_id: int):
         return self.builder.build_frame_annotated(frame_id, fragment=self.fragmentation)
 
-    def _compute_bounds(self):
-        mz_lo = im_lo = float("inf")
-        mz_hi = im_hi = float("-inf")
+    def _compute_bounds(self, im_range):
+        mz_lo, mz_hi = float("inf"), float("-inf")
+        im_lo, im_hi = float("inf"), float("-inf")
         ints = []
-        step = max(1, self.n_frames // 8)
-        for fid in self.frame_ids[::step][:8]:
+        step = max(1, self.n_frames // 24)
+        for fid in self.frame_ids[::step][:24]:
             f = self._build(fid)
             mz = np.asarray(f.mz, dtype=np.float64)
-            im = np.asarray(f.inv_mobility, dtype=np.float64)
             if mz.size:
                 mz_lo, mz_hi = min(mz_lo, mz.min()), max(mz_hi, mz.max())
+                im = np.asarray(f.inv_mobility, dtype=np.float64)
                 im_lo, im_hi = min(im_lo, im.min()), max(im_hi, im.max())
                 ints.append(np.asarray(f.intensity, dtype=np.float64))
-        self.mz_min, self.mz_max = (mz_lo, mz_hi) if np.isfinite(mz_lo) else (100.0, 1700.0)
-        self.im_min, self.im_max = (im_lo, im_hi) if np.isfinite(im_lo) else (0.6, 1.6)
+        # m/z: sampled, padded ~1% (sampling can miss the extremes; padding avoids edge-clipping).
+        if np.isfinite(mz_lo):
+            pad = 0.01 * (mz_hi - mz_lo) + 0.5
+            self.mz_min, self.mz_max = mz_lo - pad, mz_hi + pad
+        else:
+            self.mz_min, self.mz_max = 100.0, 1700.0
+        # 1/K0: prefer the authoritative full range from the scans table; else fall back to samples.
+        if im_range:
+            self.im_min, self.im_max = min(im_range), max(im_range)
+        elif np.isfinite(im_lo):
+            self.im_min, self.im_max = im_lo, im_hi
+        else:
+            self.im_min, self.im_max = 0.6, 1.6
         allint = np.concatenate(ints) if ints else np.array([1.0])
         self.i_p99 = float(np.percentile(allint, 99)) if allint.size else 1.0
 
@@ -124,7 +150,9 @@ class Acquisition:
         im = np.asarray(f.inv_mobility, dtype="<f4")
         intensity = np.asarray(f.intensity, dtype="<f4")
         rt = np.full(n, float(f.retention_time), dtype="<f4")
-        # peptide_ids_first_only: the (Rust-side, fast) dominant-or-first contributor per peak.
+        # peptide_ids_first_only: the FIRST contributor per peak (fast Rust ndarray). For convolved
+        # peaks the dominant max-intensity contributor would be truer, but that needs a per-peak Python
+        # walk over `contributions` — too slow at frame cadence; first-only is the v1 choice.
         # Negative ids (unassigned/noise) → the grey sentinel.
         pid = np.asarray(f.peptide_ids_first_only, dtype=np.int64)
         pid = np.where(pid < 0, NO_PEPTIDE, pid).astype("<u4")
@@ -170,12 +198,15 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 self._send(400, b"bad frame id", "text/plain")
                 return
+            if fid not in self.acq._frame_id_set:  # 404 reserved for genuinely out-of-range ids
+                self._send(404, f"frame {fid} out of range".encode(), "text/plain")
+                return
             t = time.perf_counter()
             try:
                 body = self.acq.frame_bytes(fid)
-            except Exception as exc:  # out-of-range id / build failure — don't drop the connection
-                print(f"frame {fid} failed: {exc}", flush=True)
-                self._send(404, f"frame {fid}: {exc}".encode(), "text/plain")
+            except Exception as exc:  # a real build/packing failure — surface it, don't drop the conn
+                print(f"frame {fid} build failed: {exc}", flush=True)
+                self._send(500, f"frame {fid}: {exc}".encode(), "text/plain")
                 return
             dt = time.perf_counter() - t
             print(f"frame {fid}: {len(body)//24} peaks in {dt*1000:.0f} ms", flush=True)
