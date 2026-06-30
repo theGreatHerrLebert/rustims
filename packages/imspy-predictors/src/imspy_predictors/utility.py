@@ -81,26 +81,26 @@ def load_tokenizer_from_resources(tokenizer_name: str = "tokenizer"):
     # Use the Rust-based tokenizer
     try:
         from imspy_predictors.utilities.tokenizers import ProformaTokenizer
-        tokenizer_path = get_tokenizer_path(tokenizer_name)
-        if tokenizer_path.is_file():
-            try:
-                return ProformaTokenizer.load_vocab(str(tokenizer_path))
-            except ValueError:
-                # File exists but is in old Keras format - use default tokenizer
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(
-                    f"Tokenizer file '{tokenizer_name}.json' exists but is in incompatible format. "
-                    "Using default ProformaTokenizer."
-                )
-                return ProformaTokenizer.with_defaults()
-        else:
-            # Return default tokenizer if file doesn't exist
-            return ProformaTokenizer.with_defaults()
     except ImportError:
         raise ImportError(
             "Could not load tokenizer. Install imspy-core for ProformaTokenizer."
         )
+
+    # If a serialized ProformaTokenizer vocab is shipped, load it. Otherwise fall
+    # back to the default ProformaTokenizer, which matches the bundled pretrained
+    # models. The default is the expected path for the current models.
+    tokenizer_path = get_tokenizer_path(tokenizer_name)
+    if tokenizer_path.is_file():
+        try:
+            return ProformaTokenizer.load_vocab(str(tokenizer_path))
+        except ValueError:
+            import logging
+            logging.getLogger(__name__).warning(
+                f"Tokenizer file '{tokenizer_name}.json' could not be parsed as a "
+                "ProformaTokenizer vocab, falling back to the default ProformaTokenizer."
+            )
+
+    return ProformaTokenizer.with_defaults()
 
 
 class InMemoryCheckpoint:
