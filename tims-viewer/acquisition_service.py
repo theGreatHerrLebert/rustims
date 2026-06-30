@@ -13,7 +13,9 @@ a GET health probe and only enables the "live acquisition" mode when it's up.
 Wire format (``/acq/frame``): little-endian records, 24 bytes/peak —
     [ mz f32, im f32, rt f32, intensity f32, peptide_id u32, flags u32 ]
 ``flags`` bit0 = fragment (MS2); ``peptide_id`` = 0xFFFFFFFF for unassigned/noise peaks (the viewer
-renders those grey). Positions are real units; the viewer normalizes them to its cube.
+renders those grey). Positions are real units; the viewer normalizes them to its cube. The ``id`` query
+param is a 0-based frame INDEX (``0..n_frames-1``), not a DB frame id — the client plays the run in
+order without needing to know the actual frame ids.
 
 Run (needs the imspy_simulation env: DIAFrameBuilder + its Rust bindings):
 
@@ -87,7 +89,6 @@ class Acquisition:
         if not rows:
             raise SystemExit("the `frames` table is empty")
         self.frame_ids = [int(r[id_col]) for r in rows]
-        self._frame_id_set = set(self.frame_ids)
         times = [float(r[time_col]) for r in rows]
         self.ms_types = [int(r[ms_col]) for r in rows] if ms_col else [0] * len(rows)
         self.n_frames = len(self.frame_ids)
@@ -141,8 +142,10 @@ class Acquisition:
             "ms_types": self.ms_types,
         }).encode()
 
-    def frame_bytes(self, frame_id: int) -> bytes:
-        f = self._build(frame_id)
+    def frame_bytes(self, index: int) -> bytes:
+        # `index` is a 0-based position into the (frame_id-ordered) frame list — the client plays
+        # 0..n_frames-1 and never needs to know the actual DB frame ids (which may not be 0-based).
+        f = self._build(self.frame_ids[index])
         mz = np.asarray(f.mz, dtype="<f4")
         n = mz.size
         if n == 0:
@@ -198,8 +201,8 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 self._send(400, b"bad frame id", "text/plain")
                 return
-            if fid not in self.acq._frame_id_set:  # 404 reserved for genuinely out-of-range ids
-                self._send(404, f"frame {fid} out of range".encode(), "text/plain")
+            if not (0 <= fid < self.acq.n_frames):  # `id` is a 0-based frame index
+                self._send(404, f"frame index {fid} out of range [0,{self.acq.n_frames})".encode(), "text/plain")
                 return
             t = time.perf_counter()
             try:

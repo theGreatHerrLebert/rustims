@@ -1097,7 +1097,8 @@ async fn fetch_acq_meta(base: &str) -> Option<AcqMeta> {
 }
 
 /// Fetch `<base>/acq/frame?id=N` (24-byte/peak records) and build normalized `GpuPoint`s:
-/// `_pad[0]` = peptide_id (color key), `flags` bit0 = fragment. Wired by the playback engine (next).
+/// `_pad[0]` = peptide_id (color key), `flags` bit0 = fragment. `id` is a 0-based frame INDEX
+/// (`0..n_frames`). Wired by the playback engine (next slice).
 #[allow(dead_code)]
 async fn fetch_acq_frame(base: &str, id: u32, m: &AcqMeta) -> Result<Vec<GpuPoint>, String> {
     let window = web_sys::window().ok_or("no window")?;
@@ -1116,6 +1117,9 @@ async fn fetch_acq_frame(base: &str, id: u32, m: &AcqMeta) -> Result<Vec<GpuPoin
     .await
     .map_err(|e| format!("body read failed: {e:?}"))?;
     let bytes = js_sys::Uint8Array::new(&buf).to_vec();
+    if bytes.len() % 24 != 0 {
+        return Err(format!("acq frame body not 24-byte aligned ({} bytes)", bytes.len()));
+    }
     let mut pts = Vec::with_capacity(bytes.len() / 24);
     for c in bytes.chunks_exact(24) {
         let f = |o: usize| f32::from_le_bytes([c[o], c[o + 1], c[o + 2], c[o + 3]]);
@@ -1140,7 +1144,15 @@ async fn fetch_acq_frame(base: &str, id: u32, m: &AcqMeta) -> Result<Vec<GpuPoin
 async fn probe_acq_service(gfx: Rc<RefCell<Gfx>>) {
     let base = acq_service_url();
     let Some(window) = web_sys::window() else { return };
-    let healthy = match wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&base)).await {
+    // Abort after 3s — the sidecar is single-threaded, so a probe issued while it's mid-build (or a
+    // half-open service) must not pin detection forever.
+    let opts = web_sys::RequestInit::new();
+    if let Ok(controller) = web_sys::AbortController::new() {
+        opts.set_signal(Some(&controller.signal()));
+        let cb = wasm_bindgen::closure::Closure::once_into_js(move || controller.abort());
+        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(cb.unchecked_ref(), 3000);
+    }
+    let healthy = match wasm_bindgen_futures::JsFuture::from(window.fetch_with_str_and_init(&base, &opts)).await {
         Ok(v) => match v.dyn_into::<web_sys::Response>() {
             Ok(r) if r.ok() => match r.text() {
                 Ok(p) => wasm_bindgen_futures::JsFuture::from(p)
