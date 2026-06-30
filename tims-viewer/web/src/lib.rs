@@ -122,6 +122,10 @@ const DEFAULT_ACQ_PORT: u16 = 8092;
 /// Trailing-window size for acquisition playback: the renderer keeps only the last this-many points
 /// (ring buffer), so an unbounded stream can't grind the GPU. Clamped to the GPU cap.
 const ACQ_RING_POINTS: usize = 1_200_000;
+/// Frames per `/acq/frames` prefetch request (built in parallel server-side).
+const ACQ_BATCH: u32 = 64;
+/// Kick the next prefetch when fewer than this many decoded frames remain buffered.
+const ACQ_LOOKAHEAD: usize = 128;
 
 /// wasm entry point — Trunk/wasm-bindgen call this on load.
 #[wasm_bindgen(start)]
@@ -293,11 +297,22 @@ struct Gfx {
     /// Acquisition-playback metadata from the sidecar's `/acq/meta` (None = no sidecar). Populated by
     /// the startup probe; drives the live playback engine.
     acq_meta: Option<AcqMeta>,
-    /// Live-acquisition playback state. `acq_playing` gates the async play-loop; `acq_cursor` is the
-    /// next frame index to fetch; `acq_speed` multiplies the real device cadence.
+    /// Live-acquisition playback state. `acq_playing` gates the async play-loop; `acq_cursor` is how
+    /// many frames have been displayed (the fetch frontier is `acq_fetch_next`); `acq_speed`
+    /// multiplies the real device cadence.
     acq_playing: bool,
     acq_cursor: u32,
     acq_speed: f64,
+    /// Prefetch ring: decoded frames waiting to be displayed (front = next). Filled ahead of the
+    /// cursor by a detached batch fetch so the play-loop never blocks on a build.
+    acq_buffer: std::collections::VecDeque<Vec<GpuPoint>>,
+    /// Next frame index to request (the prefetch frontier); `acq_cursor` is how many we've displayed.
+    acq_fetch_next: u32,
+    /// A batch fetch is in flight (single-flight — the sidecar serializes builds anyway).
+    acq_fetching: bool,
+    /// Bumped each time playback (re)starts, so an in-flight prefetch from a previous session can tell
+    /// it's stale and drop its result instead of contaminating the new run's buffer.
+    acq_gen: u32,
     /// Route Run through the Python (sklearn) service instead of the in-wasm DBSCAN. Auto-enabled by
     /// the startup probe when the service is reachable; toggleable in the Cluster tab.
     use_python_cluster: bool,
@@ -750,6 +765,10 @@ async fn run() -> Result<(), String> {
         acq_playing: false,
         acq_cursor: 0,
         acq_speed: 20.0, // chunk-1 default: lively build-up (no speed slider yet; ~fetch-limited)
+        acq_buffer: std::collections::VecDeque::new(),
+        acq_fetch_next: 0,
+        acq_fetching: false,
+        acq_gen: 0,
         dataset_name: String::new(),
         dataset_id: dataset_id(), // raw URL value; clamped to the registry by populate_datasets
         use_python_cluster: false,
@@ -1111,16 +1130,37 @@ async fn fetch_acq_meta(base: &str) -> Option<AcqMeta> {
     })
 }
 
-/// Fetch `<base>/acq/frame?id=N` (24-byte/peak records) and build normalized `GpuPoint`s:
-/// `_pad[0]` = peptide_id (color key), `flags` bit0 = fragment. `id` is a 0-based frame INDEX
-/// (`0..n_frames`). Used by the playback loop.
-async fn fetch_acq_frame(base: &str, id: u32, m: &AcqMeta) -> Result<Vec<GpuPoint>, String> {
+/// Decode one 24-byte wire record into a normalized `GpuPoint` (`_pad[0]` = peptide_id, `flags` bit0 =
+/// fragment). `c` must be exactly 24 bytes.
+fn decode_acq_record(c: &[u8], m: &AcqMeta) -> GpuPoint {
+    let f = |o: usize| f32::from_le_bytes([c[o], c[o + 1], c[o + 2], c[o + 3]]);
+    let u = |o: usize| u32::from_le_bytes([c[o], c[o + 1], c[o + 2], c[o + 3]]);
+    GpuPoint {
+        pos: [
+            m.mz.normalize(f(0) as f64),
+            m.im.normalize(f(4) as f64),
+            m.rt.normalize(f(8) as f64),
+        ],
+        intensity: f(12),
+        weight: 1.0,
+        flags: u(20),
+        _pad: [u(16), 0],
+    }
+}
+
+/// GET a binary acquisition endpoint and return the raw bytes. Aborts after 20s so a hung/half-open
+/// sidecar can't leave a prefetch in flight forever (which would stall the play-loop).
+async fn fetch_acq_bytes(url: &str) -> Result<Vec<u8>, String> {
     let window = web_sys::window().ok_or("no window")?;
-    let resp_val = wasm_bindgen_futures::JsFuture::from(
-        window.fetch_with_str(&format!("{base}/acq/frame?id={id}")),
-    )
-    .await
-    .map_err(|e| format!("fetch failed: {e:?}"))?;
+    let opts = web_sys::RequestInit::new();
+    if let Ok(controller) = web_sys::AbortController::new() {
+        opts.set_signal(Some(&controller.signal()));
+        let cb = wasm_bindgen::closure::Closure::once_into_js(move || controller.abort());
+        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(cb.unchecked_ref(), 20_000);
+    }
+    let resp_val = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str_and_init(url, &opts))
+        .await
+        .map_err(|e| format!("fetch failed: {e:?}"))?;
     let resp: web_sys::Response = resp_val.dyn_into().map_err(|_| "not a Response".to_string())?;
     if !resp.ok() {
         return Err(format!("HTTP {}", resp.status()));
@@ -1130,27 +1170,63 @@ async fn fetch_acq_frame(base: &str, id: u32, m: &AcqMeta) -> Result<Vec<GpuPoin
     )
     .await
     .map_err(|e| format!("body read failed: {e:?}"))?;
-    let bytes = js_sys::Uint8Array::new(&buf).to_vec();
+    Ok(js_sys::Uint8Array::new(&buf).to_vec())
+}
+
+/// Fetch a single frame (`<base>/acq/frame?id=N`, `id` a 0-based frame index) as `GpuPoint`s.
+#[allow(dead_code)] // kept for debugging / single-frame probes; playback uses the batch path
+async fn fetch_acq_frame(base: &str, id: u32, m: &AcqMeta) -> Result<Vec<GpuPoint>, String> {
+    let bytes = fetch_acq_bytes(&format!("{base}/acq/frame?id={id}")).await?;
     if bytes.len() % 24 != 0 {
         return Err(format!("acq frame body not 24-byte aligned ({} bytes)", bytes.len()));
     }
-    let mut pts = Vec::with_capacity(bytes.len() / 24);
-    for c in bytes.chunks_exact(24) {
-        let f = |o: usize| f32::from_le_bytes([c[o], c[o + 1], c[o + 2], c[o + 3]]);
-        let u = |o: usize| u32::from_le_bytes([c[o], c[o + 1], c[o + 2], c[o + 3]]);
-        pts.push(GpuPoint {
-            pos: [
-                m.mz.normalize(f(0) as f64),
-                m.im.normalize(f(4) as f64),
-                m.rt.normalize(f(8) as f64),
-            ],
-            intensity: f(12),
-            weight: 1.0,
-            flags: u(20),
-            _pad: [u(16), 0],
-        });
+    Ok(bytes.chunks_exact(24).map(|c| decode_acq_record(c, m)).collect())
+}
+
+/// Fetch a parallel batch (`<base>/acq/frames?start=N&count=K`) and split it into per-frame
+/// `GpuPoint` lists. Wire layout: `u32 count`, `count × [u32 frame_index, u32 n_peaks]`, then the
+/// concatenated 24-byte records for each frame in order.
+async fn fetch_acq_frames(base: &str, start: u32, count: u32, m: &AcqMeta) -> Result<Vec<Vec<GpuPoint>>, String> {
+    let bytes = fetch_acq_bytes(&format!("{base}/acq/frames?start={start}&count={count}")).await?;
+    if bytes.len() < 4 {
+        return Err("acq batch response too short".into());
     }
-    Ok(pts)
+    let rd_u32 = |o: usize| u32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]);
+    // The server returns exactly the frames we asked for; validating up front bounds `n` (so the
+    // header arithmetic below can't overflow) and stops a malformed/short batch from desyncing the
+    // fetch frontier (we advanced `acq_fetch_next` by `count` already).
+    let n = rd_u32(0) as usize;
+    if n != count as usize {
+        return Err(format!("acq batch returned {n} frames, requested {count}"));
+    }
+    let table_end = 4 + n * 8; // n == count <= ACQ_BATCH, so no overflow
+    if bytes.len() < table_end {
+        return Err("acq batch header truncated".into());
+    }
+    let mut counts = Vec::with_capacity(n);
+    for i in 0..n {
+        let idx = rd_u32(4 + i * 8);
+        if idx != start + i as u32 {
+            return Err(format!("acq batch frame_index {idx} != expected {}", start + i as u32));
+        }
+        counts.push(rd_u32(4 + i * 8 + 4) as usize);
+    }
+    let recs = &bytes[table_end..];
+    let total: usize = counts.iter().sum();
+    if total.checked_mul(24) != Some(recs.len()) {
+        return Err(format!("acq batch body {} B != {total} records", recs.len()));
+    }
+    let mut frames = Vec::with_capacity(n);
+    let mut off = 0usize;
+    for c in counts {
+        let mut pts = Vec::with_capacity(c);
+        for k in 0..c {
+            pts.push(decode_acq_record(&recs[off + k * 24..off + k * 24 + 24], m));
+        }
+        off += c * 24;
+        frames.push(pts);
+    }
+    Ok(frames)
 }
 
 /// Await `ms` milliseconds (wasm has no blocking sleep): a `setTimeout`-backed Promise.
@@ -1187,6 +1263,10 @@ fn toggle_acquisition(gfx: &Rc<RefCell<Gfx>>) {
             let i_p99 = g.acq_meta.as_ref().map(|m| m.i_p99.max(2.0)).unwrap_or(1000.0);
             g.params.transfer = [1.0, 1.0, i_p99, 1.0];
             g.acq_cursor = 0;
+            g.acq_buffer.clear();
+            g.acq_fetch_next = 0;
+            g.acq_fetching = false;
+            g.acq_gen = g.acq_gen.wrapping_add(1); // invalidate any in-flight prefetch from a prior run
             g.filter_dirty = true;
         }
         g.acq_playing
@@ -1198,77 +1278,100 @@ fn toggle_acquisition(gfx: &Rc<RefCell<Gfx>>) {
     }
 }
 
-/// The async playback loop: fetch the cursor's frame, append it, advance, sleep one (speed-scaled)
-/// device cadence, repeat — until stopped or the run ends. No prefetch ring yet, so dense frames play
-/// "build-limited" (slower than real time); that's the accepted v1 behaviour.
-async fn play_loop(gfx: Rc<RefCell<Gfx>>) {
+/// Detached prefetch: fetch one parallel batch and push its decoded frames into `acq_buffer`, then
+/// clear the in-flight flag so the play-loop can request the next. Single-flight (the sidecar
+/// serializes builds anyway). Forward-only: the streamed frames are consumed as displayed.
+async fn acq_prefetch(gfx: Rc<RefCell<Gfx>>, start: u32, count: u32, meta: AcqMeta, gen: u32) {
     let base = acq_service_url();
-    let mut errors = 0u32;
-    loop {
-        // Snapshot the run state without holding the borrow across the await.
-        let snap = {
-            let g = gfx.borrow();
-            match g.acq_meta.clone() {
-                Some(m) if g.acq_playing && g.acq_cursor < m.n_frames => {
-                    Some((m, g.acq_cursor, g.acq_speed.max(0.05)))
-                }
-                _ => None,
-            }
-        };
-        let Some((meta, cursor, speed)) = snap else {
-            // Stopped, or ran off the end — settle the UI and exit.
-            let done = {
-                let g = gfx.borrow();
-                g.acq_meta.as_ref().is_some_and(|m| g.acq_cursor >= m.n_frames)
-            };
-            if done {
-                gfx.borrow_mut().acq_playing = false;
-                set_text("acq-play", "▶ Live acquisition");
-                show_status("acquisition complete");
-            }
-            return;
-        };
-        match fetch_acq_frame(&base, cursor, &meta).await {
-            Ok(pts) => {
-                errors = 0;
-                let resident = {
-                    let g = &mut *gfx.borrow_mut();
-                    if !g.acq_playing {
-                        return; // stopped while the fetch was in flight
-                    }
-                    if !pts.is_empty() {
-                        g.renderer.append(&g.queue, &pts);
-                        g.renderer.set_draw_count(u32::MAX);
-                        g.filter_dirty = true;
-                    }
-                    g.acq_cursor = cursor + 1;
-                    g.renderer.resident()
-                };
-                // Live readout (doubles as a timeline until chunk 2's scrubber); also overwrites the
-                // stale "demo cloud" status.
-                show_status(&format!(
-                    "▶ frame {} / {} · RT {:.0}s · {} pts",
-                    cursor + 1,
-                    meta.n_frames,
-                    (cursor as f64 + 1.0) * meta.rt_cycle_length,
-                    group_short(resident as usize),
-                ));
-            }
-            Err(e) => {
-                // Skip a bad/transient frame rather than killing the whole run; bail only if it's
-                // clearly broken (many in a row).
-                errors += 1;
-                log::warn!("acq frame {cursor} failed ({e}); skipping");
-                if errors > 8 {
-                    show_status("acquisition stopped (repeated frame errors)");
-                    gfx.borrow_mut().acq_playing = false;
-                    set_text("acq-play", "▶ Live acquisition");
-                    return;
-                }
-                gfx.borrow_mut().acq_cursor = cursor + 1;
+    let result = fetch_acq_frames(&base, start, count, &meta).await;
+    let g = &mut *gfx.borrow_mut();
+    if g.acq_gen != gen {
+        return; // a newer playback session started while we were in flight — drop this result
+    }
+    g.acq_fetching = false;
+    match result {
+        Ok(frames) => {
+            if g.acq_playing {
+                g.acq_buffer.extend(frames);
             }
         }
-        sleep_ms((meta.rt_cycle_length * 1000.0 / speed) as i32).await;
+        Err(e) => log::warn!("acq batch [{start},{}) failed: {e}", start + count),
+    }
+}
+
+/// The async playback loop. Each tick it (1) kicks a prefetch batch if the buffer is running low and
+/// none is in flight, and (2) pops one ready frame and appends it at the (speed-scaled) device
+/// cadence. Fetching overlaps display, so playback isn't build-limited — it runs at real time with
+/// headroom to fast-forward, bounded by the prefetch throughput.
+async fn play_loop(gfx: Rc<RefCell<Gfx>>) {
+    let gen = gfx.borrow().acq_gen; // this session's id; a newer toggle supersedes us
+    loop {
+        enum Next {
+            Displayed { cur: u32, n_frames: u32, rt: f64, resident: u32, cadence_ms: i32 },
+            Wait,
+            Done(u32),
+        }
+        let (prefetch, next) = {
+            let g = &mut *gfx.borrow_mut();
+            if !g.acq_playing || g.acq_gen != gen {
+                return;
+            }
+            let Some(meta) = g.acq_meta.clone() else { return };
+            // (1) keep the buffer filled ahead of the cursor.
+            let prefetch = if !g.acq_fetching
+                && g.acq_buffer.len() < ACQ_LOOKAHEAD
+                && g.acq_fetch_next < meta.n_frames
+            {
+                let start = g.acq_fetch_next;
+                let count = ACQ_BATCH.min(meta.n_frames - start);
+                g.acq_fetch_next += count;
+                g.acq_fetching = true;
+                Some((start, count, meta.clone()))
+            } else {
+                None
+            };
+            // (2) display one buffered frame.
+            let next = if let Some(frame) = g.acq_buffer.pop_front() {
+                if !frame.is_empty() {
+                    g.renderer.append(&g.queue, &frame);
+                    g.renderer.set_draw_count(u32::MAX);
+                    g.filter_dirty = true;
+                }
+                g.acq_cursor += 1;
+                Next::Displayed {
+                    cur: g.acq_cursor,
+                    n_frames: meta.n_frames,
+                    rt: g.acq_cursor as f64 * meta.rt_cycle_length,
+                    resident: g.renderer.resident(),
+                    cadence_ms: (meta.rt_cycle_length * 1000.0 / g.acq_speed.max(0.05)) as i32,
+                }
+            } else if g.acq_fetch_next >= meta.n_frames && !g.acq_fetching {
+                Next::Done(meta.n_frames) // buffer drained and nothing left to fetch
+            } else {
+                Next::Wait // buffer momentarily empty — prefetch is catching up
+            };
+            (prefetch, next)
+        };
+        if let Some((start, count, meta)) = prefetch {
+            wasm_bindgen_futures::spawn_local(acq_prefetch(gfx.clone(), start, count, meta, gen));
+        }
+        match next {
+            Next::Displayed { cur, n_frames, rt, resident, cadence_ms } => {
+                show_status(&format!(
+                    "▶ frame {cur} / {n_frames} · RT {rt:.0}s · {} pts",
+                    group_short(resident as usize),
+                ));
+                sleep_ms(cadence_ms).await;
+            }
+            Next::Wait => sleep_ms(8).await,
+            Next::Done(n) => {
+                let g = &mut *gfx.borrow_mut();
+                g.acq_playing = false;
+                set_text("acq-play", "▶ Live acquisition");
+                show_status(&format!("acquisition complete — {n} frames"));
+                return;
+            }
+        }
     }
 }
 
