@@ -393,9 +393,17 @@
           <div class="dsum-row"><span class="k">RT</span><span class="v" id="data-rt">—</span></div>
           <div class="dsum-row"><span class="k">Cycle</span><span class="v" id="data-cycle">—</span></div>
         </div>
-        <div class="row" id="acq-row" style="display:none; margin-top:10px">
+        <div class="row" id="acq-row" style="display:none; margin-top:10px; gap:6px; align-items:center">
           <button class="btn" id="acq-play" type="button" style="flex:1">▶ Live acquisition</button>
-          <span class="tip" tabindex="0" role="img" aria-label="help" title="Play a simulated acquisition over time at the device frame rate, colouring each peak by its precursor (a precursor + its fragments share a hue). Requires the acquisition sidecar (?acq=).">i</span>
+          <select id="acq-speed" title="Playback speed (1× = the device's real frame rate)" aria-label="playback speed">
+            <option value="0.25">0.25×</option>
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1× real-time</option>
+            <option value="2">2×</option>
+            <option value="4">4×</option>
+            <option value="1000">Max</option>
+          </select>
+          <span class="tip" tabindex="0" role="img" aria-label="help" title="Play a simulated acquisition over time at the device frame rate, colouring each peak by its precursor (a precursor + its fragments share a hue). 1× is the real device rate; Max runs as fast as frames can be fetched. Requires the acquisition sidecar (?acq=).">i</span>
         </div>
       </section>
       </div>

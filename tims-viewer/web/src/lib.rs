@@ -764,7 +764,7 @@ async fn run() -> Result<(), String> {
         acq_meta: None,
         acq_playing: false,
         acq_cursor: 0,
-        acq_speed: 20.0, // chunk-1 default: lively build-up (no speed slider yet; ~fetch-limited)
+        acq_speed: 1.0, // real-time (the device's true frame rate); the speed selector changes it live
         acq_buffer: std::collections::VecDeque::new(),
         acq_fetch_next: 0,
         acq_fetching: false,
@@ -827,6 +827,18 @@ async fn run() -> Result<(), String> {
     if let Some(btn) = by_id::<web_sys::HtmlElement>("acq-play") {
         let gfx = gfx.clone();
         add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| toggle_acquisition(&gfx));
+    }
+    if let Some(sel) = by_id::<web_sys::HtmlSelectElement>("acq-speed") {
+        let gfx = gfx.clone();
+        // Live: the play-loop reads acq_speed every tick, so this retimes playback mid-run. "Max"
+        // (a big multiplier) drives the cadence toward 0 so it runs as fast as frames are fetched.
+        add_listener(sel.as_ref(), "change", move |_e: web_sys::Event| {
+            if let Some(s) = by_id::<web_sys::HtmlSelectElement>("acq-speed") {
+                if let Ok(v) = s.value().parse::<f64>() {
+                    gfx.borrow_mut().acq_speed = v.max(0.05);
+                }
+            }
+        });
     }
     // ① Data: fill the meta summary now (points/ranges/cycle); the dataset name arrives via /datasets.
     fill_data_summary(server_meta.as_ref());
@@ -2224,6 +2236,12 @@ enum StackOp {
 async fn load_region(gfx: Rc<RefCell<Gfx>>, region: Region, budget: Option<usize>, op: StackOp) {
     {
         let mut g = gfx.borrow_mut();
+        if g.acq_playing {
+            // A region load rebuilds the renderer; doing that under the running play-loop would
+            // desync the two. Make the user stop playback first.
+            show_status("stop live acquisition before focusing a region");
+            return;
+        }
         if g.reloading || g.focus_stack.is_empty() {
             return;
         }
