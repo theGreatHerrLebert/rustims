@@ -28,8 +28,10 @@ class MidiaExperiment:
         self.data_path = data_path
         self.dataset = TimsDatasetDIA(data_path, in_memory=False, use_bruker_sdk=use_bruker_sdk)
 
-        # Per-frame metadata (Id is contiguous 1..N). Time is retention time in seconds.
-        meta = self.dataset.get_table("Frames")[["Id", "Time", "MsMsType"]].copy()
+        # Per-frame metadata (Id is contiguous 1..N). Time is retention time in seconds;
+        # SummedIntensities is Bruker's pre-computed per-frame total ion count — it drives the
+        # TIC straight from this metadata read, with no raw-data scan (the old timsVIS source).
+        meta = self.dataset.get_table("Frames")[["Id", "Time", "MsMsType", "SummedIntensities"]].copy()
         meta = meta.sort_values("Id").reset_index(drop=True)
         self.meta = meta
 
@@ -60,6 +62,8 @@ class MidiaExperiment:
         self.precursor_frame_ids = ids[is_precursor]
         self.rt_of_frame = dict(zip(ids, meta.Time.to_numpy()))
         self.n_cycles = int(cycle_of_id.max()) + 1
+        # Whole-run length in minutes — used to widen the TIC's RT span slider to the real run.
+        self.rt_max_min = float(meta.Time.max()) / 60.0 if len(meta) else 0.0
 
     # -- frame selection ----------------------------------------------------------------
     def frames_in_rt(self, rt_start_s: float, rt_stop_s: float) -> np.ndarray:
@@ -71,6 +75,18 @@ class MidiaExperiment:
     def get_slice_retention_time(self, rt_start_s: float, rt_stop_s: float) -> "MidiaSlice":
         frame_ids = self.frames_in_rt(rt_start_s, rt_stop_s)
         return MidiaSlice(self, frame_ids)
+
+    def precursor_tic(self) -> pd.DataFrame:
+        """Whole-run total ion chromatogram over the precursor (MS1) frames.
+
+        Bruker stores a per-frame ``SummedIntensities`` in the ``Frames`` table, so this is a
+        pure metadata read — the exact quantity the old timsVIS slice selector plotted. Returns
+        one row per MS1 frame: ``rt_min`` (retention time, minutes) and the un-normalized
+        ``intensity``. The dashboard normalizes for display.
+        """
+        p = self.meta[self.meta.MsMsType == 0]
+        return pd.DataFrame({"rt_min": p.Time.to_numpy() / 60.0,
+                             "intensity": p.SummedIntensities.to_numpy(dtype=float)})
 
     # -- extraction-window lookup -------------------------------------------------------
     def midia_dimension(self, step: np.ndarray, scan: np.ndarray) -> np.ndarray:

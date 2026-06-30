@@ -41,6 +41,55 @@ _PALETTES = ["Alphabet", "Light24", "Dark24", "Set3", "Bold", "Vivid"]
 _HDBSCAN_METRICS = ["euclidean", "manhattan", "chebyshev", "l1", "l2", "cityblock",
                     "canberra", "braycurtis", "infinity"]
 
+# Per-knob explanations shown via a hover ⓘ icon next to each clustering control. Phrased for a
+# scientist tuning the result by eye: what the knob does and which way to push it.
+_HELP = {
+    "min_cluster_size": "Smallest group of points HDBSCAN will call a cluster. Higher → fewer, "
+        "bigger clusters and small peaks get dropped as noise; lower → more, smaller clusters.",
+    "min_samples": "How conservative the clustering is. Higher → more points left as noise and "
+        "tighter, denser cluster cores; lower → more points pulled into clusters. Often ≈ min "
+        "cluster size.",
+    "metric": "Distance used to compare points in the scaled (cycle, scan, m/z[, MIDIA]) space. "
+        "euclidean is the default; manhattan / cityblock is more robust to a single odd axis.",
+    "cycle_scaling": "Weights the retention-time (cycle) axis as value → x / 2^scaling. More "
+        "negative compresses RT (points count as closer in time); positive expands it.",
+    "scan_scaling": "Same x / 2^scaling weighting for the scan (ion-mobility) axis. Raise to make "
+        "mobility differences split clusters apart; lower to merge across mobility.",
+    "mz_scaling": "Same x / 2^scaling weighting for the m/z axis. Raise to separate clusters that "
+        "differ in m/z; lower to merge them.",
+    "resolution": "Resolving power used by the peak-width-preserving m/z transform, so m/z spacing "
+        "scales like real peak widths. Higher → finer m/z separation (more clusters).",
+    "alpha": "HDBSCAN robust-linkage distance scaling. Above 1 is more conservative (fewer merges); "
+        "1.0 is standard and rarely needs changing.",
+    "leaf_size": "Internal KD/Ball-tree leaf size — a speed/memory knob for nearest-neighbour "
+        "queries. Does not change the resulting labels.",
+    "approx_min_span_tree": "Use a faster approximate minimum spanning tree. On → quicker on big "
+        "slices, with a tiny chance of a slightly different tree; off → exact but slower.",
+    "gen_min_span_tree": "Also compute and keep the minimum spanning tree (for tree diagnostics). "
+        "No effect on the labels; small extra cost.",
+    "use_probability": "Display only: size points by cluster-membership probability, so core points "
+        "look bigger than fringe points. Does not change which points cluster.",
+    "filter_noise": "Display only: hide the points HDBSCAN labelled as noise (label −1) from the "
+        "3D plot.",
+    "colors": "Display only: qualitative colour palette used to tint the clusters.",
+    # MIDIA-only knobs
+    "cluster_selection_method": "How clusters are cut from the hierarchy. 'eom' (excess of mass) "
+        "favours clusters of varying density; 'leaf' takes the finest leaves → more, smaller clusters.",
+    "cluster_selection_epsilon": "Merge neighbouring clusters closer than this distance. Raise to "
+        "rejoin fragments of one feature that got split; low → keep the raw HDBSCAN split.",
+    "use_midia": "Include the MIDIA extraction-window (precursor isolation m/z) as a 4th clustering "
+        "dimension. On → fragments are also separated by which precursor window isolated them.",
+    "extraction_scaling": "Divides the MIDIA-dimension (mc) axis onto a comparable scale (quad-window "
+        "units). Higher → that axis matters less in the distance.",
+}
+
+
+def _help_html(key: str) -> str:
+    """The formatted explanation block shown when a knob's ⓘ is clicked."""
+    return (f"<div style='background:#eef6fb; border-left:3px solid #2b8cbe;"
+            f" padding:6px 10px; margin:4px 0; border-radius:3px;'>"
+            f"<b>{key.replace('_', ' ')}:</b> {_HELP.get(key, '')}</div>")
+
 
 def _initial_histograms() -> go.FigureWidget:
     fig = make_subplots(rows=2, cols=2, subplot_titles=("Cycle", "Scan", "m/z", "Size"))
@@ -55,7 +104,7 @@ def _initial_histograms() -> go.FigureWidget:
 class DataPanel:
     """Loads a retention-time slice of a run and applies a coarse range filter."""
 
-    def __init__(self, default_path: str = ""):
+    def __init__(self, default_path: str = "", browse_dir: str | None = None):
         self.experiment: MidiaExperiment | None = None
         self._loaded_path: str | None = None
         self.precursor_df = pd.DataFrame()
@@ -66,9 +115,11 @@ class DataPanel:
 
         # Browse-to-pick a run instead of typing the whole path. Bruker .d runs are
         # directories, so this navigates folders and lets you click a .d to select it
-        # (rather than a generic file chooser that would descend *into* the .d).
+        # (rather than a generic file chooser that would descend *into* the .d). The browser
+        # opens at ``browse_dir`` when given (e.g. a folder of runs), else the run's parent.
         self._suppress_browse = False
-        self.browse_dir = self._initial_browse_dir(default_path)
+        self.browse_dir = (browse_dir if browse_dir and os.path.isdir(browse_dir)
+                           else self._initial_browse_dir(default_path))
         self.browse_label = widgets.HTML()
         self.browser = widgets.Select(options=[], rows=8, description="",
                                       layout=widgets.Layout(width="60%"))
@@ -78,8 +129,15 @@ class DataPanel:
         self.refresh_button.on_click(lambda _c: self._refresh_browser())
         self._refresh_browser()
 
-        self.rt_start = widgets.FloatText(value=5.0, description="RT min (min):")
-        self.rt_stop = widgets.FloatText(value=7.0, description="RT max (min):")
+        # RT range as a span over the whole-run TIC, so you can see which part of the
+        # chromatogram you're slicing (faithful to the old timsVIS slice selector). Bounds are
+        # minutes; ``max`` widens to the real run length once a run is opened (_draw_tic).
+        self.rt_range = widgets.FloatRangeSlider(
+            value=[5.0, 7.0], min=0.0, max=46.0, step=0.1, readout_format=".1f",
+            description="RT (min):", continuous_update=False,
+            layout=widgets.Layout(width="60%"))
+        self.rt_range.observe(self._on_rt_range_change, names="value")
+        self.tic = self._make_tic_widget()
         self.mz_min = widgets.FloatText(value=700.0, description="m/z min:")
         self.mz_max = widgets.FloatText(value=730.0, description="m/z max:")
         self.scan_min = widgets.IntText(value=300, description="scan min:")
@@ -94,7 +152,8 @@ class DataPanel:
             widgets.HBox([self.browse_label, self.refresh_button]),
             self.browser,
             self.path,
-            widgets.HBox([self.rt_start, self.rt_stop]),
+            self.rt_range,
+            self.tic,
             widgets.HBox([self.mz_min, self.mz_max]),
             widgets.HBox([self.scan_min, self.scan_max, self.intensity_min]),
             widgets.HBox([self.load_button, self.status]),
@@ -146,9 +205,9 @@ class DataPanel:
             self.browse_dir = parent or os.path.sep
             self._refresh_browser()
         elif val.endswith(".d"):
-            self.path.value = val  # pick this run; load happens on "Load slice"
-            self.status.value = f"selected <b>{os.path.basename(val)}</b> — press Load slice"
+            self.path.value = val  # pick this run; the heavy point load happens on "Load slice"
             self._clear_browser_selection()  # so re-clicking the same .d works
+            self._show_tic()  # open the run (cheap metadata) and draw its TIC to pick against
         else:
             try:  # validate readability before navigating, so a failed open doesn't strand us
                 os.listdir(val)
@@ -159,14 +218,72 @@ class DataPanel:
             self.browse_dir = val
             self._refresh_browser()
 
+    def _ensure_experiment(self) -> None:
+        """Open the run (a cheap metadata read) if not already open for the current path."""
+        if self.experiment is None or self._loaded_path != self.path.value:
+            self.experiment = MidiaExperiment(self.path.value)
+            self._loaded_path = self.path.value
+
+    # -- TIC slice selector (faithful to the old timsVIS DDADataLoader) -------------------
+    @staticmethod
+    def _make_tic_widget() -> go.FigureWidget:
+        """An empty 2D TIC line. 2D FigureWidgets render fine under Voila (unlike Scatter3d)."""
+        fig = go.FigureWidget(data=go.Scatter(x=[], y=[], mode="lines",
+                                              line=dict(color="#444", width=1)))
+        fig.update_layout(title="Total Intensity Count (MS1)", template="plotly_white",
+                          xaxis_title="Time [min]", yaxis_title="Normalized intensity",
+                          yaxis_range=[0, 1], width=620, height=240,
+                          margin=dict(l=10, r=10, b=30, t=40))
+        return fig
+
+    def _show_tic(self) -> None:
+        """Open the run and draw its whole-run TIC, so the RT span is picked against it."""
+        try:
+            self.status.value = "<i>reading frame metadata…</i>"
+            self._ensure_experiment()
+            self._draw_tic()
+            self.status.value = (f"run open — <b>{self.experiment.n_cycles:,}</b> cycles; "
+                                 f"select an RT span, then press Load slice")
+        except Exception as e:
+            self.status.value = f"<span style='color:red'>{type(e).__name__}: {e}</span>"
+
+    def _draw_tic(self) -> None:
+        """Fill the TIC line from the run's MS1 SummedIntensities and fit the RT slider to it."""
+        tic = self.experiment.precursor_tic().sort_values("rt_min")
+        x = tic.rt_min.to_numpy()
+        y = tic.intensity.to_numpy()
+        ymax = float(y.max()) if len(y) and y.max() > 0 else 1.0
+        with self.tic.batch_update():
+            self.tic.data[0].x = x
+            self.tic.data[0].y = y / ymax
+        # Widen the RT span slider to the real run length and clamp the current span into it.
+        run_max = round(max(self.experiment.rt_max_min, 0.1), 1)
+        lo, hi = self.rt_range.value
+        self.rt_range.max = max(run_max, hi)  # never below the current high (ipywidgets invariant)
+        self.rt_range.value = [min(lo, run_max), min(hi, run_max)]
+        self.rt_range.max = run_max
+        self._draw_span()
+
+    def _draw_span(self) -> None:
+        """Redraw the green selection span on the TIC at the current RT range."""
+        lo, hi = self.rt_range.value
+        self.tic.layout["shapes"] = ()
+        self.tic.add_vrect(x0=lo, x1=hi, line_width=1, fillcolor="green", opacity=0.3)
+
+    def _on_rt_range_change(self, _change: object) -> None:
+        # The span only matters once a TIC is drawn; add_vrect on an empty plot is harmless.
+        self._draw_span()
+
     def _on_load(self, _change: object) -> None:
         try:
             self.status.value = "<i>loading…</i>"
-            if self.experiment is None or self._loaded_path != self.path.value:
-                self.experiment = MidiaExperiment(self.path.value)
-                self._loaded_path = self.path.value
+            newly_opened = self.experiment is None or self._loaded_path != self.path.value
+            self._ensure_experiment()
+            if newly_opened:
+                self._draw_tic()  # a typed-path first load gets its TIC too (not just .d picks)
+            rt0, rt1 = self.rt_range.value
             sl = self.experiment.get_slice_retention_time(
-                self.rt_start.value * 60.0, self.rt_stop.value * 60.0
+                rt0 * 60.0, rt1 * 60.0
             ).filtered(mz_min=self.mz_min.value, mz_max=self.mz_max.value,
                        scan_min=self.scan_min.value, scan_max=self.scan_max.value,
                        intensity_min=self.intensity_min.value)
@@ -182,7 +299,7 @@ class DataPanel:
         parts = [p for p in self.path.value.rstrip("/").split("/") if p]
         return {
             "id": parts[-1] if parts else "",
-            "rt_min_min": self.rt_start.value, "rt_max_min": self.rt_stop.value,
+            "rt_min_min": self.rt_range.value[0], "rt_max_min": self.rt_range.value[1],
             "mz_min": self.mz_min.value, "mz_max": self.mz_max.value,
             "scan_min": self.scan_min.value, "scan_max": self.scan_max.value,
             "intensity_min": self.intensity_min.value,
@@ -204,7 +321,7 @@ class PointCloudPanel:
 
         self.opacity = widgets.FloatSlider(value=0.3, min=0.1, max=1.0, step=0.1,
                                             description="opacity:", continuous_update=False)
-        self.point_size = widgets.FloatSlider(value=2.0, min=0.5, max=6.0, step=0.5,
+        self.point_size = widgets.FloatSlider(value=1.0, min=0.5, max=6.0, step=0.5,
                                               description="point size:", continuous_update=False)
         self.colorscale = widgets.Dropdown(options=sorted(px.colors.named_colorscales()),
                                            value="inferno", description="colors:")
@@ -281,7 +398,7 @@ class FragmentPointCloudPanel:
 
         self.opacity = widgets.FloatSlider(value=0.3, min=0.1, max=1.0, step=0.1,
                                             description="opacity:", continuous_update=False)
-        self.point_size = widgets.FloatSlider(value=2.0, min=0.5, max=6.0, step=0.5,
+        self.point_size = widgets.FloatSlider(value=1.0, min=0.5, max=6.0, step=0.5,
                                               description="point size:", continuous_update=False)
         self.colorscale = widgets.Dropdown(options=sorted(px.colors.named_colorscales()),
                                            value="inferno", description="colors:")
@@ -387,6 +504,94 @@ class FragmentPointCloudPanel:
         return fig
 
 
+class SurfacePanel:
+    """A 2D intensity heatmap over two raw axes — the third is summed (folded) out.
+
+    Recovers the old timsVIS ``TimsSurfaceVisualizer``: voxelize the precursor (MS1) slice and
+    sum one axis to get an intensity surface over the other two (RT×scan, RT×m/z or scan×m/z),
+    with identity/sqrt/log normalization and a coarse→fine resolution control. Rebuilt on
+    ``numpy.histogram2d`` + a 2D ``go.Heatmap`` — no TensorFlow and no heavy 3D ``go.Surface``,
+    so it stays light and renders under Voila. Like the original, this is an MS1-only view (the
+    old tool had no MIDIA surface) and folds the already range-filtered slice.
+    """
+
+    _DIMS = ["retention time", "scan", "m/z"]              # data order: (cycle, scan, mz)
+    _COL = {"retention time": "cycle", "scan": "scan", "m/z": "mz"}
+    _LABEL = {"retention time": "Cycle (RT)", "scan": "Scan (mobility)", "m/z": "m/z"}
+    _NBINS = {0: 60, 1: 120, 2: 240, 3: 480}              # resolution 0..3 -> bins per axis
+
+    def __init__(self, data_panel: DataPanel, title: str = "Intensity surface (MS1)"):
+        self.data_panel = data_panel
+
+        self.exclude_dim = widgets.Dropdown(options=self._DIMS, value="m/z", description="exclude:")
+        self.normalization = widgets.Dropdown(options=["identity", "sqrt", "log"],
+                                              value="identity", description="normalize:")
+        self.resolution = widgets.IntSlider(value=1, min=0, max=3, description="resolution:",
+                                            continuous_update=False)
+        self.colorscale = widgets.Dropdown(options=sorted(px.colors.named_colorscales()),
+                                           value="viridis", description="colors:")
+        self.render_button = widgets.Button(description="Display", button_style="info")
+        self.status = widgets.HTML()
+        self.render_button.on_click(self._on_render)
+        self.out = widgets.Output()
+        with self.out:
+            display(self._figure(None, "retention time", "scan"))
+
+        self.box = widgets.VBox([
+            widgets.HTML(f"<b>{title}</b>"),
+            widgets.HBox([self.exclude_dim, self.normalization, self.resolution, self.colorscale]),
+            widgets.HBox([self.render_button, self.status]),
+            self.out,
+        ])
+
+    def _on_render(self, _change: object) -> None:
+        try:
+            df = self.data_panel.precursor_df
+            if len(df) == 0:
+                self.status.value = "<i>load a slice first</i>"
+                return
+            exclude = self.exclude_dim.value
+            # Remaining dims keep the (cycle, scan, mz) order; first -> rows (y), second -> cols (x).
+            y_dim, x_dim = [d for d in self._DIMS if d != exclude]
+            yv = df[self._COL[y_dim]].to_numpy(dtype=float)
+            xv = df[self._COL[x_dim]].to_numpy(dtype=float)
+            w = df.intensity.to_numpy(dtype=float)
+            nb = self._NBINS[self.resolution.value]
+            # histogram2d(first, second) -> H[i,j] over (first=y, second=x); edges follow that order.
+            H, yedges, xedges = np.histogram2d(yv, xv, bins=nb, weights=w)
+            H = self._normalize(H)
+            xc = 0.5 * (xedges[:-1] + xedges[1:])
+            yc = 0.5 * (yedges[:-1] + yedges[1:])
+            self.status.value = (f"<b>{len(df):,}</b> pts → {H.shape[0]}×{H.shape[1]} grid, "
+                                 f"folded over {exclude}")
+            fig = self._figure((H, xc, yc), y_dim, x_dim)
+            with self.out:
+                self.out.clear_output(wait=True)
+                display(fig)
+        except Exception as e:
+            self.status.value = f"<span style='color:red'>{type(e).__name__}: {e}</span>"
+
+    def _normalize(self, H: np.ndarray) -> np.ndarray:
+        if self.normalization.value == "sqrt":
+            return np.sqrt(H)
+        if self.normalization.value == "log":
+            return np.log(H + 1.0)
+        return H
+
+    def _figure(self, grid: tuple | None, y_dim: str, x_dim: str) -> go.Figure:
+        fig = go.Figure()
+        if grid is not None:
+            H, xc, yc = grid
+            fig.add_trace(go.Heatmap(z=H, x=xc, y=yc, colorscale=self.colorscale.value,
+                                     colorbar=dict(title="Intensity")))
+        else:
+            fig.add_trace(go.Heatmap(z=[[0.0]]))
+        fig.update_layout(margin=dict(l=10, r=10, b=40, t=10), width=720, height=520,
+                          template="plotly_white",
+                          xaxis_title=self._LABEL[x_dim], yaxis_title=self._LABEL[y_dim])
+        return fig
+
+
 class _ClusterPanel:
     """Shared UI: HDBSCAN sliders, a Cluster button, a 3D scatter, stats + histograms."""
 
@@ -442,20 +647,52 @@ class _ClusterPanel:
         self.summary = widgets.Output()
         self.histograms = _initial_histograms()
 
+        # Click an ⓘ to pin its explanation here (hovering shows the same text as a tooltip).
+        self.help_box = widgets.HTML()
+
         self.box = widgets.VBox([
-            widgets.HTML(f"<b>{title}</b>"),
+            widgets.HTML(f"<b>{title}</b> &nbsp;<span style='color:#888'>— hover or click the "
+                         "<span style='color:#2b8cbe'>&#9432;</span> icons to learn what each knob does</span>"),
+            self.help_box,
             self._extra_controls(),
-            widgets.HBox([self.min_cluster_size, self.min_samples, self.metric]),
-            widgets.HBox([self.cycle_scaling, self.scan_scaling, self.mz_scaling, self.resolution]),
-            widgets.HBox([self.alpha, self.leaf_size,
-                          self.approx_min_span_tree, self.gen_min_span_tree, self.use_probability]),
-            widgets.HBox([self.cluster_button, self.filter_noise, self.colors]),
+            widgets.HBox([self._wrap_help(self.min_cluster_size, "min_cluster_size"),
+                          self._wrap_help(self.min_samples, "min_samples"),
+                          self._wrap_help(self.metric, "metric")]),
+            widgets.HBox([self._wrap_help(self.cycle_scaling, "cycle_scaling"),
+                          self._wrap_help(self.scan_scaling, "scan_scaling"),
+                          self._wrap_help(self.mz_scaling, "mz_scaling"),
+                          self._wrap_help(self.resolution, "resolution")]),
+            widgets.HBox([self._wrap_help(self.alpha, "alpha"),
+                          self._wrap_help(self.leaf_size, "leaf_size"),
+                          self._wrap_help(self.approx_min_span_tree, "approx_min_span_tree"),
+                          self._wrap_help(self.gen_min_span_tree, "gen_min_span_tree"),
+                          self._wrap_help(self.use_probability, "use_probability")]),
+            widgets.HBox([self.cluster_button,
+                          self._wrap_help(self.filter_noise, "filter_noise"),
+                          self._wrap_help(self.colors, "colors")]),
             widgets.HBox([self.config_name, self.save_button, self.save_status]),
             widgets.HBox([self.scatter_out, widgets.VBox([self.summary, self.histograms])]),
         ])
 
     def _extra_controls(self) -> widgets.Widget:
         return widgets.HBox([])
+
+    # -- per-knob help (hover tooltip + click-to-pin explanation) ------------------------
+    def _wrap_help(self, widget: widgets.Widget, key: str) -> widgets.HBox:
+        """Pair a control with a small ⓘ button: hover shows the tooltip, click pins the text.
+
+        A Button (not styled HTML) is used because ipywidgets' HTML sanitizes the ``title``
+        attribute away; a Button's ``tooltip`` trait surfaces on hover, and ``on_click`` writes
+        the explanation into the panel's shared ``help_box`` so a click does something visible.
+        """
+        b = widgets.Button(icon="info-circle", tooltip=_HELP.get(key, ""),
+                           layout=widgets.Layout(width="30px", height="28px"))
+        b.style.button_color = "transparent"
+        b.on_click(lambda _b, k=key: self._show_help(k))
+        return widgets.HBox([widget, b], layout=widgets.Layout(align_items="center"))
+
+    def _show_help(self, key: str) -> None:
+        self.help_box.value = _help_html(key)
 
     def _on_cluster(self, _change: object) -> None:
         try:
@@ -606,8 +843,10 @@ class MidiaHDBSCANPanel(_ClusterPanel):
         self.use_midia = widgets.Checkbox(value=True, description="include MIDIA dim", indent=False)
         self.extraction_scaling = widgets.IntSlider(value=36, min=1, max=120, step=1,
                                                     description="quad scaling:", continuous_update=False)
-        return widgets.HBox([self.cluster_selection_method, self.cluster_selection_epsilon,
-                             self.use_midia, self.extraction_scaling])
+        return widgets.HBox([self._wrap_help(self.cluster_selection_method, "cluster_selection_method"),
+                             self._wrap_help(self.cluster_selection_epsilon, "cluster_selection_epsilon"),
+                             self._wrap_help(self.use_midia, "use_midia"),
+                             self._wrap_help(self.extraction_scaling, "extraction_scaling")])
 
     def _cluster_settings(self) -> dict:
         return {**super()._cluster_settings(),
@@ -741,9 +980,11 @@ class MidiaFilterPanel:
 class MidiaVis:
     """Tabbed dashboard: data loading + precursor and MIDIA clustering."""
 
-    def __init__(self, default_path: str = ""):
-        self.data_panel = DataPanel(default_path)
+    def __init__(self, default_path: str = "", browse_dir: str | None = None):
+        self.data_panel = DataPanel(default_path, browse_dir=browse_dir)
         self.precursor_cloud = PointCloudPanel(self.data_panel, "precursor", "Precursor point cloud")
+        # Folded-intensity heatmap of the MS1 slice (recovers the old timsVIS Surface tab).
+        self.precursor_surface = SurfacePanel(self.data_panel)
         self.precursor_panel = PrecursorHDBSCANPanel(self.data_panel)
         # The MIDIA filter is the fragment source for the MIDIA cloud + clustering tabs.
         self.midia_filter = MidiaFilterPanel(self.data_panel)
@@ -751,18 +992,19 @@ class MidiaVis:
         self.midia_panel = MidiaHDBSCANPanel(self.midia_filter)
         self.tab = widgets.Tab(children=[self.data_panel.controls,
                                          self.precursor_cloud.box,
+                                         self.precursor_surface.box,
                                          self.precursor_panel.box,
                                          self.midia_filter.controls,
                                          self.fragment_cloud.box,
                                          self.midia_panel.box])
-        for i, t in enumerate(["Data", "Precursor cloud", "Precursor HDBSCAN",
+        for i, t in enumerate(["Data", "Precursor cloud", "Precursor surface", "Precursor HDBSCAN",
                                "MIDIA filter", "Fragment cloud", "MIDIA HDBSCAN"]):
             self.tab.set_title(i, t)
         self.tab.observe(self._on_tab_change, names="selected_index")
 
     def _on_tab_change(self, change: object) -> None:
         # Redraw the clustering histogram FigureWidgets when their (hidden) tab is shown.
-        panel = {2: self.precursor_panel, 5: self.midia_panel}.get(change["new"])
+        panel = {3: self.precursor_panel, 6: self.midia_panel}.get(change["new"])
         if panel is not None:
             panel.nudge_resize()
 

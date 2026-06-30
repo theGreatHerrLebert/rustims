@@ -11,7 +11,9 @@ def calculate_mz_tick_spacing(mz_min, mz_max, num_ticks=10):
 
 class ImsPointCloudVisualizer(abc.ABC):
     def __init__(self, data):
+        # numpy array of shape (N, 4) where each row is [x, y, z, intensity]
         self.data = data
+        # Create the widgets for the visualizer, including sliders and dropdown
         self.__create_widgets()
 
     def __create_widgets(self):

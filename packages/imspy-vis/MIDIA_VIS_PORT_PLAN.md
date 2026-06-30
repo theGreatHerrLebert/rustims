@@ -28,7 +28,7 @@ Improvements over the original to KEEP:
 
 | Original (7 tabs) | Port (5 tabs) | Status |
 |---|---|---|
-| Data (`MIDIADataLoader`) | Data (`DataPanel`) | merged load+filter; RT FloatText not sliders |
+| Data (`MIDIADataLoader`) | Data (`DataPanel`) | merged load+filter; RT range slider + TIC slice selector |
 | MS-I filter (`MidiaPrecursorScanFilter`) | (folded into Data) | separate-filter tab dropped |
 | MS-I points (`MidiaPrecursorPointCloudVis`) | Precursor cloud (`PointCloudPanel`) | faithful |
 | MS-I HDBSCAN (`HDBSCANVisualizer`) | Precursor HDBSCAN (`PrecursorHDBSCANPanel`) | controls trimmed |
@@ -108,10 +108,34 @@ Decision (David): **rebuild the full filter tab.** Implemented as `MidiaFilterPa
   `..`, unreadable-dir rollback, suppression `finally`). Symlink-following kept (data mounts).
 - Optionally split Data-load from an MS-I scan filter tab (re-filter without reload); the
   slice is already cached so this is mostly UX.
-- RT as scrubbable sliders (0–46 min) instead of FloatText.
+- ~~RT as scrubbable sliders (0–46 min) instead of FloatText.~~ *(DONE — see item 6)*
 - ~~Align defaults: original precursor HDBSCAN `min_samples=1`~~ *(DONE — precursor
   min_cluster_size=13/min_samples=1; MIDIA min_cluster_size=7/min_samples=7/metric=manhattan,
   all matching the originals)*.
+
+### 6. Raw-data-view recovery from proteolizard-vis (timsVIS)  *(DONE)*
+A raw-data-view audit against `proteolizard-vis` (the `DDADataLoader`/`TimsVisualizer` side, not
+just `proteolizard-midia`) found two viewing capabilities the MIDIA tool either never had or the
+port had dropped. Both are now in `DataPanel`/`MidiaVis`:
+- **TIC slice selector** *(restored from `DDADataLoader`)* — `DataPanel` now opens the run on a
+  `.d` pick (a cheap `Frames`-table read) and draws the whole-run TIC from
+  `MidiaExperiment.precursor_tic()` (MS1 `SummedIntensities` vs minutes — zero raw I/O). RT is a
+  `FloatRangeSlider`; a green `add_vrect` span tracks it live so you see which part of the
+  chromatogram you're slicing. Improvements over the original: x-axis in real minutes (no
+  frame-index binning hack) and `continuous_update=False` (no `%3` throttle).
+  NB: this was a `DDADataLoader` feature; `MIDIADataLoader` never had it — so this is a net add.
+- **Intensity surface** *(rebuilt from `surface.py::TimsSurfaceVisualizer`)* — new `SurfacePanel`
+  + "Precursor surface" tab: fold (sum) one of RT/scan/m-z and show the other two as a 2D
+  intensity heatmap, with `exclude_dim` / `identity·sqrt·log` normalization / coarse→fine
+  `resolution`. Rebuilt on `numpy.histogram2d` + `go.Heatmap` — drops the original's TensorFlow
+  dependency and heavy 3D `go.Surface`. MS1-only (the original had no MIDIA surface).
+
+Audit also confirmed the port already matches the rest of the timsVIS raw-data view: point clouds
+(opacity/size/all-colorscales/dynamic m-z ticks, plus a `max_points` cap the original lacked),
+fragment exclude-dim/color-by/quad-scaling, the rich MIDIA filter, and the histogram side-panel.
+Not pursued (low value / never existed in the original): point hover/click-to-inspect, box
+selection, and adding sqrt/identity color-normalization to the point clouds (the surface covers
+the normalization need).
 
 ## Acceptance
 - [x] Save-settings writes a CSV with Name + all filter/cluster params for both panels.
@@ -120,3 +144,5 @@ Decision (David): **rebuild the full filter tab.** Implemented as `MidiaFilterPa
       cluster_selection_method/epsilon, broad metric list).
 - [x] MIDIA filter tab decision recorded (rebuilt for full fidelity).
 - [x] Improvements retained: metadata-derived windows, window-less-fragment drop, max_points.
+- [x] TIC slice selector restored: whole-run TIC + live green RT span on the Data tab.
+- [x] Intensity surface restored: fold-one-axis heatmap with normalization + resolution (no TF).
