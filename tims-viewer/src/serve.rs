@@ -677,35 +677,62 @@ fn intensity_frac(imin: f32, i_ref: Option<(&[u32], f32)>) -> f64 {
     (above as f64 / total as f64).max(1.0 / total as f64)
 }
 
+/// Does the request actually accept `zstd`? Token-correct: matches the `zstd` coding exactly (not a
+/// substring like `x-zstd`) across a `gzip, zstd, br` list and rejects an explicit `q=0`.
+fn accepts_zstd(req: &Request) -> bool {
+    req.headers().iter().filter(|h| h.field.equiv("Accept-Encoding")).any(|h| {
+        h.value.as_str().split(',').any(|tok| {
+            let mut parts = tok.split(';').map(str::trim);
+            let coding = parts.next().unwrap_or("");
+            coding.eq_ignore_ascii_case("zstd")
+                // accept unless an explicit q=0 disqualifies it
+                && parts.all(|p| {
+                    p.strip_prefix("q=")
+                        .or_else(|| p.strip_prefix("Q="))
+                        .and_then(|v| v.parse::<f64>().ok())
+                        .map_or(true, |q| q > 0.0)
+                })
+        })
+    })
+}
+
 /// Serve the `/points` payload, zstd-compressing it when `--compress` is on AND the client advertises
 /// `Accept-Encoding: zstd` (the browser then decompresses `Content-Encoding: zstd` transparently — no
-/// client code). Falls back to the raw body if disabled, not negotiated, or on any encode error.
+/// client code). When compression is enabled the response carries `Vary: Accept-Encoding` so a shared
+/// cache/proxy can't hand a zstd body to a client that didn't ask. Falls back to raw on encode error.
 fn respond_points(req: Request, body: Arc<[u8]>, compress: bool) -> std::io::Result<()> {
-    let want_zstd = compress
-        && req.headers().iter().any(|h| {
-            h.field.equiv("Accept-Encoding") && h.value.as_str().to_ascii_lowercase().contains("zstd")
-        });
-    if want_zstd {
+    if !compress {
+        return respond_bytes(req, body, "application/octet-stream");
+    }
+    if accepts_zstd(&req) {
         match zstd::encode_all(&body[..], 3) {
             Ok(z) => {
                 let len = z.len();
-                let resp = Response::new(
+                return req.respond(Response::new(
                     StatusCode(200),
                     vec![
                         cors(),
                         header("Content-Type", "application/octet-stream"),
                         header("Content-Encoding", "zstd"),
+                        header("Vary", "Accept-Encoding"),
                     ],
                     Cursor::new(z),
                     Some(len),
                     None,
-                );
-                return req.respond(resp);
+                ));
             }
             Err(e) => log::warn!("zstd encode failed ({e}); sending raw points"),
         }
     }
-    respond_bytes(req, body, "application/octet-stream")
+    // Raw, but still Vary — this route negotiates, so caches must key on Accept-Encoding.
+    let len = body.len();
+    req.respond(Response::new(
+        StatusCode(200),
+        vec![cors(), header("Content-Type", "application/octet-stream"), header("Vary", "Accept-Encoding")],
+        Cursor::new(body),
+        Some(len),
+        None,
+    ))
 }
 
 /// Serve a shared byte buffer without copying it per request (Cursor over the `Arc`).
