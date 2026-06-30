@@ -26,14 +26,57 @@ Then load the viewer with ``?acq=http://localhost:8092`` (or it auto-detects the
 from __future__ import annotations
 
 import argparse
+import atexit
 import json
+import os
 import sqlite3
+import tempfile
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 from imspy_simulation.builders.dia import DIAFrameBuilder
+
+
+def build_subset_db(src_path: str, max_peptides: int) -> str:
+    """Write a temp DB with only the first `max_peptides` peptides (+ their ions/fragment_ions),
+    keeping every other table whole (frames/scans/dia windows are the acquisition schedule, not
+    peptide data). Lets the eager annotated builder init in seconds over a slice of a huge sim instead
+    of minutes over all of it — a no-Rust "semi-lazy" startup. Returns the temp DB path (auto-removed
+    at exit)."""
+    fd, tmp = tempfile.mkstemp(suffix=".db", prefix="acq_subset_")
+    os.close(fd)
+    os.remove(tmp)  # let sqlite create it fresh
+    t = time.perf_counter()
+    con = sqlite3.connect(tmp)
+    try:
+        con.execute("ATTACH DATABASE ? AS src", (src_path,))
+        tables = [
+            r[0] for r in con.execute(
+                "SELECT name FROM src.sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+            )
+        ]
+        # peptides first (ions/fragment_ions reference it); CREATE AS SELECT copies data, no indexes —
+        # fine for the small subset the builder reads.
+        con.execute(
+            f"CREATE TABLE peptides AS SELECT * FROM src.peptides ORDER BY peptide_id LIMIT {int(max_peptides)}"
+        )
+        for t_name in ("ions", "fragment_ions"):
+            if t_name in tables:
+                con.execute(
+                    f"CREATE TABLE {t_name} AS SELECT * FROM src.{t_name} "
+                    "WHERE peptide_id IN (SELECT peptide_id FROM peptides)"
+                )
+        for t_name in tables:
+            if t_name not in ("peptides", "ions", "fragment_ions"):
+                con.execute(f"CREATE TABLE {t_name} AS SELECT * FROM src.{t_name}")
+        con.commit()
+    finally:
+        con.close()
+    atexit.register(lambda: os.path.exists(tmp) and os.remove(tmp))
+    print(f"subset DB ({max_peptides} peptides) built in {time.perf_counter() - t:.1f}s", flush=True)
+    return tmp
 
 # NOTE: the Rust builder (PyTimsTofSyntheticsFrameBuilderDIA) is *unsendable* — it must stay on the
 # thread that created it — so this server is single-threaded (plain HTTPServer). That's fine: the DIA
@@ -53,14 +96,22 @@ _REC = np.dtype([
 class Acquisition:
     """Holds the eager annotated builder + precomputed run metadata."""
 
-    def __init__(self, db_path: str, num_threads: int, fragmentation: bool):
+    def __init__(self, db_path: str, num_threads: int, fragmentation: bool, max_peptides: int = 0):
         self.fragmentation = fragmentation
+        # Optional "semi-lazy" startup: build over a peptide subset so the eager builder inits in
+        # seconds (the frame schedule stays whole, so playback covers the full run).
+        builder_db = db_path
+        if max_peptides > 0:
+            print(f"subsetting to the first {max_peptides} peptides for a fast startup…", flush=True)
+            builder_db = build_subset_db(db_path, max_peptides)
         # Eager builder WITH annotations (lazy + annotations is not supported yet). This reads/builds
-        # all peptides + annotated fragment spectra up front — fine for small/medium sims.
-        print(f"loading annotated builder from {db_path} (this reads all peptides up front)…", flush=True)
+        # all (subset) peptides + annotated fragment spectra up front.
+        print(f"loading annotated builder from {builder_db}…", flush=True)
         t = time.perf_counter()
-        self.builder = DIAFrameBuilder(db_path, num_threads=num_threads, with_annotations=True)
+        self.builder = DIAFrameBuilder(builder_db, num_threads=num_threads, with_annotations=True)
         print(f"builder ready in {time.perf_counter() - t:.1f}s", flush=True)
+        # Frame metadata comes from the (subset or full) builder DB — both carry the full frames table.
+        db_path = builder_db
 
         # Frame metadata from the synthetic DB's `frames` table — detect columns FIRST (some DBs use
         # `id`/`rt`), then order by the detected id column.
@@ -228,9 +279,11 @@ def main():
     ap.add_argument("--port", type=int, default=8092)
     ap.add_argument("--threads", type=int, default=-1, help="builder threads (-1 = auto)")
     ap.add_argument("--no-fragmentation", action="store_true", help="precursor-only (skip MS2 fragments)")
+    ap.add_argument("--max-peptides", type=int, default=0,
+                    help="semi-lazy: build over only the first N peptides for a fast startup (0 = all)")
     args = ap.parse_args()
 
-    Handler.acq = Acquisition(args.db, args.threads, not args.no_fragmentation)
+    Handler.acq = Acquisition(args.db, args.threads, not args.no_fragmentation, args.max_peptides)
     a = Handler.acq
     print(
         f"acquisition service on http://localhost:{args.port}  "

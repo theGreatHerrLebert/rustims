@@ -33,6 +33,9 @@ python tims-viewer/cluster_service.py --port 8091
 # Point it at a prepared synthetic-sim DB (synthetic_data.db), NOT a .d.
 /Users/davidteschner/Promotion/thesis/.venv/bin/python tims-viewer/acquisition_service.py \
     --db /Users/davidteschner/Promotion/timsim/TIMSIM-DIA/synthetic_data.db --port 8092
+# Big sims (e.g. the 2GB 250K MIDIA blueprints) take minutes to init the eager builder. Use
+# --max-peptides N for a ~seconds startup over a slice (full frame schedule kept; ~2s per 2k peptides):
+#   ... --db .../MIDIA-250K-NOISY-CHRONO-FRAG/synthetic_data.db --port 8092 --max-peptides 5000
 # Status today: the viewer DETECTS it (logs the run meta to the browser console). The
 # play/pause/timeline UI is the next slice — no visible playback yet. Override URL: ?acq=<base>.
 
