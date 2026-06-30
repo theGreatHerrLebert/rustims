@@ -49,6 +49,9 @@ png = { version = "0.17", optional = true }
 # Tiny synchronous HTTP server for the Phase-2 point-streaming endpoint (`--serve`).
 tiny_http = { version = "0.12", optional = true }
 serde_json = { version = "1", optional = true }
+# Optional over-the-wire compression of the (large) /points payload, negotiated via Accept-Encoding
+# (`--compress`). Native-only; the browser decompresses `Content-Encoding: zstd` transparently.
+zstd = { version = "0.13", optional = true }
 
 [features]
 default = ["native"]
@@ -57,7 +60,7 @@ default = ["native"]
 native = [
     "dep:pollster", "dep:anyhow", "dep:rustdf", "dep:mscore", "dep:winit", "dep:egui-winit",
     "dep:env_logger", "dep:clap", "dep:rayon", "dep:crossbeam-channel", "dep:png",
-    "dep:tiny_http", "dep:serde_json",
+    "dep:tiny_http", "dep:serde_json", "dep:zstd",
 ]
 # (reserved) Pack positions/intensity as f16 to roughly halve on-GPU/wire size. Not yet
 # implemented — see NATIVE_WEB.md Phase 3.

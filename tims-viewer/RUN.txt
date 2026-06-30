@@ -12,6 +12,8 @@ cd /Users/davidteschner/Promotion/rustims
 # (rebuild only if Rust changed since last time)
 cargo build -p tims-viewer --release
 ./target/release/tims-viewer /Users/davidteschner/Promotion/midia/timsim --serve 8090 --budget 12000000
+# Over a network, add --compress: zstd-compresses /points when the browser supports it (~2.6x,
+# 356MB -> 138MB; transparent client-side decode). Leave it off for localhost (raw is faster).
 
 
 2) WEB APP  (release = the fast wasm)

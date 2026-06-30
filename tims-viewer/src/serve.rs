@@ -183,6 +183,8 @@ struct Hub {
     source: ServeSource,
     entries: Vec<DatasetEntry>,
     budget: Option<usize>,
+    /// zstd-compress the /points payload when the client advertises Accept-Encoding: zstd.
+    compress: bool,
     states: Mutex<StateCache>,
     /// Per-dataset build locks: a dataset switch fires `/meta` + `/points` + `/windows` near-
     /// simultaneously, so serialize concurrent builds of the *same* id (the rest re-check the cache
@@ -286,7 +288,7 @@ fn build_datasets_json(entries: &[DatasetEntry]) -> Arc<[u8]> {
 
 /// Build the registry, eagerly build the default dataset (fast first paint), then serve region
 /// queries — and dataset switches — on demand from `WORKERS` threads.
-pub fn serve(source: ServeSource, budget: Option<usize>, port: u16) -> Result<()> {
+pub fn serve(source: ServeSource, budget: Option<usize>, port: u16, compress: bool) -> Result<()> {
     anyhow::ensure!(
         cfg!(target_endian = "little"),
         "the point wire format is little-endian; --serve is unsupported on this big-endian target"
@@ -306,10 +308,14 @@ pub fn serve(source: ServeSource, budget: Option<usize>, port: u16) -> Result<()
         source,
         entries,
         budget,
+        compress,
         states: Mutex::new(StateCache::default()),
         build_locks: Mutex::new(HashMap::new()),
         datasets_json,
     });
+    if compress {
+        log::info!("over-the-wire zstd compression enabled for /points (Accept-Encoding negotiated)");
+    }
 
     // Eagerly build the default dataset so its first paint is instant.
     get_or_build_state(&hub, 0)?;
@@ -388,7 +394,7 @@ fn handle(req: Request, hub: &Hub) -> std::io::Result<()> {
         let (region, budget) = parse_query(&url, &state);
         return match get_or_build(&state, &region, budget) {
             Ok(lr) if want_points => {
-                respond_bytes(req, lr.points.clone(), "application/octet-stream")
+                respond_points(req, lr.points.clone(), hub.compress)
             }
             Ok(lr) => respond_bytes(req, lr.meta.clone(), "application/json"),
             Err(e) => req.respond(
@@ -669,6 +675,37 @@ fn intensity_frac(imin: f32, i_ref: Option<(&[u32], f32)>) -> f64 {
     let above: u64 = hist[bin..].iter().map(|&c| c as u64).sum();
     // Never 0: a tiny estimate yields stride 1 and we keep all (few) survivors anyway.
     (above as f64 / total as f64).max(1.0 / total as f64)
+}
+
+/// Serve the `/points` payload, zstd-compressing it when `--compress` is on AND the client advertises
+/// `Accept-Encoding: zstd` (the browser then decompresses `Content-Encoding: zstd` transparently — no
+/// client code). Falls back to the raw body if disabled, not negotiated, or on any encode error.
+fn respond_points(req: Request, body: Arc<[u8]>, compress: bool) -> std::io::Result<()> {
+    let want_zstd = compress
+        && req.headers().iter().any(|h| {
+            h.field.equiv("Accept-Encoding") && h.value.as_str().to_ascii_lowercase().contains("zstd")
+        });
+    if want_zstd {
+        match zstd::encode_all(&body[..], 3) {
+            Ok(z) => {
+                let len = z.len();
+                let resp = Response::new(
+                    StatusCode(200),
+                    vec![
+                        cors(),
+                        header("Content-Type", "application/octet-stream"),
+                        header("Content-Encoding", "zstd"),
+                    ],
+                    Cursor::new(z),
+                    Some(len),
+                    None,
+                );
+                return req.respond(resp);
+            }
+            Err(e) => log::warn!("zstd encode failed ({e}); sending raw points"),
+        }
+    }
+    respond_bytes(req, body, "application/octet-stream")
 }
 
 /// Serve a shared byte buffer without copying it per request (Cursor over the `Arc`).

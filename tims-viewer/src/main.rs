@@ -37,6 +37,10 @@ struct Args {
     /// block. No window/GPU needed; works with a `.d` path or `DEMO`.
     #[arg(long)]
     serve: Option<u16>,
+    /// With --serve: zstd-compress the /points payload when the client advertises it (Accept-Encoding).
+    /// Cuts the over-the-wire size ~3-4x for remote serving; leave off for localhost (raw is faster).
+    #[arg(long)]
+    compress: bool,
     /// With --render-png: render the volume raycaster instead of the point cloud.
     #[arg(long)]
     volume: bool,
@@ -124,7 +128,7 @@ fn main() -> Result<()> {
         } else {
             tims_viewer::serve::ServeSource::Datasets(discover_datasets(&args.input)?)
         };
-        return tims_viewer::serve::serve(source, args.budget, port);
+        return tims_viewer::serve::serve(source, args.budget, port, args.compress);
     }
 
     let (meta, is_demo) = if args.input.eq_ignore_ascii_case("DEMO") {
