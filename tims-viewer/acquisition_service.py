@@ -17,6 +17,11 @@ renders those grey). Positions are real units; the viewer normalizes them to its
 param is a 0-based frame INDEX (``0..n_frames-1``), not a DB frame id — the client plays the run in
 order without needing to know the actual frame ids.
 
+``GET /acq/frames?start=N&count=K`` builds a contiguous batch of K frames IN PARALLEL (Rayon) in one
+call and returns ``u32 count``, then ``count × [u32 frame_index, u32 n_peaks]``, then the concatenated
+records — so the viewer can prefetch ahead of the cursor cheaply instead of paying a round-trip +
+per-call build per frame.
+
 Run (needs the imspy_simulation env: DIAFrameBuilder + its Rust bindings):
 
     python tims-viewer/acquisition_service.py --db <synthetic_sim.db> --port 8092
@@ -86,6 +91,10 @@ def build_subset_db(src_path: str, max_peptides: int) -> str:
 # u32::MAX — matches the viewer's NO_CLUSTER sentinel, so unassigned peaks render in the neutral grey.
 NO_PEPTIDE = 0xFFFFFFFF
 
+# Largest batch a single /acq/frames request may build (bounds per-request work/memory; the client
+# prefetches in batches well under this).
+MAX_BATCH = 128
+
 # Per-peak record dtype sent over the wire (little-endian; 24 bytes).
 _REC = np.dtype([
     ("mz", "<f4"), ("im", "<f4"), ("rt", "<f4"),
@@ -98,6 +107,8 @@ class Acquisition:
 
     def __init__(self, db_path: str, num_threads: int, fragmentation: bool, max_peptides: int = 0):
         self.fragmentation = fragmentation
+        # Threads for the (Rayon-parallel) batch build — resolve -1 to the core count.
+        self.num_threads = num_threads if num_threads and num_threads > 0 else (os.cpu_count() or 4)
         # Optional "semi-lazy" startup: build over a peptide subset so the eager builder inits in
         # seconds (the frame schedule stays whole, so playback covers the full run).
         builder_db = db_path
@@ -108,7 +119,7 @@ class Acquisition:
         # all (subset) peptides + annotated fragment spectra up front.
         print(f"loading annotated builder from {builder_db}…", flush=True)
         t = time.perf_counter()
-        self.builder = DIAFrameBuilder(builder_db, num_threads=num_threads, with_annotations=True)
+        self.builder = DIAFrameBuilder(builder_db, num_threads=self.num_threads, with_annotations=True)
         print(f"builder ready in {time.perf_counter() - t:.1f}s", flush=True)
         # Frame metadata comes from the (subset or full) builder DB — both carry the full frames table.
         db_path = builder_db
@@ -153,6 +164,26 @@ class Acquisition:
     def _build(self, frame_id: int):
         return self.builder.build_frame_annotated(frame_id, fragment=self.fragmentation)
 
+    @staticmethod
+    def _records(f) -> np.ndarray:
+        """Pack one built annotated frame into the 24-byte/peak wire records."""
+        mz = np.asarray(f.mz, dtype="<f4")
+        n = mz.size
+        if n == 0:
+            return np.empty(0, dtype=_REC)
+        rec = np.empty(n, dtype=_REC)
+        rec["mz"] = mz
+        rec["im"] = np.asarray(f.inv_mobility, dtype="<f4")
+        rec["rt"] = np.full(n, float(f.retention_time), dtype="<f4")
+        rec["intensity"] = np.asarray(f.intensity, dtype="<f4")
+        # peptide_ids_first_only: the FIRST contributor per peak (fast Rust ndarray). The dominant
+        # max-intensity contributor would be truer for convolved peaks but needs a per-peak Python walk
+        # over `contributions` — too slow at frame cadence. Negative ids (noise) → the grey sentinel.
+        pid = np.asarray(f.peptide_ids_first_only, dtype=np.int64)
+        rec["peptide_id"] = np.where(pid < 0, NO_PEPTIDE, pid).astype("<u4")
+        rec["flags"] = np.uint32(1 if int(f.ms_type_numeric) == 9 else 0)  # frame-level: MS2 ⇒ fragments
+        return rec
+
     def _compute_bounds(self, im_range):
         mz_lo, mz_hi = float("inf"), float("-inf")
         im_lo, im_hi = float("inf"), float("-inf")
@@ -196,26 +227,33 @@ class Acquisition:
     def frame_bytes(self, index: int) -> bytes:
         # `index` is a 0-based position into the (frame_id-ordered) frame list — the client plays
         # 0..n_frames-1 and never needs to know the actual DB frame ids (which may not be 0-based).
-        f = self._build(self.frame_ids[index])
-        mz = np.asarray(f.mz, dtype="<f4")
-        n = mz.size
-        if n == 0:
-            return b""
-        im = np.asarray(f.inv_mobility, dtype="<f4")
-        intensity = np.asarray(f.intensity, dtype="<f4")
-        rt = np.full(n, float(f.retention_time), dtype="<f4")
-        # peptide_ids_first_only: the FIRST contributor per peak (fast Rust ndarray). For convolved
-        # peaks the dominant max-intensity contributor would be truer, but that needs a per-peak Python
-        # walk over `contributions` — too slow at frame cadence; first-only is the v1 choice.
-        # Negative ids (unassigned/noise) → the grey sentinel.
-        pid = np.asarray(f.peptide_ids_first_only, dtype=np.int64)
-        pid = np.where(pid < 0, NO_PEPTIDE, pid).astype("<u4")
-        is_fragment = 1 if int(f.ms_type_numeric) == 9 else 0  # frame-level: MS2 ⇒ all peaks fragments
-        flags = np.full(n, is_fragment, dtype="<u4")
-        rec = np.empty(n, dtype=_REC)
-        rec["mz"], rec["im"], rec["rt"] = mz, im, rt
-        rec["intensity"], rec["peptide_id"], rec["flags"] = intensity, pid, flags
-        return rec.tobytes()
+        return self._records(self._build(self.frame_ids[index])).tobytes()
+
+    def frames_bytes(self, start: int, count: int) -> bytes:
+        """Build a CONTIGUOUS batch of frames in parallel (Rayon, `num_threads`) and pack them into one
+        response so the client can prefetch ahead of the cursor without per-frame round-trips.
+
+        Wire layout (little-endian):
+            u32 count
+            count × [u32 frame_index, u32 n_peaks]    -- the per-frame table, in order
+            then the concatenated 24-byte records for frame[0], frame[1], … (n_peaks each)
+
+        NOTE: the annotated build is STOCHASTIC per call (the simulator's shot-noise model), so
+        re-fetching a frame yields slightly different peaks. That's realistic, but it means the client
+        must CACHE streamed frames for scrub/replay rather than re-fetching them.
+        """
+        indices = list(range(start, start + count))
+        frame_ids = [self.frame_ids[i] for i in indices]
+        frames = self.builder.build_frames_annotated(
+            frame_ids, fragment=self.fragmentation, num_threads=self.num_threads
+        )
+        recs = [self._records(f) for f in frames]
+        table = np.empty(count, dtype=[("idx", "<u4"), ("n", "<u4")])
+        table["idx"] = np.asarray(indices, dtype="<u4")
+        table["n"] = np.asarray([r.size for r in recs], dtype="<u4")
+        head = np.array([count], dtype="<u4").tobytes() + table.tobytes()
+        body = b"".join(r.tobytes() for r in recs)
+        return head + body
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -264,6 +302,34 @@ class Handler(BaseHTTPRequestHandler):
                 return
             dt = time.perf_counter() - t
             print(f"frame {fid}: {len(body)//24} peaks in {dt*1000:.0f} ms", flush=True)
+            self._send(200, body, "application/octet-stream")
+            return
+        if path == "/acq/frames":  # parallel batch — the client prefetches ahead with this
+            q = parse_qs(urlparse(self.path).query)
+            try:
+                start = int(q.get("start", ["?"])[0])
+                count = int(q.get("count", ["?"])[0])
+            except ValueError:
+                self._send(400, b"bad start/count", "text/plain")
+                return
+            if count <= 0:
+                self._send(400, b"count must be > 0", "text/plain")
+                return
+            if start < 0 or start >= self.acq.n_frames:
+                self._send(404, f"start {start} out of range [0,{self.acq.n_frames})".encode(), "text/plain")
+                return
+            # Clamp to the run end AND a sane max so one request can't build the whole run into memory.
+            count = min(count, self.acq.n_frames - start, MAX_BATCH)
+            t = time.perf_counter()
+            try:
+                body = self.acq.frames_bytes(start, count)
+            except Exception as exc:
+                print(f"batch [{start},{start+count}) build failed: {exc}", flush=True)
+                self._send(500, f"batch [{start},{start+count}): {exc}".encode(), "text/plain")
+                return
+            dt = time.perf_counter() - t
+            print(f"batch [{start},{start+count}): {len(body)} B in {dt*1000:.0f} ms "
+                  f"({dt*1000/count:.1f} ms/frame, {self.acq.num_threads} threads)", flush=True)
             self._send(200, body, "application/octet-stream")
             return
         # health probe (the viewer auto-detects the sidecar via this)
