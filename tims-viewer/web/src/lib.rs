@@ -1783,10 +1783,16 @@ fn build_window_verts(
         if r.g >= 1 && r.g <= 32 && (mask & (1u32 << (r.g - 1))) == 0 {
             continue;
         }
+        // Order each axis first: a footprint can arrive descending (1/K0 falls as scan rises, so
+        // the scan_lo/scan_hi -> 1/K0 conversion yields im0 > im1). Without this the clamp below
+        // produces hi < lo and the next check drops EVERY window — the overlay vanishes while the
+        // legend (which only needs max_window_group) still shows.
+        let (rmz0, rmz1) = (r.mz0.min(r.mz1), r.mz0.max(r.mz1));
+        let (rim0, rim1) = (r.im0.min(r.im1), r.im0.max(r.im1));
         // Clamp the axis-aligned footprint to the region so a partly-off-region window clips cleanly
         // (the per-vertex shader cull would otherwise leave stubs); drop windows fully outside.
-        let (mz0r, mz1r) = (r.mz0.max(bounds[0].0), r.mz1.min(bounds[0].1));
-        let (im0r, im1r) = (r.im0.max(bounds[1].0), r.im1.min(bounds[1].1));
+        let (mz0r, mz1r) = (rmz0.max(bounds[0].0), rmz1.min(bounds[0].1));
+        let (im0r, im1r) = (rim0.max(bounds[1].0), rim1.min(bounds[1].1));
         if mz1r <= mz0r || im1r <= im0r {
             continue;
         }
