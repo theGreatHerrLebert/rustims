@@ -1280,6 +1280,11 @@ fn toggle_acquisition(gfx: &Rc<RefCell<Gfx>>) {
             // Intensity transfer so faint peaks shrink/recede: sqrt over [1, i_p99].
             let i_p99 = g.acq_meta.as_ref().map(|m| m.i_p99.max(2.0)).unwrap_or(1000.0);
             g.params.transfer = [1.0, 1.0, i_p99, 1.0];
+            // Sync speed to whatever the selector currently shows (covers browser form-restore where
+            // the <select> value survives a reload but g.acq_speed reset to its default).
+            g.acq_speed = by_id::<web_sys::HtmlSelectElement>("acq-speed")
+                .and_then(|s| s.value().parse::<f64>().ok())
+                .map_or(1.0, |v| v.max(0.05));
             g.acq_cursor = 0;
             g.acq_buffer.clear();
             g.acq_fetch_next = 0;
