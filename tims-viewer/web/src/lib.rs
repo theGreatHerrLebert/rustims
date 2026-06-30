@@ -186,6 +186,15 @@ struct Region {
     imin: f32,
 }
 
+/// Static-view snapshot captured when acquisition starts, so Stop (and natural completion) can
+/// restore the dataset cloud in place — no page reload, no server round-trip. Holds the
+/// pre-acquisition CPU points plus the display params + view that entry overwrites.
+struct AcqStash {
+    points: Vec<GpuPoint>,
+    params: ParamsUniform,
+    view: ViewMode,
+}
+
 /// Live GPU + scene state, shared (single-threaded) between the render loop and resize handler.
 struct Gfx {
     canvas: web_sys::HtmlCanvasElement,
@@ -313,6 +322,9 @@ struct Gfx {
     /// Bumped each time playback (re)starts, so an in-flight prefetch from a previous session can tell
     /// it's stale and drop its result instead of contaminating the new run's buffer.
     acq_gen: u32,
+    /// Pre-acquisition static view, stashed at playback start and consumed by `restore_static_view`
+    /// on Stop / natural completion. `None` when not in (or after a clean exit from) acquisition.
+    acq_saved: Option<AcqStash>,
     /// Route Run through the Python (sklearn) service instead of the in-wasm DBSCAN. Auto-enabled by
     /// the startup probe when the service is reachable; toggleable in the Cluster tab.
     use_python_cluster: bool,
@@ -769,6 +781,7 @@ async fn run() -> Result<(), String> {
         acq_fetch_next: 0,
         acq_fetching: false,
         acq_gen: 0,
+        acq_saved: None,
         dataset_name: String::new(),
         dataset_id: dataset_id(), // raw URL value; clamped to the registry by populate_datasets
         use_python_cluster: false,
@@ -1268,7 +1281,14 @@ fn toggle_acquisition(gfx: &Rc<RefCell<Gfx>>) {
                 PointCloudRenderer::new(&g.device, &g.queue, g.config.format, DEPTH_FORMAT, cap, g.supports_compaction);
             g.renderer.enable_ring(); // append wraps + overwrites oldest -> bounded resident
             g.renderer.set_draw_count(u32::MAX);
-            g.cpu_points.clear(); // acquisition drives the GPU buffer directly
+            // Stash the static view so Stop / completion can restore it in place (chunk 2d). The
+            // mem::take also empties cpu_points (acquisition drives the GPU buffer directly); snapshot
+            // the display params + view that the lines below are about to overwrite.
+            g.acq_saved = Some(AcqStash {
+                points: std::mem::take(&mut g.cpu_points),
+                params: g.params,
+                view: g.view_mode,
+            });
             g.view_mode = ViewMode::Points; // acquisition is a point cloud; never the volume path
             // Acquisition replaces cpu_points/_pad[0], so any clustering is now invalid: a stale
             // cluster Run or a clicked cluster row would index the emptied cpu_points and panic.
@@ -1304,10 +1324,38 @@ fn toggle_acquisition(gfx: &Rc<RefCell<Gfx>>) {
     if start {
         wasm_bindgen_futures::spawn_local(play_loop(gfx.clone()));
     } else {
-        // Stop leaves the acquisition cloud frozen; a full in-place return to the static dataset is a
-        // chunk-2d transition — for now, reload/switch dataset to get it back.
-        show_status("playback stopped — switch dataset or reload to return to the static view");
+        // In-place return to the static dataset cloud (chunk 2d): rebuild from the stash, no reload.
+        restore_static_view(gfx);
+        refresh_controls(gfx); // re-enable focus/back/load now that playback is stopped
+        show_status("playback stopped — returned to the dataset view");
     }
+}
+
+/// Stop's in-place return to the static dataset cloud (chunk 2d): rebuild a normal (non-ring)
+/// renderer from the points stashed at playback start, restore the display params + view that
+/// acquisition overwrote, and drop any in-flight prefetch. No page reload, no server round-trip.
+/// Coloring is forced back to intensity (entry destroyed the clustering, so the restored points
+/// have no cluster ids to color by — mirrors `apply_load`). A no-op if nothing was stashed.
+fn restore_static_view(gfx: &Rc<RefCell<Gfx>>) {
+    let mut g = gfx.borrow_mut();
+    let g = &mut *g;
+    let Some(stash) = g.acq_saved.take() else { return };
+    // Rebuild the GPU buffer at the stashed cloud's size (not the trailing-ring cap) and re-upload.
+    let cap = stash.points.len().min(g.n_cap).max(1) as u32;
+    let mut renderer =
+        PointCloudRenderer::new(&g.device, &g.queue, g.config.format, DEPTH_FORMAT, cap, g.supports_compaction);
+    let _ = renderer.append(&g.queue, &stash.points);
+    g.renderer = renderer;
+    g.cpu_points = stash.points;
+    g.params = stash.params; // restores transfer/exposure, MS mask, and the spatial crops
+    g.params.color_mode = 0; // intensity (no clusters survive acquisition entry)
+    g.view_mode = stash.view;
+    g.vol_needs_grid = true; // the volume density grid is rebuilt from the restored points if shown
+    g.data_gen = g.data_gen.wrapping_add(1);
+    g.acq_gen = g.acq_gen.wrapping_add(1); // a still-in-flight prefetch sees a stale gen and drops
+    g.acq_buffer.clear();
+    g.acq_fetching = false;
+    g.filter_dirty = true;
 }
 
 /// Detached prefetch: fetch one parallel batch and push its decoded frames into `acq_buffer`, then
@@ -1398,9 +1446,13 @@ async fn play_loop(gfx: Rc<RefCell<Gfx>>) {
             Next::Wait => sleep_ms(8).await,
             Next::Done(n) => {
                 gfx.borrow_mut().acq_playing = false;
+                // Same in-place return as a manual Stop, so completion never strands the user on a
+                // frozen trailing-window cloud with no way back but a reload.
+                restore_static_view(&gfx);
+                refresh_controls(&gfx);
                 set_body_class("cluster-color", false); // restore the intensity colorbar (manual stop does too)
                 set_text("acq-play", "▶ Live acquisition");
-                show_status(&format!("acquisition complete — {n} frames"));
+                show_status(&format!("acquisition complete — {n} frames; returned to the dataset view"));
                 return;
             }
         }
