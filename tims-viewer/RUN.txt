@@ -26,6 +26,17 @@ cd /Users/davidteschner/Promotion/rustims
 python tims-viewer/cluster_service.py --port 8091
 
 
+4) ACQUISITION SIDECAR  (optional, WIP — live annotated playback; auto-detected)
+--------------------------------------------------------------------------------
+# Needs imspy_simulation IN SYNC with the compiled imspy_connector. The base envs are
+# stale; use thesis/.venv (or rebuild: cd imspy_connector && maturin develop).
+# Point it at a prepared synthetic-sim DB (synthetic_data.db), NOT a .d.
+/Users/davidteschner/Promotion/thesis/.venv/bin/python tims-viewer/acquisition_service.py \
+    --db /Users/davidteschner/Promotion/timsim/TIMSIM-DIA/synthetic_data.db --port 8092
+# Status today: the viewer DETECTS it (logs the run meta to the browser console). The
+# play/pause/timeline UI is the next slice — no visible playback yet. Override URL: ?acq=<base>.
+
+
 Notes
 -----
 - Swap the /midia/timsim path for any directory of .d folders (scanned recursively).
