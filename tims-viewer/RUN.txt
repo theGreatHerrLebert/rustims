@@ -42,6 +42,19 @@ python tims-viewer/cluster_service.py --port 8091
 # play/pause/timeline UI is the next slice — no visible playback yet. Override URL: ?acq=<base>.
 
 
+5) MIDIA VOILA NOTEBOOK  (separate tool — the imspy-vis dashboard, NOT the web viewer)
+-------------------------------------------------------------------------------------
+# An independent Voila app (ipywidgets + plotly) for loading a run, slicing by RT off the
+# TIC, and tuning HDBSCAN on the precursor/MIDIA point clouds. Unrelated to the WebGPU
+# viewer above — listed here only so the launch command lives in one place.
+cd /Users/davidteschner/Promotion/rustims
+voila packages/imspy-vis/notebooks/midia_vis.ipynb
+# Point it at a different run / browse folder (defaults are baked into the notebook):
+#   MIDIA_RUN_PATH=/path/to/run.d MIDIA_BROWSE_DIR=/path/to/folder-of-runs \
+#     voila packages/imspy-vis/notebooks/midia_vis.ipynb
+# First-time setup (same env): pip install voila && pip install -e packages/imspy-vis
+
+
 Notes
 -----
 - Swap the /midia/timsim path for any directory of .d folders (scanned recursively).
