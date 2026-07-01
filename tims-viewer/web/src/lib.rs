@@ -4150,9 +4150,20 @@ fn wire_controls(gfx: &Rc<RefCell<Gfx>>) {
     bind_value(gfx, "floor", "floor-n", 0, |g, v| {
         g.params.filter_min[3] = v as f32;
         g.filter_dirty = true;
-        g.vol_needs_grid = true; // the volume bakes the floor at deposit time — re-voxel so it updates live
         invalidate_clusters_mut(g);
     });
+    // The volume bakes the floor in at deposit time, so it must re-voxel to reflect a floor change.
+    // Do that only on slider RELEASE / number commit (the "change" event), not on every continuous
+    // "input" tick — otherwise dragging the floor in Volume mode re-deposits the whole cloud per
+    // frame. The point cloud still tracks the floor live via the input handler above.
+    for id in ["floor", "floor-n"] {
+        if let Some(el) = by_id::<web_sys::HtmlInputElement>(id) {
+            let gfx = gfx.clone();
+            add_listener(el.as_ref(), "change", move |_e: web_sys::Event| {
+                gfx.borrow_mut().vol_needs_grid = true;
+            });
+        }
+    }
 
     // Filters
     on_toggle("ms-1", gfx, |g, on| if on { g.params.ms_mask = 0b01; g.filter_dirty = true; g.vol_needs_grid = true; invalidate_clusters_mut(g); });
