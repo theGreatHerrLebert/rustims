@@ -314,6 +314,30 @@
       font-family: var(--mono); font-size: 12px; color: var(--accent-2); background: rgba(20,12,4,0.9);
       border: 1px solid rgba(255,178,62,0.3); border-radius: 8px; padding: 8px 14px; max-width: 80vw; }
     .err:empty { display: none; }
+    /* Feedback widget (PROD only — hidden until /clientconfig reports feedback:true) */
+    .feedback-btn { position: fixed; z-index: 6; right: 16px; bottom: 16px; display: none;
+      font-family: var(--mono); font-size: 12px; color: var(--accent); cursor: pointer;
+      background: rgba(20,28,40,0.92); border: 1px solid rgba(95,170,240,0.4); border-radius: 18px;
+      padding: 8px 14px; user-select: none; }
+    body.feedback-on .feedback-btn { display: block; }
+    .feedback-btn:hover { border-color: var(--accent); }
+    .feedback-modal { position: fixed; z-index: 7; inset: 0; display: none; align-items: center;
+      justify-content: center; background: rgba(0,0,0,0.45); }
+    body.feedback-open .feedback-modal { display: flex; }
+    .feedback-card { width: min(460px, 92vw); background: #0f1622; border: 1px solid rgba(95,170,240,0.35);
+      border-radius: 10px; padding: 16px 18px; font-family: var(--mono); color: #cfe0f5; }
+    .feedback-card h3 { margin: 0 0 4px; font-size: 14px; color: var(--accent); }
+    .feedback-card .sub { font-size: 11px; color: #8aa; margin-bottom: 12px; }
+    .feedback-card label { display: block; font-size: 11px; margin: 8px 0 3px; color: #9ab; }
+    .feedback-card select, .feedback-card input, .feedback-card textarea { width: 100%; box-sizing: border-box;
+      background: #0a0f18; color: #cfe0f5; border: 1px solid rgba(120,150,190,0.3); border-radius: 5px;
+      padding: 6px 8px; font: inherit; }
+    .feedback-card textarea { resize: vertical; min-height: 84px; }
+    .feedback-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; align-items: center; }
+    .feedback-actions .fb-status { margin-right: auto; font-size: 11px; color: var(--accent-2); }
+    .feedback-actions button { font: inherit; cursor: pointer; border-radius: 6px; padding: 7px 14px;
+      border: 1px solid rgba(120,150,190,0.3); background: #12202f; color: #cfe0f5; }
+    .feedback-actions button.primary { background: var(--accent); color: #06121f; border-color: var(--accent); font-weight: 700; }
 
     /* keyboard focus — inputs hide native outlines, so proxy focus onto the visible control */
     .rng:focus-visible { box-shadow: 0 0 0 4px var(--accent-dim); }
@@ -632,5 +656,28 @@
     <div class="caps"><span>hi</span><span>lo</span></div></div>
 
   <div class="err" id="status"></div>
+  <!-- Feedback widget (revealed by body.feedback-on when the server enables it; wired in lib.rs) -->
+  <div class="feedback-btn" id="feedback-open" title="Report a bug, request a feature, or ask a question">💬 Feedback</div>
+  <div class="feedback-modal" id="feedback-modal">
+    <div class="feedback-card">
+      <h3>Send feedback</h3>
+      <div class="sub">Goes straight to the tims·view maintainers. Bugs, feature requests, questions — all welcome.</div>
+      <label for="feedback-type">Type</label>
+      <select id="feedback-type">
+        <option value="bug">Bug / something broke</option>
+        <option value="feature">Feature request</option>
+        <option value="question">Question</option>
+      </select>
+      <label for="feedback-text">Message</label>
+      <textarea id="feedback-text" placeholder="What happened, or what would help?"></textarea>
+      <label for="feedback-email">Email (optional — if you'd like a reply)</label>
+      <input id="feedback-email" type="email" placeholder="you@lab.org" />
+      <div class="feedback-actions">
+        <span class="fb-status" id="feedback-status"></span>
+        <button id="feedback-cancel" type="button">Cancel</button>
+        <button id="feedback-send" type="button" class="primary">Send</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>

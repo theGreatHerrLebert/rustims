@@ -130,7 +130,14 @@ const ACQ_LOOKAHEAD: usize = 128;
 /// wasm entry point — Trunk/wasm-bindgen call this on load.
 #[wasm_bindgen(start)]
 pub fn start() {
-    console_error_panic_hook::set_once();
+    // Custom panic hook: keep the console output AND forward the panic to the server's /telemetry
+    // (PROD only, gated on TELEMETRY_ON once /clientconfig confirms it's enabled — no-op in dev).
+    std::panic::set_hook(Box::new(|info| {
+        console_error_panic_hook::hook(info);
+        if TELEMETRY_ON.load(std::sync::atomic::Ordering::Relaxed) {
+            fire_event("/telemetry", telemetry_json("wasm-panic", &info.to_string()));
+        }
+    }));
     // Off the main thread (the clustering Web Worker re-inits this same wasm) there is no DOM —
     // `window()` is None. Skip the renderer; the worker only calls `cluster_dbscan_flat`.
     if web_sys::window().is_none() {
@@ -143,6 +150,138 @@ pub fn start() {
             show_status(&format!("tims-viewer could not start: {e}"));
         }
     });
+    // Probe /clientconfig; wire error forwarding + the feedback widget only if the server enabled them.
+    wasm_bindgen_futures::spawn_local(init_telemetry_and_feedback());
+}
+
+static TELEMETRY_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Server origin for the /clientconfig, /telemetry and /feedback endpoints — the /points base
+/// with the trailing `/points` stripped (they live on the same point server).
+fn server_base() -> String {
+    let b = points_base_url();
+    b.strip_suffix("/points").map(str::to_string).unwrap_or(b)
+}
+
+/// Minimal JSON string encoder (escape quotes/backslashes/controls), so we can hand-build event
+/// bodies without pulling in serde on the wasm side.
+fn json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// A telemetry event body: kind + message + light context (dataset, page URL, user agent).
+fn telemetry_json(kind: &str, message: &str) -> String {
+    let ds = dataset_id();
+    let win = web_sys::window();
+    let ua = win.as_ref().map(|w| w.navigator().user_agent().unwrap_or_default()).unwrap_or_default();
+    let href = win.and_then(|w| w.location().href().ok()).unwrap_or_default();
+    format!(
+        "{{\"kind\":{},\"message\":{},\"dataset\":{ds},\"url\":{},\"ua\":{}}}",
+        json_str(kind), json_str(message), json_str(&href), json_str(&ua)
+    )
+}
+
+/// Fire-and-forget POST of a JSON body to a same-server endpoint. A plain-string body stays a CORS
+/// "simple request" (no preflight); failures (e.g. telemetry disabled -> 404) are ignored on purpose.
+fn fire_event(path: &str, body: String) {
+    let Some(window) = web_sys::window() else { return };
+    let url = format!("{}{path}", server_base());
+    let opts = web_sys::RequestInit::new();
+    opts.set_method("POST");
+    opts.set_body(&wasm_bindgen::JsValue::from_str(&body));
+    let _ = window.fetch_with_str_and_init(&url, &opts);
+}
+
+/// Ask the server (GET /clientconfig) whether error telemetry + the feedback widget are enabled
+/// (PROD only), and wire them if so. In dev the endpoint 404s / returns false and this is a no-op.
+async fn init_telemetry_and_feedback() {
+    let Some(window) = web_sys::window() else { return };
+    let url = format!("{}/clientconfig", server_base());
+    let Ok(resp_val) = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(&url)).await else { return };
+    let Ok(resp) = resp_val.dyn_into::<web_sys::Response>() else { return };
+    if !resp.ok() { return; }
+    let Ok(text_promise) = resp.text() else { return };
+    let Ok(text_val) = wasm_bindgen_futures::JsFuture::from(text_promise).await else { return };
+    let Some(text) = text_val.as_string() else { return };
+    let Ok(v) = js_sys::JSON::parse(&text) else { return };
+    if jget(&v, "telemetry").as_bool().unwrap_or(false) {
+        TELEMETRY_ON.store(true, std::sync::atomic::Ordering::Relaxed);
+        install_error_listeners();
+        log::info!("error telemetry enabled -> {}/telemetry", server_base());
+    }
+    if jget(&v, "feedback").as_bool().unwrap_or(false) {
+        set_body_class("feedback-on", true); // reveals the 💬 button (hidden by default)
+        wire_feedback_ui();
+    }
+}
+
+/// Forward uncaught JS errors + unhandled promise rejections to /telemetry (wasm panics go via the
+/// panic hook). Only installed when telemetry is enabled.
+fn install_error_listeners() {
+    let Some(window) = web_sys::window() else { return };
+    let on_err = Closure::wrap(Box::new(move |e: web_sys::Event| {
+        let msg = e
+            .dyn_ref::<web_sys::ErrorEvent>()
+            .map(|ee| ee.message())
+            .unwrap_or_else(|| "js error".to_string());
+        fire_event("/telemetry", telemetry_json("js-error", &msg));
+    }) as Box<dyn FnMut(web_sys::Event)>);
+    let _ = window.add_event_listener_with_callback("error", on_err.as_ref().unchecked_ref());
+    on_err.forget();
+    let on_rej = Closure::wrap(Box::new(move |_e: web_sys::Event| {
+        fire_event("/telemetry", telemetry_json("unhandledrejection", "unhandled promise rejection"));
+    }) as Box<dyn FnMut(web_sys::Event)>);
+    let _ = window.add_event_listener_with_callback("unhandledrejection", on_rej.as_ref().unchecked_ref());
+    on_rej.forget();
+}
+
+/// Wire the feedback widget: open/close the panel and POST the form to /feedback with light context.
+fn wire_feedback_ui() {
+    if let Some(btn) = by_id::<web_sys::HtmlElement>("feedback-open") {
+        add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| set_body_class("feedback-open", true));
+    }
+    if let Some(btn) = by_id::<web_sys::HtmlElement>("feedback-cancel") {
+        add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| set_body_class("feedback-open", false));
+    }
+    if let Some(btn) = by_id::<web_sys::HtmlElement>("feedback-send") {
+        add_listener(btn.as_ref(), "click", move |_e: web_sys::Event| submit_feedback());
+    }
+}
+
+fn submit_feedback() {
+    let kind = by_id::<web_sys::HtmlSelectElement>("feedback-type").map(|s| s.value()).unwrap_or_default();
+    let text = by_id::<web_sys::HtmlTextAreaElement>("feedback-text").map(|t| t.value()).unwrap_or_default();
+    let email = by_id::<web_sys::HtmlInputElement>("feedback-email").map(|i| i.value()).unwrap_or_default();
+    if text.trim().is_empty() {
+        set_text("feedback-status", "please enter a message");
+        return;
+    }
+    let ds = dataset_id();
+    let backend = by_id::<web_sys::HtmlElement>("hud-backend").map(|e| e.inner_text()).unwrap_or_default();
+    let body = format!(
+        "{{\"type\":{},\"text\":{},\"email\":{},\"dataset\":{ds},\"backend\":{}}}",
+        json_str(&kind), json_str(&text), json_str(&email), json_str(&backend)
+    );
+    fire_event("/feedback", body);
+    if let Some(t) = by_id::<web_sys::HtmlTextAreaElement>("feedback-text") {
+        t.set_value("");
+    }
+    set_body_class("feedback-open", false);
+    show_status("thanks — your feedback was sent");
 }
 
 /// DBSCAN over a flat `[x,y,z, x,y,z, …]` buffer, returning per-point labels (`-1` = noise). The

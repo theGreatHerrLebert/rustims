@@ -27,7 +27,9 @@ console_log = "1"
 web-sys = { version = "0.3", features = [
     "Document", "Window", "Element", "HtmlCanvasElement", "Node", "EventTarget",
     "Event", "MouseEvent", "WheelEvent", "Response", "Location",
-    "HtmlInputElement", "HtmlSelectElement", "HtmlElement", "HtmlLinkElement", "CssStyleDeclaration",
+    "HtmlInputElement", "HtmlSelectElement", "HtmlTextAreaElement", "HtmlElement", "HtmlLinkElement", "CssStyleDeclaration",
+    # Error telemetry: forward uncaught JS errors to /telemetry.
+    "ErrorEvent",
     "CanvasRenderingContext2d", "ImageData", "DomRect", "DomTokenList",
     # Off-main-thread DBSCAN: a module Web Worker built from a Blob that re-imports this same wasm.
     "Worker", "WorkerOptions", "WorkerType", "MessageEvent", "Blob", "BlobPropertyBag", "Url",
