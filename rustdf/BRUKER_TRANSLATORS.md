@@ -58,18 +58,29 @@ where `T1_frame`, `T2_frame` are the per-frame `Frames.T1`, `Frames.T2`.
 | `C2` | `C2` | quadratic `s²` term of the curve — **used by both ModelTypes** |
 | `C3` | `C3` | cubic `s³` term — **ModelType 1 only** (in ModelType 2 this column duplicates C0 and is dropped) |
 | `C4` | `C4` | "reduced mass" shift `m0` (`x = m − m0`); the element claimed by Bruker patent US 7,851,746 |
-| `C5` | — | ModelType-2 fine correction: a **universal constant** `225.951491` (identical across every dataset inspected) |
-| `C6` | — | ModelType-2 fine correction: per-dataset normalization span |
-| `C7` | — | ModelType-2 fine correction: order flag (= 7) |
-| `C8 … C14` | — | ModelType-2 fine correction coefficients — **not modelled** (see note below) |
+| `C5` | window low  | ModelType-2 fine correction: **lower m/z bound** of the correction window. A **universal constant** `225.951491` across every dataset seen. |
+| `C6` | window high | ModelType-2 fine correction: **upper m/z bound** of the correction window (per-dataset, e.g. 1383.7 / 1519.7). |
+| `C7` | degree | ModelType-2 fine correction: polynomial **degree = 7** (matches the fit below). |
+| `C8 … C14` | coeffs | ModelType-2 fine correction coefficients — **decode unresolved** (see note). |
 
-**Status of the ModelType-2 C8…C14 correction.** After the `C0/C1/C2` quadratic,
-a residual of ~2.5–3.6 ppm (worst at low m/z, and exactly zero at both ends of
-the acquisition m/z range) remains. It is *not* reproducible as an additive
-degree-6 polynomial in `m/z` or `√(m/z)` (a best-fit degree-6 polynomial barely
-dents it), so the role of `C8…C14` is unresolved here — most likely an internal
-SDK spline/interpolation. The base curve is therefore accurate to a few ppm but
-not bit-exact for ModelType 2.
+**Status of the ModelType-2 C8…C14 correction (partially reverse-engineered).**
+After the `C0/C1/C2` quadratic, a smooth residual of ~2.5–3.6 ppm remains.
+Established by fitting against the SDK across several datasets:
+
+- The correction is **windowed to `[C5, C6]` in m/z** — outside that interval the
+  quadratic base is the whole model.
+- Inside the window it is a **smooth degree-7 polynomial** (a degree-7 fit in the
+  normalized window coordinate reproduces the SDK to ~5e-8 m/z — effectively
+  bit-exact). This matches `C7 = 7`.
+- However, the stored `C8…C14` do **not** map onto that polynomial in any tested
+  basis (monomial or Chebyshev) / argument (`m/z`, `√m`, normalized window, time,
+  tof) / target domain (m/z, √m, flight time, ppm) — every combination leaves
+  ~99% residual. The exact encoding of `C8…C14` is still unknown.
+
+Cross-check: **no open-source reader reimplements this** — alphaRaw, alphaDIA,
+opentims, and the SDK-lookup tooling all obtain ModelType-2 m/z from Bruker's
+`libtimsdata` directly. A fully SDK-free, bit-exact ModelType-2 m/z is therefore
+not currently available; the `C0/C1/C2` base here reaches a few ppm.
 
 ---
 
