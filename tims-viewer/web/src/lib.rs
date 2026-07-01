@@ -2819,8 +2819,11 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         let g = gfx.borrow();
         let p = &g.params;
         let (fmin, fmax, ms) = (p.filter_min, p.filter_max, p.ms_mask);
-        let mut idx: Vec<usize> = Vec::with_capacity(g.cpu_points.len());
-        let mut positions: Vec<[f32; 3]> = Vec::with_capacity(g.cpu_points.len());
+        // Grow on demand — do NOT reserve cpu_points.len(): a cropped/focused cluster keeps only a
+        // small subset, so reserving the whole (up to 32M-point) cloud would waste hundreds of MB of
+        // wasm heap and raise OOM risk (codex review). The reallocs are bounded by the survivor count.
+        let mut idx: Vec<usize> = Vec::new();
+        let mut positions: Vec<[f32; 3]> = Vec::new();
         for (i, pt) in g.cpu_points.iter().enumerate() {
             let pos = pt.pos;
             if pos[0] < fmin[0]
