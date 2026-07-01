@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["PITCH_LIMIT"],"enum":["AxisView","Projection"],"struct":["OrbitCamera"]};
+window.SIDEBAR_ITEMS = {"constant":["ROLL_UP_AXIS"],"enum":["AxisView","Projection"],"struct":["OrbitCamera"]};

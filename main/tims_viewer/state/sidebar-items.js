@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["TransferMode","ViewMode","VolStyle"],"struct":["AppState","Window"]};
+window.SIDEBAR_ITEMS = {"constant":["CLUSTER_CAP"],"enum":["ColorMode","RefineAction","TransferMode","ViewMode","VolStyle"],"struct":["AppState","Window"]};

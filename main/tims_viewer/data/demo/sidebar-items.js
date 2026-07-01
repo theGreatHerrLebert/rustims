@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Blob","DemoSource","RawDemoPoint","Rng"]};
+window.SIDEBAR_ITEMS = {"struct":["DemoSource","RawDemoPoint","Rng"]};

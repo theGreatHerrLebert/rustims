@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_BUDGET","DEPTH_FORMAT"],"fn":["create_depth"],"struct":["App","Gfx","Plan"]};
+window.SIDEBAR_ITEMS = {"struct":["App","Plan"]};

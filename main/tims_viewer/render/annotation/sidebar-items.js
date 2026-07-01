@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["AnnotationRenderer","FilterUniform"]};
+window.SIDEBAR_ITEMS = {"struct":["AnnotationRenderer","LineVertex"]};

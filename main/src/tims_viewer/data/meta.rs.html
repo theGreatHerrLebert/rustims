@@ -23,118 +23,137 @@
 <a href=#23 id=23 data-nosnippet>23</a>}
 <a href=#24 id=24 data-nosnippet>24</a>
 <a href=#25 id=25 data-nosnippet>25</a><span class="doccomment">/// Lightweight index over a run's metadata.
-<a href=#26 id=26 data-nosnippet>26</a></span><span class="kw">pub struct </span>MetaIndex {
-<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">pub </span>data_path: String,
-<a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">pub </span>frames: Vec&lt;FrameInfo&gt;,
-<a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">pub </span>bounds: AxisBounds,
-<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">pub </span>total_points_estimate: u64,
-<a href=#31 id=31 data-nosnippet>31</a>}
-<a href=#32 id=32 data-nosnippet>32</a>
-<a href=#33 id=33 data-nosnippet>33</a><span class="kw">impl </span>MetaIndex {
-<a href=#34 id=34 data-nosnippet>34</a>    <span class="doccomment">/// Load metadata for a real `.d` folder.
-<a href=#35 id=35 data-nosnippet>35</a>    </span><span class="kw">pub fn </span>load(data_path: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-<a href=#36 id=36 data-nosnippet>36</a>        <span class="kw">let </span>global = read_global_meta_sql(data_path)
-<a href=#37 id=37 data-nosnippet>37</a>            .map_err(|e| <span class="macro">anyhow::anyhow!</span>(<span class="string">"read_global_meta_sql failed: {e:?}"</span>))
-<a href=#38 id=38 data-nosnippet>38</a>            .context(<span class="string">"reading global TDF metadata"</span>)<span class="question-mark">?</span>;
-<a href=#39 id=39 data-nosnippet>39</a>        <span class="kw">let </span>meta = read_meta_data_sql(data_path)
-<a href=#40 id=40 data-nosnippet>40</a>            .map_err(|e| <span class="macro">anyhow::anyhow!</span>(<span class="string">"read_meta_data_sql failed: {e:?}"</span>))
-<a href=#41 id=41 data-nosnippet>41</a>            .context(<span class="string">"reading per-frame TDF metadata"</span>)<span class="question-mark">?</span>;
-<a href=#42 id=42 data-nosnippet>42</a>
-<a href=#43 id=43 data-nosnippet>43</a>        <span class="macro">anyhow::ensure!</span>(!meta.is_empty(), <span class="string">"TDF run contains no frames"</span>);
-<a href=#44 id=44 data-nosnippet>44</a>
-<a href=#45 id=45 data-nosnippet>45</a>        <span class="kw">let </span><span class="kw-2">mut </span>frames = Vec::with_capacity(meta.len());
-<a href=#46 id=46 data-nosnippet>46</a>        <span class="kw">let </span><span class="kw-2">mut </span>rt_min = f64::INFINITY;
-<a href=#47 id=47 data-nosnippet>47</a>        <span class="kw">let </span><span class="kw-2">mut </span>rt_max = f64::NEG_INFINITY;
-<a href=#48 id=48 data-nosnippet>48</a>        <span class="kw">let </span><span class="kw-2">mut </span>total: u64 = <span class="number">0</span>;
-<a href=#49 id=49 data-nosnippet>49</a>        <span class="kw">for </span>m <span class="kw">in </span><span class="kw-2">&amp;</span>meta {
-<a href=#50 id=50 data-nosnippet>50</a>            <span class="comment">// Keep FrameMeta.id as the frame id we pass to get_frame. rustdf's get_frame
-<a href=#51 id=51 data-nosnippet>51</a>            // indexes its own frame_meta_data by position (id - 1) from the same
-<a href=#52 id=52 data-nosnippet>52</a>            // unordered SQL query, so we require ids to appear in exact 1..=N positional
-<a href=#53 id=53 data-nosnippet>53</a>            // order (validated below). Checked-convert to avoid an i64-&gt;u32 wrap.
-<a href=#54 id=54 data-nosnippet>54</a>            </span><span class="kw">let </span>id = u32::try_from(m.id)
-<a href=#55 id=55 data-nosnippet>55</a>                .map_err(|<span class="kw">_</span>| <span class="macro">anyhow::anyhow!</span>(<span class="string">"frame id {} is out of u32 range"</span>, m.id))<span class="question-mark">?</span>;
-<a href=#56 id=56 data-nosnippet>56</a>            <span class="kw">let </span>num_peaks = m.num_peaks.max(<span class="number">0</span>) <span class="kw">as </span>u64;
-<a href=#57 id=57 data-nosnippet>57</a>            <span class="kw">if </span>num_peaks &gt; <span class="number">0 </span>{
-<a href=#58 id=58 data-nosnippet>58</a>                rt_min = rt_min.min(m.time);
-<a href=#59 id=59 data-nosnippet>59</a>                rt_max = rt_max.max(m.time);
-<a href=#60 id=60 data-nosnippet>60</a>            }
-<a href=#61 id=61 data-nosnippet>61</a>            total = total.saturating_add(num_peaks);
-<a href=#62 id=62 data-nosnippet>62</a>            frames.push(FrameInfo {
-<a href=#63 id=63 data-nosnippet>63</a>                id,
-<a href=#64 id=64 data-nosnippet>64</a>                retention_time: m.time,
-<a href=#65 id=65 data-nosnippet>65</a>                is_ms2: m.ms_ms_type != <span class="number">0</span>,
-<a href=#66 id=66 data-nosnippet>66</a>                num_peaks,
-<a href=#67 id=67 data-nosnippet>67</a>            });
-<a href=#68 id=68 data-nosnippet>68</a>        }
-<a href=#69 id=69 data-nosnippet>69</a>
-<a href=#70 id=70 data-nosnippet>70</a>        <span class="comment">// rustdf looks up frames by vector position (id - 1) from the same query, so the
-<a href=#71 id=71 data-nosnippet>71</a>        // metadata must arrive in exact 1..=N order. Checking the id *set* isn't enough:
-<a href=#72 id=72 data-nosnippet>72</a>        // an unordered result like [2,1,3] passes a set check but makes get_frame(2) read
-<a href=#73 id=73 data-nosnippet>73</a>        // position 1 (id 1's data). Require positional order so this can't silently
-<a href=#74 id=74 data-nosnippet>74</a>        // corrupt the view; timsTOF runs satisfy it.
-<a href=#75 id=75 data-nosnippet>75</a>        </span><span class="kw">let </span>n = frames.len();
-<a href=#76 id=76 data-nosnippet>76</a>        <span class="kw">let </span>ordered = frames
-<a href=#77 id=77 data-nosnippet>77</a>            .iter()
-<a href=#78 id=78 data-nosnippet>78</a>            .enumerate()
-<a href=#79 id=79 data-nosnippet>79</a>            .all(|(i, f)| f.id == i <span class="kw">as </span>u32 + <span class="number">1</span>);
-<a href=#80 id=80 data-nosnippet>80</a>        <span class="macro">anyhow::ensure!</span>(
-<a href=#81 id=81 data-nosnippet>81</a>            ordered,
-<a href=#82 id=82 data-nosnippet>82</a>            <span class="string">"frame metadata is not in contiguous 1..={n} positional order \
-<a href=#83 id=83 data-nosnippet>83</a>             (first id {:?}, last id {:?}); the viewer relies on rustdf's position-based \
-<a href=#84 id=84 data-nosnippet>84</a>             frame indexing"</span>,
-<a href=#85 id=85 data-nosnippet>85</a>            frames.first().map(|f| f.id),
-<a href=#86 id=86 data-nosnippet>86</a>            frames.last().map(|f| f.id),
-<a href=#87 id=87 data-nosnippet>87</a>        );
-<a href=#88 id=88 data-nosnippet>88</a>
-<a href=#89 id=89 data-nosnippet>89</a>        <span class="kw">if </span>!rt_min.is_finite() || !rt_max.is_finite() {
-<a href=#90 id=90 data-nosnippet>90</a>            <span class="comment">// No non-empty frames carried RT; fall back to the full frame span.
-<a href=#91 id=91 data-nosnippet>91</a>            </span>rt_min = frames.first().map(|f| f.retention_time).unwrap_or(<span class="number">0.0</span>);
-<a href=#92 id=92 data-nosnippet>92</a>            rt_max = frames.last().map(|f| f.retention_time).unwrap_or(<span class="number">1.0</span>);
-<a href=#93 id=93 data-nosnippet>93</a>        }
-<a href=#94 id=94 data-nosnippet>94</a>
-<a href=#95 id=95 data-nosnippet>95</a>        <span class="kw">let </span>bounds = AxisBounds {
-<a href=#96 id=96 data-nosnippet>96</a>            mz: AxisTransform::new(
-<a href=#97 id=97 data-nosnippet>97</a>                global.mz_acquisition_range_lower,
-<a href=#98 id=98 data-nosnippet>98</a>                global.mz_acquisition_range_upper,
-<a href=#99 id=99 data-nosnippet>99</a>            ),
-<a href=#100 id=100 data-nosnippet>100</a>            im: AxisTransform::new(
-<a href=#101 id=101 data-nosnippet>101</a>                global.one_over_k0_range_lower,
-<a href=#102 id=102 data-nosnippet>102</a>                global.one_over_k0_range_upper,
+<a href=#26 id=26 data-nosnippet>26</a></span><span class="attr">#[derive(Clone)]
+<a href=#27 id=27 data-nosnippet>27</a></span><span class="kw">pub struct </span>MetaIndex {
+<a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">pub </span>data_path: String,
+<a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">pub </span>frames: Vec&lt;FrameInfo&gt;,
+<a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">pub </span>bounds: AxisBounds,
+<a href=#31 id=31 data-nosnippet>31</a>    <span class="kw">pub </span>total_points_estimate: u64,
+<a href=#32 id=32 data-nosnippet>32</a>    <span class="doccomment">/// TIMS scans per frame (the mobility ramp length; constant across frames). Used to anchor the
+<a href=#33 id=33 data-nosnippet>33</a>    /// clustering's 1/K0 reach to a fixed number of scans (run-level, focus-independent).
+<a href=#34 id=34 data-nosnippet>34</a>    </span><span class="kw">pub </span>num_scans: u32,
+<a href=#35 id=35 data-nosnippet>35</a>}
+<a href=#36 id=36 data-nosnippet>36</a>
+<a href=#37 id=37 data-nosnippet>37</a><span class="kw">impl </span>MetaIndex {
+<a href=#38 id=38 data-nosnippet>38</a>    <span class="doccomment">/// Load metadata for a real `.d` folder.
+<a href=#39 id=39 data-nosnippet>39</a>    </span><span class="kw">pub fn </span>load(data_path: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+<a href=#40 id=40 data-nosnippet>40</a>        <span class="kw">let </span>global = read_global_meta_sql(data_path)
+<a href=#41 id=41 data-nosnippet>41</a>            .map_err(|e| <span class="macro">anyhow::anyhow!</span>(<span class="string">"read_global_meta_sql failed: {e:?}"</span>))
+<a href=#42 id=42 data-nosnippet>42</a>            .context(<span class="string">"reading global TDF metadata"</span>)<span class="question-mark">?</span>;
+<a href=#43 id=43 data-nosnippet>43</a>        <span class="kw">let </span>meta = read_meta_data_sql(data_path)
+<a href=#44 id=44 data-nosnippet>44</a>            .map_err(|e| <span class="macro">anyhow::anyhow!</span>(<span class="string">"read_meta_data_sql failed: {e:?}"</span>))
+<a href=#45 id=45 data-nosnippet>45</a>            .context(<span class="string">"reading per-frame TDF metadata"</span>)<span class="question-mark">?</span>;
+<a href=#46 id=46 data-nosnippet>46</a>
+<a href=#47 id=47 data-nosnippet>47</a>        <span class="macro">anyhow::ensure!</span>(!meta.is_empty(), <span class="string">"TDF run contains no frames"</span>);
+<a href=#48 id=48 data-nosnippet>48</a>
+<a href=#49 id=49 data-nosnippet>49</a>        <span class="kw">let </span><span class="kw-2">mut </span>frames = Vec::with_capacity(meta.len());
+<a href=#50 id=50 data-nosnippet>50</a>        <span class="kw">let </span><span class="kw-2">mut </span>rt_min = f64::INFINITY;
+<a href=#51 id=51 data-nosnippet>51</a>        <span class="kw">let </span><span class="kw-2">mut </span>rt_max = f64::NEG_INFINITY;
+<a href=#52 id=52 data-nosnippet>52</a>        <span class="kw">let </span><span class="kw-2">mut </span>total: u64 = <span class="number">0</span>;
+<a href=#53 id=53 data-nosnippet>53</a>        <span class="kw">for </span>m <span class="kw">in </span><span class="kw-2">&amp;</span>meta {
+<a href=#54 id=54 data-nosnippet>54</a>            <span class="comment">// Keep FrameMeta.id as the frame id we pass to get_frame. rustdf's get_frame
+<a href=#55 id=55 data-nosnippet>55</a>            // indexes its own frame_meta_data by position (id - 1) from the same
+<a href=#56 id=56 data-nosnippet>56</a>            // unordered SQL query, so we require ids to appear in exact 1..=N positional
+<a href=#57 id=57 data-nosnippet>57</a>            // order (validated below). Checked-convert to avoid an i64-&gt;u32 wrap.
+<a href=#58 id=58 data-nosnippet>58</a>            </span><span class="kw">let </span>id = u32::try_from(m.id)
+<a href=#59 id=59 data-nosnippet>59</a>                .map_err(|<span class="kw">_</span>| <span class="macro">anyhow::anyhow!</span>(<span class="string">"frame id {} is out of u32 range"</span>, m.id))<span class="question-mark">?</span>;
+<a href=#60 id=60 data-nosnippet>60</a>            <span class="kw">let </span>num_peaks = m.num_peaks.max(<span class="number">0</span>) <span class="kw">as </span>u64;
+<a href=#61 id=61 data-nosnippet>61</a>            <span class="kw">if </span>num_peaks &gt; <span class="number">0 </span>{
+<a href=#62 id=62 data-nosnippet>62</a>                rt_min = rt_min.min(m.time);
+<a href=#63 id=63 data-nosnippet>63</a>                rt_max = rt_max.max(m.time);
+<a href=#64 id=64 data-nosnippet>64</a>            }
+<a href=#65 id=65 data-nosnippet>65</a>            total = total.saturating_add(num_peaks);
+<a href=#66 id=66 data-nosnippet>66</a>            frames.push(FrameInfo {
+<a href=#67 id=67 data-nosnippet>67</a>                id,
+<a href=#68 id=68 data-nosnippet>68</a>                retention_time: m.time,
+<a href=#69 id=69 data-nosnippet>69</a>                is_ms2: m.ms_ms_type != <span class="number">0</span>,
+<a href=#70 id=70 data-nosnippet>70</a>                num_peaks,
+<a href=#71 id=71 data-nosnippet>71</a>            });
+<a href=#72 id=72 data-nosnippet>72</a>        }
+<a href=#73 id=73 data-nosnippet>73</a>
+<a href=#74 id=74 data-nosnippet>74</a>        <span class="comment">// rustdf looks up frames by vector position (id - 1) from the same query, so the
+<a href=#75 id=75 data-nosnippet>75</a>        // metadata must arrive in exact 1..=N order. Checking the id *set* isn't enough:
+<a href=#76 id=76 data-nosnippet>76</a>        // an unordered result like [2,1,3] passes a set check but makes get_frame(2) read
+<a href=#77 id=77 data-nosnippet>77</a>        // position 1 (id 1's data). Require positional order so this can't silently
+<a href=#78 id=78 data-nosnippet>78</a>        // corrupt the view; timsTOF runs satisfy it.
+<a href=#79 id=79 data-nosnippet>79</a>        </span><span class="kw">let </span>n = frames.len();
+<a href=#80 id=80 data-nosnippet>80</a>        <span class="kw">let </span>ordered = frames
+<a href=#81 id=81 data-nosnippet>81</a>            .iter()
+<a href=#82 id=82 data-nosnippet>82</a>            .enumerate()
+<a href=#83 id=83 data-nosnippet>83</a>            .all(|(i, f)| f.id == i <span class="kw">as </span>u32 + <span class="number">1</span>);
+<a href=#84 id=84 data-nosnippet>84</a>        <span class="macro">anyhow::ensure!</span>(
+<a href=#85 id=85 data-nosnippet>85</a>            ordered,
+<a href=#86 id=86 data-nosnippet>86</a>            <span class="string">"frame metadata is not in contiguous 1..={n} positional order \
+<a href=#87 id=87 data-nosnippet>87</a>             (first id {:?}, last id {:?}); the viewer relies on rustdf's position-based \
+<a href=#88 id=88 data-nosnippet>88</a>             frame indexing"</span>,
+<a href=#89 id=89 data-nosnippet>89</a>            frames.first().map(|f| f.id),
+<a href=#90 id=90 data-nosnippet>90</a>            frames.last().map(|f| f.id),
+<a href=#91 id=91 data-nosnippet>91</a>        );
+<a href=#92 id=92 data-nosnippet>92</a>
+<a href=#93 id=93 data-nosnippet>93</a>        <span class="kw">if </span>!rt_min.is_finite() || !rt_max.is_finite() {
+<a href=#94 id=94 data-nosnippet>94</a>            <span class="comment">// No non-empty frames carried RT; fall back to the full frame span.
+<a href=#95 id=95 data-nosnippet>95</a>            </span>rt_min = frames.first().map(|f| f.retention_time).unwrap_or(<span class="number">0.0</span>);
+<a href=#96 id=96 data-nosnippet>96</a>            rt_max = frames.last().map(|f| f.retention_time).unwrap_or(<span class="number">1.0</span>);
+<a href=#97 id=97 data-nosnippet>97</a>        }
+<a href=#98 id=98 data-nosnippet>98</a>
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">let </span>bounds = AxisBounds {
+<a href=#100 id=100 data-nosnippet>100</a>            mz: AxisTransform::new(
+<a href=#101 id=101 data-nosnippet>101</a>                global.mz_acquisition_range_lower,
+<a href=#102 id=102 data-nosnippet>102</a>                global.mz_acquisition_range_upper,
 <a href=#103 id=103 data-nosnippet>103</a>            ),
-<a href=#104 id=104 data-nosnippet>104</a>            rt: AxisTransform::new(rt_min, rt_max),
-<a href=#105 id=105 data-nosnippet>105</a>        };
-<a href=#106 id=106 data-nosnippet>106</a>
-<a href=#107 id=107 data-nosnippet>107</a>        <span class="prelude-val">Ok</span>(MetaIndex {
-<a href=#108 id=108 data-nosnippet>108</a>            data_path: data_path.to_string(),
-<a href=#109 id=109 data-nosnippet>109</a>            frames,
-<a href=#110 id=110 data-nosnippet>110</a>            bounds,
-<a href=#111 id=111 data-nosnippet>111</a>            total_points_estimate: total,
-<a href=#112 id=112 data-nosnippet>112</a>        })
-<a href=#113 id=113 data-nosnippet>113</a>    }
-<a href=#114 id=114 data-nosnippet>114</a>
-<a href=#115 id=115 data-nosnippet>115</a>    <span class="doccomment">/// Synthetic metadata for the `DEMO` path (no Bruker data required).
-<a href=#116 id=116 data-nosnippet>116</a>    </span><span class="kw">pub fn </span>demo(num_frames: usize, total_points: u64) -&gt; <span class="self">Self </span>{
-<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">let </span><span class="kw-2">mut </span>frames = Vec::with_capacity(num_frames);
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..num_frames {
-<a href=#119 id=119 data-nosnippet>119</a>            <span class="kw">let </span>rt = i <span class="kw">as </span>f64 * <span class="number">0.5</span>; <span class="comment">// 0.5 s spacing
-<a href=#120 id=120 data-nosnippet>120</a>            </span>frames.push(FrameInfo {
-<a href=#121 id=121 data-nosnippet>121</a>                id: (i + <span class="number">1</span>) <span class="kw">as </span>u32,
-<a href=#122 id=122 data-nosnippet>122</a>                retention_time: rt,
-<a href=#123 id=123 data-nosnippet>123</a>                is_ms2: i % <span class="number">10 </span>== <span class="number">9</span>, <span class="comment">// ~10% MS2
-<a href=#124 id=124 data-nosnippet>124</a>                </span>num_peaks: total_points / num_frames.max(<span class="number">1</span>) <span class="kw">as </span>u64,
-<a href=#125 id=125 data-nosnippet>125</a>            });
-<a href=#126 id=126 data-nosnippet>126</a>        }
-<a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">let </span>bounds = AxisBounds {
-<a href=#128 id=128 data-nosnippet>128</a>            mz: AxisTransform::new(<span class="number">100.0</span>, <span class="number">1700.0</span>),
-<a href=#129 id=129 data-nosnippet>129</a>            im: AxisTransform::new(<span class="number">0.6</span>, <span class="number">1.6</span>),
-<a href=#130 id=130 data-nosnippet>130</a>            rt: AxisTransform::new(<span class="number">0.0</span>, (num_frames.max(<span class="number">1</span>) - <span class="number">1</span>) <span class="kw">as </span>f64 * <span class="number">0.5</span>),
-<a href=#131 id=131 data-nosnippet>131</a>        };
-<a href=#132 id=132 data-nosnippet>132</a>        MetaIndex {
-<a href=#133 id=133 data-nosnippet>133</a>            data_path: <span class="string">"DEMO"</span>.to_string(),
-<a href=#134 id=134 data-nosnippet>134</a>            frames,
-<a href=#135 id=135 data-nosnippet>135</a>            bounds,
-<a href=#136 id=136 data-nosnippet>136</a>            total_points_estimate: total_points,
-<a href=#137 id=137 data-nosnippet>137</a>        }
-<a href=#138 id=138 data-nosnippet>138</a>    }
-<a href=#139 id=139 data-nosnippet>139</a>}
+<a href=#104 id=104 data-nosnippet>104</a>            im: AxisTransform::new(
+<a href=#105 id=105 data-nosnippet>105</a>                global.one_over_k0_range_lower,
+<a href=#106 id=106 data-nosnippet>106</a>                global.one_over_k0_range_upper,
+<a href=#107 id=107 data-nosnippet>107</a>            ),
+<a href=#108 id=108 data-nosnippet>108</a>            rt: AxisTransform::new(rt_min, rt_max),
+<a href=#109 id=109 data-nosnippet>109</a>        };
+<a href=#110 id=110 data-nosnippet>110</a>
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="comment">// The mobility ramp length (constant across frames). Use the mode (most common value) so a
+<a href=#112 id=112 data-nosnippet>112</a>        // single corrupt frame — a stray 0 or an absurdly high count — can't skew the anchor.
+<a href=#113 id=113 data-nosnippet>113</a>        </span><span class="kw">let </span>num_scans = {
+<a href=#114 id=114 data-nosnippet>114</a>            <span class="kw">let </span><span class="kw-2">mut </span>counts: std::collections::HashMap&lt;u32, usize&gt; = std::collections::HashMap::new();
+<a href=#115 id=115 data-nosnippet>115</a>            <span class="kw">for </span>m <span class="kw">in </span><span class="kw-2">&amp;</span>meta {
+<a href=#116 id=116 data-nosnippet>116</a>                <span class="kw">let </span>s = m.num_scans.max(<span class="number">0</span>) <span class="kw">as </span>u32;
+<a href=#117 id=117 data-nosnippet>117</a>                <span class="kw">if </span>s &gt; <span class="number">0 </span>{
+<a href=#118 id=118 data-nosnippet>118</a>                    <span class="kw-2">*</span>counts.entry(s).or_default() += <span class="number">1</span>;
+<a href=#119 id=119 data-nosnippet>119</a>                }
+<a href=#120 id=120 data-nosnippet>120</a>            }
+<a href=#121 id=121 data-nosnippet>121</a>            counts.into_iter().max_by_key(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, c)| c).map(|(s, <span class="kw">_</span>)| s).unwrap_or(<span class="number">0</span>)
+<a href=#122 id=122 data-nosnippet>122</a>        };
+<a href=#123 id=123 data-nosnippet>123</a>
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="prelude-val">Ok</span>(MetaIndex {
+<a href=#125 id=125 data-nosnippet>125</a>            data_path: data_path.to_string(),
+<a href=#126 id=126 data-nosnippet>126</a>            frames,
+<a href=#127 id=127 data-nosnippet>127</a>            bounds,
+<a href=#128 id=128 data-nosnippet>128</a>            total_points_estimate: total,
+<a href=#129 id=129 data-nosnippet>129</a>            num_scans,
+<a href=#130 id=130 data-nosnippet>130</a>        })
+<a href=#131 id=131 data-nosnippet>131</a>    }
+<a href=#132 id=132 data-nosnippet>132</a>
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="doccomment">/// Synthetic metadata for the `DEMO` path (no Bruker data required).
+<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">pub fn </span>demo(num_frames: usize, total_points: u64) -&gt; <span class="self">Self </span>{
+<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span><span class="kw-2">mut </span>frames = Vec::with_capacity(num_frames);
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..num_frames {
+<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">let </span>rt = i <span class="kw">as </span>f64 * <span class="number">0.5</span>; <span class="comment">// 0.5 s spacing
+<a href=#138 id=138 data-nosnippet>138</a>            </span>frames.push(FrameInfo {
+<a href=#139 id=139 data-nosnippet>139</a>                id: (i + <span class="number">1</span>) <span class="kw">as </span>u32,
+<a href=#140 id=140 data-nosnippet>140</a>                retention_time: rt,
+<a href=#141 id=141 data-nosnippet>141</a>                is_ms2: i % <span class="number">10 </span>== <span class="number">9</span>, <span class="comment">// ~10% MS2
+<a href=#142 id=142 data-nosnippet>142</a>                </span>num_peaks: total_points / num_frames.max(<span class="number">1</span>) <span class="kw">as </span>u64,
+<a href=#143 id=143 data-nosnippet>143</a>            });
+<a href=#144 id=144 data-nosnippet>144</a>        }
+<a href=#145 id=145 data-nosnippet>145</a>        <span class="kw">let </span>bounds = AxisBounds {
+<a href=#146 id=146 data-nosnippet>146</a>            mz: AxisTransform::new(<span class="number">100.0</span>, <span class="number">1700.0</span>),
+<a href=#147 id=147 data-nosnippet>147</a>            im: AxisTransform::new(<span class="number">0.6</span>, <span class="number">1.6</span>),
+<a href=#148 id=148 data-nosnippet>148</a>            rt: AxisTransform::new(<span class="number">0.0</span>, (num_frames.max(<span class="number">1</span>) - <span class="number">1</span>) <span class="kw">as </span>f64 * <span class="number">0.5</span>),
+<a href=#149 id=149 data-nosnippet>149</a>        };
+<a href=#150 id=150 data-nosnippet>150</a>        MetaIndex {
+<a href=#151 id=151 data-nosnippet>151</a>            data_path: <span class="string">"DEMO"</span>.to_string(),
+<a href=#152 id=152 data-nosnippet>152</a>            frames,
+<a href=#153 id=153 data-nosnippet>153</a>            bounds,
+<a href=#154 id=154 data-nosnippet>154</a>            total_points_estimate: total_points,
+<a href=#155 id=155 data-nosnippet>155</a>            num_scans: <span class="number">709</span>, <span class="comment">// a typical timsTOF mobility ramp length
+<a href=#156 id=156 data-nosnippet>156</a>        </span>}
+<a href=#157 id=157 data-nosnippet>157</a>    }
+<a href=#158 id=158 data-nosnippet>158</a>}
 </code></pre></div></section></main></body></html>

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["COLORMAP_NAMES","LUT_WIDTH"],"fn":["anchors","build_lut_rgba8","create_lut_texture"]};
+window.SIDEBAR_ITEMS = {"constant":["COLORMAP_NAMES"],"fn":["build_lut_rgba8","create_lut_texture","group_color","sample"]};

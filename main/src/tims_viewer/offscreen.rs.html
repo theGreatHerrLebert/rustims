@@ -106,261 +106,270 @@
 <a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">let </span>bounds = plan.meta.bounds;
 <a href=#107 id=107 data-nosnippet>107</a>    <span class="kw">let </span><span class="kw-2">mut </span>state = AppState::new(bounds, total, COLORMAP_NAMES.len() <span class="kw">as </span>u32);
 <a href=#108 id=108 data-nosnippet>108</a>    state.capacity = capacity;
-<a href=#109 id=109 data-nosnippet>109</a>    state.view_mode = <span class="kw">if </span>opts.volume { ViewMode::Volume } <span class="kw">else </span>{ ViewMode::Points };
-<a href=#110 id=110 data-nosnippet>110</a>    state.vol_style = <span class="kw">if </span>opts.mip { VolStyle::Mip } <span class="kw">else </span>{ VolStyle::Composite };
-<a href=#111 id=111 data-nosnippet>111</a>
-<a href=#112 id=112 data-nosnippet>112</a>    <span class="comment">// Load the whole run synchronously by draining the streaming loader.
-<a href=#113 id=113 data-nosnippet>113</a>    </span><span class="kw">let </span>mode = <span class="kw">if </span>plan.is_demo {
-<a href=#114 id=114 data-nosnippet>114</a>        LoaderMode::Demo(DemoSource::new(plan.meta.frames.len(), total))
-<a href=#115 id=115 data-nosnippet>115</a>    } <span class="kw">else </span>{
-<a href=#116 id=116 data-nosnippet>116</a>        LoaderMode::Real {
-<a href=#117 id=117 data-nosnippet>117</a>            path: plan.meta.data_path.clone(),
-<a href=#118 id=118 data-nosnippet>118</a>            frame_ids: plan.meta.frames.iter().map(|f| f.id).collect(),
-<a href=#119 id=119 data-nosnippet>119</a>        }
-<a href=#120 id=120 data-nosnippet>120</a>    };
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">let </span>loader = LoaderHandle::spawn(mode, bounds, total, capacity <span class="kw">as </span>usize);
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="kw">let </span>keep = |p: <span class="kw-2">&amp;</span>GpuPoint| <span class="kw">match </span>opts.ms {
-<a href=#123 id=123 data-nosnippet>123</a>        MsFilter::All =&gt; <span class="bool-val">true</span>,
-<a href=#124 id=124 data-nosnippet>124</a>        MsFilter::Ms1 =&gt; p.flags &amp; GpuPoint::MS2_FLAG == <span class="number">0</span>,
-<a href=#125 id=125 data-nosnippet>125</a>        MsFilter::Ms2 =&gt; p.flags &amp; GpuPoint::MS2_FLAG != <span class="number">0</span>,
-<a href=#126 id=126 data-nosnippet>126</a>    };
-<a href=#127 id=127 data-nosnippet>127</a>    <span class="comment">// Reservoir of RETAINED intensities so the auto transfer range matches what is
-<a href=#128 id=128 data-nosnippet>128</a>    // actually rendered (the loader's Stats span both MS levels).
-<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>reservoir: Vec&lt;f32&gt; = Vec::new();
-<a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">let </span>sample_every = (capacity <span class="kw">as </span>usize / <span class="number">200_000</span>).max(<span class="number">1</span>) <span class="kw">as </span>u64;
-<a href=#131 id=131 data-nosnippet>131</a>    <span class="kw">let </span><span class="kw-2">mut </span>seen: u64 = <span class="number">0</span>;
-<a href=#132 id=132 data-nosnippet>132</a>    <span class="kw">let </span><span class="kw-2">mut </span>done = <span class="bool-val">false</span>;
-<a href=#133 id=133 data-nosnippet>133</a>    <span class="kw">loop </span>{
-<a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">match </span>loader.rx.recv() {
-<a href=#135 id=135 data-nosnippet>135</a>            <span class="prelude-val">Ok</span>(LoadMsg::Chunk { points: pts, .. }) =&gt; {
-<a href=#136 id=136 data-nosnippet>136</a>                <span class="comment">// Filter to the requested MS level at the source so both the volume grid
-<a href=#137 id=137 data-nosnippet>137</a>                // and the point buffer render only that level.
-<a href=#138 id=138 data-nosnippet>138</a>                </span><span class="kw">let </span>pts: Vec&lt;GpuPoint&gt; = <span class="kw">if </span>opts.ms == MsFilter::All {
-<a href=#139 id=139 data-nosnippet>139</a>                    pts
-<a href=#140 id=140 data-nosnippet>140</a>                } <span class="kw">else </span>{
-<a href=#141 id=141 data-nosnippet>141</a>                    pts.into_iter().filter(<span class="kw-2">&amp;</span>keep).collect()
-<a href=#142 id=142 data-nosnippet>142</a>                };
-<a href=#143 id=143 data-nosnippet>143</a>                <span class="kw">for </span>p <span class="kw">in </span><span class="kw-2">&amp;</span>pts {
-<a href=#144 id=144 data-nosnippet>144</a>                    <span class="comment">// Deposit intensity*weight so density is downsample-invariant.
-<a href=#145 id=145 data-nosnippet>145</a>                    </span>grid.deposit(p.pos, p.intensity * p.weight);
-<a href=#146 id=146 data-nosnippet>146</a>                    <span class="kw">if </span>seen % sample_every == <span class="number">0 </span>&amp;&amp; reservoir.len() &lt; <span class="number">200_000 </span>{
-<a href=#147 id=147 data-nosnippet>147</a>                        reservoir.push(p.intensity);
-<a href=#148 id=148 data-nosnippet>148</a>                    }
-<a href=#149 id=149 data-nosnippet>149</a>                    seen += <span class="number">1</span>;
-<a href=#150 id=150 data-nosnippet>150</a>                }
-<a href=#151 id=151 data-nosnippet>151</a>                points.append(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>pts);
-<a href=#152 id=152 data-nosnippet>152</a>            }
-<a href=#153 id=153 data-nosnippet>153</a>            <span class="prelude-val">Ok</span>(LoadMsg::PeakChunk { points: pts }) =&gt; {
-<a href=#154 id=154 data-nosnippet>154</a>                <span class="comment">// Display-only peaks: append to the cloud, never to the volume density.
-<a href=#155 id=155 data-nosnippet>155</a>                </span><span class="kw">let </span>pts: Vec&lt;GpuPoint&gt; = <span class="kw">if </span>opts.ms == MsFilter::All {
-<a href=#156 id=156 data-nosnippet>156</a>                    pts
-<a href=#157 id=157 data-nosnippet>157</a>                } <span class="kw">else </span>{
-<a href=#158 id=158 data-nosnippet>158</a>                    pts.into_iter().filter(<span class="kw-2">&amp;</span>keep).collect()
-<a href=#159 id=159 data-nosnippet>159</a>                };
-<a href=#160 id=160 data-nosnippet>160</a>                points.append(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>pts);
-<a href=#161 id=161 data-nosnippet>161</a>            }
-<a href=#162 id=162 data-nosnippet>162</a>            <span class="prelude-val">Ok</span>(LoadMsg::Stats { .. }) =&gt; {} <span class="comment">// recomputed below from retained points
-<a href=#163 id=163 data-nosnippet>163</a>            </span><span class="prelude-val">Ok</span>(LoadMsg::Annotations { lines }) =&gt; {
-<a href=#164 id=164 data-nosnippet>164</a>                <span class="kw">if </span>opts.annotations {
-<a href=#165 id=165 data-nosnippet>165</a>                    annotations.upload(<span class="kw-2">&amp;</span>device, <span class="kw-2">&amp;</span>lines);
-<a href=#166 id=166 data-nosnippet>166</a>                }
-<a href=#167 id=167 data-nosnippet>167</a>            }
-<a href=#168 id=168 data-nosnippet>168</a>            <span class="prelude-val">Ok</span>(LoadMsg::Done { .. }) =&gt; {
-<a href=#169 id=169 data-nosnippet>169</a>                done = <span class="bool-val">true</span>;
-<a href=#170 id=170 data-nosnippet>170</a>                <span class="kw">break</span>;
-<a href=#171 id=171 data-nosnippet>171</a>            }
-<a href=#172 id=172 data-nosnippet>172</a>            <span class="prelude-val">Ok</span>(LoadMsg::Error(e)) =&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"loader error: {e}"</span>),
-<a href=#173 id=173 data-nosnippet>173</a>            <span class="prelude-val">Ok</span>(LoadMsg::Progress(<span class="kw">_</span>)) =&gt; {}
-<a href=#174 id=174 data-nosnippet>174</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
-<a href=#175 id=175 data-nosnippet>175</a>        }
-<a href=#176 id=176 data-nosnippet>176</a>    }
-<a href=#177 id=177 data-nosnippet>177</a>    <span class="comment">// A disconnect before Done means the loader thread died (e.g. panicked) — don't
-<a href=#178 id=178 data-nosnippet>178</a>    // silently write a partial/empty image.
-<a href=#179 id=179 data-nosnippet>179</a>    </span><span class="macro">anyhow::ensure!</span>(done, <span class="string">"loader thread ended before completing the load"</span>);
-<a href=#180 id=180 data-nosnippet>180</a>
-<a href=#181 id=181 data-nosnippet>181</a>    <span class="comment">// Default transfer range. Volume density sums live in a different range than
-<a href=#182 id=182 data-nosnippet>182</a>    // per-point intensity, so take it from the voxel density distribution; the point
-<a href=#183 id=183 data-nosnippet>183</a>    // cloud uses the retained-intensity percentiles.
-<a href=#184 id=184 data-nosnippet>184</a>    </span><span class="kw">if </span>opts.volume {
-<a href=#185 id=185 data-nosnippet>185</a>        <span class="kw">let </span>(lo, hi) = grid.density_percentiles();
-<a href=#186 id=186 data-nosnippet>186</a>        state.i_min = lo;
-<a href=#187 id=187 data-nosnippet>187</a>        state.i_max = hi;
-<a href=#188 id=188 data-nosnippet>188</a>    } <span class="kw">else if </span>!reservoir.is_empty() {
-<a href=#189 id=189 data-nosnippet>189</a>        reservoir.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-<a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">let </span>pct = |q: f32| reservoir[(((reservoir.len() - <span class="number">1</span>) <span class="kw">as </span>f32) * q) <span class="kw">as </span>usize];
-<a href=#191 id=191 data-nosnippet>191</a>        state.i_min = pct(<span class="number">0.01</span>).max(<span class="number">1.0</span>);
-<a href=#192 id=192 data-nosnippet>192</a>        state.i_max = pct(<span class="number">0.99</span>).max(state.i_min * <span class="number">1.0001</span>);
-<a href=#193 id=193 data-nosnippet>193</a>    }
-<a href=#194 id=194 data-nosnippet>194</a>    <span class="comment">// Apply transfer-function overrides (e.g. raise i_min to threshold out noise).
-<a href=#195 id=195 data-nosnippet>195</a>    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(v) = opts.i_min {
-<a href=#196 id=196 data-nosnippet>196</a>        state.i_min = v;
-<a href=#197 id=197 data-nosnippet>197</a>    }
-<a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(v) = opts.i_max {
-<a href=#199 id=199 data-nosnippet>199</a>        state.i_max = v;
-<a href=#200 id=200 data-nosnippet>200</a>    }
-<a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(v) = opts.exposure {
-<a href=#202 id=202 data-nosnippet>202</a>        state.exposure = v;
-<a href=#203 id=203 data-nosnippet>203</a>    }
-<a href=#204 id=204 data-nosnippet>204</a>    <span class="macro">log::info!</span>(
-<a href=#205 id=205 data-nosnippet>205</a>        <span class="string">"loaded {} points (i_min={:.0} i_max={:.0} exposure={})"</span>,
-<a href=#206 id=206 data-nosnippet>206</a>        points.resident(),
-<a href=#207 id=207 data-nosnippet>207</a>        state.i_min,
-<a href=#208 id=208 data-nosnippet>208</a>        state.i_max,
-<a href=#209 id=209 data-nosnippet>209</a>        state.exposure
-<a href=#210 id=210 data-nosnippet>210</a>    );
-<a href=#211 id=211 data-nosnippet>211</a>
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="comment">// Camera + uniforms.
-<a href=#213 id=213 data-nosnippet>213</a>    </span><span class="kw">let </span>camera = OrbitCamera::default();
-<a href=#214 id=214 data-nosnippet>214</a>    <span class="kw">let </span>aspect = opts.width <span class="kw">as </span>f32 / opts.height <span class="kw">as </span>f32;
-<a href=#215 id=215 data-nosnippet>215</a>    <span class="kw">let </span>cam_uniform = camera.to_uniform(aspect, [opts.width <span class="kw">as </span>f32, opts.height <span class="kw">as </span>f32]);
-<a href=#216 id=216 data-nosnippet>216</a>    <span class="kw">let </span>params = state.params();
-<a href=#217 id=217 data-nosnippet>217</a>    points.update_camera(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>cam_uniform);
-<a href=#218 id=218 data-nosnippet>218</a>    points.update_params(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>params);
-<a href=#219 id=219 data-nosnippet>219</a>    annotations.update_camera(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>cam_uniform);
-<a href=#220 id=220 data-nosnippet>220</a>    annotations.update_filter(<span class="kw-2">&amp;</span>queue, params.filter_min, params.filter_max);
-<a href=#221 id=221 data-nosnippet>221</a>    <span class="kw">if </span>opts.volume {
-<a href=#222 id=222 data-nosnippet>222</a>        <span class="kw">let </span><span class="kw-2">mut </span>vu = state.volume_uniform(camera.inv_view_proj(aspect));
-<a href=#223 id=223 data-nosnippet>223</a>        vu.density_scale = grid.density_scale();
-<a href=#224 id=224 data-nosnippet>224</a>        volume.update_uniform(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>vu);
-<a href=#225 id=225 data-nosnippet>225</a>        volume.upload(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>grid.to_f16_scaled());
-<a href=#226 id=226 data-nosnippet>226</a>    }
-<a href=#227 id=227 data-nosnippet>227</a>
-<a href=#228 id=228 data-nosnippet>228</a>    <span class="comment">// Offscreen targets.
-<a href=#229 id=229 data-nosnippet>229</a>    </span><span class="kw">let </span>color = device.create_texture(<span class="kw-2">&amp;</span>wgpu::TextureDescriptor {
-<a href=#230 id=230 data-nosnippet>230</a>        label: <span class="prelude-val">Some</span>(<span class="string">"offscreen-color"</span>),
-<a href=#231 id=231 data-nosnippet>231</a>        size: wgpu::Extent3d {
-<a href=#232 id=232 data-nosnippet>232</a>            width: opts.width,
-<a href=#233 id=233 data-nosnippet>233</a>            height: opts.height,
-<a href=#234 id=234 data-nosnippet>234</a>            depth_or_array_layers: <span class="number">1</span>,
-<a href=#235 id=235 data-nosnippet>235</a>        },
-<a href=#236 id=236 data-nosnippet>236</a>        mip_level_count: <span class="number">1</span>,
-<a href=#237 id=237 data-nosnippet>237</a>        sample_count: <span class="number">1</span>,
-<a href=#238 id=238 data-nosnippet>238</a>        dimension: wgpu::TextureDimension::D2,
-<a href=#239 id=239 data-nosnippet>239</a>        format: COLOR_FORMAT,
-<a href=#240 id=240 data-nosnippet>240</a>        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-<a href=#241 id=241 data-nosnippet>241</a>        view_formats: <span class="kw-2">&amp;</span>[],
-<a href=#242 id=242 data-nosnippet>242</a>    });
-<a href=#243 id=243 data-nosnippet>243</a>    <span class="kw">let </span>depth = device.create_texture(<span class="kw-2">&amp;</span>wgpu::TextureDescriptor {
-<a href=#244 id=244 data-nosnippet>244</a>        label: <span class="prelude-val">Some</span>(<span class="string">"offscreen-depth"</span>),
-<a href=#245 id=245 data-nosnippet>245</a>        size: wgpu::Extent3d {
-<a href=#246 id=246 data-nosnippet>246</a>            width: opts.width,
-<a href=#247 id=247 data-nosnippet>247</a>            height: opts.height,
-<a href=#248 id=248 data-nosnippet>248</a>            depth_or_array_layers: <span class="number">1</span>,
-<a href=#249 id=249 data-nosnippet>249</a>        },
-<a href=#250 id=250 data-nosnippet>250</a>        mip_level_count: <span class="number">1</span>,
-<a href=#251 id=251 data-nosnippet>251</a>        sample_count: <span class="number">1</span>,
-<a href=#252 id=252 data-nosnippet>252</a>        dimension: wgpu::TextureDimension::D2,
-<a href=#253 id=253 data-nosnippet>253</a>        format: DEPTH_FORMAT,
-<a href=#254 id=254 data-nosnippet>254</a>        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-<a href=#255 id=255 data-nosnippet>255</a>        view_formats: <span class="kw-2">&amp;</span>[],
-<a href=#256 id=256 data-nosnippet>256</a>    });
-<a href=#257 id=257 data-nosnippet>257</a>    <span class="kw">let </span>color_view = color.create_view(<span class="kw-2">&amp;</span>Default::default());
-<a href=#258 id=258 data-nosnippet>258</a>    <span class="kw">let </span>depth_view = depth.create_view(<span class="kw-2">&amp;</span>Default::default());
-<a href=#259 id=259 data-nosnippet>259</a>
-<a href=#260 id=260 data-nosnippet>260</a>    <span class="comment">// Padded readback buffer (bytes_per_row must be 256-aligned for texture-&gt;buffer).
-<a href=#261 id=261 data-nosnippet>261</a>    </span><span class="kw">let </span>unpadded_bpr = opts.width * <span class="number">4</span>;
-<a href=#262 id=262 data-nosnippet>262</a>    <span class="kw">let </span>padded_bpr = unpadded_bpr.div_ceil(<span class="number">256</span>) * <span class="number">256</span>;
-<a href=#263 id=263 data-nosnippet>263</a>    <span class="kw">let </span>readback = device.create_buffer(<span class="kw-2">&amp;</span>wgpu::BufferDescriptor {
-<a href=#264 id=264 data-nosnippet>264</a>        label: <span class="prelude-val">Some</span>(<span class="string">"readback"</span>),
-<a href=#265 id=265 data-nosnippet>265</a>        size: (padded_bpr * opts.height) <span class="kw">as </span>u64,
-<a href=#266 id=266 data-nosnippet>266</a>        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-<a href=#267 id=267 data-nosnippet>267</a>        mapped_at_creation: <span class="bool-val">false</span>,
-<a href=#268 id=268 data-nosnippet>268</a>    });
-<a href=#269 id=269 data-nosnippet>269</a>
-<a href=#270 id=270 data-nosnippet>270</a>    <span class="kw">let </span><span class="kw-2">mut </span>encoder =
-<a href=#271 id=271 data-nosnippet>271</a>        device.create_command_encoder(<span class="kw-2">&amp;</span>wgpu::CommandEncoderDescriptor { label: <span class="prelude-val">Some</span>(<span class="string">"offscreen"</span>) });
-<a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">if </span>!opts.volume {
-<a href=#273 id=273 data-nosnippet>273</a>        points.prepare(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;mut </span>encoder);
-<a href=#274 id=274 data-nosnippet>274</a>    }
-<a href=#275 id=275 data-nosnippet>275</a>    {
-<a href=#276 id=276 data-nosnippet>276</a>        <span class="kw">let </span><span class="kw-2">mut </span>rpass = encoder.begin_render_pass(<span class="kw-2">&amp;</span>wgpu::RenderPassDescriptor {
-<a href=#277 id=277 data-nosnippet>277</a>            label: <span class="prelude-val">Some</span>(<span class="string">"offscreen-scene"</span>),
-<a href=#278 id=278 data-nosnippet>278</a>            color_attachments: <span class="kw-2">&amp;</span>[<span class="prelude-val">Some</span>(wgpu::RenderPassColorAttachment {
-<a href=#279 id=279 data-nosnippet>279</a>                view: <span class="kw-2">&amp;</span>color_view,
-<a href=#280 id=280 data-nosnippet>280</a>                resolve_target: <span class="prelude-val">None</span>,
-<a href=#281 id=281 data-nosnippet>281</a>                ops: wgpu::Operations {
-<a href=#282 id=282 data-nosnippet>282</a>                    load: wgpu::LoadOp::Clear(wgpu::Color {
-<a href=#283 id=283 data-nosnippet>283</a>                        r: <span class="number">0.02</span>,
-<a href=#284 id=284 data-nosnippet>284</a>                        g: <span class="number">0.02</span>,
-<a href=#285 id=285 data-nosnippet>285</a>                        b: <span class="number">0.035</span>,
-<a href=#286 id=286 data-nosnippet>286</a>                        a: <span class="number">1.0</span>,
-<a href=#287 id=287 data-nosnippet>287</a>                    }),
-<a href=#288 id=288 data-nosnippet>288</a>                    store: wgpu::StoreOp::Store,
-<a href=#289 id=289 data-nosnippet>289</a>                },
-<a href=#290 id=290 data-nosnippet>290</a>            })],
-<a href=#291 id=291 data-nosnippet>291</a>            depth_stencil_attachment: <span class="prelude-val">Some</span>(wgpu::RenderPassDepthStencilAttachment {
-<a href=#292 id=292 data-nosnippet>292</a>                view: <span class="kw-2">&amp;</span>depth_view,
-<a href=#293 id=293 data-nosnippet>293</a>                depth_ops: <span class="prelude-val">Some</span>(wgpu::Operations {
-<a href=#294 id=294 data-nosnippet>294</a>                    load: wgpu::LoadOp::Clear(<span class="number">1.0</span>),
-<a href=#295 id=295 data-nosnippet>295</a>                    store: wgpu::StoreOp::Store,
-<a href=#296 id=296 data-nosnippet>296</a>                }),
-<a href=#297 id=297 data-nosnippet>297</a>                stencil_ops: <span class="prelude-val">None</span>,
-<a href=#298 id=298 data-nosnippet>298</a>            }),
-<a href=#299 id=299 data-nosnippet>299</a>            timestamp_writes: <span class="prelude-val">None</span>,
-<a href=#300 id=300 data-nosnippet>300</a>            occlusion_query_set: <span class="prelude-val">None</span>,
-<a href=#301 id=301 data-nosnippet>301</a>        });
-<a href=#302 id=302 data-nosnippet>302</a>        <span class="kw">if </span>opts.volume {
-<a href=#303 id=303 data-nosnippet>303</a>            volume.render(<span class="kw-2">&amp;mut </span>rpass);
-<a href=#304 id=304 data-nosnippet>304</a>        } <span class="kw">else </span>{
-<a href=#305 id=305 data-nosnippet>305</a>            points.render(<span class="kw-2">&amp;mut </span>rpass, state.point_mode);
-<a href=#306 id=306 data-nosnippet>306</a>        }
-<a href=#307 id=307 data-nosnippet>307</a>        <span class="kw">if </span>opts.annotations {
-<a href=#308 id=308 data-nosnippet>308</a>            annotations.render(<span class="kw-2">&amp;mut </span>rpass);
-<a href=#309 id=309 data-nosnippet>309</a>        }
-<a href=#310 id=310 data-nosnippet>310</a>    }
-<a href=#311 id=311 data-nosnippet>311</a>    encoder.copy_texture_to_buffer(
-<a href=#312 id=312 data-nosnippet>312</a>        wgpu::ImageCopyTexture {
-<a href=#313 id=313 data-nosnippet>313</a>            texture: <span class="kw-2">&amp;</span>color,
-<a href=#314 id=314 data-nosnippet>314</a>            mip_level: <span class="number">0</span>,
-<a href=#315 id=315 data-nosnippet>315</a>            origin: wgpu::Origin3d::ZERO,
-<a href=#316 id=316 data-nosnippet>316</a>            aspect: wgpu::TextureAspect::All,
-<a href=#317 id=317 data-nosnippet>317</a>        },
-<a href=#318 id=318 data-nosnippet>318</a>        wgpu::ImageCopyBuffer {
-<a href=#319 id=319 data-nosnippet>319</a>            buffer: <span class="kw-2">&amp;</span>readback,
-<a href=#320 id=320 data-nosnippet>320</a>            layout: wgpu::ImageDataLayout {
-<a href=#321 id=321 data-nosnippet>321</a>                offset: <span class="number">0</span>,
-<a href=#322 id=322 data-nosnippet>322</a>                bytes_per_row: <span class="prelude-val">Some</span>(padded_bpr),
-<a href=#323 id=323 data-nosnippet>323</a>                rows_per_image: <span class="prelude-val">Some</span>(opts.height),
-<a href=#324 id=324 data-nosnippet>324</a>            },
-<a href=#325 id=325 data-nosnippet>325</a>        },
-<a href=#326 id=326 data-nosnippet>326</a>        wgpu::Extent3d {
-<a href=#327 id=327 data-nosnippet>327</a>            width: opts.width,
-<a href=#328 id=328 data-nosnippet>328</a>            height: opts.height,
-<a href=#329 id=329 data-nosnippet>329</a>            depth_or_array_layers: <span class="number">1</span>,
-<a href=#330 id=330 data-nosnippet>330</a>        },
-<a href=#331 id=331 data-nosnippet>331</a>    );
-<a href=#332 id=332 data-nosnippet>332</a>    queue.submit(std::iter::once(encoder.finish()));
-<a href=#333 id=333 data-nosnippet>333</a>
-<a href=#334 id=334 data-nosnippet>334</a>    <span class="comment">// Map and read back.
-<a href=#335 id=335 data-nosnippet>335</a>    </span><span class="kw">let </span>slice = readback.slice(..);
-<a href=#336 id=336 data-nosnippet>336</a>    <span class="kw">let </span>(tx, rx) = std::sync::mpsc::channel();
-<a href=#337 id=337 data-nosnippet>337</a>    slice.map_async(wgpu::MapMode::Read, <span class="kw">move </span>|r| {
-<a href=#338 id=338 data-nosnippet>338</a>        <span class="kw">let _ </span>= tx.send(r);
-<a href=#339 id=339 data-nosnippet>339</a>    });
-<a href=#340 id=340 data-nosnippet>340</a>    device.poll(wgpu::Maintain::Wait);
-<a href=#341 id=341 data-nosnippet>341</a>    rx.recv()
-<a href=#342 id=342 data-nosnippet>342</a>        .context(<span class="string">"map_async channel closed"</span>)<span class="question-mark">?
-<a href=#343 id=343 data-nosnippet>343</a>        </span>.context(<span class="string">"buffer map failed"</span>)<span class="question-mark">?</span>;
-<a href=#344 id=344 data-nosnippet>344</a>
-<a href=#345 id=345 data-nosnippet>345</a>    <span class="kw">let </span>data = slice.get_mapped_range();
-<a href=#346 id=346 data-nosnippet>346</a>    <span class="kw">let </span><span class="kw-2">mut </span>rgba = Vec::with_capacity((opts.width * opts.height * <span class="number">4</span>) <span class="kw">as </span>usize);
-<a href=#347 id=347 data-nosnippet>347</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..opts.height {
-<a href=#348 id=348 data-nosnippet>348</a>        <span class="kw">let </span>start = (row * padded_bpr) <span class="kw">as </span>usize;
-<a href=#349 id=349 data-nosnippet>349</a>        rgba.extend_from_slice(<span class="kw-2">&amp;</span>data[start..start + unpadded_bpr <span class="kw">as </span>usize]);
-<a href=#350 id=350 data-nosnippet>350</a>    }
-<a href=#351 id=351 data-nosnippet>351</a>    drop(data);
-<a href=#352 id=352 data-nosnippet>352</a>    readback.unmap();
+<a href=#109 id=109 data-nosnippet>109</a>    state.downsample_stride =
+<a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">crate</span>::data::loader::stride_for(total, capacity <span class="kw">as </span>usize) <span class="kw">as </span>u32;
+<a href=#111 id=111 data-nosnippet>111</a>    state.view_mode = <span class="kw">if </span>opts.volume { ViewMode::Volume } <span class="kw">else </span>{ ViewMode::Points };
+<a href=#112 id=112 data-nosnippet>112</a>    state.vol_style = <span class="kw">if </span>opts.mip { VolStyle::Mip } <span class="kw">else </span>{ VolStyle::Composite };
+<a href=#113 id=113 data-nosnippet>113</a>    <span class="comment">// MS selection is applied at upload time via `opts.ms`; let the shader pass everything
+<a href=#114 id=114 data-nosnippet>114</a>    // that was uploaded (don't double-filter with the interactive MS1-only default).
+<a href=#115 id=115 data-nosnippet>115</a>    </span>state.show_ms2 = <span class="bool-val">true</span>;
+<a href=#116 id=116 data-nosnippet>116</a>
+<a href=#117 id=117 data-nosnippet>117</a>    <span class="comment">// Load the whole run synchronously by draining the streaming loader.
+<a href=#118 id=118 data-nosnippet>118</a>    </span><span class="kw">let </span>mode = <span class="kw">if </span>plan.is_demo {
+<a href=#119 id=119 data-nosnippet>119</a>        LoaderMode::Demo(DemoSource::new(plan.meta.frames.len(), total))
+<a href=#120 id=120 data-nosnippet>120</a>    } <span class="kw">else </span>{
+<a href=#121 id=121 data-nosnippet>121</a>        LoaderMode::Real {
+<a href=#122 id=122 data-nosnippet>122</a>            path: plan.meta.data_path.clone(),
+<a href=#123 id=123 data-nosnippet>123</a>            frame_ids: plan.meta.frames.iter().map(|f| f.id).collect(),
+<a href=#124 id=124 data-nosnippet>124</a>        }
+<a href=#125 id=125 data-nosnippet>125</a>    };
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">let </span>loader = LoaderHandle::spawn(mode, bounds, total, capacity <span class="kw">as </span>usize, <span class="prelude-val">None</span>);
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">let </span>keep = |p: <span class="kw-2">&amp;</span>GpuPoint| <span class="kw">match </span>opts.ms {
+<a href=#128 id=128 data-nosnippet>128</a>        MsFilter::All =&gt; <span class="bool-val">true</span>,
+<a href=#129 id=129 data-nosnippet>129</a>        MsFilter::Ms1 =&gt; p.flags &amp; GpuPoint::MS2_FLAG == <span class="number">0</span>,
+<a href=#130 id=130 data-nosnippet>130</a>        MsFilter::Ms2 =&gt; p.flags &amp; GpuPoint::MS2_FLAG != <span class="number">0</span>,
+<a href=#131 id=131 data-nosnippet>131</a>    };
+<a href=#132 id=132 data-nosnippet>132</a>    <span class="comment">// Reservoir of RETAINED intensities so the auto transfer range matches what is
+<a href=#133 id=133 data-nosnippet>133</a>    // actually rendered (the loader's Stats span both MS levels).
+<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">let </span><span class="kw-2">mut </span>reservoir: Vec&lt;f32&gt; = Vec::new();
+<a href=#135 id=135 data-nosnippet>135</a>    <span class="kw">let </span>sample_every = (capacity <span class="kw">as </span>usize / <span class="number">200_000</span>).max(<span class="number">1</span>) <span class="kw">as </span>u64;
+<a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">let </span><span class="kw-2">mut </span>seen: u64 = <span class="number">0</span>;
+<a href=#137 id=137 data-nosnippet>137</a>    <span class="kw">let </span><span class="kw-2">mut </span>done = <span class="bool-val">false</span>;
+<a href=#138 id=138 data-nosnippet>138</a>    <span class="kw">loop </span>{
+<a href=#139 id=139 data-nosnippet>139</a>        <span class="kw">match </span>loader.rx.recv() {
+<a href=#140 id=140 data-nosnippet>140</a>            <span class="prelude-val">Ok</span>(LoadMsg::Chunk { points: pts, .. }) =&gt; {
+<a href=#141 id=141 data-nosnippet>141</a>                <span class="comment">// Filter to the requested MS level at the source so both the volume grid
+<a href=#142 id=142 data-nosnippet>142</a>                // and the point buffer render only that level.
+<a href=#143 id=143 data-nosnippet>143</a>                </span><span class="kw">let </span>pts: Vec&lt;GpuPoint&gt; = <span class="kw">if </span>opts.ms == MsFilter::All {
+<a href=#144 id=144 data-nosnippet>144</a>                    pts
+<a href=#145 id=145 data-nosnippet>145</a>                } <span class="kw">else </span>{
+<a href=#146 id=146 data-nosnippet>146</a>                    pts.into_iter().filter(<span class="kw-2">&amp;</span>keep).collect()
+<a href=#147 id=147 data-nosnippet>147</a>                };
+<a href=#148 id=148 data-nosnippet>148</a>                <span class="kw">for </span>p <span class="kw">in </span><span class="kw-2">&amp;</span>pts {
+<a href=#149 id=149 data-nosnippet>149</a>                    <span class="comment">// Deposit intensity*weight so density is downsample-invariant.
+<a href=#150 id=150 data-nosnippet>150</a>                    </span>grid.deposit(p.pos, p.intensity * p.weight);
+<a href=#151 id=151 data-nosnippet>151</a>                    <span class="kw">if </span>seen % sample_every == <span class="number">0 </span>&amp;&amp; reservoir.len() &lt; <span class="number">200_000 </span>{
+<a href=#152 id=152 data-nosnippet>152</a>                        reservoir.push(p.intensity);
+<a href=#153 id=153 data-nosnippet>153</a>                    }
+<a href=#154 id=154 data-nosnippet>154</a>                    seen += <span class="number">1</span>;
+<a href=#155 id=155 data-nosnippet>155</a>                }
+<a href=#156 id=156 data-nosnippet>156</a>                points.append(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>pts);
+<a href=#157 id=157 data-nosnippet>157</a>            }
+<a href=#158 id=158 data-nosnippet>158</a>            <span class="prelude-val">Ok</span>(LoadMsg::PeakChunk { points: pts }) =&gt; {
+<a href=#159 id=159 data-nosnippet>159</a>                <span class="comment">// Display-only peaks: append to the cloud, never to the volume density.
+<a href=#160 id=160 data-nosnippet>160</a>                </span><span class="kw">let </span>pts: Vec&lt;GpuPoint&gt; = <span class="kw">if </span>opts.ms == MsFilter::All {
+<a href=#161 id=161 data-nosnippet>161</a>                    pts
+<a href=#162 id=162 data-nosnippet>162</a>                } <span class="kw">else </span>{
+<a href=#163 id=163 data-nosnippet>163</a>                    pts.into_iter().filter(<span class="kw-2">&amp;</span>keep).collect()
+<a href=#164 id=164 data-nosnippet>164</a>                };
+<a href=#165 id=165 data-nosnippet>165</a>                points.append(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>pts);
+<a href=#166 id=166 data-nosnippet>166</a>            }
+<a href=#167 id=167 data-nosnippet>167</a>            <span class="prelude-val">Ok</span>(LoadMsg::Stats { .. }) =&gt; {} <span class="comment">// recomputed below from retained points
+<a href=#168 id=168 data-nosnippet>168</a>            </span><span class="prelude-val">Ok</span>(LoadMsg::Histograms { .. }) =&gt; {} <span class="comment">// UI-only; headless ignores
+<a href=#169 id=169 data-nosnippet>169</a>            </span><span class="prelude-val">Ok</span>(LoadMsg::Annotations { lines, .. }) =&gt; {
+<a href=#170 id=170 data-nosnippet>170</a>                <span class="kw">if </span>opts.annotations {
+<a href=#171 id=171 data-nosnippet>171</a>                    annotations.upload(<span class="kw-2">&amp;</span>device, <span class="kw-2">&amp;</span>lines);
+<a href=#172 id=172 data-nosnippet>172</a>                }
+<a href=#173 id=173 data-nosnippet>173</a>            }
+<a href=#174 id=174 data-nosnippet>174</a>            <span class="prelude-val">Ok</span>(LoadMsg::Done { .. }) =&gt; {
+<a href=#175 id=175 data-nosnippet>175</a>                done = <span class="bool-val">true</span>;
+<a href=#176 id=176 data-nosnippet>176</a>                <span class="kw">break</span>;
+<a href=#177 id=177 data-nosnippet>177</a>            }
+<a href=#178 id=178 data-nosnippet>178</a>            <span class="prelude-val">Ok</span>(LoadMsg::Error(e)) =&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"loader error: {e}"</span>),
+<a href=#179 id=179 data-nosnippet>179</a>            <span class="prelude-val">Ok</span>(LoadMsg::Progress(<span class="kw">_</span>)) =&gt; {}
+<a href=#180 id=180 data-nosnippet>180</a>            <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
+<a href=#181 id=181 data-nosnippet>181</a>        }
+<a href=#182 id=182 data-nosnippet>182</a>    }
+<a href=#183 id=183 data-nosnippet>183</a>    <span class="comment">// A disconnect before Done means the loader thread died (e.g. panicked) — don't
+<a href=#184 id=184 data-nosnippet>184</a>    // silently write a partial/empty image.
+<a href=#185 id=185 data-nosnippet>185</a>    </span><span class="macro">anyhow::ensure!</span>(done, <span class="string">"loader thread ended before completing the load"</span>);
+<a href=#186 id=186 data-nosnippet>186</a>
+<a href=#187 id=187 data-nosnippet>187</a>    <span class="comment">// Default transfer range. Volume density sums live in a different range than
+<a href=#188 id=188 data-nosnippet>188</a>    // per-point intensity, so take it from the voxel density distribution; the point
+<a href=#189 id=189 data-nosnippet>189</a>    // cloud uses the retained-intensity percentiles.
+<a href=#190 id=190 data-nosnippet>190</a>    </span><span class="kw">if </span>opts.volume {
+<a href=#191 id=191 data-nosnippet>191</a>        <span class="kw">let </span>(lo, hi) = grid.density_percentiles();
+<a href=#192 id=192 data-nosnippet>192</a>        state.auto_transfer_volume(lo, hi);
+<a href=#193 id=193 data-nosnippet>193</a>    } <span class="kw">else if </span>!reservoir.is_empty() {
+<a href=#194 id=194 data-nosnippet>194</a>        reservoir.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+<a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">let </span>pct = |q: f32| reservoir[(((reservoir.len() - <span class="number">1</span>) <span class="kw">as </span>f32) * q) <span class="kw">as </span>usize];
+<a href=#196 id=196 data-nosnippet>196</a>        <span class="comment">// Feed the same auto-exposure heuristic the interactive viewer uses, so the
+<a href=#197 id=197 data-nosnippet>197</a>        // headless render is legible (median mid-LUT, additive cloud not blown out).
+<a href=#198 id=198 data-nosnippet>198</a>        </span>state.i_p1 = pct(<span class="number">0.01</span>).max(<span class="number">1.0</span>);
+<a href=#199 id=199 data-nosnippet>199</a>        state.i_med = pct(<span class="number">0.50</span>).max(state.i_p1);
+<a href=#200 id=200 data-nosnippet>200</a>        state.i_p99 = pct(<span class="number">0.99</span>).max(state.i_med * <span class="number">1.0001</span>);
+<a href=#201 id=201 data-nosnippet>201</a>        state.auto_transfer_points();
+<a href=#202 id=202 data-nosnippet>202</a>    }
+<a href=#203 id=203 data-nosnippet>203</a>    <span class="comment">// Apply transfer-function overrides (e.g. raise i_min to threshold out noise).
+<a href=#204 id=204 data-nosnippet>204</a>    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(v) = opts.i_min {
+<a href=#205 id=205 data-nosnippet>205</a>        state.i_min = v;
+<a href=#206 id=206 data-nosnippet>206</a>    }
+<a href=#207 id=207 data-nosnippet>207</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(v) = opts.i_max {
+<a href=#208 id=208 data-nosnippet>208</a>        state.i_max = v;
+<a href=#209 id=209 data-nosnippet>209</a>    }
+<a href=#210 id=210 data-nosnippet>210</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(v) = opts.exposure {
+<a href=#211 id=211 data-nosnippet>211</a>        state.exposure = v;
+<a href=#212 id=212 data-nosnippet>212</a>    }
+<a href=#213 id=213 data-nosnippet>213</a>    <span class="macro">log::info!</span>(
+<a href=#214 id=214 data-nosnippet>214</a>        <span class="string">"loaded {} points (i_min={:.0} i_max={:.0} exposure={})"</span>,
+<a href=#215 id=215 data-nosnippet>215</a>        points.resident(),
+<a href=#216 id=216 data-nosnippet>216</a>        state.i_min,
+<a href=#217 id=217 data-nosnippet>217</a>        state.i_max,
+<a href=#218 id=218 data-nosnippet>218</a>        state.exposure
+<a href=#219 id=219 data-nosnippet>219</a>    );
+<a href=#220 id=220 data-nosnippet>220</a>
+<a href=#221 id=221 data-nosnippet>221</a>    <span class="comment">// Camera + uniforms.
+<a href=#222 id=222 data-nosnippet>222</a>    </span><span class="kw">let </span>camera = OrbitCamera::default();
+<a href=#223 id=223 data-nosnippet>223</a>    <span class="kw">let </span>aspect = opts.width <span class="kw">as </span>f32 / opts.height <span class="kw">as </span>f32;
+<a href=#224 id=224 data-nosnippet>224</a>    <span class="kw">let </span>cam_uniform = camera.to_uniform(aspect, [opts.width <span class="kw">as </span>f32, opts.height <span class="kw">as </span>f32]);
+<a href=#225 id=225 data-nosnippet>225</a>    <span class="kw">let </span>params = state.params();
+<a href=#226 id=226 data-nosnippet>226</a>    points.update_camera(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>cam_uniform);
+<a href=#227 id=227 data-nosnippet>227</a>    points.update_params(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>params);
+<a href=#228 id=228 data-nosnippet>228</a>    annotations.update_camera(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>cam_uniform);
+<a href=#229 id=229 data-nosnippet>229</a>    annotations.update_filter(<span class="kw-2">&amp;</span>queue, params.filter_min, params.filter_max, params.focus);
+<a href=#230 id=230 data-nosnippet>230</a>    <span class="kw">if </span>opts.volume {
+<a href=#231 id=231 data-nosnippet>231</a>        <span class="kw">let </span><span class="kw-2">mut </span>vu = state.volume_uniform(camera.inv_view_proj(aspect));
+<a href=#232 id=232 data-nosnippet>232</a>        vu.density_scale = grid.density_scale();
+<a href=#233 id=233 data-nosnippet>233</a>        volume.update_uniform(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;</span>vu);
+<a href=#234 id=234 data-nosnippet>234</a>        volume.upload(<span class="kw-2">&amp;</span>queue, grid.to_f16_scaled());
+<a href=#235 id=235 data-nosnippet>235</a>    }
+<a href=#236 id=236 data-nosnippet>236</a>
+<a href=#237 id=237 data-nosnippet>237</a>    <span class="comment">// Offscreen targets.
+<a href=#238 id=238 data-nosnippet>238</a>    </span><span class="kw">let </span>color = device.create_texture(<span class="kw-2">&amp;</span>wgpu::TextureDescriptor {
+<a href=#239 id=239 data-nosnippet>239</a>        label: <span class="prelude-val">Some</span>(<span class="string">"offscreen-color"</span>),
+<a href=#240 id=240 data-nosnippet>240</a>        size: wgpu::Extent3d {
+<a href=#241 id=241 data-nosnippet>241</a>            width: opts.width,
+<a href=#242 id=242 data-nosnippet>242</a>            height: opts.height,
+<a href=#243 id=243 data-nosnippet>243</a>            depth_or_array_layers: <span class="number">1</span>,
+<a href=#244 id=244 data-nosnippet>244</a>        },
+<a href=#245 id=245 data-nosnippet>245</a>        mip_level_count: <span class="number">1</span>,
+<a href=#246 id=246 data-nosnippet>246</a>        sample_count: <span class="number">1</span>,
+<a href=#247 id=247 data-nosnippet>247</a>        dimension: wgpu::TextureDimension::D2,
+<a href=#248 id=248 data-nosnippet>248</a>        format: COLOR_FORMAT,
+<a href=#249 id=249 data-nosnippet>249</a>        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+<a href=#250 id=250 data-nosnippet>250</a>        view_formats: <span class="kw-2">&amp;</span>[],
+<a href=#251 id=251 data-nosnippet>251</a>    });
+<a href=#252 id=252 data-nosnippet>252</a>    <span class="kw">let </span>depth = device.create_texture(<span class="kw-2">&amp;</span>wgpu::TextureDescriptor {
+<a href=#253 id=253 data-nosnippet>253</a>        label: <span class="prelude-val">Some</span>(<span class="string">"offscreen-depth"</span>),
+<a href=#254 id=254 data-nosnippet>254</a>        size: wgpu::Extent3d {
+<a href=#255 id=255 data-nosnippet>255</a>            width: opts.width,
+<a href=#256 id=256 data-nosnippet>256</a>            height: opts.height,
+<a href=#257 id=257 data-nosnippet>257</a>            depth_or_array_layers: <span class="number">1</span>,
+<a href=#258 id=258 data-nosnippet>258</a>        },
+<a href=#259 id=259 data-nosnippet>259</a>        mip_level_count: <span class="number">1</span>,
+<a href=#260 id=260 data-nosnippet>260</a>        sample_count: <span class="number">1</span>,
+<a href=#261 id=261 data-nosnippet>261</a>        dimension: wgpu::TextureDimension::D2,
+<a href=#262 id=262 data-nosnippet>262</a>        format: DEPTH_FORMAT,
+<a href=#263 id=263 data-nosnippet>263</a>        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+<a href=#264 id=264 data-nosnippet>264</a>        view_formats: <span class="kw-2">&amp;</span>[],
+<a href=#265 id=265 data-nosnippet>265</a>    });
+<a href=#266 id=266 data-nosnippet>266</a>    <span class="kw">let </span>color_view = color.create_view(<span class="kw-2">&amp;</span>Default::default());
+<a href=#267 id=267 data-nosnippet>267</a>    <span class="kw">let </span>depth_view = depth.create_view(<span class="kw-2">&amp;</span>Default::default());
+<a href=#268 id=268 data-nosnippet>268</a>
+<a href=#269 id=269 data-nosnippet>269</a>    <span class="comment">// Padded readback buffer (bytes_per_row must be 256-aligned for texture-&gt;buffer).
+<a href=#270 id=270 data-nosnippet>270</a>    </span><span class="kw">let </span>unpadded_bpr = opts.width * <span class="number">4</span>;
+<a href=#271 id=271 data-nosnippet>271</a>    <span class="kw">let </span>padded_bpr = unpadded_bpr.div_ceil(<span class="number">256</span>) * <span class="number">256</span>;
+<a href=#272 id=272 data-nosnippet>272</a>    <span class="kw">let </span>readback = device.create_buffer(<span class="kw-2">&amp;</span>wgpu::BufferDescriptor {
+<a href=#273 id=273 data-nosnippet>273</a>        label: <span class="prelude-val">Some</span>(<span class="string">"readback"</span>),
+<a href=#274 id=274 data-nosnippet>274</a>        size: (padded_bpr * opts.height) <span class="kw">as </span>u64,
+<a href=#275 id=275 data-nosnippet>275</a>        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+<a href=#276 id=276 data-nosnippet>276</a>        mapped_at_creation: <span class="bool-val">false</span>,
+<a href=#277 id=277 data-nosnippet>277</a>    });
+<a href=#278 id=278 data-nosnippet>278</a>
+<a href=#279 id=279 data-nosnippet>279</a>    <span class="kw">let </span><span class="kw-2">mut </span>encoder =
+<a href=#280 id=280 data-nosnippet>280</a>        device.create_command_encoder(<span class="kw-2">&amp;</span>wgpu::CommandEncoderDescriptor { label: <span class="prelude-val">Some</span>(<span class="string">"offscreen"</span>) });
+<a href=#281 id=281 data-nosnippet>281</a>    <span class="kw">if </span>!opts.volume {
+<a href=#282 id=282 data-nosnippet>282</a>        points.prepare(<span class="kw-2">&amp;</span>queue, <span class="kw-2">&amp;mut </span>encoder);
+<a href=#283 id=283 data-nosnippet>283</a>    }
+<a href=#284 id=284 data-nosnippet>284</a>    {
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">let </span><span class="kw-2">mut </span>rpass = encoder.begin_render_pass(<span class="kw-2">&amp;</span>wgpu::RenderPassDescriptor {
+<a href=#286 id=286 data-nosnippet>286</a>            label: <span class="prelude-val">Some</span>(<span class="string">"offscreen-scene"</span>),
+<a href=#287 id=287 data-nosnippet>287</a>            color_attachments: <span class="kw-2">&amp;</span>[<span class="prelude-val">Some</span>(wgpu::RenderPassColorAttachment {
+<a href=#288 id=288 data-nosnippet>288</a>                view: <span class="kw-2">&amp;</span>color_view,
+<a href=#289 id=289 data-nosnippet>289</a>                resolve_target: <span class="prelude-val">None</span>,
+<a href=#290 id=290 data-nosnippet>290</a>                ops: wgpu::Operations {
+<a href=#291 id=291 data-nosnippet>291</a>                    load: wgpu::LoadOp::Clear(wgpu::Color {
+<a href=#292 id=292 data-nosnippet>292</a>                        r: <span class="number">0.02</span>,
+<a href=#293 id=293 data-nosnippet>293</a>                        g: <span class="number">0.02</span>,
+<a href=#294 id=294 data-nosnippet>294</a>                        b: <span class="number">0.035</span>,
+<a href=#295 id=295 data-nosnippet>295</a>                        a: <span class="number">1.0</span>,
+<a href=#296 id=296 data-nosnippet>296</a>                    }),
+<a href=#297 id=297 data-nosnippet>297</a>                    store: wgpu::StoreOp::Store,
+<a href=#298 id=298 data-nosnippet>298</a>                },
+<a href=#299 id=299 data-nosnippet>299</a>            })],
+<a href=#300 id=300 data-nosnippet>300</a>            depth_stencil_attachment: <span class="prelude-val">Some</span>(wgpu::RenderPassDepthStencilAttachment {
+<a href=#301 id=301 data-nosnippet>301</a>                view: <span class="kw-2">&amp;</span>depth_view,
+<a href=#302 id=302 data-nosnippet>302</a>                depth_ops: <span class="prelude-val">Some</span>(wgpu::Operations {
+<a href=#303 id=303 data-nosnippet>303</a>                    load: wgpu::LoadOp::Clear(<span class="number">1.0</span>),
+<a href=#304 id=304 data-nosnippet>304</a>                    store: wgpu::StoreOp::Store,
+<a href=#305 id=305 data-nosnippet>305</a>                }),
+<a href=#306 id=306 data-nosnippet>306</a>                stencil_ops: <span class="prelude-val">None</span>,
+<a href=#307 id=307 data-nosnippet>307</a>            }),
+<a href=#308 id=308 data-nosnippet>308</a>            timestamp_writes: <span class="prelude-val">None</span>,
+<a href=#309 id=309 data-nosnippet>309</a>            occlusion_query_set: <span class="prelude-val">None</span>,
+<a href=#310 id=310 data-nosnippet>310</a>        });
+<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">if </span>opts.volume {
+<a href=#312 id=312 data-nosnippet>312</a>            volume.render(<span class="kw-2">&amp;mut </span>rpass);
+<a href=#313 id=313 data-nosnippet>313</a>        } <span class="kw">else </span>{
+<a href=#314 id=314 data-nosnippet>314</a>            points.render(<span class="kw-2">&amp;mut </span>rpass, state.point_mode);
+<a href=#315 id=315 data-nosnippet>315</a>        }
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">if </span>opts.annotations {
+<a href=#317 id=317 data-nosnippet>317</a>            annotations.render(<span class="kw-2">&amp;mut </span>rpass);
+<a href=#318 id=318 data-nosnippet>318</a>        }
+<a href=#319 id=319 data-nosnippet>319</a>    }
+<a href=#320 id=320 data-nosnippet>320</a>    encoder.copy_texture_to_buffer(
+<a href=#321 id=321 data-nosnippet>321</a>        wgpu::ImageCopyTexture {
+<a href=#322 id=322 data-nosnippet>322</a>            texture: <span class="kw-2">&amp;</span>color,
+<a href=#323 id=323 data-nosnippet>323</a>            mip_level: <span class="number">0</span>,
+<a href=#324 id=324 data-nosnippet>324</a>            origin: wgpu::Origin3d::ZERO,
+<a href=#325 id=325 data-nosnippet>325</a>            aspect: wgpu::TextureAspect::All,
+<a href=#326 id=326 data-nosnippet>326</a>        },
+<a href=#327 id=327 data-nosnippet>327</a>        wgpu::ImageCopyBuffer {
+<a href=#328 id=328 data-nosnippet>328</a>            buffer: <span class="kw-2">&amp;</span>readback,
+<a href=#329 id=329 data-nosnippet>329</a>            layout: wgpu::ImageDataLayout {
+<a href=#330 id=330 data-nosnippet>330</a>                offset: <span class="number">0</span>,
+<a href=#331 id=331 data-nosnippet>331</a>                bytes_per_row: <span class="prelude-val">Some</span>(padded_bpr),
+<a href=#332 id=332 data-nosnippet>332</a>                rows_per_image: <span class="prelude-val">Some</span>(opts.height),
+<a href=#333 id=333 data-nosnippet>333</a>            },
+<a href=#334 id=334 data-nosnippet>334</a>        },
+<a href=#335 id=335 data-nosnippet>335</a>        wgpu::Extent3d {
+<a href=#336 id=336 data-nosnippet>336</a>            width: opts.width,
+<a href=#337 id=337 data-nosnippet>337</a>            height: opts.height,
+<a href=#338 id=338 data-nosnippet>338</a>            depth_or_array_layers: <span class="number">1</span>,
+<a href=#339 id=339 data-nosnippet>339</a>        },
+<a href=#340 id=340 data-nosnippet>340</a>    );
+<a href=#341 id=341 data-nosnippet>341</a>    queue.submit(std::iter::once(encoder.finish()));
+<a href=#342 id=342 data-nosnippet>342</a>
+<a href=#343 id=343 data-nosnippet>343</a>    <span class="comment">// Map and read back.
+<a href=#344 id=344 data-nosnippet>344</a>    </span><span class="kw">let </span>slice = readback.slice(..);
+<a href=#345 id=345 data-nosnippet>345</a>    <span class="kw">let </span>(tx, rx) = std::sync::mpsc::channel();
+<a href=#346 id=346 data-nosnippet>346</a>    slice.map_async(wgpu::MapMode::Read, <span class="kw">move </span>|r| {
+<a href=#347 id=347 data-nosnippet>347</a>        <span class="kw">let _ </span>= tx.send(r);
+<a href=#348 id=348 data-nosnippet>348</a>    });
+<a href=#349 id=349 data-nosnippet>349</a>    device.poll(wgpu::Maintain::Wait);
+<a href=#350 id=350 data-nosnippet>350</a>    rx.recv()
+<a href=#351 id=351 data-nosnippet>351</a>        .context(<span class="string">"map_async channel closed"</span>)<span class="question-mark">?
+<a href=#352 id=352 data-nosnippet>352</a>        </span>.context(<span class="string">"buffer map failed"</span>)<span class="question-mark">?</span>;
 <a href=#353 id=353 data-nosnippet>353</a>
-<a href=#354 id=354 data-nosnippet>354</a>    <span class="comment">// Encode PNG (Rgba8UnormSrgb bytes are already sRGB).
-<a href=#355 id=355 data-nosnippet>355</a>    </span><span class="kw">let </span>file = std::fs::File::create(out).with_context(|| <span class="macro">format!</span>(<span class="string">"creating {}"</span>, out.display()))<span class="question-mark">?</span>;
-<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw">let </span>w = std::io::BufWriter::new(file);
-<a href=#357 id=357 data-nosnippet>357</a>    <span class="kw">let </span><span class="kw-2">mut </span>encoder = png::Encoder::new(w, opts.width, opts.height);
-<a href=#358 id=358 data-nosnippet>358</a>    encoder.set_color(png::ColorType::Rgba);
-<a href=#359 id=359 data-nosnippet>359</a>    encoder.set_depth(png::BitDepth::Eight);
-<a href=#360 id=360 data-nosnippet>360</a>    encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
-<a href=#361 id=361 data-nosnippet>361</a>    <span class="kw">let </span><span class="kw-2">mut </span>writer = encoder.write_header().context(<span class="string">"png header"</span>)<span class="question-mark">?</span>;
-<a href=#362 id=362 data-nosnippet>362</a>    writer.write_image_data(<span class="kw-2">&amp;</span>rgba).context(<span class="string">"png write"</span>)<span class="question-mark">?</span>;
-<a href=#363 id=363 data-nosnippet>363</a>
-<a href=#364 id=364 data-nosnippet>364</a>    <span class="prelude-val">Ok</span>(())
-<a href=#365 id=365 data-nosnippet>365</a>}
+<a href=#354 id=354 data-nosnippet>354</a>    <span class="kw">let </span>data = slice.get_mapped_range();
+<a href=#355 id=355 data-nosnippet>355</a>    <span class="kw">let </span><span class="kw-2">mut </span>rgba = Vec::with_capacity((opts.width * opts.height * <span class="number">4</span>) <span class="kw">as </span>usize);
+<a href=#356 id=356 data-nosnippet>356</a>    <span class="kw">for </span>row <span class="kw">in </span><span class="number">0</span>..opts.height {
+<a href=#357 id=357 data-nosnippet>357</a>        <span class="kw">let </span>start = (row * padded_bpr) <span class="kw">as </span>usize;
+<a href=#358 id=358 data-nosnippet>358</a>        rgba.extend_from_slice(<span class="kw-2">&amp;</span>data[start..start + unpadded_bpr <span class="kw">as </span>usize]);
+<a href=#359 id=359 data-nosnippet>359</a>    }
+<a href=#360 id=360 data-nosnippet>360</a>    drop(data);
+<a href=#361 id=361 data-nosnippet>361</a>    readback.unmap();
+<a href=#362 id=362 data-nosnippet>362</a>
+<a href=#363 id=363 data-nosnippet>363</a>    <span class="comment">// Encode PNG (Rgba8UnormSrgb bytes are already sRGB).
+<a href=#364 id=364 data-nosnippet>364</a>    </span><span class="kw">let </span>file = std::fs::File::create(out).with_context(|| <span class="macro">format!</span>(<span class="string">"creating {}"</span>, out.display()))<span class="question-mark">?</span>;
+<a href=#365 id=365 data-nosnippet>365</a>    <span class="kw">let </span>w = std::io::BufWriter::new(file);
+<a href=#366 id=366 data-nosnippet>366</a>    <span class="kw">let </span><span class="kw-2">mut </span>encoder = png::Encoder::new(w, opts.width, opts.height);
+<a href=#367 id=367 data-nosnippet>367</a>    encoder.set_color(png::ColorType::Rgba);
+<a href=#368 id=368 data-nosnippet>368</a>    encoder.set_depth(png::BitDepth::Eight);
+<a href=#369 id=369 data-nosnippet>369</a>    encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+<a href=#370 id=370 data-nosnippet>370</a>    <span class="kw">let </span><span class="kw-2">mut </span>writer = encoder.write_header().context(<span class="string">"png header"</span>)<span class="question-mark">?</span>;
+<a href=#371 id=371 data-nosnippet>371</a>    writer.write_image_data(<span class="kw-2">&amp;</span>rgba).context(<span class="string">"png write"</span>)<span class="question-mark">?</span>;
+<a href=#372 id=372 data-nosnippet>372</a>
+<a href=#373 id=373 data-nosnippet>373</a>    <span class="prelude-val">Ok</span>(())
+<a href=#374 id=374 data-nosnippet>374</a>}
 </code></pre></div></section></main></body></html>

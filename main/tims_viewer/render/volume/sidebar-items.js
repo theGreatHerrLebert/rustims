@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["F16_TARGET_MAX","VOLUME_DIMS"],"struct":["VolumeGrid","VolumeRenderer"]};
+window.SIDEBAR_ITEMS = {"constant":["VOLUME_DIMS"],"struct":["VolumeGrid","VolumeRenderer"]};

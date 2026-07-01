@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["WORKGROUP_SIZE"],"enum":["PointMode"],"fn":["build_compute_stage","compute_uniform_entry","storage_entry","uniform_entry"],"struct":["ComputeStage","PointCloudRenderer"]};
+window.SIDEBAR_ITEMS = {"enum":["PointMode"],"struct":["PointCloudRenderer"]};

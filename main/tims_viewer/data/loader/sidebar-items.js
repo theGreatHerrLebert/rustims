@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["CHUNK_POINTS","GENERATION","PEAK_DIMS","RESERVOIR_CAP","ZERO_POINT"],"enum":["LoadCmd","LoadMsg","LoaderMode"],"fn":["build_annotations","peak_cell","push_box","push_cross","reservoir_push","run_loader","stride_for"],"struct":["LoaderHandle"]};
+window.SIDEBAR_ITEMS = {"constant":["HIST_BINS","PROJ_BINS"],"enum":["LoadCmd","LoadMsg","LoaderMode"],"fn":["dia_window_rects","stride_for"],"struct":["LoaderHandle","RegionFilter"]};

@@ -2,127 +2,151 @@
 <a href=#2 id=2 data-nosnippet>2</a>
 <a href=#3 id=3 data-nosnippet>3</a></span><span class="kw">use </span>bytemuck::{Pod, Zeroable};
 <a href=#4 id=4 data-nosnippet>4</a>
-<a href=#5 id=5 data-nosnippet>5</a><span class="doccomment">/// One renderable data point, packed for the GPU as instance data.
-<a href=#6 id=6 data-nosnippet>6</a>///
-<a href=#7 id=7 data-nosnippet>7</a>/// Layout is 32 bytes, 16-byte aligned, so a `Vec&lt;GpuPoint&gt;` uploads directly as a
-<a href=#8 id=8 data-nosnippet>8</a>/// vertex (instance-step) buffer via `bytemuck::cast_slice`.
-<a href=#9 id=9 data-nosnippet>9</a>///
-<a href=#10 id=10 data-nosnippet>10</a>/// `weight` is the number of original points this sample represents (`1/p` of the
-<a href=#11 id=11 data-nosnippet>11</a>/// downsample). Carrying it lets additive-density rendering stay brightness-invariant
-<a href=#12 id=12 data-nosnippet>12</a>/// regardless of the downsample ratio (see the shared density/exposure model).
-<a href=#13 id=13 data-nosnippet>13</a></span><span class="attr">#[repr(C)]
-<a href=#14 id=14 data-nosnippet>14</a>#[derive(Clone, Copy, Debug, Pod, Zeroable)]
-<a href=#15 id=15 data-nosnippet>15</a></span><span class="kw">pub struct </span>GpuPoint {
-<a href=#16 id=16 data-nosnippet>16</a>    <span class="doccomment">/// Position in the normalized cube `[-1, 1]^3` (x=m/z, y=1/K0, z=RT).
-<a href=#17 id=17 data-nosnippet>17</a>    </span><span class="kw">pub </span>pos: [f32; <span class="number">3</span>],
-<a href=#18 id=18 data-nosnippet>18</a>    <span class="doccomment">/// Raw intensity (counts).
-<a href=#19 id=19 data-nosnippet>19</a>    </span><span class="kw">pub </span>intensity: f32,
-<a href=#20 id=20 data-nosnippet>20</a>    <span class="doccomment">/// Sample weight = `1/p` (how many source points this one stands in for).
-<a href=#21 id=21 data-nosnippet>21</a>    </span><span class="kw">pub </span>weight: f32,
-<a href=#22 id=22 data-nosnippet>22</a>    <span class="doccomment">/// Bit flags. bit0: 0 = MS1/precursor, 1 = MS2/fragment.
-<a href=#23 id=23 data-nosnippet>23</a>    </span><span class="kw">pub </span>flags: u32,
-<a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">pub </span>_pad: [u32; <span class="number">2</span>],
-<a href=#25 id=25 data-nosnippet>25</a>}
-<a href=#26 id=26 data-nosnippet>26</a>
-<a href=#27 id=27 data-nosnippet>27</a><span class="kw">impl </span>GpuPoint {
-<a href=#28 id=28 data-nosnippet>28</a>    <span class="kw">pub const </span>MS2_FLAG: u32 = <span class="number">1</span>;
-<a href=#29 id=29 data-nosnippet>29</a>
-<a href=#30 id=30 data-nosnippet>30</a>    <span class="doccomment">/// `wgpu` vertex-buffer layout describing the instance step-mode attributes.
-<a href=#31 id=31 data-nosnippet>31</a>    </span><span class="kw">pub fn </span>layout() -&gt; wgpu::VertexBufferLayout&lt;<span class="lifetime">'static</span>&gt; {
-<a href=#32 id=32 data-nosnippet>32</a>        <span class="kw">const </span>ATTRS: [wgpu::VertexAttribute; <span class="number">4</span>] = <span class="macro">wgpu::vertex_attr_array!</span>[
-<a href=#33 id=33 data-nosnippet>33</a>            <span class="number">0 </span>=&gt; Float32x3, <span class="comment">// pos
-<a href=#34 id=34 data-nosnippet>34</a>            </span><span class="number">1 </span>=&gt; Float32,   <span class="comment">// intensity
-<a href=#35 id=35 data-nosnippet>35</a>            </span><span class="number">2 </span>=&gt; Float32,   <span class="comment">// weight
-<a href=#36 id=36 data-nosnippet>36</a>            </span><span class="number">3 </span>=&gt; Uint32,    <span class="comment">// flags
-<a href=#37 id=37 data-nosnippet>37</a>        </span>];
-<a href=#38 id=38 data-nosnippet>38</a>        wgpu::VertexBufferLayout {
-<a href=#39 id=39 data-nosnippet>39</a>            array_stride: std::mem::size_of::&lt;GpuPoint&gt;() <span class="kw">as </span>wgpu::BufferAddress,
-<a href=#40 id=40 data-nosnippet>40</a>            step_mode: wgpu::VertexStepMode::Instance,
-<a href=#41 id=41 data-nosnippet>41</a>            attributes: <span class="kw-2">&amp;</span>ATTRS,
-<a href=#42 id=42 data-nosnippet>42</a>        }
-<a href=#43 id=43 data-nosnippet>43</a>    }
-<a href=#44 id=44 data-nosnippet>44</a>}
-<a href=#45 id=45 data-nosnippet>45</a>
-<a href=#46 id=46 data-nosnippet>46</a><span class="doccomment">/// Affine mapping between a real-unit axis range and the normalized cube `[-1, 1]`.
-<a href=#47 id=47 data-nosnippet>47</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
-<a href=#48 id=48 data-nosnippet>48</a></span><span class="kw">pub struct </span>AxisTransform {
-<a href=#49 id=49 data-nosnippet>49</a>    <span class="kw">pub </span>min: f64,
-<a href=#50 id=50 data-nosnippet>50</a>    <span class="kw">pub </span>max: f64,
-<a href=#51 id=51 data-nosnippet>51</a>}
+<a href=#5 id=5 data-nosnippet>5</a><span class="doccomment">/// Number of evenly spaced RT slices each DIA window footprint is drawn at. Shared here (a
+<a href=#6 id=6 data-nosnippet>6</a>/// both-targets module) so the native loader and the wasm overlay use one value — the geometry
+<a href=#7 id=7 data-nosnippet>7</a>/// must match on both sides of the `/windows` endpoint.
+<a href=#8 id=8 data-nosnippet>8</a></span><span class="kw">pub const </span>DIA_WINDOW_RT_SLICES: usize = <span class="number">6</span>;
+<a href=#9 id=9 data-nosnippet>9</a>
+<a href=#10 id=10 data-nosnippet>10</a><span class="doccomment">/// One DIA/MIDIA isolation window's selection footprint in **real units**: an `(m/z × 1/K0)`
+<a href=#11 id=11 data-nosnippet>11</a>/// rectangle (mobility already converted from scan numbers). Group ids color the interleaved
+<a href=#12 id=12 data-nosnippet>12</a>/// isolation bands. The native loader produces these for the `/windows` endpoint; the wasm client
+<a href=#13 id=13 data-nosnippet>13</a>/// re-normalizes them to its region bounds (so they align with the cloud and off-region windows
+<a href=#14 id=14 data-nosnippet>14</a>/// clip). Shared here so both sides use one struct definition.
+<a href=#15 id=15 data-nosnippet>15</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
+<a href=#16 id=16 data-nosnippet>16</a></span><span class="kw">pub struct </span>WindowRect {
+<a href=#17 id=17 data-nosnippet>17</a>    <span class="kw">pub </span>group: u32,
+<a href=#18 id=18 data-nosnippet>18</a>    <span class="kw">pub </span>mz0: f64,
+<a href=#19 id=19 data-nosnippet>19</a>    <span class="kw">pub </span>mz1: f64,
+<a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">pub </span>im0: f64,
+<a href=#21 id=21 data-nosnippet>21</a>    <span class="kw">pub </span>im1: f64,
+<a href=#22 id=22 data-nosnippet>22</a>}
+<a href=#23 id=23 data-nosnippet>23</a>
+<a href=#24 id=24 data-nosnippet>24</a><span class="doccomment">/// One renderable data point, packed for the GPU as instance data.
+<a href=#25 id=25 data-nosnippet>25</a>///
+<a href=#26 id=26 data-nosnippet>26</a>/// Layout is 32 bytes, 16-byte aligned, so a `Vec&lt;GpuPoint&gt;` uploads directly as a
+<a href=#27 id=27 data-nosnippet>27</a>/// vertex (instance-step) buffer via `bytemuck::cast_slice`.
+<a href=#28 id=28 data-nosnippet>28</a>///
+<a href=#29 id=29 data-nosnippet>29</a>/// `weight` is the number of original points this sample represents (`1/p` of the
+<a href=#30 id=30 data-nosnippet>30</a>/// downsample). Carrying it lets additive-density rendering stay brightness-invariant
+<a href=#31 id=31 data-nosnippet>31</a>/// regardless of the downsample ratio (see the shared density/exposure model).
+<a href=#32 id=32 data-nosnippet>32</a></span><span class="attr">#[repr(C)]
+<a href=#33 id=33 data-nosnippet>33</a>#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+<a href=#34 id=34 data-nosnippet>34</a></span><span class="kw">pub struct </span>GpuPoint {
+<a href=#35 id=35 data-nosnippet>35</a>    <span class="doccomment">/// Position in the normalized cube `[-1, 1]^3` (x=m/z, y=1/K0, z=RT).
+<a href=#36 id=36 data-nosnippet>36</a>    </span><span class="kw">pub </span>pos: [f32; <span class="number">3</span>],
+<a href=#37 id=37 data-nosnippet>37</a>    <span class="doccomment">/// Raw intensity (counts).
+<a href=#38 id=38 data-nosnippet>38</a>    </span><span class="kw">pub </span>intensity: f32,
+<a href=#39 id=39 data-nosnippet>39</a>    <span class="doccomment">/// Sample weight = `1/p` (how many source points this one stands in for).
+<a href=#40 id=40 data-nosnippet>40</a>    </span><span class="kw">pub </span>weight: f32,
+<a href=#41 id=41 data-nosnippet>41</a>    <span class="doccomment">/// Bit flags. bit0: 0 = MS1/precursor, 1 = MS2/fragment.
+<a href=#42 id=42 data-nosnippet>42</a>    </span><span class="kw">pub </span>flags: u32,
+<a href=#43 id=43 data-nosnippet>43</a>    <span class="doccomment">/// `_pad[0]` doubles as the DBSCAN cluster id for cluster coloring (`NO_CLUSTER` =
+<a href=#44 id=44 data-nosnippet>44</a>    /// noise/unclustered); `_pad[1]` is reserved padding to keep the 32-byte layout.
+<a href=#45 id=45 data-nosnippet>45</a>    </span><span class="kw">pub </span>_pad: [u32; <span class="number">2</span>],
+<a href=#46 id=46 data-nosnippet>46</a>}
+<a href=#47 id=47 data-nosnippet>47</a>
+<a href=#48 id=48 data-nosnippet>48</a><span class="kw">impl </span>GpuPoint {
+<a href=#49 id=49 data-nosnippet>49</a>    <span class="kw">pub const </span>MS2_FLAG: u32 = <span class="number">1</span>;
+<a href=#50 id=50 data-nosnippet>50</a>    <span class="doccomment">/// Cluster-id sentinel for noise / not-yet-clustered points (rendered grey).
+<a href=#51 id=51 data-nosnippet>51</a>    </span><span class="kw">pub const </span>NO_CLUSTER: u32 = u32::MAX;
 <a href=#52 id=52 data-nosnippet>52</a>
-<a href=#53 id=53 data-nosnippet>53</a><span class="kw">impl </span>AxisTransform {
-<a href=#54 id=54 data-nosnippet>54</a>    <span class="kw">pub fn </span>new(min: f64, max: f64) -&gt; <span class="self">Self </span>{
-<a href=#55 id=55 data-nosnippet>55</a>        <span class="comment">// Guard against a degenerate (zero-width) range.
-<a href=#56 id=56 data-nosnippet>56</a>        </span><span class="kw">if </span>(max - min).abs() &lt; f64::EPSILON {
-<a href=#57 id=57 data-nosnippet>57</a>            AxisTransform {
-<a href=#58 id=58 data-nosnippet>58</a>                min,
-<a href=#59 id=59 data-nosnippet>59</a>                max: min + <span class="number">1.0</span>,
-<a href=#60 id=60 data-nosnippet>60</a>            }
-<a href=#61 id=61 data-nosnippet>61</a>        } <span class="kw">else </span>{
-<a href=#62 id=62 data-nosnippet>62</a>            AxisTransform { min, max }
-<a href=#63 id=63 data-nosnippet>63</a>        }
-<a href=#64 id=64 data-nosnippet>64</a>    }
-<a href=#65 id=65 data-nosnippet>65</a>
-<a href=#66 id=66 data-nosnippet>66</a>    <span class="doccomment">/// Map a real value into `[-1, 1]`.
-<a href=#67 id=67 data-nosnippet>67</a>    </span><span class="attr">#[inline]
-<a href=#68 id=68 data-nosnippet>68</a>    </span><span class="kw">pub fn </span>normalize(<span class="kw-2">&amp;</span><span class="self">self</span>, v: f64) -&gt; f32 {
-<a href=#69 id=69 data-nosnippet>69</a>        (<span class="number">2.0 </span>* (v - <span class="self">self</span>.min) / (<span class="self">self</span>.max - <span class="self">self</span>.min) - <span class="number">1.0</span>) <span class="kw">as </span>f32
-<a href=#70 id=70 data-nosnippet>70</a>    }
-<a href=#71 id=71 data-nosnippet>71</a>
-<a href=#72 id=72 data-nosnippet>72</a>    <span class="doccomment">/// Map a normalized `[-1, 1]` value back to real units.
-<a href=#73 id=73 data-nosnippet>73</a>    /// Used by axis-tick labeling (and tested); kept ahead of the gizmo work.
-<a href=#74 id=74 data-nosnippet>74</a>    </span><span class="attr">#[allow(dead_code)]
-<a href=#75 id=75 data-nosnippet>75</a>    #[inline]
-<a href=#76 id=76 data-nosnippet>76</a>    </span><span class="kw">pub fn </span>denormalize(<span class="kw-2">&amp;</span><span class="self">self</span>, n: f32) -&gt; f64 {
-<a href=#77 id=77 data-nosnippet>77</a>        <span class="self">self</span>.min + ((n <span class="kw">as </span>f64) + <span class="number">1.0</span>) * <span class="number">0.5 </span>* (<span class="self">self</span>.max - <span class="self">self</span>.min)
-<a href=#78 id=78 data-nosnippet>78</a>    }
-<a href=#79 id=79 data-nosnippet>79</a>}
-<a href=#80 id=80 data-nosnippet>80</a>
-<a href=#81 id=81 data-nosnippet>81</a><span class="doccomment">/// The three spatial axes of the run, in real units, plus their normalizers.
-<a href=#82 id=82 data-nosnippet>82</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
-<a href=#83 id=83 data-nosnippet>83</a></span><span class="kw">pub struct </span>AxisBounds {
-<a href=#84 id=84 data-nosnippet>84</a>    <span class="doccomment">/// x-axis: m/z (Th).
-<a href=#85 id=85 data-nosnippet>85</a>    </span><span class="kw">pub </span>mz: AxisTransform,
-<a href=#86 id=86 data-nosnippet>86</a>    <span class="doccomment">/// y-axis: inverse ion mobility 1/K0.
-<a href=#87 id=87 data-nosnippet>87</a>    </span><span class="kw">pub </span>im: AxisTransform,
-<a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// z-axis: retention time (seconds).
-<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">pub </span>rt: AxisTransform,
-<a href=#90 id=90 data-nosnippet>90</a>}
-<a href=#91 id=91 data-nosnippet>91</a>
-<a href=#92 id=92 data-nosnippet>92</a><span class="kw">impl </span>AxisBounds {
-<a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// Normalize a `(mz, im, rt)` real-unit triple into cube coordinates.
-<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="attr">#[inline]
-<a href=#95 id=95 data-nosnippet>95</a>    </span><span class="kw">pub fn </span>normalize(<span class="kw-2">&amp;</span><span class="self">self</span>, mz: f64, im: f64, rt: f64) -&gt; [f32; <span class="number">3</span>] {
-<a href=#96 id=96 data-nosnippet>96</a>        [<span class="self">self</span>.mz.normalize(mz), <span class="self">self</span>.im.normalize(im), <span class="self">self</span>.rt.normalize(rt)]
-<a href=#97 id=97 data-nosnippet>97</a>    }
-<a href=#98 id=98 data-nosnippet>98</a>}
-<a href=#99 id=99 data-nosnippet>99</a>
-<a href=#100 id=100 data-nosnippet>100</a><span class="attr">#[cfg(test)]
-<a href=#101 id=101 data-nosnippet>101</a></span><span class="kw">mod </span>tests {
-<a href=#102 id=102 data-nosnippet>102</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
-<a href=#103 id=103 data-nosnippet>103</a>
-<a href=#104 id=104 data-nosnippet>104</a>    <span class="attr">#[test]
-<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="kw">fn </span>gpu_point_is_32_bytes() {
-<a href=#106 id=106 data-nosnippet>106</a>        <span class="macro">assert_eq!</span>(std::mem::size_of::&lt;GpuPoint&gt;(), <span class="number">32</span>);
-<a href=#107 id=107 data-nosnippet>107</a>    }
-<a href=#108 id=108 data-nosnippet>108</a>
-<a href=#109 id=109 data-nosnippet>109</a>    <span class="attr">#[test]
-<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="kw">fn </span>axis_transform_round_trip() {
-<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">let </span>t = AxisTransform::new(<span class="number">100.0</span>, <span class="number">1700.0</span>);
-<a href=#112 id=112 data-nosnippet>112</a>        <span class="kw">for </span>v <span class="kw">in </span>[<span class="number">100.0</span>, <span class="number">400.0</span>, <span class="number">900.5</span>, <span class="number">1700.0</span>] {
-<a href=#113 id=113 data-nosnippet>113</a>            <span class="kw">let </span>n = t.normalize(v);
-<a href=#114 id=114 data-nosnippet>114</a>            <span class="kw">let </span>back = t.denormalize(n);
-<a href=#115 id=115 data-nosnippet>115</a>            <span class="macro">assert!</span>((back - v).abs() &lt; <span class="number">1e-6</span>, <span class="string">"round-trip failed for {v}: {back}"</span>);
-<a href=#116 id=116 data-nosnippet>116</a>        }
-<a href=#117 id=117 data-nosnippet>117</a>        <span class="macro">assert!</span>((t.normalize(<span class="number">100.0</span>) + <span class="number">1.0</span>).abs() &lt; <span class="number">1e-6</span>);
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="macro">assert!</span>((t.normalize(<span class="number">1700.0</span>) - <span class="number">1.0</span>).abs() &lt; <span class="number">1e-6</span>);
-<a href=#119 id=119 data-nosnippet>119</a>    }
-<a href=#120 id=120 data-nosnippet>120</a>
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="attr">#[test]
-<a href=#122 id=122 data-nosnippet>122</a>    </span><span class="kw">fn </span>axis_transform_handles_degenerate_range() {
-<a href=#123 id=123 data-nosnippet>123</a>        <span class="kw">let </span>t = AxisTransform::new(<span class="number">5.0</span>, <span class="number">5.0</span>);
-<a href=#124 id=124 data-nosnippet>124</a>        <span class="comment">// Must not divide by zero / produce NaN.
-<a href=#125 id=125 data-nosnippet>125</a>        </span><span class="macro">assert!</span>(t.normalize(<span class="number">5.0</span>).is_finite());
-<a href=#126 id=126 data-nosnippet>126</a>    }
-<a href=#127 id=127 data-nosnippet>127</a>}
+<a href=#53 id=53 data-nosnippet>53</a>    <span class="doccomment">/// `wgpu` vertex-buffer layout describing the instance step-mode attributes.
+<a href=#54 id=54 data-nosnippet>54</a>    </span><span class="kw">pub fn </span>layout() -&gt; wgpu::VertexBufferLayout&lt;<span class="lifetime">'static</span>&gt; {
+<a href=#55 id=55 data-nosnippet>55</a>        <span class="kw">const </span>ATTRS: [wgpu::VertexAttribute; <span class="number">5</span>] = <span class="macro">wgpu::vertex_attr_array!</span>[
+<a href=#56 id=56 data-nosnippet>56</a>            <span class="number">0 </span>=&gt; Float32x3, <span class="comment">// pos
+<a href=#57 id=57 data-nosnippet>57</a>            </span><span class="number">1 </span>=&gt; Float32,   <span class="comment">// intensity
+<a href=#58 id=58 data-nosnippet>58</a>            </span><span class="number">2 </span>=&gt; Float32,   <span class="comment">// weight
+<a href=#59 id=59 data-nosnippet>59</a>            </span><span class="number">3 </span>=&gt; Uint32,    <span class="comment">// flags
+<a href=#60 id=60 data-nosnippet>60</a>            </span><span class="number">4 </span>=&gt; Uint32,    <span class="comment">// cluster id (_pad[0])
+<a href=#61 id=61 data-nosnippet>61</a>        </span>];
+<a href=#62 id=62 data-nosnippet>62</a>        wgpu::VertexBufferLayout {
+<a href=#63 id=63 data-nosnippet>63</a>            array_stride: std::mem::size_of::&lt;GpuPoint&gt;() <span class="kw">as </span>wgpu::BufferAddress,
+<a href=#64 id=64 data-nosnippet>64</a>            step_mode: wgpu::VertexStepMode::Instance,
+<a href=#65 id=65 data-nosnippet>65</a>            attributes: <span class="kw-2">&amp;</span>ATTRS,
+<a href=#66 id=66 data-nosnippet>66</a>        }
+<a href=#67 id=67 data-nosnippet>67</a>    }
+<a href=#68 id=68 data-nosnippet>68</a>}
+<a href=#69 id=69 data-nosnippet>69</a>
+<a href=#70 id=70 data-nosnippet>70</a><span class="doccomment">/// Affine mapping between a real-unit axis range and the normalized cube `[-1, 1]`.
+<a href=#71 id=71 data-nosnippet>71</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
+<a href=#72 id=72 data-nosnippet>72</a></span><span class="kw">pub struct </span>AxisTransform {
+<a href=#73 id=73 data-nosnippet>73</a>    <span class="kw">pub </span>min: f64,
+<a href=#74 id=74 data-nosnippet>74</a>    <span class="kw">pub </span>max: f64,
+<a href=#75 id=75 data-nosnippet>75</a>}
+<a href=#76 id=76 data-nosnippet>76</a>
+<a href=#77 id=77 data-nosnippet>77</a><span class="kw">impl </span>AxisTransform {
+<a href=#78 id=78 data-nosnippet>78</a>    <span class="kw">pub fn </span>new(min: f64, max: f64) -&gt; <span class="self">Self </span>{
+<a href=#79 id=79 data-nosnippet>79</a>        <span class="comment">// Guard against a degenerate (zero-width) range.
+<a href=#80 id=80 data-nosnippet>80</a>        </span><span class="kw">if </span>(max - min).abs() &lt; f64::EPSILON {
+<a href=#81 id=81 data-nosnippet>81</a>            AxisTransform {
+<a href=#82 id=82 data-nosnippet>82</a>                min,
+<a href=#83 id=83 data-nosnippet>83</a>                max: min + <span class="number">1.0</span>,
+<a href=#84 id=84 data-nosnippet>84</a>            }
+<a href=#85 id=85 data-nosnippet>85</a>        } <span class="kw">else </span>{
+<a href=#86 id=86 data-nosnippet>86</a>            AxisTransform { min, max }
+<a href=#87 id=87 data-nosnippet>87</a>        }
+<a href=#88 id=88 data-nosnippet>88</a>    }
+<a href=#89 id=89 data-nosnippet>89</a>
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// Map a real value into `[-1, 1]`.
+<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="attr">#[inline]
+<a href=#92 id=92 data-nosnippet>92</a>    </span><span class="kw">pub fn </span>normalize(<span class="kw-2">&amp;</span><span class="self">self</span>, v: f64) -&gt; f32 {
+<a href=#93 id=93 data-nosnippet>93</a>        (<span class="number">2.0 </span>* (v - <span class="self">self</span>.min) / (<span class="self">self</span>.max - <span class="self">self</span>.min) - <span class="number">1.0</span>) <span class="kw">as </span>f32
+<a href=#94 id=94 data-nosnippet>94</a>    }
+<a href=#95 id=95 data-nosnippet>95</a>
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="doccomment">/// Map a normalized `[-1, 1]` value back to real units.
+<a href=#97 id=97 data-nosnippet>97</a>    /// Used by axis-tick labeling (and tested); kept ahead of the gizmo work.
+<a href=#98 id=98 data-nosnippet>98</a>    </span><span class="attr">#[allow(dead_code)]
+<a href=#99 id=99 data-nosnippet>99</a>    #[inline]
+<a href=#100 id=100 data-nosnippet>100</a>    </span><span class="kw">pub fn </span>denormalize(<span class="kw-2">&amp;</span><span class="self">self</span>, n: f32) -&gt; f64 {
+<a href=#101 id=101 data-nosnippet>101</a>        <span class="self">self</span>.min + ((n <span class="kw">as </span>f64) + <span class="number">1.0</span>) * <span class="number">0.5 </span>* (<span class="self">self</span>.max - <span class="self">self</span>.min)
+<a href=#102 id=102 data-nosnippet>102</a>    }
+<a href=#103 id=103 data-nosnippet>103</a>}
+<a href=#104 id=104 data-nosnippet>104</a>
+<a href=#105 id=105 data-nosnippet>105</a><span class="doccomment">/// The three spatial axes of the run, in real units, plus their normalizers.
+<a href=#106 id=106 data-nosnippet>106</a></span><span class="attr">#[derive(Clone, Copy, Debug)]
+<a href=#107 id=107 data-nosnippet>107</a></span><span class="kw">pub struct </span>AxisBounds {
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="doccomment">/// x-axis: m/z (Th).
+<a href=#109 id=109 data-nosnippet>109</a>    </span><span class="kw">pub </span>mz: AxisTransform,
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="doccomment">/// y-axis: inverse ion mobility 1/K0.
+<a href=#111 id=111 data-nosnippet>111</a>    </span><span class="kw">pub </span>im: AxisTransform,
+<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// z-axis: retention time (seconds).
+<a href=#113 id=113 data-nosnippet>113</a>    </span><span class="kw">pub </span>rt: AxisTransform,
+<a href=#114 id=114 data-nosnippet>114</a>}
+<a href=#115 id=115 data-nosnippet>115</a>
+<a href=#116 id=116 data-nosnippet>116</a><span class="kw">impl </span>AxisBounds {
+<a href=#117 id=117 data-nosnippet>117</a>    <span class="doccomment">/// Normalize a `(mz, im, rt)` real-unit triple into cube coordinates.
+<a href=#118 id=118 data-nosnippet>118</a>    </span><span class="attr">#[inline]
+<a href=#119 id=119 data-nosnippet>119</a>    </span><span class="kw">pub fn </span>normalize(<span class="kw-2">&amp;</span><span class="self">self</span>, mz: f64, im: f64, rt: f64) -&gt; [f32; <span class="number">3</span>] {
+<a href=#120 id=120 data-nosnippet>120</a>        [<span class="self">self</span>.mz.normalize(mz), <span class="self">self</span>.im.normalize(im), <span class="self">self</span>.rt.normalize(rt)]
+<a href=#121 id=121 data-nosnippet>121</a>    }
+<a href=#122 id=122 data-nosnippet>122</a>}
+<a href=#123 id=123 data-nosnippet>123</a>
+<a href=#124 id=124 data-nosnippet>124</a><span class="attr">#[cfg(test)]
+<a href=#125 id=125 data-nosnippet>125</a></span><span class="kw">mod </span>tests {
+<a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">use </span>super::<span class="kw-2">*</span>;
+<a href=#127 id=127 data-nosnippet>127</a>
+<a href=#128 id=128 data-nosnippet>128</a>    <span class="attr">#[test]
+<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="kw">fn </span>gpu_point_is_32_bytes() {
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="macro">assert_eq!</span>(std::mem::size_of::&lt;GpuPoint&gt;(), <span class="number">32</span>);
+<a href=#131 id=131 data-nosnippet>131</a>    }
+<a href=#132 id=132 data-nosnippet>132</a>
+<a href=#133 id=133 data-nosnippet>133</a>    <span class="attr">#[test]
+<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">fn </span>axis_transform_round_trip() {
+<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span>t = AxisTransform::new(<span class="number">100.0</span>, <span class="number">1700.0</span>);
+<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">for </span>v <span class="kw">in </span>[<span class="number">100.0</span>, <span class="number">400.0</span>, <span class="number">900.5</span>, <span class="number">1700.0</span>] {
+<a href=#137 id=137 data-nosnippet>137</a>            <span class="kw">let </span>n = t.normalize(v);
+<a href=#138 id=138 data-nosnippet>138</a>            <span class="kw">let </span>back = t.denormalize(n);
+<a href=#139 id=139 data-nosnippet>139</a>            <span class="macro">assert!</span>((back - v).abs() &lt; <span class="number">1e-6</span>, <span class="string">"round-trip failed for {v}: {back}"</span>);
+<a href=#140 id=140 data-nosnippet>140</a>        }
+<a href=#141 id=141 data-nosnippet>141</a>        <span class="macro">assert!</span>((t.normalize(<span class="number">100.0</span>) + <span class="number">1.0</span>).abs() &lt; <span class="number">1e-6</span>);
+<a href=#142 id=142 data-nosnippet>142</a>        <span class="macro">assert!</span>((t.normalize(<span class="number">1700.0</span>) - <span class="number">1.0</span>).abs() &lt; <span class="number">1e-6</span>);
+<a href=#143 id=143 data-nosnippet>143</a>    }
+<a href=#144 id=144 data-nosnippet>144</a>
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="attr">#[test]
+<a href=#146 id=146 data-nosnippet>146</a>    </span><span class="kw">fn </span>axis_transform_handles_degenerate_range() {
+<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">let </span>t = AxisTransform::new(<span class="number">5.0</span>, <span class="number">5.0</span>);
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="comment">// Must not divide by zero / produce NaN.
+<a href=#149 id=149 data-nosnippet>149</a>        </span><span class="macro">assert!</span>(t.normalize(<span class="number">5.0</span>).is_finite());
+<a href=#150 id=150 data-nosnippet>150</a>    }
+<a href=#151 id=151 data-nosnippet>151</a>}
 </code></pre></div></section></main></body></html>

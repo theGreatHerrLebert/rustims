@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["axis_window","build","fmt_count"]};
+window.SIDEBAR_ITEMS = {"fn":["build"],"struct":["TickLabel"]};
