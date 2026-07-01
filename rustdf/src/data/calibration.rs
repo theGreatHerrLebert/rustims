@@ -91,10 +91,11 @@ impl MzCalibrator {
     /// TOF index -> m/z. Inverts `t = C0 + b*s + c2*s^2 + c3*s^3` for `s`.
     pub fn tof_to_mz(&self, tof_index: u32) -> f64 {
         let t = self.tof_index_to_time(tof_index as f64);
-        // Base (linear-in-sqrt) closed form, exact when c2 = c3 = 0.
-        let mut s = (t - self.c0) / self.b;
-        if self.c2 != 0.0 || self.c3 != 0.0 {
-            // Newton refinement for the ModelType-1 cubic curve.
+        // Linear-in-sqrt estimate; exact when c2 = c3 = 0.
+        let s0 = (t - self.c0) / self.b;
+        let s = if self.c3 != 0.0 {
+            // ModelType-1 cubic: Newton refinement from the linear estimate.
+            let mut s = s0;
             for _ in 0..8 {
                 let f = self.c0 + self.b * s + self.c2 * s * s + self.c3 * s * s * s - t;
                 let df = self.b + 2.0 * self.c2 * s + 3.0 * self.c3 * s * s;
@@ -107,7 +108,23 @@ impl MzCalibrator {
                     break;
                 }
             }
-        }
+            s
+        } else if self.c2 != 0.0 {
+            // ModelType-2 quadratic `c2*s^2 + b*s + (c0 - t) = 0`, solved in the
+            // numerically stable ("citardauq") form so the physical root does not
+            // lose precision to cancellation when |c2| is tiny. b > 0 always, so
+            // q < 0 and is never zero. Falls back to the linear estimate if the
+            // discriminant is negative (out-of-range tof).
+            let disc = self.b * self.b - 4.0 * self.c2 * (self.c0 - t);
+            if disc < 0.0 {
+                s0
+            } else {
+                let q = -0.5 * (self.b + disc.sqrt());
+                (self.c0 - t) / q
+            }
+        } else {
+            s0
+        };
         s * s - self.c4
     }
 

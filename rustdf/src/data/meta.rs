@@ -440,10 +440,10 @@ pub fn read_dia_ms_ms_windows(
 ///   tof_time = c0 + b*sqrt(m) + c2*m + c3*m^1.5,   b = sqrt(1e12 / c1)
 /// inverted to give m/z from a TOF index (see `data::calibration::MzCalibrator`).
 ///
-/// For model_type 2 (modern instruments) the base curve reduces to
-///   sqrt(mz) = (tof_time - c0) / sqrt(1e12 / c1)
-/// (c2/c3 are NOT curve terms in model 2). This base is accurate to ~10 ppm; the
-/// remaining error is a proprietary degree-6 correction polynomial in c8..c14.
+/// Model 2 (modern instruments) uses the same `c0 + b*sqrt(m) + c2*m` curve
+/// (c2 IS a curve term; only the c3 cubic term is model-1 only). That base is
+/// accurate to a few ppm; the remaining error is a proprietary correction in
+/// c8..c14 (windowed to [c5, c6]) that is not modelled.
 pub fn read_mz_calibration(
     bruker_d_folder_name: &str,
 ) -> Result<Vec<MzCalibration>, Box<dyn std::error::Error>> {

@@ -363,6 +363,13 @@ impl IndexConverter for BrukerLibTimsDataConverter {
 ///     the same C0/C1/C2 quadratic-in-sqrt(m) curve and reproduces the SDK to a
 ///     few ppm (the proprietary ModelType-2 C8..C14 fine correction is not
 ///     modelled).
+///
+/// This is a **fixed-calibration** converter: it captures one frame's
+/// calibration rows + temperatures at build time and applies them to every
+/// frame, ignoring the per-call `frame_id` (like the other SDK-free converters
+/// `Simple`/`Calibrated`/`Lookup`). Valid because the coefficients are
+/// effectively constant across a run; use the SDK-backed `BrukerLib` converter
+/// if a run genuinely carries multiple calibration rows.
 pub struct BrukerFormulaConverter {
     pub mz: crate::data::calibration::MzCalibrator,
     pub im: crate::data::calibration::MobilityCalibrator,
@@ -395,6 +402,15 @@ impl BrukerFormulaConverter {
             .into_iter()
             .find(|c| c.id == tims_id)
             .ok_or("TimsCalibration row not found")?;
+
+        // Reject calibration models this converter does not implement, rather
+        // than silently mis-computing (m/z model 2 is the default branch).
+        if mzc.model_type != 1 && mzc.model_type != 2 {
+            return Err(format!("unsupported MzCalibration ModelType {}", mzc.model_type).into());
+        }
+        if tc.model_type != 2 {
+            return Err(format!("unsupported TimsCalibration ModelType {}", tc.model_type).into());
+        }
 
         let mz = MzCalibrator::new(
             mzc.model_type,
