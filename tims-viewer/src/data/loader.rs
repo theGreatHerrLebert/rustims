@@ -226,7 +226,13 @@ fn run_loader(
     // the hundreds of millions of per-point updates. Sentinel intensity -1 = unoccupied;
     // the source index lets us drop peaks the systematic sampler already emitted.
     let n_cells = (PEAK_DIMS[0] * PEAK_DIMS[1] * PEAK_DIMS[2]) as usize;
-    let mut peaks: Vec<(f32, u64, GpuPoint)> = vec![(-1.0, 0, ZERO_POINT); n_cells];
+    // Peak grid, struct-of-arrays. The hot per-point compare reads only `best_i` (1M×4 B = 4 MB,
+    // cache-resident) instead of pulling a cache line of the 48 B (f32,u64,GpuPoint) tuple; the cold
+    // `best_gi`/`best_gp` are written only on a new max. `best_i` sentinel -1.0 (== the old tuple .0)
+    // so a real 0-intensity point still occupies an empty cell via strict `> -1.0`.
+    let mut best_i: Vec<f32> = vec![-1.0; n_cells];
+    let mut best_gi: Vec<u64> = vec![0; n_cells];
+    let mut best_gp: Vec<GpuPoint> = vec![ZERO_POINT; n_cells];
 
     // Subsample intensities into a reservoir for percentile defaults.
     let mut reservoir: Vec<f32> = Vec::with_capacity(RESERVOIR_CAP);
@@ -347,12 +353,14 @@ fn run_loader(
             }
             let pos = bounds.normalize($mz, $im, $rt);
             let flags = if $ms2 { GpuPoint::MS2_FLAG } else { 0 };
-            // Peak: keep the highest-intensity point per coarse cell.
-            let slot = &mut peaks[peak_cell(pos) as usize];
-            if intensity > slot.0 {
-                slot.0 = intensity;
-                slot.1 = global_i;
-                slot.2 = GpuPoint { pos, intensity, weight: 1.0, flags, _pad: [GpuPoint::NO_CLUSTER, 0] };
+            // Peak: keep the highest-intensity point per coarse cell (SoA — the hot read is best_i
+            // only; strict `>` keeps first-wins on ties).
+            let cell = peak_cell(pos) as usize;
+            if intensity > best_i[cell] {
+                best_i[cell] = intensity;
+                best_gi[cell] = global_i;
+                best_gp[cell] =
+                    GpuPoint { pos, intensity, weight: 1.0, flags, _pad: [GpuPoint::NO_CLUSTER, 0] };
             }
             // Systematic density base (every stride-th survivor, via the countdown above).
             if keep_in == 0 {
@@ -444,10 +452,11 @@ fn run_loader(
     // the strongest survive if occupied cells exceed the headroom.
     let peak_room = budget.saturating_sub(systematic_count as usize);
     if peak_room > 0 && stride_u64 > 1 {
-        let mut peak_pts: Vec<GpuPoint> = peaks
-            .into_iter()
-            .filter(|(i, gi, _)| *i >= 0.0 && gi % stride_u64 != 0)
-            .map(|(_, _, gp)| gp)
+        // Occupancy first (best_i >= 0.0, == the old `i >= 0.0`), THEN the systematic-dedup modulo —
+        // never run `% stride` on an empty cell.
+        let mut peak_pts: Vec<GpuPoint> = (0..n_cells)
+            .filter(|&c| best_i[c] >= 0.0 && best_gi[c] % stride_u64 != 0)
+            .map(|c| best_gp[c])
             .collect();
         // Keep the strongest `peak_room` peaks. A partial select (O(n)) suffices — order within the
         // kept set is irrelevant (everything is shuffled downstream). Guard peak_room < len:
