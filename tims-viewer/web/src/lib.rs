@@ -108,6 +108,9 @@ const DEFAULT_ACQ_PORT: u16 = 8092;
 /// Trailing-window size for acquisition playback: the renderer keeps only the last this-many points
 /// (ring buffer), so an unbounded stream can't grind the GPU. Clamped to the GPU cap.
 const ACQ_RING_POINTS: usize = 1_200_000;
+/// Idle heartbeat: even with no change/interaction, re-render every Nth frame (~3×/s at 60 fps) so a
+/// missed `needs_redraw` wake-source self-heals instead of the view freezing.
+const IDLE_HEARTBEAT: u32 = 20;
 /// Frames per `/acq/frames` prefetch request (built in parallel server-side).
 const ACQ_BATCH: u32 = 64;
 /// Kick the next prefetch when fewer than this many decoded frames remain buffered.
@@ -360,6 +363,10 @@ struct Gfx {
     fps_ema: f32,
     fps_t: f64,
     hud_tick: u32,
+    /// Idle throttling: skip the (multi-million-point) draw when nothing changed and nothing is
+    /// animating. Set at interactions/loads (+ piggybacked on `filter_dirty`); a heartbeat every
+    /// `IDLE_HEARTBEAT` frames renders anyway so a missed wake-source self-heals instead of freezing.
+    needs_redraw: bool,
     /// Real-unit axis ranges `[mz, im, rt]` from `/meta`, for crop labels; `None` => show %.
     axis_bounds: Option<[(f64, f64); 3]>,
     /// Mean RT seconds per cycle (from `/meta`); 0 if unknown. Clusters RT in cycle units.
@@ -497,6 +504,7 @@ impl Gfx {
         self.config.height = h;
         self.surface.configure(&self.device, &self.config);
         self.depth_view = create_depth(&self.device, w, h);
+        self.needs_redraw = true; // a resize changes the surface — redraw next frame
     }
 
     /// Project each axis label's cube position to the canvas and position its DOM element.
@@ -595,6 +603,7 @@ impl Gfx {
         }
         // Recompute the displayed (filter-surviving) count when the filter/draw-count changed.
         if self.filter_dirty {
+            self.needs_redraw = true; // a filter/param/load change must trigger a redraw
             let shown = recount_displayed(self);
             let resident = self.renderer.resident() as usize;
             let txt = if self.points_base.is_empty() {
@@ -606,6 +615,14 @@ impl Gfx {
             };
             set_text("hud-points", &txt);
             self.filter_dirty = false;
+        }
+
+        // Idle skip: if nothing changed and nothing is animating, keep the rAF loop alive but skip
+        // the (multi-million-point) draw — idle GPU ~0. IDLE_HEARTBEAT forces a periodic redraw so a
+        // missed wake-source recovers in a fraction of a second rather than freezing the view.
+        let animating = self.auto_rotate || self.dragging.is_some() || self.acq_playing;
+        if !self.needs_redraw && !animating && self.hud_tick % IDLE_HEARTBEAT != 0 {
+            return true;
         }
 
         if self.auto_rotate {
@@ -694,6 +711,7 @@ impl Gfx {
         }
         self.queue.submit(std::iter::once(enc.finish()));
         surface_tex.present();
+        self.needs_redraw = false; // drawn this frame; go idle until the next change/interaction
         true
     }
 }
@@ -866,6 +884,7 @@ async fn run() -> Result<(), String> {
         fps_ema: 0.0,
         fps_t: 0.0,
         hud_tick: 0,
+        needs_redraw: true,
         axis_bounds,
         cycle_duration: server_meta.as_ref().map(|m| m.cycle_duration).unwrap_or(0.0),
         points_base: if is_demo_fallback { String::new() } else { url.clone() },
@@ -4140,7 +4159,11 @@ fn bind_value(
         let (gfx, apply, s, n) = (gfx.clone(), apply.clone(), slider.clone(), num.clone());
         add_listener(slider.as_ref(), "input", move |_e: web_sys::Event| {
             let v = s.value_as_number();
-            apply(&mut gfx.borrow_mut(), v);
+            {
+                let mut g = gfx.borrow_mut();
+                apply(&mut g, v);
+                g.needs_redraw = true; // slider/number change redraws (idle-throttle wake-up)
+            }
             n.set_value(&format!("{v:.prec$}"));
         });
     }
@@ -4156,7 +4179,11 @@ fn bind_value(
             let v = raw.clamp(lo, hi);
             n.set_value(&format!("{v:.prec$}"));
             s.set_value(&v.to_string());
-            apply(&mut gfx.borrow_mut(), v);
+            {
+                let mut g = gfx.borrow_mut();
+                apply(&mut g, v);
+                g.needs_redraw = true; // slider/number change redraws (idle-throttle wake-up)
+            }
         });
     }
 }
@@ -4241,7 +4268,9 @@ fn on_toggle(id: &str, gfx: &Rc<RefCell<Gfx>>, mut f: impl FnMut(&mut Gfx, bool)
     if let Some(inp) = by_id::<web_sys::HtmlInputElement>(id) {
         let (gfx, el) = (gfx.clone(), inp.clone());
         add_listener(inp.as_ref(), "change", move |_e: web_sys::Event| {
-            f(&mut gfx.borrow_mut(), el.checked());
+            let mut g = gfx.borrow_mut();
+            f(&mut g, el.checked());
+            g.needs_redraw = true; // any control change redraws (idle-throttle wake-up)
         });
     }
 }
@@ -4250,7 +4279,11 @@ fn on_toggle(id: &str, gfx: &Rc<RefCell<Gfx>>, mut f: impl FnMut(&mut Gfx, bool)
 fn on_click(id: &str, gfx: &Rc<RefCell<Gfx>>, mut f: impl FnMut(&mut Gfx) + 'static) {
     if let Some(el) = document().and_then(|d| d.get_element_by_id(id)) {
         let gfx = gfx.clone();
-        add_listener(el.as_ref(), "click", move |_e: web_sys::Event| f(&mut gfx.borrow_mut()));
+        add_listener(el.as_ref(), "click", move |_e: web_sys::Event| {
+            let mut g = gfx.borrow_mut();
+            f(&mut g);
+            g.needs_redraw = true; // any control click redraws (idle-throttle wake-up)
+        });
     }
 }
 
@@ -4288,7 +4321,11 @@ fn wire_controls(gfx: &Rc<RefCell<Gfx>>) {
         add_listener(sel.as_ref(), "change", move |_e: web_sys::Event| {
             // Read the option's own value (don't rely on DOM order matching COLORMAP_NAMES).
             let id = el.value().parse::<u32>().unwrap_or(0).min(COLORMAP_NAMES.len() as u32 - 1);
-            gfx.borrow_mut().params.colormap_id = id;
+            {
+                let mut g = gfx.borrow_mut();
+                g.params.colormap_id = id;
+                g.needs_redraw = true;
+            }
             set_cbar(id);
         });
     }
@@ -4419,6 +4456,7 @@ fn wire_input(gfx: &Rc<RefCell<Gfx>>, window: &web_sys::Window, canvas: &web_sys
             let mut g = gfx.borrow_mut();
             g.auto_rotate = false;
             g.dragging = Some(e.button());
+            g.needs_redraw = true;
             set_checked("ar", false); // keep the Auto-orbit switch in sync
         });
     }
@@ -4433,13 +4471,16 @@ fn wire_input(gfx: &Rc<RefCell<Gfx>>, window: &web_sys::Window, canvas: &web_sys
                 } else {
                     g.camera.pan(dx, dy);
                 }
+                g.needs_redraw = true;
             }
         });
     }
     {
         let gfx = gfx.clone();
         add_listener(window.as_ref(), "mouseup", move |_e: web_sys::MouseEvent| {
-            gfx.borrow_mut().dragging = None;
+            let mut g = gfx.borrow_mut();
+            g.dragging = None;
+            g.needs_redraw = true;
         });
     }
     {
@@ -4449,6 +4490,7 @@ fn wire_input(gfx: &Rc<RefCell<Gfx>>, window: &web_sys::Window, canvas: &web_sys
             let mut g = gfx.borrow_mut();
             g.auto_rotate = false; // zoom is an interaction too — hand control to the user
             g.camera.zoom(-(e.delta_y() as f32) / 100.0);
+            g.needs_redraw = true;
             set_checked("ar", false);
         });
     }
