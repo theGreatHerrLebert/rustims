@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Acquisition sidecar — stream annotated DIA frames for live playback in tims-viewer.
+"""Acquisition sidecar (EXPERIMENTAL) — stream annotated SIMULATED DIA frames for live playback.
+
+STATUS: experimental. This streams a *simulated* acquisition (TimSim synthetic data), not real
+instrument output; the wire format and endpoints may still change, and it's an optional, off-by-
+default sidecar. The viewer flags the "Live acquisition" mode as experimental to match.
 
 Wraps TimSim's ``DIAFrameBuilder(with_annotations=True)`` over a prepared synthetic-simulation DB and
 serves, per frame, the annotated points (m/z, 1/K0, RT, intensity + peptide_id + precursor/fragment
