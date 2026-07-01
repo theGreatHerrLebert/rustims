@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["acquisition","dataset","dda","dia","handle","meta","raw","utility"]};
+window.SIDEBAR_ITEMS = {"mod":["acquisition","calibration","dataset","dda","dia","handle","meta","raw","utility"]};
