@@ -1131,6 +1131,44 @@ impl TimsDataLoader {
         })
     }
 
+    /// Create a lazy loader using the exact SDK-free Bruker calibration formulas.
+    ///
+    /// Builds a [`BrukerFormulaConverter`] from the `MzCalibration` /
+    /// `TimsCalibration` tables (frame `calibration_frame_id`, default 1 — the
+    /// coefficients are near-constant per run). Needs no Bruker SDK at build or
+    /// runtime; 1/K0 is machine-exact and m/z is bit-exact for MzCalibration
+    /// ModelType 1 (few ppm for ModelType 2).
+    pub fn new_lazy_with_bruker_formula(data_path: &str, calibration_frame_id: u32) -> Self {
+        let raw_data_layout = TimsRawDataLayout::new(data_path);
+        let index_converter = TimsIndexConverter::BrukerFormula(
+            BrukerFormulaConverter::from_d_folder(data_path, calibration_frame_id).unwrap(),
+        );
+        TimsDataLoader::Lazy(TimsLazyLoder {
+            raw_data_layout,
+            index_converter,
+        })
+    }
+
+    /// In-memory counterpart of [`Self::new_lazy_with_bruker_formula`].
+    pub fn new_in_memory_with_bruker_formula(data_path: &str, calibration_frame_id: u32) -> Self {
+        let raw_data_layout = TimsRawDataLayout::new(data_path);
+        let index_converter = TimsIndexConverter::BrukerFormula(
+            BrukerFormulaConverter::from_d_folder(data_path, calibration_frame_id).unwrap(),
+        );
+
+        let mut file_path = PathBuf::from(data_path);
+        file_path.push("analysis.tdf_bin");
+        let mut infile = File::open(file_path).unwrap();
+        let mut data = Vec::new();
+        infile.read_to_end(&mut data).unwrap();
+
+        TimsDataLoader::InMemory(TimsInMemoryLoader {
+            raw_data_layout,
+            index_converter,
+            compressed_data: data,
+        })
+    }
+
     /// Create a lazy loader with full calibration (both m/z and IM).
     ///
     /// This method uses regression-derived m/z calibration coefficients instead of
