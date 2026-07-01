@@ -4150,6 +4150,7 @@ fn wire_controls(gfx: &Rc<RefCell<Gfx>>) {
     bind_value(gfx, "floor", "floor-n", 0, |g, v| {
         g.params.filter_min[3] = v as f32;
         g.filter_dirty = true;
+        g.vol_needs_grid = true; // the volume bakes the floor at deposit time — re-voxel so it updates live
         invalidate_clusters_mut(g);
     });
 
