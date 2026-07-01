@@ -39,10 +39,11 @@ fn derive_mz_calibration(
         return None;
     }
 
-    // Try to create a BrukerLib converter
-    let sdk_converter = match std::panic::catch_unwind(|| {
-        BrukerLibTimsDataConverter::new(bruker_lib_path, data_path)
-    }) {
+    // Try to create a BrukerLib converter. Use the FALLIBLE `try_new`, not `catch_unwind` around the
+    // panicking `new`: the workspace builds release with `panic = "abort"`, so catch_unwind can't
+    // recover — a present-but-unloadable SDK (wrong arch / mismatched version) would abort instead of
+    // returning None. try_new returns Err on load failure with no panic.
+    let sdk_converter = match BrukerLibTimsDataConverter::try_new(bruker_lib_path, data_path) {
         Ok(converter) => converter,
         Err(_) => return None,
     };
@@ -242,8 +243,17 @@ pub struct BrukerLibTimsDataConverter {
 
 impl BrukerLibTimsDataConverter {
     pub fn new(bruker_lib_path: &str, data_path: &str) -> Self {
-        let bruker_lib = BrukerTimsDataLibrary::new(bruker_lib_path, data_path).unwrap();
-        BrukerLibTimsDataConverter { bruker_lib }
+        Self::try_new(bruker_lib_path, data_path).unwrap()
+    }
+    /// Fallible constructor — `Err` if the Bruker SDK shared library can't be loaded (missing,
+    /// wrong architecture, mismatched version). Lets callers degrade to the simple/derived
+    /// calibration instead of panicking.
+    pub fn try_new(
+        bruker_lib_path: &str,
+        data_path: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let bruker_lib = BrukerTimsDataLibrary::new(bruker_lib_path, data_path)?;
+        Ok(BrukerLibTimsDataConverter { bruker_lib })
     }
 }
 impl IndexConverter for BrukerLibTimsDataConverter {
@@ -822,6 +832,60 @@ pub enum TimsDataLoader {
     Lazy(TimsLazyLoder),
 }
 
+/// Pick the m/z/mobility index converter, shared by the lazy and in-memory loaders.
+///
+/// - `use_bruker_sdk` → try the live Bruker SDK converter; if the SDK shared library can't be
+///   loaded (missing / wrong arch / mismatched version) this now **falls back** (with a warning)
+///   instead of panicking.
+/// - Otherwise (or after that fallback): derive an accurate calibration from the SDK if the
+///   `bruker_lib_path` is usable, else the simple boundary model (~5 Da error on some datasets).
+fn build_index_converter(
+    bruker_lib_path: &str,
+    data_path: &str,
+    use_bruker_sdk: bool,
+    scan_max_index: u32,
+    im_lower: f64,
+    im_upper: f64,
+    tof_max_index: u32,
+    mz_lower: f64,
+    mz_upper: f64,
+) -> TimsIndexConverter {
+    if use_bruker_sdk {
+        match BrukerLibTimsDataConverter::try_new(bruker_lib_path, data_path) {
+            Ok(converter) => return TimsIndexConverter::BrukerLib(converter),
+            Err(e) => eprintln!(
+                "Warning: Bruker SDK requested but failed to load ({e}); \
+                falling back to derived/simple m/z calibration."
+            ),
+        }
+    }
+    // Derive an accurate calibration via the SDK if possible, else the simple boundary model.
+    match derive_mz_calibration(bruker_lib_path, data_path, tof_max_index) {
+        Some((intercept, slope)) => TimsIndexConverter::Calibrated(CalibratedIndexConverter::new(
+            intercept,
+            slope,
+            im_lower,
+            im_upper,
+            scan_max_index,
+        )),
+        None => {
+            eprintln!(
+                "Warning: Could not derive m/z calibration from SDK. \
+                Using simple boundary model which may have ~5 Da error on some datasets. \
+                This typically happens on macOS where Bruker SDK is not available."
+            );
+            TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(
+                mz_lower,
+                mz_upper,
+                tof_max_index,
+                im_lower,
+                im_upper,
+                scan_max_index,
+            ))
+        }
+    }
+}
+
 impl TimsDataLoader {
     pub fn new_lazy(
         bruker_lib_path: &str,
@@ -835,42 +899,17 @@ impl TimsDataLoader {
         mz_upper: f64,
     ) -> Self {
         let raw_data_layout = TimsRawDataLayout::new(data_path);
-
-        let index_converter = match use_bruker_sdk {
-            true => TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(
-                bruker_lib_path,
-                data_path,
-            )),
-            false => {
-                // Try to derive accurate calibration using SDK, fall back to simple model
-                match derive_mz_calibration(bruker_lib_path, data_path, tof_max_index) {
-                    Some((intercept, slope)) => {
-                        TimsIndexConverter::Calibrated(CalibratedIndexConverter::new(
-                            intercept,
-                            slope,
-                            im_lower,
-                            im_upper,
-                            scan_max_index,
-                        ))
-                    }
-                    None => {
-                        eprintln!(
-                            "Warning: Could not derive m/z calibration from SDK. \
-                            Using simple boundary model which may have ~5 Da error on some datasets. \
-                            This typically happens on macOS where Bruker SDK is not available."
-                        );
-                        TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(
-                            mz_lower,
-                            mz_upper,
-                            tof_max_index,
-                            im_lower,
-                            im_upper,
-                            scan_max_index,
-                        ))
-                    }
-                }
-            }
-        };
+        let index_converter = build_index_converter(
+            bruker_lib_path,
+            data_path,
+            use_bruker_sdk,
+            scan_max_index,
+            im_lower,
+            im_upper,
+            tof_max_index,
+            mz_lower,
+            mz_upper,
+        );
 
         TimsDataLoader::Lazy(TimsLazyLoder {
             raw_data_layout,
@@ -890,42 +929,17 @@ impl TimsDataLoader {
         mz_upper: f64,
     ) -> Self {
         let raw_data_layout = TimsRawDataLayout::new(data_path);
-
-        let index_converter = match use_bruker_sdk {
-            true => TimsIndexConverter::BrukerLib(BrukerLibTimsDataConverter::new(
-                bruker_lib_path,
-                data_path,
-            )),
-            false => {
-                // Try to derive accurate calibration using SDK, fall back to simple model
-                match derive_mz_calibration(bruker_lib_path, data_path, tof_max_index) {
-                    Some((intercept, slope)) => {
-                        TimsIndexConverter::Calibrated(CalibratedIndexConverter::new(
-                            intercept,
-                            slope,
-                            im_lower,
-                            im_upper,
-                            scan_max_index,
-                        ))
-                    }
-                    None => {
-                        eprintln!(
-                            "Warning: Could not derive m/z calibration from SDK. \
-                            Using simple boundary model which may have ~5 Da error on some datasets. \
-                            This typically happens on macOS where Bruker SDK is not available."
-                        );
-                        TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(
-                            mz_lower,
-                            mz_upper,
-                            tof_max_index,
-                            im_lower,
-                            im_upper,
-                            scan_max_index,
-                        ))
-                    }
-                }
-            }
-        };
+        let index_converter = build_index_converter(
+            bruker_lib_path,
+            data_path,
+            use_bruker_sdk,
+            scan_max_index,
+            im_lower,
+            im_upper,
+            tof_max_index,
+            mz_lower,
+            mz_upper,
+        );
 
         let mut file_path = PathBuf::from(data_path);
         file_path.push("analysis.tdf_bin");
