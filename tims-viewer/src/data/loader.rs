@@ -323,6 +323,11 @@ fn run_loader(
     // systematic sampling (count-bounded, RT-unbiased).
     let mut global_i: u64 = 0;
     let stride_u64 = stride as u64;
+    // Countdown replacing `global_i % stride_u64 == 0` in the hot per-point gate (a division over
+    // 100M+ points). Starts at 0 so survivor index 0 is kept, then resets to stride-1 — identical
+    // phase to the modulo (stride==1 -> always 0 -> keep all). `global_i` still advances every
+    // survivor (it tags the peak grid + drives the peak-tail dedup `gi % stride`).
+    let mut keep_in: u64 = 0;
 
     // Per-point handler shared by both sources: cull against the region filter first, then update
     // the peak grid for every SURVIVING point and emit every stride-th into the systematic base.
@@ -349,8 +354,9 @@ fn run_loader(
                 slot.1 = global_i;
                 slot.2 = GpuPoint { pos, intensity, weight: 1.0, flags, _pad: [GpuPoint::NO_CLUSTER, 0] };
             }
-            // Systematic density base.
-            if global_i % stride_u64 == 0 {
+            // Systematic density base (every stride-th survivor, via the countdown above).
+            if keep_in == 0 {
+                keep_in = stride_u64 - 1;
                 chunk.push(GpuPoint { pos, intensity, weight, flags, _pad: [GpuPoint::NO_CLUSTER, 0] });
                 systematic_count += 1;
                 reservoir_push(&mut reservoir, &mut kept_counter, sample_every, intensity);
@@ -368,6 +374,8 @@ fn run_loader(
                 if chunk.len() >= CHUNK_POINTS {
                     flush!();
                 }
+            } else {
+                keep_in -= 1;
             }
             global_i += 1;
         }};
@@ -441,13 +449,17 @@ fn run_loader(
             .filter(|(i, gi, _)| *i >= 0.0 && gi % stride_u64 != 0)
             .map(|(_, _, gp)| gp)
             .collect();
-        // Strongest first.
-        peak_pts.sort_by(|a, b| {
-            b.intensity
-                .partial_cmp(&a.intensity)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        peak_pts.truncate(peak_room);
+        // Keep the strongest `peak_room` peaks. A partial select (O(n)) suffices — order within the
+        // kept set is irrelevant (everything is shuffled downstream). Guard peak_room < len:
+        // select_nth at index == len is out of bounds, and peak_room >= len already keeps all.
+        if peak_room < peak_pts.len() {
+            peak_pts.select_nth_unstable_by(peak_room, |a, b| {
+                b.intensity
+                    .partial_cmp(&a.intensity)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            peak_pts.truncate(peak_room);
+        }
         // Fold peaks into the distributions + intensity range too: they are displayed points
         // and are often the brightest in the run, so excluding them would make the default
         // intensity filter (which uses i_lo/i_hi) cull the very peaks preservation kept.
