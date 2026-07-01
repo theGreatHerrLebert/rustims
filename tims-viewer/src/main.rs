@@ -41,6 +41,11 @@ struct Args {
     /// Cuts the over-the-wire size ~3-4x for remote serving; leave off for localhost (raw is faster).
     #[arg(long)]
     compress: bool,
+    /// With --serve (PROD): enable in-app error telemetry + user feedback, appended as JSONL to this
+    /// directory (telemetry.jsonl / feedback.jsonl). Omit for local dev — the endpoints stay off and
+    /// the frontend hides the feedback widget and sends nothing.
+    #[arg(long)]
+    telemetry_dir: Option<std::path::PathBuf>,
     /// With --render-png: render the volume raycaster instead of the point cloud.
     #[arg(long)]
     volume: bool,
@@ -128,7 +133,7 @@ fn main() -> Result<()> {
         } else {
             tims_viewer::serve::ServeSource::Datasets(discover_datasets(&args.input)?)
         };
-        return tims_viewer::serve::serve(source, args.budget, port, args.compress);
+        return tims_viewer::serve::serve(source, args.budget, port, args.compress, args.telemetry_dir);
     }
 
     let (meta, is_demo) = if args.input.eq_ignore_ascii_case("DEMO") {

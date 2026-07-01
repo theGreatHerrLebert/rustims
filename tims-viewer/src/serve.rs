@@ -191,6 +191,11 @@ struct Hub {
     /// and hit it) — without serializing builds of *different* datasets.
     build_locks: Mutex<HashMap<usize, Arc<Mutex<()>>>>,
     datasets_json: Arc<[u8]>,
+    /// PROD only: directory the /telemetry + /feedback endpoints append JSONL to. `None` in dev —
+    /// both endpoints report "disabled" and the frontend hides the feedback widget. The lock
+    /// serializes appends across worker threads.
+    telemetry_dir: Option<PathBuf>,
+    telemetry_lock: Mutex<()>,
 }
 
 impl Hub {
@@ -296,7 +301,13 @@ fn build_datasets_json(entries: &[DatasetEntry]) -> Arc<[u8]> {
 
 /// Build the registry, eagerly build the default dataset (fast first paint), then serve region
 /// queries — and dataset switches — on demand from `WORKERS` threads.
-pub fn serve(source: ServeSource, budget: Option<usize>, port: u16, compress: bool) -> Result<()> {
+pub fn serve(
+    source: ServeSource,
+    budget: Option<usize>,
+    port: u16,
+    compress: bool,
+    telemetry_dir: Option<PathBuf>,
+) -> Result<()> {
     anyhow::ensure!(
         cfg!(target_endian = "little"),
         "the point wire format is little-endian; --serve is unsupported on this big-endian target"
@@ -320,9 +331,18 @@ pub fn serve(source: ServeSource, budget: Option<usize>, port: u16, compress: bo
         states: Mutex::new(StateCache::default()),
         build_locks: Mutex::new(HashMap::new()),
         datasets_json,
+        telemetry_dir,
+        telemetry_lock: Mutex::new(()),
     });
     if compress {
         log::info!("over-the-wire zstd compression enabled for /points (Accept-Encoding negotiated)");
+    }
+    if let Some(dir) = &hub.telemetry_dir {
+        if let Err(e) = std::fs::create_dir_all(dir) {
+            log::warn!("telemetry dir {} not writable ({e}); telemetry/feedback will 500", dir.display());
+        } else {
+            log::info!("telemetry + feedback enabled -> {}", dir.display());
+        }
     }
 
     // Eagerly build the default dataset so its first paint is instant.
@@ -370,7 +390,7 @@ fn handle(req: Request, hub: &Hub) -> std::io::Result<()> {
         return req.respond(
             Response::empty(204)
                 .with_header(cors())
-                .with_header(header("Access-Control-Allow-Methods", "GET, OPTIONS"))
+                .with_header(header("Access-Control-Allow-Methods", "GET, POST, OPTIONS"))
                 .with_header(header("Access-Control-Allow-Headers", "*")),
         );
     }
@@ -379,6 +399,16 @@ fn handle(req: Request, hub: &Hub) -> std::io::Result<()> {
     if *req.method() == Method::Get && path == "/datasets" {
         // The selectable-dataset registry (the frontend renders this as a dropdown).
         return respond_bytes(req, hub.datasets_json.clone(), "application/json");
+    }
+    if *req.method() == Method::Get && path == "/clientconfig" {
+        // Tells the frontend whether to wire error telemetry + show the feedback widget (PROD only).
+        let on = hub.telemetry_dir.is_some();
+        let json = format!("{{\"telemetry\":{on},\"feedback\":{on}}}");
+        return respond_bytes(req, json.into_bytes().into(), "application/json");
+    }
+    if *req.method() == Method::Post && (path == "/telemetry" || path == "/feedback") {
+        let file = if path == "/telemetry" { "telemetry.jsonl" } else { "feedback.jsonl" };
+        return log_client_event(req, hub, file);
     }
     let want_windows = path == "/windows";
     let (want_points, want_meta) = (path == "/points", path == "/meta");
@@ -742,6 +772,52 @@ fn respond_points(req: Request, body: Arc<[u8]>, compress: bool) -> std::io::Res
         Some(len),
         None,
     ))
+}
+
+/// Append a client-posted JSON event (error telemetry or user feedback) as one JSONL line to the
+/// configured telemetry dir, stamped with a server-side unix time. PROD only: 404 when no dir is
+/// configured. Body is bounded and must be valid JSON so the log stays one-object-per-line.
+fn log_client_event(mut req: Request, hub: &Hub, file: &str) -> std::io::Result<()> {
+    use std::io::{Read, Write};
+    let Some(dir) = hub.telemetry_dir.clone() else {
+        return req.respond(
+            Response::from_string("telemetry disabled").with_status_code(404).with_header(cors()),
+        );
+    };
+    const MAX: usize = 64 * 1024;
+    if req.body_length().unwrap_or(0) > MAX {
+        return req.respond(
+            Response::from_string("payload too large").with_status_code(413).with_header(cors()),
+        );
+    }
+    let mut buf = String::new();
+    let _ = req.as_reader().take(MAX as u64).read_to_string(&mut buf);
+    let event: serde_json::Value = match serde_json::from_str(&buf) {
+        Ok(v) => v,
+        Err(_) => {
+            return req
+                .respond(Response::from_string("invalid json").with_status_code(400).with_header(cors()));
+        }
+    };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let line = serde_json::json!({ "ts_unix": ts, "event": event }).to_string();
+    {
+        let _g = hub.telemetry_lock.lock().unwrap_or_else(|p| p.into_inner());
+        let path = dir.join(file);
+        match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            Ok(mut f) => {
+                let _ = writeln!(f, "{line}");
+            }
+            Err(e) => {
+                log::warn!("telemetry append to {} failed: {e}", path.display());
+                return req.respond(Response::empty(500).with_header(cors()));
+            }
+        }
+    }
+    req.respond(Response::empty(204).with_header(cors()))
 }
 
 /// Serve a shared byte buffer without copying it per request (Cursor over the `Arc`).
