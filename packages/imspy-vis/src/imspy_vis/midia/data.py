@@ -31,7 +31,14 @@ class MidiaExperiment:
         # Per-frame metadata (Id is contiguous 1..N). Time is retention time in seconds;
         # SummedIntensities is Bruker's pre-computed per-frame total ion count — it drives the
         # TIC straight from this metadata read, with no raw-data scan (the old timsVIS source).
-        meta = self.dataset.get_table("Frames")[["Id", "Time", "MsMsType", "SummedIntensities"]].copy()
+        # SummedIntensities is optional: older / converted schemas may lack it, so probe for it and
+        # degrade the TIC gracefully (flat line) instead of KeyError-ing the whole dashboard.
+        frames = self.dataset.get_table("Frames")
+        cols = ["Id", "Time", "MsMsType"]
+        self.has_tic = "SummedIntensities" in frames.columns
+        if self.has_tic:
+            cols.append("SummedIntensities")
+        meta = frames[cols].copy()
         meta = meta.sort_values("Id").reset_index(drop=True)
         self.meta = meta
 
@@ -85,8 +92,9 @@ class MidiaExperiment:
         ``intensity``. The dashboard normalizes for display.
         """
         p = self.meta[self.meta.MsMsType == 0]
-        return pd.DataFrame({"rt_min": p.Time.to_numpy() / 60.0,
-                             "intensity": p.SummedIntensities.to_numpy(dtype=float)})
+        intensity = (p.SummedIntensities.to_numpy(dtype=float) if self.has_tic
+                     else np.zeros(len(p), dtype=float))  # no SummedIntensities column -> flat TIC
+        return pd.DataFrame({"rt_min": p.Time.to_numpy() / 60.0, "intensity": intensity})
 
     # -- extraction-window lookup -------------------------------------------------------
     def midia_dimension(self, step: np.ndarray, scan: np.ndarray) -> np.ndarray:

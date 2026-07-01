@@ -64,7 +64,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         q = parse_qs(urlparse(self.path).query)
         method = q.get("method", ["dbscan"])[0]
-        n = int(self.headers.get("Content-Length", 0))
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):  # malformed header -> clean 400, don't drop the connection
+            self.send_response(400)
+            self._cors()
+            self.end_headers()
+            return
         buf = bytearray()
         while len(buf) < n:  # the socket can hand back the body in chunks
             chunk = self.rfile.read(n - len(buf))

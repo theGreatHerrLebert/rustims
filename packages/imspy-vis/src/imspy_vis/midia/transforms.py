@@ -27,5 +27,10 @@ def peak_width_preserving_mz_transform(
 
 
 def calculate_mz_tick_spacing(mz_min: float, mz_max: float, num_ticks: int = 10) -> float:
-    """Round tick spacing for the m/z axis of a 3D scatter."""
-    return float(np.round((mz_max - mz_min) / num_ticks, 1))
+    """Round tick spacing for the m/z axis of a 3D scatter. Never 0 — plotly rejects ``dtick=0``,
+    which a very narrow visible m/z span (< ~0.5) would otherwise produce and fail the render."""
+    spacing = float(np.round((mz_max - mz_min) / max(num_ticks, 1), 1))
+    if spacing > 0:
+        return spacing
+    raw = (mz_max - mz_min) / max(num_ticks, 1)  # narrow span rounded to 0 — use the finer raw step
+    return float(raw) if raw > 0 else 1.0

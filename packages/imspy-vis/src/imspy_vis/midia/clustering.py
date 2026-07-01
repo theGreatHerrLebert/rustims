@@ -37,14 +37,18 @@ def cluster_precursors_dbscan(points: pd.DataFrame,
                               scan_scaling: float = 0.4,
                               resolution: int = 50_000) -> pd.DataFrame:
     """DBSCAN over precursor points (``cycle, scan, mz, intensity``)."""
+    out = points[["cycle", "scan", "mz", "intensity"]].copy()
+    if len(out) < 2:
+        # .fit raises on 0 samples (and 1 is trivially noise) — return all-noise cleanly instead of
+        # surfacing a raw sklearn ValueError when the RT/mz/scan filter yields (almost) no MS1 points.
+        out["label"] = np.full(len(out), -1, dtype=int)
+        return out
     rt = points.cycle.to_numpy() / np.power(2, cycle_scaling)
     dt = points.scan.to_numpy() / np.power(2, scan_scaling)
     mz = peak_width_preserving_mz_transform(points.mz.to_numpy(), resolution=resolution)
 
     labels = DBSCAN(eps=epsilon, min_samples=min_samples, n_jobs=-1,
                     metric=metric).fit(np.vstack([rt, dt, mz]).T).labels_
-
-    out = points[["cycle", "scan", "mz", "intensity"]].copy()
     out["label"] = labels
     return out
 
@@ -64,6 +68,12 @@ def cluster_precursors_hdbscan(points: pd.DataFrame,
                                resolution: int = 50_000,
                                mz_scaling: float = 0.0) -> pd.DataFrame:
     """HDBSCAN over precursor points (``cycle, scan, mz, intensity``)."""
+    out = points[["cycle", "scan", "mz", "intensity"]].copy()
+    if len(out) < 2:
+        # HDBSCAN.fit raises on 0 samples — return all-noise cleanly (matches the MIDIA path's guard).
+        out["label"] = np.full(len(out), -1, dtype=int)
+        out["probability"] = np.zeros(len(out), dtype=float)
+        return out
     rt = points.cycle.to_numpy() / np.power(2, cycle_scaling)
     dt = points.scan.to_numpy() / np.power(2, scan_scaling)
     mz = peak_width_preserving_mz_transform(points.mz.to_numpy(), resolution=resolution) / np.power(2, mz_scaling)
