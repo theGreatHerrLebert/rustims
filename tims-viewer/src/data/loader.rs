@@ -528,22 +528,9 @@ fn run_loader(
     });
 }
 
-/// Build annotation-overlay line geometry (normalized cube) from the run's DDA/DIA
-/// Number of evenly spaced RT slices each DIA window footprint is drawn at.
-pub const DIA_WINDOW_RT_SLICES: usize = 6;
-
-/// One DIA/MIDIA isolation window's selection footprint in **real units**: an `(m/z × 1/K0)`
-/// rectangle (mobility already converted from scan numbers). Group ids color the interleaved
-/// isolation bands. The web `/windows` endpoint serves these; the web re-normalizes them to its
-/// region bounds (so they align with the cloud and off-region windows clip).
-#[derive(Clone, Copy, Debug)]
-pub struct WindowRect {
-    pub group: u32,
-    pub mz0: f64,
-    pub mz1: f64,
-    pub im0: f64,
-    pub im1: f64,
-}
+// DIA_WINDOW_RT_SLICES and WindowRect now live in `crate::data::point` (a both-targets module) so
+// the native loader and the wasm overlay share one definition; re-exported here for existing users.
+pub use crate::data::point::{WindowRect, DIA_WINDOW_RT_SLICES};
 
 /// Read the DIA/MIDIA isolation windows and return their real-unit `(m/z × 1/K0)` footprints plus
 /// the max group id (the `group_color` denominator). Subsamples a fine MIDIA diagonal so it stays

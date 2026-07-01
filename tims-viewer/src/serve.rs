@@ -67,17 +67,23 @@ struct LoadKey {
     budget: u64,
 }
 
+/// Per-field quantization grid `[mz, im, rt, imin]`, shared by `LoadKey::of` (key rounding) and
+/// `snap_region` (reported bounds). These MUST use the same scales: if a request rounded to one key
+/// but reported bounds that snap to a different key, `/points` and `/meta` could disagree. 1/K0 spans
+/// ~1 unit so it's quantized finely (1e6); the rest to 1e3.
+const QUANT: [f64; 4] = [1e3, 1e6, 1e3, 1e3];
+
 impl LoadKey {
     fn of(r: &Region4D, budget: usize) -> Self {
         let q = |x: f64, s: f64| (x * s).round() as i64;
         LoadKey {
-            mz0: q(r.mz.0, 1e3),
-            mz1: q(r.mz.1, 1e3),
-            im0: q(r.im.0, 1e6), // 1/K0 spans ~1 unit — quantize finely
-            im1: q(r.im.1, 1e6),
-            rt0: q(r.rt.0, 1e3),
-            rt1: q(r.rt.1, 1e3),
-            imin: q(r.imin as f64, 1e3),
+            mz0: q(r.mz.0, QUANT[0]),
+            mz1: q(r.mz.1, QUANT[0]),
+            im0: q(r.im.0, QUANT[1]),
+            im1: q(r.im.1, QUANT[1]),
+            rt0: q(r.rt.0, QUANT[2]),
+            rt1: q(r.rt.1, QUANT[2]),
+            imin: q(r.imin as f64, QUANT[3]),
             budget: budget as u64,
         }
     }
@@ -511,10 +517,10 @@ fn parse_query(url: &str, state: &State) -> (Region4D, usize) {
 /// Round a region onto the same grid the cache key quantizes to, so key and bounds stay consistent.
 fn snap_region(mut r: Region4D) -> Region4D {
     let snap = |x: f64, s: f64| (x * s).round() / s;
-    r.mz = (snap(r.mz.0, 1e3), snap(r.mz.1, 1e3));
-    r.im = (snap(r.im.0, 1e6), snap(r.im.1, 1e6));
-    r.rt = (snap(r.rt.0, 1e3), snap(r.rt.1, 1e3));
-    r.imin = snap(r.imin as f64, 1e3) as f32;
+    r.mz = (snap(r.mz.0, QUANT[0]), snap(r.mz.1, QUANT[0]));
+    r.im = (snap(r.im.0, QUANT[1]), snap(r.im.1, QUANT[1]));
+    r.rt = (snap(r.rt.0, QUANT[2]), snap(r.rt.1, QUANT[2]));
+    r.imin = snap(r.imin as f64, QUANT[3]) as f32;
     r
 }
 
@@ -584,7 +590,7 @@ fn build_load_result(
     // A region with no frames in its RT window is valid — return an empty result (the loader would
     // otherwise error on a zero-frame run). Frames-but-zero-survivors flows through normally below.
     if frame_ids.is_empty() {
-        return Ok(empty_result(region));
+        return Ok(empty_result(meta, region));
     }
 
     // Region-relative survivor estimate -> stride (FOCUS_LENS_PLAN.md blocker-1): scale the RT
@@ -650,7 +656,6 @@ fn build_load_result(
         0.0
     };
 
-    let fin = |x: f64| if x.is_finite() { x } else { 0.0 };
     // Run-level 1/K0 per TIMS scan: the FULL-run mobility span over the ramp length. Run-level (not
     // region-scoped) so the client's IM clustering reach is focus-independent.
     let im_per_scan = if meta.num_scans > 1 {
@@ -658,35 +663,10 @@ fn build_load_result(
     } else {
         0.0
     };
-    let meta_json = serde_json::json!({
-        "version": 1,
-        "point_stride": std::mem::size_of::<GpuPoint>(),
-        "n_points": n_points,
-        "downsample_stride": stride,
-        "cycle_duration": fin(cycle_duration),
-        "im_per_scan_1k0": fin(im_per_scan),
-        "num_scans": meta.num_scans,
-        // Region bounds in real units — the client re-normalizes axes/crops/strips to these.
-        "bounds": {
-            "mz": [fin(region.mz.0), fin(region.mz.1)],
-            "im": [fin(region.im.0), fin(region.im.1)],
-            "rt": [fin(region.rt.0), fin(region.rt.1)],
-        },
-        "intensity": {
-            "p1": fin(i_p1 as f64), "p50": fin(i_p50 as f64), "p99": fin(i_p99 as f64),
-            "hist": i_hist.clone(),
-        },
-        // Sample-based per-axis density histograms (over the kept systematic sample + peak tail).
-        "hist": hist.as_ref().map(|h| serde_json::json!({
-            "mz": h.mz, "im": h.im, "rt": h.rt,
-        })),
-        // Sample-based 2D density projections for the box-select minimaps.
-        "proj": hist.as_ref().map(|h| serde_json::json!({
-            "bins": PROJ_BINS,
-            "mz_im": h.proj_mz_im, "mz_rt": h.proj_mz_rt, "im_rt": h.proj_im_rt,
-        })),
-    })
-    .to_string();
+    let meta_json = build_meta_json(
+        region, n_points, stride, cycle_duration, im_per_scan, meta.num_scans, i_p1, i_p50, i_p99,
+        &i_hist, hist.as_ref(),
+    );
 
     Ok(Built {
         result: LoadResult {
@@ -900,23 +880,64 @@ fn collect(
 }
 
 /// A valid empty load for a region with no points (e.g. an RT window selecting no frames).
-fn empty_result(region: &Region4D) -> Built {
+/// Build the `/meta` JSON string. The single source of the meta schema, shared by the normal load
+/// path and the empty-region path so a field can't be added to one and silently omitted from the
+/// other. `hist: None` emits null hist/proj (empty region).
+#[allow(clippy::too_many_arguments)]
+fn build_meta_json(
+    region: &Region4D,
+    n_points: usize,
+    downsample_stride: usize,
+    cycle_duration: f64,
+    im_per_scan: f64,
+    num_scans: u32,
+    i_p1: f32,
+    i_p50: f32,
+    i_p99: f32,
+    i_hist: &[u32],
+    hist: Option<&Hist>,
+) -> String {
     let fin = |x: f64| if x.is_finite() { x } else { 0.0 };
-    let meta_json = serde_json::json!({
+    serde_json::json!({
         "version": 1,
         "point_stride": std::mem::size_of::<GpuPoint>(),
-        "n_points": 0,
-        "downsample_stride": 1,
+        "n_points": n_points,
+        "downsample_stride": downsample_stride,
+        "cycle_duration": fin(cycle_duration),
+        "im_per_scan_1k0": fin(im_per_scan),
+        "num_scans": num_scans,
+        // Region bounds in real units — the client re-normalizes axes/crops/strips to these.
         "bounds": {
             "mz": [fin(region.mz.0), fin(region.mz.1)],
             "im": [fin(region.im.0), fin(region.im.1)],
             "rt": [fin(region.rt.0), fin(region.rt.1)],
         },
-        "intensity": { "p1": 1.0, "p50": 1.0, "p99": 1.0, "hist": vec![0u32; I_HIST_BINS] },
-        "hist": serde_json::Value::Null,
-        "proj": serde_json::Value::Null,
+        "intensity": {
+            "p1": fin(i_p1 as f64), "p50": fin(i_p50 as f64), "p99": fin(i_p99 as f64),
+            "hist": i_hist,
+        },
+        // Sample-based per-axis density histograms (over the kept systematic sample + peak tail).
+        "hist": hist.map(|h| serde_json::json!({ "mz": h.mz, "im": h.im, "rt": h.rt })),
+        // Sample-based 2D density projections for the box-select minimaps.
+        "proj": hist.map(|h| serde_json::json!({
+            "bins": PROJ_BINS,
+            "mz_im": h.proj_mz_im, "mz_rt": h.proj_mz_rt, "im_rt": h.proj_im_rt,
+        })),
     })
-    .to_string();
+    .to_string()
+}
+
+fn empty_result(meta: &MetaIndex, region: &Region4D) -> Built {
+    // Run-level fields are still meaningful for an empty region (no frames in the RT window); route
+    // through the shared builder so the schema can't drift from the normal path.
+    let im_per_scan = if meta.num_scans > 1 {
+        (meta.bounds.im.max - meta.bounds.im.min).abs() / (meta.num_scans as f64 - 1.0)
+    } else {
+        0.0
+    };
+    let meta_json = build_meta_json(
+        region, 0, 1, 0.0, im_per_scan, meta.num_scans, 1.0, 1.0, 1.0, &vec![0u32; I_HIST_BINS], None,
+    );
     Built {
         result: LoadResult {
             points: Arc::from(Vec::<u8>::new().into_boxed_slice()),

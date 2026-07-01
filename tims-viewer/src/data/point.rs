@@ -2,6 +2,25 @@
 
 use bytemuck::{Pod, Zeroable};
 
+/// Number of evenly spaced RT slices each DIA window footprint is drawn at. Shared here (a
+/// both-targets module) so the native loader and the wasm overlay use one value — the geometry
+/// must match on both sides of the `/windows` endpoint.
+pub const DIA_WINDOW_RT_SLICES: usize = 6;
+
+/// One DIA/MIDIA isolation window's selection footprint in **real units**: an `(m/z × 1/K0)`
+/// rectangle (mobility already converted from scan numbers). Group ids color the interleaved
+/// isolation bands. The native loader produces these for the `/windows` endpoint; the wasm client
+/// re-normalizes them to its region bounds (so they align with the cloud and off-region windows
+/// clip). Shared here so both sides use one struct definition.
+#[derive(Clone, Copy, Debug)]
+pub struct WindowRect {
+    pub group: u32,
+    pub mz0: f64,
+    pub mz1: f64,
+    pub im0: f64,
+    pub im1: f64,
+}
+
 /// One renderable data point, packed for the GPU as instance data.
 ///
 /// Layout is 32 bytes, 16-byte aligned, so a `Vec<GpuPoint>` uploads directly as a

@@ -16,7 +16,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 
 use tims_viewer::camera::{OrbitCamera, ROLL_UP_AXIS};
-use tims_viewer::data::point::{AxisTransform, GpuPoint};
+use tims_viewer::data::point::{AxisTransform, GpuPoint, WindowRect, DIA_WINDOW_RT_SLICES};
 use tims_viewer::render::annotation::{AnnotationRenderer, LineVertex};
 use tims_viewer::ticks::{fmt_tick, ticks_for, Axis, RT_MINUTES_SPAN};
 use tims_viewer::render::colormap::{sample as colormap_sample, COLORMAP_NAMES};
@@ -58,10 +58,6 @@ const CLUSTER_MZ_PEAK_WIDTHS: f64 = 1.5;
 /// the GPU buffer limit: ~32M × 32 B ≈ 1 GB resident, well clear of the ~4 GB wasm address space.
 const MAX_WEB_POINTS: usize = 32_000_000;
 
-/// RT slices each DIA window footprint is drawn at (mirrors the native loader's `DIA_WINDOW_RT_SLICES`,
-/// which lives in the native-only loader module).
-const DIA_WINDOW_RT_SLICES: usize = 6;
-
 /// Parameters of a clustering Run, snapshotted at gather time (so the exported JSON reflects what
 /// was actually used, not later slider edits while the worker runs).
 #[derive(Clone, Copy)]
@@ -84,16 +80,6 @@ struct ClusterRunParams {
     im_per_scan: f64,
 }
 
-/// A DIA isolation-window footprint in real units (from `/windows`); re-normalized to the focused
-/// region each load to draw the precursor-selection overlay in the m/z × 1/K0 (scan) plane.
-#[derive(Clone, Copy)]
-struct WinRect {
-    g: u32,
-    mz0: f64,
-    mz1: f64,
-    im0: f64,
-    im1: f64,
-}
 
 /// Points (the splat cloud) vs Volume (raymarched density grid).
 #[derive(Clone, Copy, PartialEq)]
@@ -348,7 +334,7 @@ struct Gfx {
     /// DIA isolation-window overlay (separate line buffer from the axes), with the run's footprints
     /// in real units re-normalized to the focused region.
     windows: AnnotationRenderer,
-    window_rects: Vec<WinRect>,
+    window_rects: Vec<WindowRect>,
     max_window_group: u32,
     show_windows: bool,
     /// Per-group visibility bitmask (bit g-1 = group g, for g in 1..=32); groups >32 and ungrouped
@@ -1948,7 +1934,7 @@ fn fill_data_summary(meta: Option<&MetaInfo>) {
 }
 
 /// Fetch the run's DIA isolation-window footprints (real units) + the max group id.
-async fn fetch_windows(url: &str) -> Result<(Vec<WinRect>, u32), String> {
+async fn fetch_windows(url: &str) -> Result<(Vec<WindowRect>, u32), String> {
     let window = web_sys::window().ok_or("no window")?;
     let resp_val = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str(url))
         .await
@@ -1972,7 +1958,7 @@ async fn fetch_windows(url: &str) -> Result<(Vec<WinRect>, u32), String> {
             continue;
         }
         let f = |k: u32| row.get(k).as_f64().unwrap_or(0.0);
-        rects.push(WinRect { g: f(0) as u32, mz0: f(1), mz1: f(2), im0: f(3), im1: f(4) });
+        rects.push(WindowRect { group: f(0) as u32, mz0: f(1), mz1: f(2), im0: f(3), im1: f(4) });
     }
     Ok((rects, max_group))
 }
@@ -1980,7 +1966,7 @@ async fn fetch_windows(url: &str) -> Result<(Vec<WinRect>, u32), String> {
 /// Build the window-overlay line vertices: each footprint as an `(m/z × 1/K0)` rectangle at
 /// `DIA_WINDOW_RT_SLICES` RT slices, normalized to the focused region's `bounds` and colored by group.
 fn build_window_verts(
-    rects: &[WinRect],
+    rects: &[WindowRect],
     bounds: [(f64, f64); 3],
     max_group: u32,
     mask: u32,
@@ -1993,7 +1979,7 @@ fn build_window_verts(
     let denom = max_group.max(1);
     for r in rects {
         // Per-group visibility: groups 1..=32 gate on their mask bit; >32 and group 0 always show.
-        if r.g >= 1 && r.g <= 32 && (mask & (1u32 << (r.g - 1))) == 0 {
+        if r.group >= 1 && r.group <= 32 && (mask & (1u32 << (r.group - 1))) == 0 {
             continue;
         }
         // Order each axis first: a footprint can arrive descending (1/K0 falls as scan rises, so
@@ -2009,7 +1995,7 @@ fn build_window_verts(
         if mz1r <= mz0r || im1r <= im0r {
             continue;
         }
-        let color = tims_viewer::render::colormap::group_color(r.g, denom);
+        let color = tims_viewer::render::colormap::group_color(r.group, denom);
         let (mz0, mz1) = (norm(mz0r, 0), norm(mz1r, 0));
         let (im0, im1) = (norm(im0r, 1), norm(im1r, 1));
         for i in 0..DIA_WINDOW_RT_SLICES {
