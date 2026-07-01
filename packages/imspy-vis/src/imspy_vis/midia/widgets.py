@@ -752,10 +752,17 @@ class _ClusterPanel:
             return
         g = signal.groupby("label")
         with self.histograms.batch_update():
-            self.histograms.data[0].x = g["cycle"].nunique().to_numpy()
-            self.histograms.data[1].x = g["scan"].nunique().to_numpy()
-            self.histograms.data[2].x = g["mz"].nunique().to_numpy()
-            self.histograms.data[3].x = g.size().to_numpy()
+            # One grouped aggregation pass instead of four separate ones (nunique walks each group).
+            agg = g.agg(
+                cycle=("cycle", "nunique"),
+                scan=("scan", "nunique"),
+                mz=("mz", "nunique"),
+                size=("cycle", "size"),  # group size (matches the old g.size())
+            )
+            self.histograms.data[0].x = agg["cycle"].to_numpy()
+            self.histograms.data[1].x = agg["scan"].to_numpy()
+            self.histograms.data[2].x = agg["mz"].to_numpy()
+            self.histograms.data[3].x = agg["size"].to_numpy()
 
     def nudge_resize(self) -> None:
         """Force the 2D histogram FigureWidget to redraw after its tab is revealed."""

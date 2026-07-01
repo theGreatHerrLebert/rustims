@@ -48,7 +48,7 @@ def cluster_precursors_dbscan(points: pd.DataFrame,
     mz = peak_width_preserving_mz_transform(points.mz.to_numpy(), resolution=resolution)
 
     labels = DBSCAN(eps=epsilon, min_samples=min_samples, n_jobs=-1,
-                    metric=metric).fit(np.vstack([rt, dt, mz]).T).labels_
+                    metric=metric).fit(np.stack([rt, dt, mz], axis=1)).labels_
     out["label"] = labels
     return out
 
@@ -83,10 +83,9 @@ def cluster_precursors_hdbscan(points: pd.DataFrame,
                        gen_min_span_tree=gen_min_span_tree,
                        leaf_size=leaf_size, metric=metric,
                        min_cluster_size=min_cluster_size,
-                       min_samples=min_samples, p=p).fit(np.vstack([rt, dt, mz]).T)
+                       min_samples=min_samples, p=p).fit(np.stack([rt, dt, mz], axis=1))
 
-    out = points[["cycle", "scan", "mz", "intensity"]].copy()
-    out["label"] = clusters.labels_
+    out["label"] = clusters.labels_  # reuse the `out` copy built at the top (no duplicate copy)
     out["probability"] = clusters.probabilities_
     return out
 
@@ -155,7 +154,7 @@ def cluster_midia_hdbscan(points: pd.DataFrame,
                        min_cluster_size=min_cluster_size,
                        min_samples=min_samples, p=p)
 
-    feats = np.vstack([rt, mc_scaled, dt, mz]).T if use_midia_dimension else np.vstack([rt, dt, mz]).T
+    feats = np.stack([rt, mc_scaled, dt, mz], axis=1) if use_midia_dimension else np.stack([rt, dt, mz], axis=1)
     clusters.fit(feats)
 
     return pd.DataFrame({
@@ -174,8 +173,8 @@ def calculate_statistics(
     clusters: pd.DataFrame, noise: pd.DataFrame
 ) -> tuple[pd.DataFrame, DataFrameGroupBy]:
     """Summary table (points/intensity/clusters x total/cluster/noise/ratio) + per-label group."""
-    sum_int_clusters = clusters.groupby(["label"])["intensity"].sum().sum()
-    sum_int_noise = noise.groupby(["label"])["intensity"].sum().sum()
+    sum_int_clusters = clusters["intensity"].sum()  # per-label sums then summed == the column total
+    sum_int_noise = noise["intensity"].sum()
     intensity_ratio = np.round(sum_int_clusters / sum_int_noise, 3) if sum_int_noise else np.inf
 
     n_clusters_pts = clusters.shape[0]

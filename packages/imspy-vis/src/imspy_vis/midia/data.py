@@ -66,6 +66,19 @@ class MidiaExperiment:
         # first MS1 frame fold into cycle 0 instead of getting a spurious -1.
         cycle_of_id = np.maximum(np.cumsum(is_precursor) - 1, 0)
         self._cycle_of_frame = dict(zip(ids, cycle_of_id))
+        # Dense frame-id -> cycle / step lookup arrays, so MidiaSlice._load can gather cycle/step for
+        # its millions of points with a vectorized C index instead of Series.map(pydict) (per-row
+        # Python dict calls). Frame ids are the contiguous Frames.Id (1..N); index by id directly.
+        # Fall back to the dict .map when the ids are NOT contiguous 1..N (dense arrays would misindex).
+        self.cycle_by_frame = None
+        self.step_by_frame = None
+        if len(ids) and ids.min() == 1 and ids.max() == len(ids):
+            self.cycle_by_frame = np.zeros(len(ids) + 1, dtype=np.int64)
+            self.cycle_by_frame[ids] = cycle_of_id
+            self.step_by_frame = np.zeros(len(ids) + 1, dtype=np.int64)  # 0 for MS1 (absent from info)
+            fr, wg = info.Frame.to_numpy(), info.WindowGroup.to_numpy()
+            in_range = (fr >= 1) & (fr <= len(ids))
+            self.step_by_frame[fr[in_range]] = wg[in_range]
         self.precursor_frame_ids = ids[is_precursor]
         self.rt_of_frame = dict(zip(ids, meta.Time.to_numpy()))
         self.n_cycles = int(cycle_of_id.max()) + 1
@@ -189,9 +202,14 @@ class MidiaSlice:
         # Batched, multi-threaded read of the whole slice in one call.
         df = self.exp.dataset.get_tims_slice(self.frame_ids).df
         df = df[["frame", "scan", "mz", "intensity"]].copy()
-        df["cycle"] = df["frame"].map(self.exp._cycle_of_frame).astype("int64")
         # step = quadrupole window group for fragment frames, 0 for precursor (MS1) frames.
-        df["step"] = df["frame"].map(self.exp.frame_to_step).fillna(0).astype("int64")
+        if self.exp.cycle_by_frame is not None:
+            fr = df["frame"].to_numpy()  # frame ids (1..N), used as a direct index into the dense arrays
+            df["cycle"] = self.exp.cycle_by_frame[fr]  # already int64
+            df["step"] = self.exp.step_by_frame[fr]
+        else:  # non-contiguous ids: fall back to the per-row dict map
+            df["cycle"] = df["frame"].map(self.exp._cycle_of_frame).astype("int64")
+            df["step"] = df["frame"].map(self.exp.frame_to_step).fillna(0).astype("int64")
         self._df = df
         return df
 
