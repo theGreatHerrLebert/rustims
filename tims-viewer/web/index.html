@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>tims·view — GPU ion-cloud viewer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #090c12; --bg2: #0c1018;
+      --ink: #cdd7e6; --dim: #7b8799; --faint: #515c70;
+      --line: rgba(150,172,205,0.11); --line-2: rgba(150,172,205,0.06);
+      --panel: rgba(13,18,27,0.66);
+      --accent: #35e0c4;       /* viridis teal — primary */
+      --accent-2: #ffb23e;     /* inferno amber — data highlight */
+      --accent-dim: rgba(53,224,196,0.16);
+      --sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --disp: 'Space Grotesk', var(--sans);
+      --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+      --r: 9px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+      font-family: var(--sans); overflow: hidden; }
+    body::before { /* faint instrument vignette + grid wash behind the canvas */
+      content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      background:
+        radial-gradient(120% 90% at 70% 0%, rgba(53,224,196,0.05), transparent 55%),
+        radial-gradient(80% 70% at 0% 100%, rgba(255,178,62,0.04), transparent 60%); }
+
+    #tims-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block;
+      z-index: 1; background: radial-gradient(120% 100% at 50% 40%, #0b0f17 0%, #05070b 100%); }
+
+    /* ---- control rail (glass) ---- */
+    .rail { position: fixed; z-index: 3; top: 16px; left: 16px; bottom: 16px; width: 320px;
+      display: flex; flex-direction: column; border-radius: var(--r);
+      background: var(--panel); border: 1px solid var(--line);
+      backdrop-filter: blur(18px) saturate(1.3); -webkit-backdrop-filter: blur(18px) saturate(1.3);
+      box-shadow: 0 24px 60px -24px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.04);
+      transition: transform .35s cubic-bezier(.4,.1,.2,1), opacity .3s; }
+    .rail::before { content: ""; position: absolute; left: 0; top: 14px; bottom: 14px; width: 2px;
+      border-radius: 2px; background: linear-gradient(var(--accent), var(--accent-2)); opacity: .85; }
+
+    .head { padding: 18px 18px 14px 20px; border-bottom: 1px solid var(--line); }
+    .mark { font-family: var(--disp); font-weight: 700; font-size: 18px; letter-spacing: .02em;
+      display: flex; align-items: baseline; gap: 7px; }
+    .mark b { color: var(--accent); font-weight: 700; }
+    .mark span { color: var(--faint); font-weight: 500; }
+    .sub { margin-top: 3px; font-size: 11px; color: var(--dim); letter-spacing: .04em; }
+
+    /* ---- telemetry HUD ---- */
+    .hud { padding: 12px 18px 12px 20px; border-bottom: 1px solid var(--line);
+      display: grid; grid-template-columns: 1fr 1fr; gap: 9px 14px; font-family: var(--mono); }
+    .stat { display: flex; flex-direction: column; gap: 2px; }
+    .stat .k { font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); }
+    .stat .v { font-size: 14px; font-weight: 500; color: var(--ink); font-variant-numeric: tabular-nums; }
+    .stat .v.accent { color: var(--accent); }
+
+    /* ---- scrolling sections ---- */
+    .body { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 4px 0 14px; }
+    .body::-webkit-scrollbar { width: 8px; }
+    .body::-webkit-scrollbar-thumb { background: var(--line); border-radius: 8px; }
+    /* tabs */
+    .tabs { display: flex; gap: 2px; padding: 8px 14px 0 16px; border-bottom: 1px solid var(--line); }
+    .tab { flex: 1; font-family: var(--sans); font-size: 11.5px; font-weight: 500; color: var(--dim);
+      background: transparent; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      padding: 7px 3px 8px; cursor: pointer; transition: color .14s, border-color .14s; white-space: nowrap; }
+    .tab:hover { color: var(--ink); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab .tn { font-size: .92em; opacity: .55; margin-right: 3px; }
+    .tab.active .tn { opacity: .85; }
+    .tab-gear { flex: 0 0 auto; margin-left: auto; font-size: 13px; padding-left: 8px; padding-right: 6px; }
+    .tabpane { display: none; }
+    .tabpane.active { display: block; }
+    /* Advanced disclosure inside a flow tab (collapsed by default) */
+    .adv { margin: 2px 0 6px; }
+    .adv > summary { font-size: 11px; color: var(--dim); cursor: pointer; padding: 4px 0; list-style: none;
+      user-select: none; }
+    .adv > summary::-webkit-details-marker { display: none; }
+    .adv > summary::before { content: "▸"; color: var(--faint); margin-right: 5px; }
+    .adv[open] > summary::before { content: "▾"; }
+    /* ① Data meta summary */
+    .dsum { margin-top: 8px; }
+    .dsum-row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; font-size: 12px;
+      border-bottom: 1px solid var(--line); }
+    .dsum-row .k { color: var(--dim); }
+    .dsum-row .v { color: var(--ink); font-family: var(--mono); text-align: right; }
+    /* volume-only controls, shown when View = Volume */
+    .vol-only { display: none; }
+    body.volmode .vol-only { display: flex; }
+    /* point-only controls (Transfer/Exposure don't affect the volume) — greyed in Volume mode */
+    .points-only { transition: opacity .15s; }
+    body.volmode .points-only { opacity: .35; pointer-events: none; }
+
+    /* cluster stats rail (right edge, shown when a clustering result exists) */
+    .rail.right { left: auto; right: 16px; display: none; }
+    body.has-clusters .rail.right { display: flex; }
+    /* hide the intensity colorbar when the stats rail takes the right edge, or when the cloud is
+       cluster-colored (the intensity legend is meaningless then) */
+    body.has-clusters .cbar, body.cluster-color .cbar { display: none; }
+    .cs-table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11.5px;
+      margin-bottom: 10px; }
+    .cs-table th, .cs-table td { text-align: right; padding: 3px 5px; }
+    .cs-table th:first-child, .cs-table td:first-child { text-align: left; color: var(--dim); }
+    .cs-table th { color: var(--faint); font-weight: 500; font-size: 10px; letter-spacing: .06em;
+      text-transform: uppercase; }
+    .cs-table td { color: var(--ink); font-variant-numeric: tabular-nums; }
+    .cs-table td:nth-child(3) { color: var(--accent); }
+    .cs-table td:nth-child(4) { color: var(--faint); }
+    .cs-hist { margin-bottom: 10px; }
+    .cs-hist .map-cap { font-size: 10.5px; color: var(--dim); font-family: var(--mono); margin-bottom: 3px; }
+    .cs-hist .map-cap b { color: var(--ink); font-weight: 500; }
+    .cs-axis { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9.5px;
+      color: var(--faint); margin-top: 2px; }
+    /* inline help affordance: a small ⓘ whose native tooltip (title) escapes the rail overflow clip */
+    .tip { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px;
+      border-radius: 50%; border: 1px solid var(--line); color: var(--faint); font-size: 9px;
+      font-weight: 700; font-style: normal; font-family: var(--sans); cursor: help; margin-left: 5px;
+      vertical-align: middle; }
+    .tip:hover, .tip:focus-visible { color: var(--accent); border-color: var(--accent-dim); outline: none; }
+    .dspick { display: flex; align-items: center; gap: 8px; margin-top: 9px; }
+    .dspick .lbl { white-space: nowrap; }
+    .dspick .sel { flex: 1; min-width: 0; }
+    /* clickable cluster list (isolate on click) */
+    .cs-export { float: right; font-family: var(--sans); font-size: 10px; letter-spacing: .04em;
+      color: var(--accent); background: transparent; border: 1px solid var(--line); border-radius: 5px;
+      padding: 2px 8px; cursor: pointer; text-transform: none; transition: border-color .14s, color .14s; }
+    .cs-export:hover { border-color: var(--accent); }
+    .cs-list { display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; }
+    .cs-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
+      font-family: var(--mono); font-size: 11.5px; color: var(--ink); background: transparent;
+      border: 1px solid transparent; border-radius: 6px; padding: 4px 8px; cursor: pointer;
+      transition: background .12s, border-color .12s; }
+    .cs-row:hover { background: rgba(150,172,205,0.06); }
+    .cs-row.active { border-color: var(--accent); background: var(--accent-dim); }
+    .cs-row.show-all { color: var(--accent); justify-content: center; font-family: var(--sans); }
+    .cs-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+    .cs-meta { margin-left: auto; color: var(--dim); font-variant-numeric: tabular-nums; }
+    .cs-more { font-family: var(--mono); font-size: 10.5px; color: var(--faint); padding: 5px 8px; }
+    /* DIA window per-group legend (toggle a group's windows); shown only when DIA windows are on */
+    .win-legend { display: none; flex-wrap: wrap; gap: 5px; margin: 2px 0 10px; }
+    body.show-windows .win-legend { display: flex; }
+    .wg { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 11px;
+      color: var(--dim); background: transparent; border: 1px solid var(--line); border-radius: 6px;
+      padding: 2px 7px; cursor: pointer; opacity: .45; transition: opacity .12s, border-color .12s; }
+    .wg.on { opacity: 1; color: var(--ink); border-color: var(--line-2); }
+    .wg:hover { border-color: var(--accent); }
+    .wg-dot { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+    /* clustering progress bar (worker reports visited-point ticks) */
+    .cl-prog { display: none; height: 4px; border-radius: 4px; margin: 0 0 9px; overflow: hidden;
+      background: var(--line); }
+    .cl-bar { height: 100%; width: 0; border-radius: 4px;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .2s ease-out; }
+
+    .sec { padding: 14px 18px 4px 20px; }
+    .sec + .sec { border-top: 1px solid var(--line-2); }
+    .ey { display: flex; align-items: center; gap: 8px; font-size: 10px; letter-spacing: .18em;
+      text-transform: uppercase; color: var(--dim); margin-bottom: 11px;
+      cursor: pointer; user-select: none; transition: color .14s; }
+    .ey:hover { color: var(--ink); }
+    .ey::before { content: "▾"; font-size: 9px; letter-spacing: 0; color: var(--faint);
+      transition: transform .18s; }
+    .ey::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+    .sec.collapsed .ey { margin-bottom: 4px; }
+    .sec.collapsed .ey::before { transform: rotate(-90deg); }
+    .sec.collapsed > *:not(.ey) { display: none; }
+
+    /* 2D projection minimaps (box-select to focus) */
+    .map { margin-bottom: 12px; }
+    .map-cap { font-size: 11px; color: var(--dim); font-family: var(--mono); margin-bottom: 4px; }
+    .map-cap b { color: var(--ink); font-weight: 500; }
+    .map-wrap { position: relative; width: 100%; aspect-ratio: 1 / 1; border: 1px solid var(--line);
+      border-radius: 6px; overflow: hidden; cursor: crosshair; background: #05070b; }
+    .map-wrap canvas { width: 100%; height: 100%; display: block; }
+    .map-sel { position: absolute; border: 1px solid var(--accent); background: var(--accent-dim);
+      pointer-events: none; display: none; }
+
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      min-height: 30px; margin-bottom: 9px; }
+    .lbl { font-size: 12.5px; color: var(--ink); font-weight: 500; }
+    .val { font-family: var(--mono); font-size: 11.5px; color: var(--accent-2);
+      font-variant-numeric: tabular-nums; min-width: 40px; text-align: right; }
+    .acc { color: var(--accent-2); font-weight: 500; }
+    /* editable numeric readout — type a value or use the slider */
+    .numin { font-family: var(--mono); font-size: 11.5px; color: var(--accent-2); width: 54px;
+      text-align: right; background: transparent; border: 1px solid transparent; border-radius: 5px;
+      padding: 2px 5px; font-variant-numeric: tabular-nums; -moz-appearance: textfield; appearance: textfield; }
+    .numin::-webkit-outer-spin-button, .numin::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .numin:hover { border-color: var(--line); }
+    .numin:focus { border-color: var(--accent); outline: none; color: var(--ink); background: rgba(0,0,0,0.25); }
+
+    /* range */
+    .rng { -webkit-appearance: none; appearance: none; width: 150px; height: 3px; border-radius: 3px;
+      background: var(--line); outline: none; }
+    .rng::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%;
+      margin-top: -5px; /* center the thumb on the 3px track */
+      background: var(--ink); border: 2px solid var(--accent); cursor: pointer;
+      box-shadow: 0 0 0 3px transparent; transition: box-shadow .15s; }
+    .rng::-webkit-slider-thumb:hover { box-shadow: 0 0 0 4px var(--accent-dim); }
+    .rng::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--ink);
+      border: 2px solid var(--accent); cursor: pointer; }
+    .rng.wide { width: 100%; }
+
+    /* segmented (radios) */
+    .seg { display: inline-flex; background: rgba(0,0,0,0.25); border: 1px solid var(--line);
+      border-radius: 7px; padding: 2px; gap: 2px; }
+    .seg input { position: absolute; opacity: 0; pointer-events: none; }
+    .seg label { font-size: 11.5px; font-weight: 500; color: var(--dim); padding: 4px 10px;
+      border-radius: 5px; cursor: pointer; transition: all .14s; line-height: 1.2; }
+    .seg label:hover { color: var(--ink); }
+    .seg input:checked + label { background: var(--accent-dim); color: var(--accent); }
+    .seg input:disabled + label { opacity: .4; cursor: default; pointer-events: none; }
+    .seg.full { display: flex; } .seg.full label { flex: 1; text-align: center; }
+
+    /* select */
+    .sel { font-family: var(--sans); font-size: 12.5px; color: var(--ink); background: rgba(0,0,0,0.25);
+      border: 1px solid var(--line); border-radius: 7px; padding: 6px 28px 6px 10px; cursor: pointer;
+      appearance: none; -webkit-appearance: none; width: 150px;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%237b8799' stroke-width='1.5'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 10px center; }
+    .sel:focus { border-color: var(--accent); outline: none; }
+
+    /* switch */
+    .sw { position: absolute; opacity: 0; }
+    .sw-l { width: 38px; height: 21px; border-radius: 21px; background: rgba(0,0,0,0.35);
+      border: 1px solid var(--line); position: relative; cursor: pointer; transition: all .18s; display: block; }
+    .sw-l::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px;
+      border-radius: 50%; background: var(--dim); transition: all .18s; }
+    .sw:checked + .sw-l { background: var(--accent-dim); border-color: var(--accent); }
+    .sw:checked + .sw-l::after { left: 19px; background: var(--accent); }
+    .sw:disabled + .sw-l { opacity: .35; cursor: default; pointer-events: none; }
+
+    /* button */
+    .btn { font-family: var(--sans); font-size: 12px; font-weight: 500; color: var(--ink);
+      background: rgba(255,255,255,0.03); border: 1px solid var(--line); border-radius: 7px;
+      padding: 7px 12px; cursor: pointer; transition: all .14s; }
+    .btn:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+    .btn:disabled, .btn:disabled:hover { opacity: .4; cursor: default; color: var(--dim);
+      border-color: var(--line); background: rgba(255,255,255,0.03); }
+    .btn.mono { font-family: var(--mono); font-size: 11px; }
+    .btn.stop { color: #ff6b6b; border-color: rgba(255,107,107,0.5); background: rgba(255,107,107,0.08); }
+    .btn.stop:hover { color: #ff8585; border-color: #ff6b6b; background: rgba(255,107,107,0.14); }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    /* axis crop dual-mini-sliders */
+    .crop { margin-bottom: 11px; }
+    .crop .clab { display: flex; justify-content: space-between; font-size: 11px; color: var(--dim);
+      margin-bottom: 5px; font-family: var(--mono); }
+    .crop .clab b { color: var(--ink); font-weight: 500; }
+    /* distribution strip above the crop slider (SVG injected by the wasm), aligned to its range */
+    .crop-hist { height: 26px; margin: 1px 0 3px; opacity: .9; }
+    .crop-hist svg { display: block; width: 100%; height: 100%; }
+    /* floor row: full-width slider + number field */
+    .frow { display: flex; align-items: center; gap: 10px; }
+    .frow .rng { flex: 1; }
+    /* dual-thumb range: two inputs overlaid on one track, fill between the thumbs */
+    .dual { position: relative; height: 20px; }
+    .dual-track, .dual-fill { position: absolute; top: 50%; transform: translateY(-50%);
+      height: 3px; border-radius: 3px; pointer-events: none; }
+    .dual-track { left: 0; right: 0; background: var(--line); }
+    .dual-fill { left: 0; width: 100%; background: var(--accent); opacity: .85; }
+    .dual input[type=range] { position: absolute; left: 0; top: 0; width: 100%; height: 20px; margin: 0;
+      -webkit-appearance: none; appearance: none; background: transparent; pointer-events: none; }
+    .dual input[type=range]::-webkit-slider-runnable-track { background: transparent; border: none; }
+    .dual input[type=range]::-moz-range-track { background: transparent; border: none; }
+    .dual input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; pointer-events: auto;
+      width: 13px; height: 13px; margin-top: -5px; border-radius: 50%; background: var(--ink);
+      border: 2px solid var(--accent); cursor: grab; box-shadow: 0 1px 3px rgba(0,0,0,.5); }
+    .dual input[type=range]::-webkit-slider-thumb:active { cursor: grabbing; box-shadow: 0 0 0 4px var(--accent-dim); }
+    .dual input[type=range]::-moz-range-thumb { pointer-events: auto; width: 12px; height: 12px;
+      border-radius: 50%; background: var(--ink); border: 2px solid var(--accent); cursor: grab; }
+    .dual input[type=range]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px var(--accent-dim); }
+
+    /* colorbar */
+    .cbar { position: fixed; z-index: 3; right: 18px; bottom: 18px; width: 16px; height: 168px;
+      border-radius: 4px; border: 1px solid var(--line); display: flex; flex-direction: column;
+      box-shadow: 0 8px 24px -8px rgba(0,0,0,0.6); }
+    .cbar-track { flex: 1; border-radius: 3px; }
+    .cbar.v0 .cbar-track { background: linear-gradient(to top, #440154, #3b528b, #21918c, #5ec962, #fde725); }
+    .cbar.v1 .cbar-track { background: linear-gradient(to top, #000004, #57106e, #bc3754, #f98e09, #fcffa4); }
+    .cbar.v2 .cbar-track { background: linear-gradient(to top, #30123b, #4669db, #1ae4b6, #a4fc3c, #fb7e21, #7a0403); }
+    .cbar.v3 .cbar-track { background: linear-gradient(to top, #000, #fff); }
+    .cbar .caps { position: absolute; right: 22px; top: -2px; bottom: -2px; display: flex;
+      flex-direction: column; justify-content: space-between; font-family: var(--mono); font-size: 9px;
+      color: var(--faint); letter-spacing: .04em; white-space: nowrap; }
+
+    /* projected 3D axis tick labels (positioned by the wasm each frame) */
+    #axis-labels { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
+    .axlabel { position: absolute; left: 0; top: 0; font-family: var(--mono); font-size: 10.5px;
+      font-variant-numeric: tabular-nums; letter-spacing: .01em; white-space: nowrap;
+      text-shadow: 0 1px 3px #000, 0 0 3px #000; will-change: transform; }
+
+    /* collapse (pure CSS checkbox) */
+    .railtgl, .railtgl-r { position: absolute; opacity: 0; pointer-events: none; }
+    .railtgl:checked ~ .rail:not(.right) { transform: translateX(calc(-100% - 18px)); opacity: 0; }
+    .railtgl:checked ~ .railbtn:not(.railbtn-r) { left: 16px; }
+    /* right rail (cluster panel) collapse — its own toggle, slides off to the right. Two-class
+       selectors (.railbtn.railbtn-r) beat the generic .railbtn rule below regardless of order. */
+    .railbtn.railbtn-r { left: auto; right: 348px; display: none;
+      transition: right .35s cubic-bezier(.4,.1,.2,1); }
+    body.has-clusters .railbtn.railbtn-r { display: grid; } /* only exists when the panel does */
+    .railtgl-r:checked ~ .rail.right { transform: translateX(calc(100% + 18px)); opacity: 0; }
+    .railtgl-r:checked ~ .railbtn.railbtn-r { right: 16px; }
+    .railbtn { position: fixed; z-index: 4; top: 16px; left: 348px; transition: left .35s cubic-bezier(.4,.1,.2,1);
+      width: 34px; height: 34px; display: grid; place-items: center; cursor: pointer; border-radius: 8px;
+      background: var(--panel); border: 1px solid var(--line); backdrop-filter: blur(18px);
+      color: var(--dim); }
+    .railbtn:hover { color: var(--accent); border-color: var(--accent); }
+    .railbtn svg { width: 15px; height: 15px; }
+
+    .err { position: fixed; z-index: 5; left: 50%; bottom: 22px; transform: translateX(-50%);
+      font-family: var(--mono); font-size: 12px; color: var(--accent-2); background: rgba(20,12,4,0.9);
+      border: 1px solid rgba(255,178,62,0.3); border-radius: 8px; padding: 8px 14px; max-width: 80vw; }
+    .err:empty { display: none; }
+    /* Feedback widget (PROD only — hidden until /clientconfig reports feedback:true) */
+    .feedback-btn { position: fixed; z-index: 6; right: 16px; bottom: 16px; display: none;
+      font-family: var(--mono); font-size: 12px; color: var(--accent); cursor: pointer;
+      background: rgba(20,28,40,0.92); border: 1px solid rgba(95,170,240,0.4); border-radius: 18px;
+      padding: 8px 14px; user-select: none; }
+    body.feedback-on .feedback-btn { display: block; }
+    .feedback-btn:hover { border-color: var(--accent); }
+    .feedback-modal { position: fixed; z-index: 7; inset: 0; display: none; align-items: center;
+      justify-content: center; background: rgba(0,0,0,0.45); }
+    body.feedback-open .feedback-modal { display: flex; }
+    .feedback-card { width: min(460px, 92vw); background: #0f1622; border: 1px solid rgba(95,170,240,0.35);
+      border-radius: 10px; padding: 16px 18px; font-family: var(--mono); color: #cfe0f5; }
+    .feedback-card h3 { margin: 0 0 4px; font-size: 14px; color: var(--accent); }
+    .feedback-card .sub { font-size: 11px; color: #8aa; margin-bottom: 12px; }
+    .feedback-card label { display: block; font-size: 11px; margin: 8px 0 3px; color: #9ab; }
+    .feedback-card select, .feedback-card input, .feedback-card textarea { width: 100%; box-sizing: border-box;
+      background: #0a0f18; color: #cfe0f5; border: 1px solid rgba(120,150,190,0.3); border-radius: 5px;
+      padding: 6px 8px; font: inherit; }
+    .feedback-card textarea { resize: vertical; min-height: 84px; }
+    .feedback-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; align-items: center; }
+    .feedback-actions .fb-status { margin-right: auto; font-size: 11px; color: var(--accent-2); }
+    .feedback-actions button { font: inherit; cursor: pointer; border-radius: 6px; padding: 7px 14px;
+      border: 1px solid rgba(120,150,190,0.3); background: #12202f; color: #cfe0f5; }
+    .feedback-actions button.primary { background: var(--accent); color: #06121f; border-color: var(--accent); font-weight: 700; }
+
+    /* keyboard focus — inputs hide native outlines, so proxy focus onto the visible control */
+    .rng:focus-visible { box-shadow: 0 0 0 4px var(--accent-dim); }
+    .seg input:focus-visible + label,
+    .sw:focus-visible + .sw-l,
+    .railtgl:focus-visible + .railbtn,
+    .btn:focus-visible, .sel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    /* HUD: keep long device names from breaking the 2-column grid */
+    .stat { min-width: 0; }
+    .stat .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* opaque fallback where backdrop-filter is unsupported (panel stays legible over data) */
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+      .rail, .railbtn, .cbar { background: #0d1119f2; }
+    }
+
+    @media (prefers-reduced-motion: reduce) { *, *::before { transition: none !important; } }
+
+    @media (max-width: 720px) {
+      .rail { width: calc(100vw - 32px); }
+      /* the stats rail (and its toggle) would cover the controls full-width — hide on narrow */
+      body.has-clusters .rail.right { display: none; }
+      body.has-clusters .railbtn.railbtn-r { display: none; }
+      /* open: toggle parks at the rail's top-right (acts as close); collapsed: top-left to reopen */
+      .railbtn:not(.railbtn-r) { left: auto; right: 16px; }
+      .railtgl:checked ~ .railbtn:not(.railbtn-r) { left: 16px; right: auto; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="tims-canvas"></canvas>
+  <div id="axis-labels" aria-hidden="true"></div>
+
+  <input type="checkbox" id="railtgl" class="railtgl" />
+  <label for="railtgl" class="railbtn" title="Toggle panel" aria-label="Toggle panel">
+    <svg viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+  </label>
+
+  <aside class="rail">
+    <div class="head">
+      <div class="mark">tims<b>·</b>view <span>/ ion cloud</span></div>
+      <div class="sub">m/z × 1/K₀ × retention time — GPU point field</div>
+    </div>
+
+    <div class="hud">
+      <div class="stat"><span class="k">Source</span><span class="v accent" id="hud-backend">—</span></div>
+      <div class="stat"><span class="k">Device</span><span class="v" id="hud-adapter">—</span></div>
+      <div class="stat"><span class="k">Points</span><span class="v" id="hud-points">—</span></div>
+      <div class="stat"><span class="k">Frame</span><span class="v" id="hud-fps">— fps</span></div>
+    </div>
+
+    <div class="body">
+      <div class="tabs">
+        <button class="tab" id="tabbtn-data" data-tab="data" type="button"><span class="tn">①</span>Data</button>
+        <button class="tab active" id="tabbtn-region" data-tab="region" type="button"><span class="tn">②</span>Region</button>
+        <button class="tab" id="tabbtn-cluster" data-tab="cluster" type="button"><span class="tn">③</span>Cluster</button>
+        <button class="tab" id="tabbtn-save" data-tab="save" type="button"><span class="tn">④</span>Save</button>
+        <button class="tab tab-gear" id="tabbtn-display" data-tab="display" type="button" title="Display & exploration" aria-label="Display">⚙</button>
+      </div>
+      <div class="tabpane" id="tab-data">
+      <section class="sec">
+        <div class="ey">Dataset</div>
+        <div class="dspick" id="dspick" style="display:none">
+          <label class="lbl" for="dataset-sel">Dataset</label>
+          <select class="sel" id="dataset-sel" aria-label="dataset"></select>
+        </div>
+        <div class="dsum">
+          <div class="dsum-row"><span class="k">Name</span><span class="v" id="data-name">—</span></div>
+          <div class="dsum-row"><span class="k">Points</span><span class="v" id="data-points">—</span></div>
+          <div class="dsum-row"><span class="k">m/z</span><span class="v" id="data-mz">—</span></div>
+          <div class="dsum-row"><span class="k">1/K₀</span><span class="v" id="data-im">—</span></div>
+          <div class="dsum-row"><span class="k">RT</span><span class="v" id="data-rt">—</span></div>
+          <div class="dsum-row"><span class="k">Cycle</span><span class="v" id="data-cycle">—</span></div>
+        </div>
+        <div class="row" id="acq-row" style="display:none; margin-top:10px; gap:6px; align-items:center; flex-wrap:wrap">
+          <button class="btn" id="acq-play" type="button" style="flex:1 1 auto">▶ Live acquisition</button>
+          <span title="Experimental — streams a SIMULATED acquisition from the sidecar; behavior and wire format may still change." style="flex:none; font-size:9px; font-weight:700; letter-spacing:.05em; text-transform:uppercase; color:#f0b429; border:1px solid rgba(240,180,41,.5); border-radius:3px; padding:1px 5px; white-space:nowrap">experimental</span>
+          <select id="acq-speed" class="sel" title="Playback speed (1× = the device's real frame rate)" aria-label="playback speed">
+            <option value="0.25">0.25×</option>
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1× real-time</option>
+            <option value="2">2×</option>
+            <option value="4">4×</option>
+            <option value="1000">Max</option>
+          </select>
+          <span class="tip" tabindex="0" role="img" aria-label="help" title="EXPERIMENTAL. Play a SIMULATED acquisition over time at the device frame rate, colouring each peak by its precursor (a precursor + its fragments share a hue). 1× is the real device rate; Max runs as fast as frames can be fetched. Requires the acquisition sidecar (?acq=).">i</span>
+        </div>
+      </section>
+      </div>
+      <div class="tabpane" id="tab-display">
+      <section class="sec">
+        <div class="ey">View</div>
+        <div class="row"><label class="lbl" for="ar">Auto-orbit</label>
+          <span><input type="checkbox" class="sw" id="ar" checked /><label for="ar" class="sw-l" aria-hidden="true"></label></span></div>
+        <div class="grid2">
+          <button class="btn" id="reset">Reset view</button>
+          <button class="btn mono" id="roll" title="Cycle which axis points up">up: 1/K₀</button>
+        </div>
+      </section>
+
+      <section class="sec">
+        <div class="ey">Render</div>
+        <div class="row"><span class="lbl" id="l-view">View</span>
+          <span class="seg" role="radiogroup" aria-labelledby="l-view">
+            <input type="radio" name="viewm" id="v-pts" checked /><label for="v-pts">Points</label>
+            <input type="radio" name="viewm" id="v-vol" /><label for="v-vol">Volume</label>
+          </span></div>
+        <div class="row vol-only"><span class="lbl" id="l-vstyle">Volume</span>
+          <span class="seg" role="radiogroup" aria-labelledby="l-vstyle">
+            <input type="radio" name="vstyle" id="vs-comp" checked /><label for="vs-comp">Composite</label>
+            <input type="radio" name="vstyle" id="vs-mip" /><label for="vs-mip">MIP</label>
+          </span></div>
+        <div class="row vol-only"><label class="lbl" for="vsteps">Steps</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="vsteps" min="32" max="512" step="16" value="256" aria-label="raymarch steps" />
+            <input type="number" class="numin" id="vsteps-n" min="32" max="512" step="16" value="256" aria-label="raymarch steps value" /></span></div>
+        <div class="row points-only"><label class="lbl" for="disp">Display</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="disp" min="1" max="100" step="1" value="100" aria-label="fraction of points to display" />
+            <input type="number" class="numin" id="disp-n" min="1" step="1000" value="0" style="width:78px" aria-label="number of points to display" /></span></div>
+        <div class="row"><label class="lbl" for="load-n">Load <span class="dim" id="load-cap"></span></label>
+          <span style="display:flex;align-items:center;gap:8px">
+            <input type="number" class="numin" id="load-n" min="1" step="100000" value="0" style="width:84px" aria-label="points to load from the server" />
+            <button class="btn mono" id="load-go" type="button">load</button></span></div>
+        <div class="row points-only"><span class="lbl" id="l-mode">Mode</span>
+          <span class="seg" role="radiogroup" aria-labelledby="l-mode">
+            <input type="radio" name="mode" id="m-add" checked /><label for="m-add">Density</label>
+            <input type="radio" name="mode" id="m-opq" /><label for="m-opq">Solid</label>
+          </span></div>
+        <div class="row"><label class="lbl" for="cmap">Colormap</label>
+          <select class="sel" id="cmap" aria-label="Colormap">
+            <option value="0">Viridis</option><option value="1" selected>Inferno</option>
+            <option value="2">Turbo</option><option value="3">Grayscale</option>
+          </select></div>
+        <div class="row points-only"><label class="lbl" for="psize">Point size</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="psize" min="0.5" max="6" step="0.1" value="2.5" />
+            <input type="number" class="numin" id="psize-n" min="0.5" max="6" step="0.1" value="2.5" aria-label="point size value" /></span></div>
+        <div class="row points-only"><label class="lbl" for="opac">Opacity</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="opac" min="0.05" max="1" step="0.05" value="0.6" />
+            <input type="number" class="numin" id="opac-n" min="0.05" max="1" step="0.05" value="0.60" aria-label="opacity value" /></span></div>
+      </section>
+
+      <section class="sec">
+        <div class="ey">Intensity</div>
+        <div class="row points-only"><span class="lbl" id="l-xf">Transfer</span>
+          <span class="seg" role="radiogroup" aria-labelledby="l-xf">
+            <input type="radio" name="xf" id="xf-lin" /><label for="xf-lin">Lin</label>
+            <input type="radio" name="xf" id="xf-sqrt" checked /><label for="xf-sqrt">√</label>
+            <input type="radio" name="xf" id="xf-log" /><label for="xf-log">Log</label>
+          </span></div>
+        <div class="row points-only"><label class="lbl" for="expo">Exposure</label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="expo" min="0.02" max="4" step="0.02" value="1.00" />
+            <input type="number" class="numin" id="expo-n" min="0.02" max="4" step="0.02" value="1.00" aria-label="exposure value" /></span></div>
+      </section>
+      </div>
+      <div class="tabpane active" id="tab-region">
+      <section class="sec">
+        <div class="ey">Filters</div>
+        <div class="row" style="gap:8px">
+          <button class="btn" id="focus-go" type="button" style="flex:1" title="Re-load just the boxed region from the full dataset at higher detail — densifies the sampling so isotopes and fine structure resolve. Back returns to the previous view.">⊕ Focus selection</button>
+          <button class="btn mono" id="focus-back" type="button" disabled>← Back <span id="focus-depth" class="dim"></span></button>
+        </div>
+        <div class="row"><span class="lbl" id="l-ms">Show</span>
+          <span class="seg" role="radiogroup" aria-labelledby="l-ms">
+            <input type="radio" name="ms" id="ms-1" checked /><label for="ms-1">MS1</label>
+            <input type="radio" name="ms" id="ms-2" /><label for="ms-2">MS2</label>
+            <input type="radio" name="ms" id="ms-b" /><label for="ms-b">Both</label>
+          </span></div>
+        <div class="row"><label class="lbl" for="show-windows">DIA windows</label>
+          <span><input type="checkbox" class="sw" id="show-windows" /><label for="show-windows" class="sw-l" aria-hidden="true"></label></span></div>
+        <div class="win-legend" id="win-groups"></div>
+        <div class="crop">
+          <div class="clab"><b>m/z</b><span id="cmz-v">full</span></div>
+          <div class="crop-hist" id="cmz-hist"></div>
+          <div class="dual">
+            <div class="dual-track"></div><div class="dual-fill" id="cmz-fill"></div>
+            <input type="range" id="cmz-lo" min="0" max="1000" value="0" aria-label="m/z crop minimum" />
+            <input type="range" id="cmz-hi" min="0" max="1000" value="1000" aria-label="m/z crop maximum" />
+          </div>
+        </div>
+        <div class="crop">
+          <div class="clab"><b>1/K₀</b><span id="cim-v">full</span></div>
+          <div class="crop-hist" id="cim-hist"></div>
+          <div class="dual">
+            <div class="dual-track"></div><div class="dual-fill" id="cim-fill"></div>
+            <input type="range" id="cim-lo" min="0" max="1000" value="0" aria-label="ion mobility crop minimum" />
+            <input type="range" id="cim-hi" min="0" max="1000" value="1000" aria-label="ion mobility crop maximum" />
+          </div>
+        </div>
+        <div class="crop">
+          <div class="clab"><b>RT</b><span id="crt-v">full</span></div>
+          <div class="crop-hist" id="crt-hist"></div>
+          <div class="dual">
+            <div class="dual-track"></div><div class="dual-fill" id="crt-fill"></div>
+            <input type="range" id="crt-lo" min="0" max="1000" value="0" aria-label="retention time crop minimum" />
+            <input type="range" id="crt-hi" min="0" max="1000" value="1000" aria-label="retention time crop maximum" />
+          </div>
+        </div>
+        <div class="crop">
+          <div class="clab"><b>Floor</b><span class="tip" tabindex="0" role="img" aria-label="help" title="Drop points below this intensity (raw counts) before clustering and rendering — removes background noise so clusters stand out.">i</span><span>intensity ≥ (counts) <span id="floor-src" class="acc"></span></span></div>
+          <div class="crop-hist" id="floor-hist"></div>
+          <div class="frow">
+            <input type="range" class="rng wide" id="floor" min="0" max="1000" step="1" value="0" aria-label="intensity floor" />
+            <input type="number" class="numin" id="floor-n" min="0" max="5000" step="1" value="0" aria-label="intensity floor value in counts" />
+          </div>
+        </div>
+      </section>
+      <section class="sec">
+        <div class="ey">Maps · drag a box to focus</div>
+        <div class="map"><div class="map-cap"><b>m/z</b> × <b>1/K₀</b></div>
+          <div class="map-wrap" id="mw-0"><canvas id="map-0" width="96" height="96"></canvas><div class="map-sel" id="sel-0"></div></div></div>
+        <div class="map"><div class="map-cap"><b>m/z</b> × <b>RT</b></div>
+          <div class="map-wrap" id="mw-1"><canvas id="map-1" width="96" height="96"></canvas><div class="map-sel" id="sel-1"></div></div></div>
+        <div class="map"><div class="map-cap"><b>1/K₀</b> × <b>RT</b></div>
+          <div class="map-wrap" id="mw-2"><canvas id="map-2" width="96" height="96"></canvas><div class="map-sel" id="sel-2"></div></div></div>
+      </section>
+      </div>
+      <div class="tabpane" id="tab-cluster">
+      <section class="sec">
+        <div class="ey">Cluster</div>
+        <div class="row"><label class="lbl" for="cl-algo">Algorithm <span class="dim" id="cl-algo-status" style="font-weight:400">checking…</span><span class="tip" tabindex="0" role="img" aria-label="help" title="DBSCAN groups points denser than a fixed radius (ε); HDBSCAN finds clusters of varying density with no ε. ‘built-in’ runs in your browser; the others use the local Python service.">i</span></label>
+          <select class="sel" id="cl-algo" aria-label="clustering algorithm">
+            <option value="wasm">DBSCAN (built-in)</option>
+            <option value="sklearn" id="opt-sklearn" disabled>DBSCAN (sklearn)</option>
+          </select></div>
+        <div class="row algo-dbscan"><label class="lbl" for="cl-eps">ε radius <span class="dim" style="font-weight:400">(norm.)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="DBSCAN neighbourhood radius in the calibrated metric. Larger ε → looser, bigger clusters. It scales all three axis reaches (RT / 1/K₀ / m/z) together.">i</span></label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="cl-eps" min="0.002" max="0.1" step="0.001" value="0.012" aria-label="cluster radius" />
+            <input type="number" class="numin" id="cl-eps-n" min="0.002" max="0.1" step="0.001" value="0.012" aria-label="cluster radius value" /></span></div>
+        <div class="row algo-dbscan"><label class="lbl" for="cl-min">Min points<span class="tip" tabindex="0" role="img" aria-label="help" title="Fewest neighbours (including itself) a point needs within ε to anchor a cluster. Higher → more points left as noise.">i</span></label>
+          <span style="display:flex;align-items:center;gap:10px">
+            <input type="range" class="rng" id="cl-min" min="2" max="50" step="1" value="8" aria-label="cluster min points" />
+            <input type="number" class="numin" id="cl-min-n" min="2" max="50" step="1" value="8" aria-label="cluster min points value" /></span></div>
+        <details class="adv">
+          <summary>Advanced · metric</summary>
+          <div class="row"><label class="lbl" for="cl-rtc">RT width <span class="dim" style="font-weight:400">(cycles)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="How many MS1 cycles ε spans along retention time. A precursor elutes over several cycles — raise to keep an elution together, lower to split co-eluting species. Independent of how you crop the view.">i</span></label>
+            <span style="display:flex;align-items:center;gap:10px">
+              <input type="range" class="rng" id="cl-rtc" min="1" max="12" step="1" value="2" aria-label="cluster RT reach in cycles" />
+              <input type="number" class="numin" id="cl-rtc-n" min="1" max="12" step="1" value="2" aria-label="cluster RT reach in cycles value" /></span></div>
+          <div class="row"><label class="lbl" for="cl-ims">1/K₀ width <span class="dim" style="font-weight:400">(scans)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="How many TIMS mobility scans ε spans along 1/K₀. Anchored to the run’s scans-per-1/K₀, so it stays fixed no matter how you crop the view. ~2 ≈ the classic default.">i</span></label>
+            <span style="display:flex;align-items:center;gap:10px">
+              <input type="range" class="rng" id="cl-ims" min="1" max="20" step="0.5" value="2" aria-label="cluster 1/K0 reach in scans" />
+              <input type="number" class="numin" id="cl-ims-n" min="1" max="20" step="0.5" value="2" aria-label="cluster 1/K0 reach in scans value" /></span></div>
+          <div class="row"><label class="lbl" for="cl-mzw">m/z width <span class="dim" style="font-weight:400">(peak-widths)</span><span class="tip" tabindex="0" role="img" aria-label="help" title="How many TOF peak-widths ε spans along m/z. Keep it small (≈1–2) so neighbouring isotopes — tens of peak-widths apart — don’t merge into one cluster.">i</span></label>
+            <span style="display:flex;align-items:center;gap:10px">
+              <input type="range" class="rng" id="cl-mzw" min="1" max="40" step="0.5" value="1.5" aria-label="cluster m/z peak-width reach" />
+              <input type="number" class="numin" id="cl-mzw-n" min="1" max="40" step="0.5" value="1.5" aria-label="cluster m/z peak-width reach value" /></span></div>
+        </details>
+        <div class="row"><button class="btn" id="cl-run" type="button" style="flex:1">⬡ Run clustering</button></div>
+        <div class="cl-prog" id="cl-prog"><div class="cl-bar" id="cl-bar"></div></div>
+        <div class="row"><label class="lbl" for="cl-color">Color by cluster</label>
+          <span><input type="checkbox" class="sw" id="cl-color" checked /><label for="cl-color" class="sw-l" aria-hidden="true"></label></span></div>
+        <div class="row"><label class="lbl" for="hide-noise">Hide noise</label>
+          <span><input type="checkbox" class="sw" id="hide-noise" /><label for="hide-noise" class="sw-l" aria-hidden="true"></label></span></div>
+        <div class="row"><span class="lbl">Result</span><span class="val" id="cl-readout" style="min-width:auto">—</span></div>
+        <div class="sub" style="padding:0 0 4px; color:var(--faint)">Clusters the filtered points in the focused region.</div>
+      </section>
+      </div>
+      <div class="tabpane" id="tab-save">
+      <section class="sec">
+        <div class="ey">Save</div>
+        <div class="sub" style="padding:0 0 8px; color:var(--faint)">Export the reproducible setup anytime; export results once a clustering exists.</div>
+        <div class="row"><button class="btn" id="cfg-export" type="button" style="flex:1">⬡ Export config (JSON)</button></div>
+        <div class="row"><button class="btn" id="cl-export" type="button" style="flex:1" disabled>⬡ Export results (CSV + JSON)</button></div>
+        <div class="row"><span class="lbl">Status</span><span class="val" id="save-status" style="min-width:auto">no clustering yet</span></div>
+      </section>
+      </div>
+    </div>
+  </aside>
+
+  <!-- cluster stats (right rail, shown when a clustering result exists) -->
+  <input type="checkbox" id="railtgl-r" class="railtgl-r" />
+  <label for="railtgl-r" class="railbtn railbtn-r" title="Toggle cluster panel" aria-label="Toggle cluster panel">
+    <svg viewBox="0 0 16 16" fill="none"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+  </label>
+  <aside class="rail right" id="cluster-panel" aria-label="cluster statistics">
+    <div class="head">
+      <div class="mark"><b>clusters</b> <span>stats</span></div>
+      <div class="sub" id="cs-sub">—</div>
+    </div>
+    <div class="body">
+      <section class="sec">
+        <div class="ey">Summary</div>
+        <table class="cs-table">
+          <tr><th></th><th>Total</th><th>Signal</th><th>Noise</th></tr>
+          <tr><td>Points</td><td id="cs-pts-t">—</td><td id="cs-pts-c">—</td><td id="cs-pts-n">—</td></tr>
+          <tr><td>Intensity</td><td id="cs-int-t">—</td><td id="cs-int-c">—</td><td id="cs-int-n">—</td></tr>
+        </table>
+        <div class="row"><span class="lbl">Clusters</span><span class="val" id="cs-k" style="min-width:auto">—</span></div>
+        <div class="row"><span class="lbl">S/N · points</span><span class="val" id="cs-ratio" style="min-width:auto">—</span></div>
+        <div class="row"><span class="lbl">S/N · intensity</span><span class="val" id="cs-iratio" style="min-width:auto">—</span></div>
+      </section>
+      <section class="sec">
+        <div class="ey">Per-cluster</div>
+        <div class="cs-hist"><div class="map-cap">Size (points)</div><div class="crop-hist" id="csh-size"></div>
+          <div class="cs-axis"><span>0</span><span id="csx-size"></span></div></div>
+        <div class="cs-hist"><div class="map-cap"><b>m/z</b> extent</div><div class="crop-hist" id="csh-mz"></div>
+          <div class="cs-axis"><span>0</span><span id="csx-mz"></span></div></div>
+        <div class="cs-hist"><div class="map-cap"><b>1/K₀</b> extent</div><div class="crop-hist" id="csh-im"></div>
+          <div class="cs-axis"><span>0</span><span id="csx-im"></span></div></div>
+        <div class="cs-hist"><div class="map-cap"><b>RT</b> extent</div><div class="crop-hist" id="csh-rt"></div>
+          <div class="cs-axis"><span>0</span><span id="csx-rt"></span></div></div>
+      </section>
+      <section class="sec">
+        <div class="ey">Clusters</div>
+        <div class="cs-list" id="cs-list"></div>
+      </section>
+    </div>
+  </aside>
+
+  <div class="cbar v1" id="cbar"><div class="cbar-track"></div>
+    <div class="caps"><span>hi</span><span>lo</span></div></div>
+
+  <div class="err" id="status"></div>
+  <!-- Feedback widget (revealed by body.feedback-on when the server enables it; wired in lib.rs) -->
+  <div class="feedback-btn" id="feedback-open" title="Report a bug, request a feature, or ask a question">💬 Feedback</div>
+  <div class="feedback-modal" id="feedback-modal">
+    <div class="feedback-card">
+      <h3>Send feedback</h3>
+      <div class="sub">Goes straight to the tims·view maintainers. Bugs, feature requests, questions — all welcome.</div>
+      <label for="feedback-type">Type</label>
+      <select id="feedback-type">
+        <option value="bug">Bug / something broke</option>
+        <option value="feature">Feature request</option>
+        <option value="question">Question</option>
+      </select>
+      <label for="feedback-text">Message</label>
+      <textarea id="feedback-text" placeholder="What happened, or what would help?"></textarea>
+      <label for="feedback-email">Email (optional — if you'd like a reply)</label>
+      <input id="feedback-email" type="email" placeholder="you@lab.org" />
+      <div class="feedback-actions">
+        <span class="fb-status" id="feedback-status"></span>
+        <button id="feedback-cancel" type="button">Cancel</button>
+        <button id="feedback-send" type="button" class="primary">Send</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

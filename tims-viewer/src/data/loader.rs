@@ -24,6 +24,7 @@ use rustdf::data::meta::{
 
 use super::demo::DemoSource;
 use super::point::{AxisBounds, GpuPoint};
+use crate::render::annotation::LineVertex;
 
 /// Messages from the loader thread to the render thread.
 ///
@@ -39,11 +40,29 @@ pub enum LoadMsg {
     PeakChunk { points: Vec<GpuPoint> },
     /// Fractional load progress in `[0, 1]`.
     Progress(f32),
-    /// Robust intensity range (p1/p99) for transfer-function defaults.
-    Stats { i_min: f32, i_max: f32 },
-    /// Annotation overlay geometry: line-list vertices (pairs = segments) in the
-    /// normalized cube (DDA precursor crosses / DIA isolation-window boxes).
-    Annotations { lines: Vec<[f32; 3]> },
+    /// Robust intensity percentiles (p1/p50/p99) for transfer-function defaults.
+    Stats { i_p1: f32, i_p99: f32, i_p50: f32 },
+    /// Per-axis distribution histograms (each `HIST_BINS` long) for the levels-style filter
+    /// UI. m/z·1/K0·RT bin linearly over the cube bounds; `intensity` is data-tight log,
+    /// spanning `[i_lo, i_hi]` (the kept sample's min/max intensity).
+    Histograms {
+        mz: Vec<u32>,
+        im: Vec<u32>,
+        rt: Vec<u32>,
+        intensity: Vec<u32>,
+        i_lo: f32,
+        i_hi: f32,
+        /// 2D density projections (each `PROJ_BINS * PROJ_BINS`, row-major `x + PROJ_BINS*y`)
+        /// for the minimaps: m/z×1/K0, m/z×RT, 1/K0×RT.
+        proj_mz_im: Vec<u32>,
+        proj_mz_rt: Vec<u32>,
+        proj_im_rt: Vec<u32>,
+    },
+    /// Annotation overlay geometry: colored line-list vertices (pairs = segments) in the
+    /// normalized cube (DDA precursor crosses / DIA isolation-window footprints). `groups`
+    /// is a parallel per-vertex window-group id (u32::MAX = ungrouped); `n_groups` is the
+    /// number of DIA/MIDIA window groups, for the per-group visibility UI.
+    Annotations { lines: Vec<LineVertex>, groups: Vec<u32>, n_groups: u32 },
     /// All frames for `generation` have been streamed.
     Done { generation: u64 },
     /// Fatal error; loading stopped.
@@ -54,6 +73,17 @@ pub enum LoadMsg {
 pub enum LoadCmd {
     /// Abandon the current load and exit.
     Cancel,
+}
+
+/// Optional real-unit m/z + 1/K0 + intensity cull applied per-point during a region refinement
+/// load (frame selection already handles the RT window). Points outside are skipped at the source,
+/// so the budget concentrates on the focused region (the 4D lens — see FOCUS_LENS_PLAN.md).
+#[derive(Clone, Copy)]
+pub struct RegionFilter {
+    pub mz: (f64, f64),
+    pub im: (f64, f64),
+    /// Per-point intensity floor (real counts); points below are dropped at the source.
+    pub intensity_min: f32,
 }
 
 /// What to stream.
@@ -75,13 +105,14 @@ impl LoaderHandle {
         bounds: AxisBounds,
         total_estimate: u64,
         budget: usize,
+        filter: Option<RegionFilter>,
     ) -> Self {
         let (msg_tx, msg_rx) = bounded::<LoadMsg>(8);
         let (cmd_tx, cmd_rx) = bounded::<LoadCmd>(4);
         let handle = std::thread::Builder::new()
             .name("tims-loader".into())
             .spawn(move || {
-                run_loader(mode, bounds, total_estimate, budget, &msg_tx, &cmd_rx);
+                run_loader(mode, bounds, total_estimate, budget, filter, &msg_tx, &cmd_rx);
             })
             .expect("failed to spawn loader thread");
         LoaderHandle {
@@ -131,15 +162,42 @@ const ZERO_POINT: GpuPoint = GpuPoint {
     intensity: 0.0,
     weight: 1.0,
     flags: 0,
-    _pad: [0, 0],
+    _pad: [GpuPoint::NO_CLUSTER, 0],
 };
+
+/// Number of bins in each per-axis distribution histogram (for the levels-style filter UI).
+pub const HIST_BINS: usize = 80;
+/// Fine intermediate bins for the intensity log histogram before rebinning to the data range.
+const LOGI_FINE: usize = 256;
+/// Upper bound of the fixed intensity log range (log10), generous for timsTOF intensities.
+const LOGI_HI: f32 = 8.0;
+
+/// Bin a normalized-cube coordinate in `[-1, 1]` into `[0, bins)`. Equal-width cells: scale by the
+/// bin count and clamp, so every bin covers `1/N` of the range (vs `*(N-1)`, which leaves the last
+/// bin degenerate — only exactly `1.0` — and misaligns the strips/maps from UI fractions). The one
+/// place this cube→bin-index convention lives; shared by hbin/pbin/peak_cell.
+#[inline]
+fn bin(n: f32, bins: usize) -> usize {
+    (((n * 0.5 + 0.5).clamp(0.0, 1.0) * bins as f32) as usize).min(bins.saturating_sub(1))
+}
+
+#[inline]
+fn hbin(n: f32) -> usize {
+    bin(n, HIST_BINS)
+}
+
+/// Side length of each 2D projection minimap (m/z·1/K0·RT plane heatmaps).
+pub const PROJ_BINS: usize = 96;
+/// Bin a normalized-cube coordinate in `[-1, 1]` into `[0, PROJ_BINS)` (equal-width cells).
+#[inline]
+fn pbin(n: f32) -> usize {
+    bin(n, PROJ_BINS)
+}
 
 /// Map a normalized-cube position to a coarse peak-grid cell index.
 #[inline]
 fn peak_cell(pos: [f32; 3]) -> u32 {
-    let axis = |n: f32, dim: u32| -> u32 {
-        (((n * 0.5 + 0.5).clamp(0.0, 1.0) * dim as f32) as u32).min(dim - 1)
-    };
+    let axis = |n: f32, dim: u32| -> u32 { bin(n, dim as usize) as u32 };
     let x = axis(pos[0], PEAK_DIMS[0]);
     let y = axis(pos[1], PEAK_DIMS[1]);
     let z = axis(pos[2], PEAK_DIMS[2]);
@@ -152,13 +210,14 @@ fn run_loader(
     bounds: AxisBounds,
     total_estimate: u64,
     budget: usize,
+    filter: Option<RegionFilter>,
     tx: &Sender<LoadMsg>,
     cmd_rx: &Receiver<LoadCmd>,
 ) {
     // Stratified sampling: spend ~85% of the budget on a systematic density base, and
     // reserve the rest for per-cell intensity PEAKS so sparse high-intensity features
     // always survive (pure systematic sampling can statistically miss them).
-    let systematic_budget = ((budget * 85) / 100).max(1);
+    let systematic_budget = (budget.saturating_mul(85) / 100).max(1);
     let stride = stride_for(total_estimate, systematic_budget);
     let weight = stride as f32;
     let mut systematic_count: u64 = 0;
@@ -173,6 +232,20 @@ fn run_loader(
     let mut reservoir: Vec<f32> = Vec::with_capacity(RESERVOIR_CAP);
     let mut kept_counter: u64 = 0;
     let sample_every = (budget / RESERVOIR_CAP).max(1) as u64;
+
+    // Distribution histograms (over the kept systematic sample) for the levels-style filter
+    // UI. m/z·1/K0·RT bin over the normalized cube; intensity accumulates into a fine fixed
+    // log range, then rebins to the data's actual range at the end (so it is data-tight).
+    let mut hist_mz = [0u32; HIST_BINS];
+    let mut hist_im = [0u32; HIST_BINS];
+    let mut hist_rt = [0u32; HIST_BINS];
+    let mut logi_fine = [0u32; LOGI_FINE];
+    let mut i_lo_seen = f32::MAX;
+    let mut i_hi_seen = 0.0f32;
+    // 2D density projections onto the coordinate planes (the "you are here" minimaps).
+    let mut proj_mz_im = vec![0u32; PROJ_BINS * PROJ_BINS]; // x = m/z, y = 1/K0
+    let mut proj_mz_rt = vec![0u32; PROJ_BINS * PROJ_BINS]; // x = m/z, y = RT
+    let mut proj_im_rt = vec![0u32; PROJ_BINS * PROJ_BINS]; // x = 1/K0, y = RT
 
     let mut chunk: Vec<GpuPoint> = Vec::with_capacity(CHUNK_POINTS);
 
@@ -250,12 +323,28 @@ fn run_loader(
     // systematic sampling (count-bounded, RT-unbiased).
     let mut global_i: u64 = 0;
     let stride_u64 = stride as u64;
+    // Countdown replacing `global_i % stride_u64 == 0` in the hot per-point gate (a division over
+    // 100M+ points). Starts at 0 so survivor index 0 is kept, then resets to stride-1 — identical
+    // phase to the modulo (stride==1 -> always 0 -> keep all). `global_i` still advances every
+    // survivor (it tags the peak grid + drives the peak-tail dedup `gi % stride`).
+    let mut keep_in: u64 = 0;
 
-    // Per-point handler shared by both sources: update the peak grid for EVERY point,
-    // and emit every stride-th into the systematic density base.
+    // Per-point handler shared by both sources: cull against the region filter first, then update
+    // the peak grid for every SURVIVING point and emit every stride-th into the systematic base.
     macro_rules! handle_point {
         ($mz:expr, $im:expr, $rt:expr, $it:expr, $ms2:expr) => {{
             let intensity = $it;
+            // Region cull (the 4D lens): drop points outside the m/z·1/K0·intensity window at the
+            // source so the budget concentrates on the focused region. RT is handled by frame
+            // selection. `global_i` is not advanced for culled points, so the systematic stride
+            // counts only survivors.
+            if let Some(f) = &filter {
+                if $mz < f.mz.0 || $mz > f.mz.1 || $im < f.im.0 || $im > f.im.1
+                    || intensity < f.intensity_min
+                {
+                    continue;
+                }
+            }
             let pos = bounds.normalize($mz, $im, $rt);
             let flags = if $ms2 { GpuPoint::MS2_FLAG } else { 0 };
             // Peak: keep the highest-intensity point per coarse cell.
@@ -263,51 +352,87 @@ fn run_loader(
             if intensity > slot.0 {
                 slot.0 = intensity;
                 slot.1 = global_i;
-                slot.2 = GpuPoint { pos, intensity, weight: 1.0, flags, _pad: [0, 0] };
+                slot.2 = GpuPoint { pos, intensity, weight: 1.0, flags, _pad: [GpuPoint::NO_CLUSTER, 0] };
             }
-            // Systematic density base.
-            if global_i % stride_u64 == 0 {
-                chunk.push(GpuPoint { pos, intensity, weight, flags, _pad: [0, 0] });
+            // Systematic density base (every stride-th survivor, via the countdown above).
+            if keep_in == 0 {
+                keep_in = stride_u64 - 1;
+                chunk.push(GpuPoint { pos, intensity, weight, flags, _pad: [GpuPoint::NO_CLUSTER, 0] });
                 systematic_count += 1;
                 reservoir_push(&mut reservoir, &mut kept_counter, sample_every, intensity);
+                // Distribution histograms over the kept (representative) sample.
+                hist_mz[hbin(pos[0])] += 1;
+                hist_im[hbin(pos[1])] += 1;
+                hist_rt[hbin(pos[2])] += 1;
+                logi_fine[((intensity.max(1.0).log10() / LOGI_HI) * LOGI_FINE as f32)
+                    .clamp(0.0, (LOGI_FINE - 1) as f32) as usize] += 1;
+                proj_mz_im[pbin(pos[0]) + PROJ_BINS * pbin(pos[1])] += 1;
+                proj_mz_rt[pbin(pos[0]) + PROJ_BINS * pbin(pos[2])] += 1;
+                proj_im_rt[pbin(pos[1]) + PROJ_BINS * pbin(pos[2])] += 1;
+                i_lo_seen = i_lo_seen.min(intensity);
+                i_hi_seen = i_hi_seen.max(intensity);
                 if chunk.len() >= CHUNK_POINTS {
                     flush!();
                 }
+            } else {
+                keep_in -= 1;
             }
             global_i += 1;
         }};
     }
 
-    for idx in 0..n_frames {
-        if cancelled!() {
-            return;
-        }
-        match &mode {
-            LoaderMode::Real { frame_ids, .. } => {
-                let ds = dataset.as_ref().unwrap();
-                let frame = ds.get_frame(frame_ids[idx]);
-                let rt = frame.ims_frame.retention_time;
-                let is_ms2 = !matches!(frame.ms_type, MsType::Precursor);
-                let mz = frame.ims_frame.mz.as_slice();
-                let im = frame.ims_frame.mobility.as_slice();
-                let it = frame.ims_frame.intensity.as_slice();
-                // Validate parallel arrays — never zip past the shortest.
-                let n = mz.len().min(im.len()).min(it.len());
-                for j in 0..n {
-                    handle_point!(mz[j], im[j], rt, it[j] as f32, is_ms2);
+    match &mode {
+        LoaderMode::Real { frame_ids, .. } => {
+            use rayon::prelude::*;
+            let ds = dataset.as_ref().unwrap();
+            // Decode frames in parallel batches (the heavy, CPU-bound part — every core helps),
+            // then fold the decoded points in sequentially so the systematic sampler, peak grid
+            // and histograms stay exactly correct. One batch is in flight to bound memory.
+            const DECODE_BATCH: usize = 64;
+            let mut start = 0;
+            while start < n_frames {
+                if cancelled!() {
+                    return;
+                }
+                let end = (start + DECODE_BATCH).min(n_frames);
+                let frames: Vec<_> = frame_ids[start..end]
+                    .par_iter()
+                    .map(|&fid| ds.get_frame(fid))
+                    .collect();
+                for frame in &frames {
+                    let rt = frame.ims_frame.retention_time;
+                    let is_ms2 = !matches!(frame.ms_type, MsType::Precursor);
+                    let mz = frame.ims_frame.mz.as_slice();
+                    let im = frame.ims_frame.mobility.as_slice();
+                    let it = frame.ims_frame.intensity.as_slice();
+                    // Validate parallel arrays — never zip past the shortest.
+                    let n = mz.len().min(im.len()).min(it.len());
+                    for j in 0..n {
+                        handle_point!(mz[j], im[j], rt, it[j] as f32, is_ms2);
+                    }
+                }
+                start = end;
+                let progress = end as f32 / n_frames as f32;
+                if progress - last_progress >= 0.01 {
+                    let _ = tx.try_send(LoadMsg::Progress(progress));
+                    last_progress = progress;
                 }
             }
-            LoaderMode::Demo(d) => {
+        }
+        LoaderMode::Demo(d) => {
+            for idx in 0..n_frames {
+                if cancelled!() {
+                    return;
+                }
                 for p in d.frame(idx) {
                     handle_point!(p.mz, p.im, p.rt, p.intensity as f32, p.is_ms2);
                 }
+                let progress = (idx + 1) as f32 / n_frames as f32;
+                if progress - last_progress >= 0.01 {
+                    let _ = tx.try_send(LoadMsg::Progress(progress));
+                    last_progress = progress;
+                }
             }
-        }
-
-        let progress = (idx + 1) as f32 / n_frames as f32;
-        if progress - last_progress >= 0.01 {
-            let _ = tx.try_send(LoadMsg::Progress(progress));
-            last_progress = progress;
         }
     }
 
@@ -324,13 +449,32 @@ fn run_loader(
             .filter(|(i, gi, _)| *i >= 0.0 && gi % stride_u64 != 0)
             .map(|(_, _, gp)| gp)
             .collect();
-        // Strongest first.
-        peak_pts.sort_by(|a, b| {
-            b.intensity
-                .partial_cmp(&a.intensity)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        peak_pts.truncate(peak_room);
+        // Keep the strongest `peak_room` peaks. A partial select (O(n)) suffices — order within the
+        // kept set is irrelevant (everything is shuffled downstream). Guard peak_room < len:
+        // select_nth at index == len is out of bounds, and peak_room >= len already keeps all.
+        if peak_room < peak_pts.len() {
+            peak_pts.select_nth_unstable_by(peak_room, |a, b| {
+                b.intensity
+                    .partial_cmp(&a.intensity)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            peak_pts.truncate(peak_room);
+        }
+        // Fold peaks into the distributions + intensity range too: they are displayed points
+        // and are often the brightest in the run, so excluding them would make the default
+        // intensity filter (which uses i_lo/i_hi) cull the very peaks preservation kept.
+        for gp in &peak_pts {
+            hist_mz[hbin(gp.pos[0])] += 1;
+            hist_im[hbin(gp.pos[1])] += 1;
+            hist_rt[hbin(gp.pos[2])] += 1;
+            logi_fine[((gp.intensity.max(1.0).log10() / LOGI_HI) * LOGI_FINE as f32)
+                .clamp(0.0, (LOGI_FINE - 1) as f32) as usize] += 1;
+            proj_mz_im[pbin(gp.pos[0]) + PROJ_BINS * pbin(gp.pos[1])] += 1;
+            proj_mz_rt[pbin(gp.pos[0]) + PROJ_BINS * pbin(gp.pos[2])] += 1;
+            proj_im_rt[pbin(gp.pos[1]) + PROJ_BINS * pbin(gp.pos[2])] += 1;
+            i_lo_seen = i_lo_seen.min(gp.intensity);
+            i_hi_seen = i_hi_seen.max(gp.intensity);
+        }
         for batch in peak_pts.chunks(CHUNK_POINTS) {
             send_cancellable!(LoadMsg::PeakChunk {
                 points: batch.to_vec(),
@@ -341,9 +485,9 @@ fn run_loader(
     // Annotation overlay (real data only — needs the dataset's scan->mobility converter
     // and the DDA/DIA metadata tables).
     if let (LoaderMode::Real { path, .. }, Some(ds)) = (&mode, &dataset) {
-        let lines = build_annotations(ds, path, &bounds);
+        let (lines, groups, n_groups) = build_annotations(ds, path, &bounds);
         if !lines.is_empty() {
-            send_cancellable!(LoadMsg::Annotations { lines });
+            send_cancellable!(LoadMsg::Annotations { lines, groups, n_groups });
         }
     }
 
@@ -354,9 +498,41 @@ fn run_loader(
             let i = ((reservoir.len() as f32 - 1.0) * q).round() as usize;
             reservoir[i.min(reservoir.len() - 1)]
         };
-        let i_min = p(0.01).max(1.0);
-        let i_max = p(0.99).max(i_min * 1.0001);
-        send_cancellable!(LoadMsg::Stats { i_min, i_max });
+        let i_p1 = p(0.01).max(1.0);
+        let i_p50 = p(0.50).max(i_p1);
+        let i_p99 = p(0.99).max(i_p50 * 1.0001);
+        send_cancellable!(LoadMsg::Stats { i_p1, i_p99, i_p50 });
+    }
+
+    // Rebin the fine fixed-range intensity histogram into the data's actual log range so the
+    // levels strip is data-tight, and ship all four distributions to the UI.
+    if i_hi_seen > 0.0 {
+        let i_lo = i_lo_seen.max(1.0);
+        let i_hi = i_hi_seen.max(i_lo * 1.0001);
+        let (llo, lhi) = (i_lo.log10(), i_hi.log10());
+        let span = (lhi - llo).max(1e-6);
+        let mut hist_i = vec![0u32; HIST_BINS];
+        for (src, &c) in logi_fine.iter().enumerate() {
+            if c == 0 {
+                continue;
+            }
+            let src_log = ((src as f32 + 0.5) / LOGI_FINE as f32) * LOGI_HI;
+            let t = (((src_log - llo) / span) * HIST_BINS as f32) as i32;
+            if t >= 0 && (t as usize) < HIST_BINS {
+                hist_i[t as usize] += c;
+            }
+        }
+        send_cancellable!(LoadMsg::Histograms {
+            mz: hist_mz.to_vec(),
+            im: hist_im.to_vec(),
+            rt: hist_rt.to_vec(),
+            intensity: hist_i,
+            i_lo,
+            i_hi,
+            proj_mz_im,
+            proj_mz_rt,
+            proj_im_rt,
+        });
     }
 
     send_cancellable!(LoadMsg::Done {
@@ -364,14 +540,67 @@ fn run_loader(
     });
 }
 
-/// Build annotation-overlay line geometry (normalized cube) from the run's DDA/DIA
+// DIA_WINDOW_RT_SLICES and WindowRect now live in `crate::data::point` (a both-targets module) so
+// the native loader and the wasm overlay share one definition; re-exported here for existing users.
+pub use crate::data::point::{WindowRect, DIA_WINDOW_RT_SLICES};
+
+/// Read the DIA/MIDIA isolation windows and return their real-unit `(m/z × 1/K0)` footprints plus
+/// the max group id (the `group_color` denominator). Subsamples a fine MIDIA diagonal so it stays
+/// legible, widening each kept rect symmetrically across the skipped scans. Returns empty for
+/// non-DIA or unreadable runs.
+pub fn dia_window_rects(ds: &TimsDataset, path: &str) -> (Vec<WindowRect>, u32) {
+    let (windows, info) = match (read_dia_ms_ms_windows(path), read_dia_ms_ms_info(path)) {
+        (Ok(w), Ok(i)) => (w, i),
+        _ => return (Vec::new(), 0),
+    };
+    if windows.is_empty() {
+        return (Vec::new(), 0);
+    }
+    // A representative frame per window group, for scan->mobility conversion.
+    let mut grp_frame: std::collections::HashMap<u32, u32> = Default::default();
+    for di in &info {
+        grp_frame.entry(di.window_group).or_insert(di.frame_id);
+    }
+    // Subsample so a fine MIDIA diagonal (~15k windows) stays legible; a conventional DIA scheme
+    // (tens of windows) keeps every box (stride == 1).
+    const TARGET_WINDOWS: usize = 800;
+    let stride = (windows.len() / TARGET_WINDOWS).max(1);
+    let max_group = windows.iter().map(|w| w.window_group).max().unwrap_or(1).max(1);
+    let max_scan = windows.iter().map(|w| w.scan_num_end).max().unwrap_or(0);
+    let mut out = Vec::new();
+    for w in windows.iter().step_by(stride) {
+        let fid = grp_frame.get(&w.window_group).copied().unwrap_or(1);
+        // Widen SYMMETRICALLY across the skipped scans so the rect stays a visible window AND stays
+        // centered on the real window's mobility (widening only the high-scan end would shift the
+        // 1/K0 center). stride == 1 (conventional DIA) leaves it exact.
+        let half = stride as u32 / 2;
+        let scan_lo = w.scan_num_begin.saturating_sub(half);
+        let scan_hi = (w.scan_num_end + half).min(max_scan.max(w.scan_num_end));
+        let ims = ds.scan_to_inverse_mobility(fid, &vec![scan_lo, scan_hi]);
+        let im0 = ims.first().copied().unwrap_or(0.0);
+        let im1 = ims.get(1).copied().unwrap_or(im0);
+        out.push(WindowRect {
+            group: w.window_group,
+            mz0: w.isolation_mz - w.isolation_width * 0.5,
+            mz1: w.isolation_mz + w.isolation_width * 0.5,
+            im0,
+            im1,
+        });
+    }
+    (out, max_group)
+}
+
 /// metadata. DDA precursors -> small 3D crosses; DIA isolation windows -> wireframe
 /// boxes. Returns line-list vertices (consecutive pairs are segments).
-fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<[f32; 3]> {
+fn build_annotations(
+    ds: &TimsDataset,
+    path: &str,
+    bounds: &AxisBounds,
+) -> (Vec<LineVertex>, Vec<u32>, u32) {
     // frame_id -> retention time (ids are contiguous 1..=N, validated at load).
     let meta = match read_meta_data_sql(path) {
         Ok(m) => m,
-        Err(_) => return Vec::new(),
+        Err(_) => return (Vec::new(), Vec::new(), 0),
     };
     let max_id = meta.iter().map(|m| m.id).max().unwrap_or(0).max(0) as usize;
     let mut rt_by = vec![0f64; max_id + 1];
@@ -382,7 +611,11 @@ fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<[
     }
     let rt_of = |fid: u32| rt_by.get(fid as usize).copied().unwrap_or(0.0);
 
-    let mut lines: Vec<[f32; 3]> = Vec::new();
+    // `groups` is a per-vertex window-group id, parallel to `lines`, for CPU-side group
+    // toggling. u32::MAX means "ungrouped, always shown" (DDA precursor crosses).
+    let mut lines: Vec<LineVertex> = Vec::new();
+    let mut groups: Vec<u32> = Vec::new();
+    let mut n_groups_out: u32 = 0;
     match ds.get_acquisition_mode() {
         AcquisitionMode::DDA | AcquisitionMode::PRECURSOR => {
             if let Ok(precursors) = read_dda_precursor_meta(path) {
@@ -395,82 +628,89 @@ fn build_annotations(ds: &TimsDataset, path: &str, bounds: &AxisBounds) -> Vec<[
                         .copied()
                         .unwrap_or(0.0);
                     let pos = bounds.normalize(p.precursor_mz_highest_intensity, im, rt_of(fid));
-                    push_cross(&mut lines, pos, 0.012);
+                    push_cross(&mut lines, &mut groups, pos, 0.012, [0.1, 0.95, 0.95], u32::MAX);
                 }
             }
         }
         AcquisitionMode::DIA => {
-            if let (Ok(windows), Ok(info)) =
-                (read_dia_ms_ms_windows(path), read_dia_ms_ms_info(path))
-            {
-                // Per window group: RT span and a representative frame for scan->mobility.
-                let mut grp_rt: std::collections::HashMap<u32, (f64, f64)> = Default::default();
-                let mut grp_frame: std::collections::HashMap<u32, u32> = Default::default();
-                for di in &info {
-                    let rt = rt_of(di.frame_id);
-                    let e = grp_rt
-                        .entry(di.window_group)
-                        .or_insert((f64::INFINITY, f64::NEG_INFINITY));
-                    e.0 = e.0.min(rt);
-                    e.1 = e.1.max(rt);
-                    grp_frame.entry(di.window_group).or_insert(di.frame_id);
-                }
-                for w in &windows {
-                    let fid = grp_frame.get(&w.window_group).copied().unwrap_or(1);
-                    let ims = ds.scan_to_inverse_mobility(fid, &vec![w.scan_num_begin, w.scan_num_end]);
-                    let im0 = ims.first().copied().unwrap_or(0.0);
-                    let im1 = ims.get(1).copied().unwrap_or(im0);
-                    let (rt0, rt1) = grp_rt.get(&w.window_group).copied().unwrap_or((0.0, 0.0));
-                    let mz0 = w.isolation_mz - w.isolation_width * 0.5;
-                    let mz1 = w.isolation_mz + w.isolation_width * 0.5;
-                    push_box(&mut lines, bounds, (mz0, mz1), (im0, im1), (rt0, rt1));
+            // The (m/z × 1/K0) selection footprints in real units, shared with the web overlay's
+            // `/windows` endpoint so the two never drift.
+            let (rects, max_group) = dia_window_rects(ds, path);
+            n_groups_out = max_group;
+            let (rt_lo, rt_hi) = (bounds.rt.min, bounds.rt.max);
+            for r in &rects {
+                let color = crate::render::colormap::group_color(r.group, max_group);
+                // Draw the footprint at several evenly spaced RT slices, so the recurring isolation
+                // scheme sits on the precursor signal through the whole run rather than piling onto
+                // the two RT end-walls.
+                for i in 0..DIA_WINDOW_RT_SLICES {
+                    let rt = rt_lo
+                        + (rt_hi - rt_lo) * (i as f64 + 0.5) / DIA_WINDOW_RT_SLICES as f64;
+                    push_rect_mz_im(
+                        &mut lines,
+                        &mut groups,
+                        bounds,
+                        (r.mz0, r.mz1),
+                        (r.im0, r.im1),
+                        rt,
+                        color,
+                        r.group,
+                    );
                 }
             }
         }
         AcquisitionMode::Unknown => {}
     }
-    lines
+    (lines, groups, n_groups_out)
 }
 
-/// Append a 3-segment axis-aligned cross centered at `c` (half-length `h`).
-fn push_cross(lines: &mut Vec<[f32; 3]>, c: [f32; 3], h: f32) {
-    lines.push([c[0] - h, c[1], c[2]]);
-    lines.push([c[0] + h, c[1], c[2]]);
-    lines.push([c[0], c[1] - h, c[2]]);
-    lines.push([c[0], c[1] + h, c[2]]);
-    lines.push([c[0], c[1], c[2] - h]);
-    lines.push([c[0], c[1], c[2] + h]);
+/// Append a 3-segment axis-aligned cross centered at `c` (half-length `h`), in `color`,
+/// tagging each vertex with `group`.
+fn push_cross(
+    lines: &mut Vec<LineVertex>,
+    groups: &mut Vec<u32>,
+    c: [f32; 3],
+    h: f32,
+    color: [f32; 3],
+    group: u32,
+) {
+    let mut v = |p: [f32; 3]| {
+        lines.push(LineVertex::new(p, color));
+        groups.push(group);
+    };
+    v([c[0] - h, c[1], c[2]]);
+    v([c[0] + h, c[1], c[2]]);
+    v([c[0], c[1] - h, c[2]]);
+    v([c[0], c[1] + h, c[2]]);
+    v([c[0], c[1], c[2] - h]);
+    v([c[0], c[1], c[2] + h]);
 }
 
-/// Append the 12 edges of an axis-aligned box spanning the given real-unit ranges.
-fn push_box(
-    lines: &mut Vec<[f32; 3]>,
+/// Append the 4 edges of an axis-aligned rectangle in the m/z x mobility plane at a fixed
+/// retention time — one isolation window's footprint, drawn at a given RT slice.
+fn push_rect_mz_im(
+    lines: &mut Vec<LineVertex>,
+    groups: &mut Vec<u32>,
     bounds: &AxisBounds,
     mz: (f64, f64),
     im: (f64, f64),
-    rt: (f64, f64),
+    rt: f64,
+    color: [f32; 3],
+    group: u32,
 ) {
-    // 8 corners (normalized).
-    let corner = |a: f64, b: f64, c: f64| bounds.normalize(a, b, c);
+    let corner = |a: f64, b: f64| bounds.normalize(a, b, rt);
     let c = [
-        corner(mz.0, im.0, rt.0),
-        corner(mz.1, im.0, rt.0),
-        corner(mz.1, im.1, rt.0),
-        corner(mz.0, im.1, rt.0),
-        corner(mz.0, im.0, rt.1),
-        corner(mz.1, im.0, rt.1),
-        corner(mz.1, im.1, rt.1),
-        corner(mz.0, im.1, rt.1),
+        corner(mz.0, im.0),
+        corner(mz.1, im.0),
+        corner(mz.1, im.1),
+        corner(mz.0, im.1),
     ];
-    // 12 edges as index pairs.
-    const EDGES: [(usize, usize); 12] = [
-        (0, 1), (1, 2), (2, 3), (3, 0), // bottom (rt0)
-        (4, 5), (5, 6), (6, 7), (7, 4), // top (rt1)
-        (0, 4), (1, 5), (2, 6), (3, 7), // verticals
-    ];
+    const EDGES: [(usize, usize); 4] = [(0, 1), (1, 2), (2, 3), (3, 0)];
     for (a, b) in EDGES {
-        lines.push(c[a]);
-        lines.push(c[b]);
+        lines.push(LineVertex::new(c[a], color));
+        lines.push(LineVertex::new(c[b], color));
+        groups.push(group);
+        groups.push(group);
     }
 }
 
@@ -553,7 +793,7 @@ mod tests {
         let budget = 50_000usize;
         let demo = DemoSource::new(20, total);
         let handle =
-            LoaderHandle::spawn(LoaderMode::Demo(demo), demo_bounds(), total, budget);
+            LoaderHandle::spawn(LoaderMode::Demo(demo), demo_bounds(), total, budget, None);
 
         let mut points = 0usize;
         let mut saw_stats = false;
@@ -567,8 +807,9 @@ mod tests {
                     }
                     points += p.len();
                 }
-                Ok(LoadMsg::Stats { i_min, i_max }) => {
-                    assert!(i_min > 0.0 && i_max > i_min);
+                Ok(LoadMsg::Stats { i_p1, i_p99, i_p50 }) => {
+                    assert!(i_p1 > 0.0 && i_p99 > i_p1);
+                    assert!(i_p50 >= i_p1 && i_p50 <= i_p99);
                     saw_stats = true;
                 }
                 // The only non-panic exit: reaching past the loop proves Done arrived.
@@ -577,7 +818,9 @@ mod tests {
                     points += p.len();
                 }
                 Ok(LoadMsg::Error(e)) => panic!("loader error: {e}"),
-                Ok(LoadMsg::Progress(_)) | Ok(LoadMsg::Annotations { .. }) => {}
+                Ok(LoadMsg::Progress(_))
+                | Ok(LoadMsg::Annotations { .. })
+                | Ok(LoadMsg::Histograms { .. }) => {}
                 Err(e) => panic!("loader timed out / disconnected: {e}"),
             }
         }
@@ -585,5 +828,64 @@ mod tests {
         assert!(points > 0, "loader produced no points");
         // ~budget points (stride=2 over 100k); allow generous slack.
         assert!(points <= 70_000, "downsample exceeded budget: {points}");
+    }
+
+    /// Drain a loader run, returning (systematic base count, peak count).
+    fn drain(handle: LoaderHandle) -> (usize, usize) {
+        let (mut sys, mut pk) = (0usize, 0usize);
+        loop {
+            match handle.rx.recv_timeout(Duration::from_secs(30)) {
+                Ok(LoadMsg::Chunk { points, .. }) => sys += points.len(),
+                Ok(LoadMsg::PeakChunk { points }) => pk += points.len(),
+                Ok(LoadMsg::Done { .. }) => break,
+                Ok(LoadMsg::Error(e)) => panic!("loader error: {e}"),
+                Ok(_) => {}
+                Err(e) => panic!("loader timed out / disconnected: {e}"),
+            }
+        }
+        (sys, pk)
+    }
+
+    /// FOCUS_LENS_PLAN.md blocker-1 proof: a region load must spend its budget on the *region*,
+    /// not stay over-strided on the full-run estimate. Drives the systematic-base count.
+    #[test]
+    fn region_estimate_concentrates_budget() {
+        let total = 200_000u64;
+        let demo = || DemoSource::new(30, total);
+        // m/z sub-range; im wide open so only m/z culls (isolates a clean strict subset).
+        let region = Some(RegionFilter { mz: (100.0, 500.0), im: (-10.0, 10.0), intensity_min: 0.0 });
+
+        // True survivors in the region (stride 1: budget exceeds everything).
+        let (survivors, _) =
+            drain(LoaderHandle::spawn(LoaderMode::Demo(demo()), demo_bounds(), total, total as usize * 2, region));
+        assert!(survivors > 1000, "region too small to test: {survivors}");
+        assert!((survivors as u64) < total, "region should be a strict subset of the run");
+
+        let budget = (survivors / 2).max(2000); // below survivors so sampling is actually active
+
+        // Region-relative estimate (= survivors): the systematic base should ~fill the budget.
+        let (sys_region, _) =
+            drain(LoaderHandle::spawn(LoaderMode::Demo(demo()), demo_bounds(), survivors as u64, budget, region));
+        // Full-run estimate (the bug): stride stays coarse -> budget badly under-spent.
+        let (sys_full, _) =
+            drain(LoaderHandle::spawn(LoaderMode::Demo(demo()), demo_bounds(), total, budget, region));
+
+        // Exact: the systematic base keeps every `stride`-th SURVIVOR, where the stride is sized to
+        // the survivor count. This equals ceil(survivors/stride) only if `global_i` advances solely
+        // for survivors — it would fail if culled points still advanced the index.
+        let systematic_budget = (budget * 85 / 100).max(1);
+        let stride = stride_for(survivors as u64, systematic_budget) as u64;
+        let expected = (survivors as u64).div_ceil(stride) as usize;
+        assert_eq!(
+            sys_region, expected,
+            "region systematic count must be exactly ceil(survivors/stride): \
+             survivors={survivors} stride={stride}"
+        );
+        // The full-run estimate sizes the stride to ~total, spending only ~(survivors/total) of the
+        // budget — far less than the region estimate. This is the blocker-1 regression guard.
+        assert!(
+            (sys_full as f64) < 0.5 * sys_region as f64,
+            "full-run estimate did not under-spend (blocker-1 unfixed): full={sys_full} region={sys_region}"
+        );
     }
 }

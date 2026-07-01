@@ -106,8 +106,13 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
     let bounds = plan.meta.bounds;
     let mut state = AppState::new(bounds, total, COLORMAP_NAMES.len() as u32);
     state.capacity = capacity;
+    state.downsample_stride =
+        crate::data::loader::stride_for(total, capacity as usize) as u32;
     state.view_mode = if opts.volume { ViewMode::Volume } else { ViewMode::Points };
     state.vol_style = if opts.mip { VolStyle::Mip } else { VolStyle::Composite };
+    // MS selection is applied at upload time via `opts.ms`; let the shader pass everything
+    // that was uploaded (don't double-filter with the interactive MS1-only default).
+    state.show_ms2 = true;
 
     // Load the whole run synchronously by draining the streaming loader.
     let mode = if plan.is_demo {
@@ -118,7 +123,7 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
             frame_ids: plan.meta.frames.iter().map(|f| f.id).collect(),
         }
     };
-    let loader = LoaderHandle::spawn(mode, bounds, total, capacity as usize);
+    let loader = LoaderHandle::spawn(mode, bounds, total, capacity as usize, None);
     let keep = |p: &GpuPoint| match opts.ms {
         MsFilter::All => true,
         MsFilter::Ms1 => p.flags & GpuPoint::MS2_FLAG == 0,
@@ -160,7 +165,8 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
                 points.append(&queue, &pts);
             }
             Ok(LoadMsg::Stats { .. }) => {} // recomputed below from retained points
-            Ok(LoadMsg::Annotations { lines }) => {
+            Ok(LoadMsg::Histograms { .. }) => {} // UI-only; headless ignores
+            Ok(LoadMsg::Annotations { lines, .. }) => {
                 if opts.annotations {
                     annotations.upload(&device, &lines);
                 }
@@ -183,13 +189,16 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
     // cloud uses the retained-intensity percentiles.
     if opts.volume {
         let (lo, hi) = grid.density_percentiles();
-        state.i_min = lo;
-        state.i_max = hi;
+        state.auto_transfer_volume(lo, hi);
     } else if !reservoir.is_empty() {
         reservoir.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let pct = |q: f32| reservoir[(((reservoir.len() - 1) as f32) * q) as usize];
-        state.i_min = pct(0.01).max(1.0);
-        state.i_max = pct(0.99).max(state.i_min * 1.0001);
+        // Feed the same auto-exposure heuristic the interactive viewer uses, so the
+        // headless render is legible (median mid-LUT, additive cloud not blown out).
+        state.i_p1 = pct(0.01).max(1.0);
+        state.i_med = pct(0.50).max(state.i_p1);
+        state.i_p99 = pct(0.99).max(state.i_med * 1.0001);
+        state.auto_transfer_points();
     }
     // Apply transfer-function overrides (e.g. raise i_min to threshold out noise).
     if let Some(v) = opts.i_min {
@@ -217,12 +226,12 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
     points.update_camera(&queue, &cam_uniform);
     points.update_params(&queue, &params);
     annotations.update_camera(&queue, &cam_uniform);
-    annotations.update_filter(&queue, params.filter_min, params.filter_max);
+    annotations.update_filter(&queue, params.filter_min, params.filter_max, params.focus);
     if opts.volume {
         let mut vu = state.volume_uniform(camera.inv_view_proj(aspect));
         vu.density_scale = grid.density_scale();
         volume.update_uniform(&queue, &vu);
-        volume.upload(&queue, &grid.to_f16_scaled());
+        volume.upload(&queue, grid.to_f16_scaled());
     }
 
     // Offscreen targets.

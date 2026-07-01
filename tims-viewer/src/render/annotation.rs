@@ -6,6 +6,21 @@ use wgpu::util::DeviceExt;
 
 use super::uniforms::CameraUniform;
 
+/// A colored line vertex (pairs form segments). Color is per-vertex so the overlay can
+/// distinguish e.g. DIA window groups.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct LineVertex {
+    pub pos: [f32; 3],
+    pub color: [f32; 3],
+}
+
+impl LineVertex {
+    pub fn new(pos: [f32; 3], color: [f32; 3]) -> Self {
+        LineVertex { pos, color }
+    }
+}
+
 /// Normalized-cube window the overlay is clipped to (xyz; w unused).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -92,9 +107,9 @@ impl AnnotationRenderer {
                 module: &shader,
                 entry_point: "vs_main",
                 buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: 12,
+                    array_stride: 24,
                     step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3],
                 }],
                 compilation_options: Default::default(),
             },
@@ -138,17 +153,20 @@ impl AnnotationRenderer {
         queue.write_buffer(&self.camera_buf, 0, bytemuck::bytes_of(cam));
     }
 
-    /// Set the normalized-cube window the overlay is clipped to.
-    pub fn update_filter(&self, queue: &wgpu::Queue, min: [f32; 4], max: [f32; 4]) {
+    /// Set the normalized-cube window the overlay is clipped to. `focus` (0.0/1.0) re-fits
+    /// that window to the full cube — carried in the unused `min.w` slot for the shader.
+    pub fn update_filter(&self, queue: &wgpu::Queue, min: [f32; 4], max: [f32; 4], focus: f32) {
+        let mut m = min;
+        m[3] = focus;
         queue.write_buffer(
             &self.filter_buf,
             0,
-            bytemuck::bytes_of(&FilterUniform { min, max }),
+            bytemuck::bytes_of(&FilterUniform { min: m, max }),
         );
     }
 
-    /// Upload line-list vertices (pairs = segments). Recreates the buffer.
-    pub fn upload(&mut self, device: &wgpu::Device, verts: &[[f32; 3]]) {
+    /// Upload colored line-list vertices (pairs = segments). Recreates the buffer.
+    pub fn upload(&mut self, device: &wgpu::Device, verts: &[LineVertex]) {
         if verts.is_empty() {
             self.vbuf = None;
             self.vcount = 0;

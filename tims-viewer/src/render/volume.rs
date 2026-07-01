@@ -28,6 +28,8 @@ pub struct VolumeGrid {
     /// Largest accumulated voxel density (drives the normalization scale).
     max_density: f32,
     dirty: bool,
+    /// Reusable f16 staging buffer for uploads, to avoid a per-frame allocation.
+    scratch: Vec<f16>,
 }
 
 impl VolumeGrid {
@@ -45,6 +47,7 @@ impl VolumeGrid {
             data: vec![0.0; n],
             max_density: 0.0,
             dirty: false,
+            scratch: Vec::new(),
         }
     }
 
@@ -54,6 +57,14 @@ impl VolumeGrid {
 
     pub fn clear_dirty(&mut self) {
         self.dirty = false;
+    }
+
+    /// Zero all density (and the running max) — used when re-streaming a refined region so
+    /// the grid rebuilds from scratch.
+    pub fn clear(&mut self) {
+        self.data.iter_mut().for_each(|v| *v = 0.0);
+        self.max_density = 0.0;
+        self.dirty = true;
     }
 
     /// Deposit a point (normalized cube position in [-1,1], raw intensity) using
@@ -115,21 +126,49 @@ impl VolumeGrid {
         if nz.is_empty() {
             return (1.0, 2.0);
         }
-        nz.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let pct = |q: f32| nz[(((nz.len() - 1) as f32) * q) as usize];
-        let lo = pct(0.50).max(1e-6); // median: voxels below it are sparse fringe
-        let hi = pct(0.999).max(lo * 1.0001);
+        // Two order statistics (median, p99.9) via partial select (O(n)) instead of a full sort of
+        // up to ~6.3M voxels on every re-voxel. select_nth places the k-th smallest at index k, so
+        // nz[k] equals the sorted value — same result as before. Indices are < len (empty handled).
+        let cmp = |a: &f32, b: &f32| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal);
+        let lo_i = (((nz.len() - 1) as f32) * 0.50) as usize;
+        let hi_i = (((nz.len() - 1) as f32) * 0.999) as usize;
+        nz.select_nth_unstable_by(hi_i, cmp);
+        let hi_raw = nz[hi_i];
+        nz.select_nth_unstable_by(lo_i, cmp); // reorders, but hi_raw is already read
+        let lo = nz[lo_i].max(1e-6); // median: voxels below it are sparse fringe
+        let hi = hi_raw.max(lo * 1.0001);
         (lo, hi)
     }
 
-    /// Normalize by `density_scale` and convert to f16. The shader multiplies back by
+    /// Rebuild this grid as `wa*a + wb*b` of two same-dim source grids. Used to fold the
+    /// separate MS1 / MS2 density grids into the displayed volume per the MS1/MS2 toggle
+    /// (weights are 1.0 or 0.0), so the volume raycaster honors the same filter as points.
+    pub fn combine(&mut self, a: &VolumeGrid, b: &VolumeGrid, wa: f32, wb: f32) {
+        assert!(self.data.len() == a.data.len() && self.data.len() == b.data.len());
+        let mut max = 0.0f32;
+        for (i, d) in self.data.iter_mut().enumerate() {
+            let v = a.data[i] * wa + b.data[i] * wb;
+            *d = v;
+            if v > max {
+                max = v;
+            }
+        }
+        self.max_density = max;
+        self.dirty = true;
+    }
+
+    /// Normalize by `density_scale` and convert to f16 into the reusable scratch buffer
+    /// (avoids a fresh multi-MB allocation per upload). The shader multiplies back by
     /// `density_scale` before the transfer function.
-    pub fn to_f16_scaled(&self) -> Vec<f16> {
+    pub fn to_f16_scaled(&mut self) -> &[f16] {
         let inv = 1.0 / self.density_scale();
-        self.data
-            .iter()
-            .map(|&v| f16::from_f32((v * inv).min(F16_TARGET_MAX)))
-            .collect()
+        if self.scratch.len() != self.data.len() {
+            self.scratch = vec![f16::from_f32(0.0); self.data.len()];
+        }
+        for (s, &v) in self.scratch.iter_mut().zip(self.data.iter()) {
+            *s = f16::from_f32((v * inv).min(F16_TARGET_MAX));
+        }
+        &self.scratch
     }
 }
 
@@ -451,7 +490,7 @@ mod tests {
             let t = i as f32 / 15.0 * 2.0 - 1.0;
             grid.deposit([t, 0.0, 0.0], 500.0 + i as f32 * 100.0);
         }
-        r.upload(&queue, &grid.to_f16_scaled());
+        r.upload(&queue, grid.to_f16_scaled());
         let cam = crate::camera::OrbitCamera::default();
         let mut u = VolumeUniform {
             inv_view_proj: cam.inv_view_proj(1.0),

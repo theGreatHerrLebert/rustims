@@ -14,8 +14,8 @@ struct Params {
     transfer   : vec4<f32>, // mode, i_min, i_max, exposure
     point_size : f32,
     opacity    : f32,
-    _pad0      : f32,
-    _pad1      : f32,
+    focus      : f32,
+    color_mode : u32,   // 0 = intensity colormap, 1 = cluster id, 2 = hide-noise, 3 = acquisition (id + size-by-intensity)
     ms_mask     : u32,
     colormap_id : u32,
     render_mode : u32,
@@ -33,7 +33,22 @@ struct VsOut {
     @location(1) intensity : f32,
     @location(2) weight : f32,
     @location(3) visible : f32,
+    @location(4) @interpolate(flat) cluster : u32,
 };
+
+fn hsv2rgb(h: f32, s: f32, v: f32) -> vec3<f32> {
+    let k = vec3<f32>(5.0, 3.0, 1.0) / 6.0;
+    let p = abs(fract(vec3<f32>(h) + k) * 6.0 - 3.0);
+    return v * mix(vec3<f32>(1.0), clamp(p - 1.0, vec3<f32>(0.0), vec3<f32>(1.0)), s);
+}
+
+// Cluster id -> color: golden-ratio hue spacing; the noise sentinel renders grey.
+fn cluster_color(id: u32) -> vec3<f32> {
+    if (id == 0xffffffffu) {
+        return vec3<f32>(0.32, 0.32, 0.38);
+    }
+    return hsv2rgb(fract(f32(id) * 0.6180339887), 0.65, 1.0);
+}
 
 fn transfer(i: f32) -> f32 {
     let mode = params.transfer.x;
@@ -61,16 +76,29 @@ fn vs_main(
     @location(1) intensity : f32,
     @location(2) weight : f32,
     @location(3) flags : u32,
+    @location(4) cluster : u32,
 ) -> VsOut {
     var out : VsOut;
+    out.cluster = cluster;
 
-    // Window + MS-type filtering -> collapse off-screen if rejected.
+    // Window + intensity-range + MS-type filtering -> collapse off-screen if rejected.
+    // The intensity range rides filter_min.w / filter_max.w (real intensity units).
     let in_window =
-        all(pos >= params.filter_min.xyz) && all(pos <= params.filter_max.xyz);
+        all(pos >= params.filter_min.xyz) && all(pos <= params.filter_max.xyz)
+        && intensity >= params.filter_min.w && intensity <= params.filter_max.w;
     let is_ms2 = (flags & 1u) != 0u;
     let show = select((params.ms_mask & 1u) != 0u, (params.ms_mask & 2u) != 0u, is_ms2);
     if (!in_window || !show) {
         out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0); // outside clip volume -> culled
+        out.visible = 0.0;
+        out.uv = vec2<f32>(0.0, 0.0);
+        out.intensity = 0.0;
+        out.weight = 0.0;
+        return out;
+    }
+    // Hide-noise mode (color_mode == 2): cull points that didn't cluster (NO_CLUSTER sentinel).
+    if (params.color_mode == 2u && cluster == 0xffffffffu) {
+        out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
         out.visible = 0.0;
         out.uv = vec2<f32>(0.0, 0.0);
         out.intensity = 0.0;
@@ -87,9 +115,22 @@ fn vs_main(
     );
     let corner = corners[vid];
 
+    // Focus: re-fit the active window box to the full cube (zoom to selection).
+    var fpos = pos;
+    if (params.focus > 0.5) {
+        let center = (params.filter_min.xyz + params.filter_max.xyz) * 0.5;
+        let halfspan = max((params.filter_max.xyz - params.filter_min.xyz) * 0.5, vec3<f32>(1e-6));
+        fpos = (pos - center) / halfspan;
+    }
+
     // World-space billboard so size attenuates with distance (perspective).
-    let half = params.point_size * 0.0015;
-    let world = pos + (corner.x * cam.right.xyz + corner.y * cam.up.xyz) * half;
+    var bb = params.point_size * 0.0015;
+    // Acquisition playback (color_mode 3): scale the splat by intensity so faint peaks recede and
+    // the bright precursor/fragment signals stand out as the run builds up.
+    if (params.color_mode == 3u) {
+        bb = bb * mix(0.18, 1.0, transfer(intensity));
+    }
+    let world = fpos + (corner.x * cam.right.xyz + corner.y * cam.up.xyz) * bb;
     out.clip = cam.view_proj * vec4<f32>(world, 1.0);
     out.uv = corner;
     out.intensity = intensity;
@@ -108,11 +149,18 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (falloff <= 0.0) {
         discard;
     }
-    let t = transfer(in.intensity);
-    let row = (f32(params.colormap_id) + 0.5) / f32(params.n_colormaps);
-    let color = textureSample(lut_tex, lut_smp, vec2<f32>(t, row)).rgb;
+    var color : vec3<f32>;
+    if (params.color_mode >= 1u) {
+        color = cluster_color(in.cluster);
+    } else {
+        let t = transfer(in.intensity);
+        let row = (f32(params.colormap_id) + 0.5) / f32(params.n_colormaps);
+        color = textureSample(lut_tex, lut_smp, vec2<f32>(t, row)).rgb;
+    }
 
-    if (params.render_mode == 1u) {
+    // Cluster coloring always renders opaque: additive blending would mix distinct cluster
+    // hues into mush and dim them by the 1/p weight, so cluster ids would read as noise.
+    if (params.render_mode == 1u || params.color_mode >= 1u) {
         // Structural opaque: round point via alpha cutout, depth-written.
         if (falloff < 0.5) {
             discard;

@@ -1,0 +1,38 @@
+[package]
+name = "tims-viewer-web"
+version = "0.1.0"
+edition = "2021"
+description = "Browser (WASM/WebGPU) shell embedding the tims-viewer GPU point-cloud renderer."
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Everything is wasm-only: on a native `cargo build` (the workspace default) this crate compiles
+# to an empty lib and pulls no web deps. Build the real thing with Trunk or
+# `cargo build -p tims-viewer-web --target wasm32-unknown-unknown`.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# The render-safe half of tims-viewer (no Bruker loader / native deps).
+tims-viewer = { path = "..", default-features = false }
+# `webgl` adds the WebGL2 fallback alongside the default WebGPU backend.
+wgpu = { version = "=22.1.0", features = ["webgl"] }
+glam = { version = "0.29", features = ["bytemuck"] }
+bytemuck = { version = "1.21", features = ["derive"] }
+log = "0.4"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+console_error_panic_hook = "0.1"
+console_log = "1"
+web-sys = { version = "0.3", features = [
+    "Document", "Window", "Element", "HtmlCanvasElement", "Node", "EventTarget",
+    "Event", "MouseEvent", "WheelEvent", "Response", "Location",
+    "HtmlInputElement", "HtmlSelectElement", "HtmlTextAreaElement", "HtmlElement", "HtmlLinkElement", "CssStyleDeclaration",
+    # Error telemetry: forward uncaught JS errors to /telemetry.
+    "ErrorEvent",
+    "CanvasRenderingContext2d", "ImageData", "DomRect", "DomTokenList",
+    # Off-main-thread DBSCAN: a module Web Worker built from a Blob that re-imports this same wasm.
+    "Worker", "WorkerOptions", "WorkerType", "MessageEvent", "Blob", "BlobPropertyBag", "Url",
+    # POST points to an optional Python (sklearn) clustering service (+ a timed-out health probe).
+    "RequestInit", "AbortController", "AbortSignal",
+] }

@@ -23,11 +23,15 @@ pub struct FrameInfo {
 }
 
 /// Lightweight index over a run's metadata.
+#[derive(Clone)]
 pub struct MetaIndex {
     pub data_path: String,
     pub frames: Vec<FrameInfo>,
     pub bounds: AxisBounds,
     pub total_points_estimate: u64,
+    /// TIMS scans per frame (the mobility ramp length; constant across frames). Used to anchor the
+    /// clustering's 1/K0 reach to a fixed number of scans (run-level, focus-independent).
+    pub num_scans: u32,
 }
 
 impl MetaIndex {
@@ -104,11 +108,25 @@ impl MetaIndex {
             rt: AxisTransform::new(rt_min, rt_max),
         };
 
+        // The mobility ramp length (constant across frames). Use the mode (most common value) so a
+        // single corrupt frame — a stray 0 or an absurdly high count — can't skew the anchor.
+        let num_scans = {
+            let mut counts: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+            for m in &meta {
+                let s = m.num_scans.max(0) as u32;
+                if s > 0 {
+                    *counts.entry(s).or_default() += 1;
+                }
+            }
+            counts.into_iter().max_by_key(|&(_, c)| c).map(|(s, _)| s).unwrap_or(0)
+        };
+
         Ok(MetaIndex {
             data_path: data_path.to_string(),
             frames,
             bounds,
             total_points_estimate: total,
+            num_scans,
         })
     }
 
@@ -134,6 +152,7 @@ impl MetaIndex {
             frames,
             bounds,
             total_points_estimate: total_points,
+            num_scans: 709, // a typical timsTOF mobility ramp length
         }
     }
 }

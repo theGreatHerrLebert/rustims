@@ -24,8 +24,8 @@ struct Params {
     transfer   : vec4<f32>,
     point_size : f32,
     opacity    : f32,
-    _pad0      : f32,
-    _pad1      : f32,
+    focus      : f32,      // mirrors ParamsUniform; unused here
+    color_mode : u32,      // mirrors ParamsUniform; unused here
     ms_mask     : u32,
     colormap_id : u32,
     render_mode : u32,
@@ -43,7 +43,7 @@ struct DrawArgs {
 
 struct Compaction {
     point_count : u32,
-    _p0 : u32,
+    row_stride : u32,   // invocations per dispatch row (groups_x * workgroup_size)
     _p1 : u32,
     _p2 : u32,
 };
@@ -57,7 +57,8 @@ struct Compaction {
 
 @compute @workgroup_size(256)
 fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
-    let i = gid.x;
+    // 2D dispatch grid: rebuild the linear point index from the row stride.
+    let i = gid.x + gid.y * comp.row_stride;
     if (i >= comp.point_count) {
         return;
     }
@@ -75,8 +76,17 @@ fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
         return;
     }
 
-    // Frustum cull (with a margin so splats near the edge aren't clipped early).
-    let clip = cam.view_proj * vec4<f32>(p.pos, 1.0);
+    // Frustum cull (with a margin so splats near the edge aren't clipped early). Cull against the
+    // SAME position the draw shader renders: when "focus to window" is on it refits points into the
+    // focus box, so a point can be on-screen after the refit while its raw pos is outside the frustum.
+    // Culling raw pos here would silently drop those visible points before the draw pass.
+    var fpos = p.pos;
+    if (params.focus > 0.5) {
+        let center = (params.filter_min.xyz + params.filter_max.xyz) * 0.5;
+        let halfspan = max((params.filter_max.xyz - params.filter_min.xyz) * 0.5, vec3<f32>(1e-6));
+        fpos = (p.pos - center) / halfspan;
+    }
+    let clip = cam.view_proj * vec4<f32>(fpos, 1.0);
     if (clip.w <= 0.0) {
         return;
     }

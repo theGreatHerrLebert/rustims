@@ -5,7 +5,8 @@ members = [
     "rustms",
     "imspy_connector",
     "imsjl_connector",
-    "tims-viewer"
+    "tims-viewer",
+    "tims-viewer/web"
 ]
 
 resolver = "2"

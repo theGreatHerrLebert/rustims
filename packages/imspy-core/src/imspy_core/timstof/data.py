@@ -120,15 +120,21 @@ class TimsDataset(ABC):
                 warnings.warn("Warning: Only x86_64 architecture is supported by bruker SDK, setting use_bruker_sdk to False.")
                 self.use_bruker_sdk = False
 
-        # Try to find SDK path (needed for calibration even when use_bruker_sdk=False)
+        # Try to find SDK path (needed for calibration even when use_bruker_sdk=False).
+        # NOTE: open-tims-bruker-bridge ships the vendor binaries for *all* platforms, so
+        # Path(so_path).exists() is True even for the Windows timsdata.dll on macOS. Loading
+        # a foreign-platform binary makes the Rust dlopen panic ("slice is not valid mach-o
+        # file"). There is no usable Bruker SDK on macOS / non-amd64, so stay on NO_SDK there
+        # (the reader degrades to the boundary m/z model, matching the native viewer).
         sdk_path = "NO_SDK"
-        try:
-            for so_path in obb.get_so_paths():
-                if Path(so_path).exists():
-                    sdk_path = so_path
-                    break
-        except Exception:
-            pass
+        if current_os != "Darwin" and is_amd64():
+            try:
+                for so_path in obb.get_so_paths():
+                    if Path(so_path).exists():
+                        sdk_path = so_path
+                        break
+            except Exception:
+                pass
 
         if not self.use_bruker_sdk:
             # Pass SDK path for calibration derivation, but use_bruker_sdk=False for fast parallel access

@@ -5,20 +5,15 @@
 //!   tims-viewer DEMO                 synthetic point cloud (no Bruker data needed)
 //!   tims-viewer DEMO --budget 25000000
 
-mod app;
-mod camera;
-mod data;
-mod offscreen;
-mod render;
-mod state;
-mod ui;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::Parser;
 use winit::event_loop::{ControlFlow, EventLoop};
 
-use app::{App, Plan};
-use data::meta::MetaIndex;
+use tims_viewer::app::{App, Plan};
+use tims_viewer::data::meta::MetaIndex;
+use tims_viewer::offscreen;
 
 /// Command-line arguments.
 #[derive(Parser, Debug)]
@@ -38,6 +33,19 @@ struct Args {
     /// Headless: render one frame to this PNG path and exit (no window needed).
     #[arg(long)]
     render_png: Option<String>,
+    /// Serve the loaded slice's packed points over HTTP on this port (for the web shell), then
+    /// block. No window/GPU needed; works with a `.d` path or `DEMO`.
+    #[arg(long)]
+    serve: Option<u16>,
+    /// With --serve: zstd-compress the /points payload when the client advertises it (Accept-Encoding).
+    /// Cuts the over-the-wire size ~3-4x for remote serving; leave off for localhost (raw is faster).
+    #[arg(long)]
+    compress: bool,
+    /// With --serve (PROD): enable in-app error telemetry + user feedback, appended as JSONL to this
+    /// directory (telemetry.jsonl / feedback.jsonl). Omit for local dev — the endpoints stay off and
+    /// the frontend hides the feedback widget and sends nothing.
+    #[arg(long)]
+    telemetry_dir: Option<std::path::PathBuf>,
     /// With --render-png: render the volume raycaster instead of the point cloud.
     #[arg(long)]
     volume: bool,
@@ -64,9 +72,69 @@ struct Args {
     exposure: Option<f32>,
 }
 
+/// Is `p` a Bruker `.d` dataset folder (named `*.d`, or containing `analysis.tdf`)?
+fn is_dataset_dir(p: &Path) -> bool {
+    p.is_dir()
+        && (p.extension().is_some_and(|e| e.eq_ignore_ascii_case("d"))
+            || p.join("analysis.tdf").exists())
+}
+
+/// Recursively collect `.d` datasets under `dir` (pruning at each `.d` — it holds files, not nested
+/// datasets — and bounded in depth so a deep tree can't blow up the scan).
+fn collect_datasets(dir: &Path, depth: usize, out: &mut Vec<PathBuf>) {
+    if depth > 4 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for p in entries.filter_map(|e| e.ok().map(|e| e.path())) {
+        if p.is_symlink() {
+            continue; // don't follow symlinks — keeps discovery within the real root (no escape/loops)
+        }
+        if is_dataset_dir(&p) {
+            out.push(p); // a .d — collect it, don't descend
+        } else if p.is_dir() {
+            collect_datasets(&p, depth + 1, out);
+        }
+    }
+}
+
+/// Resolve the server's selectable datasets from the launch input: a single `.d` → just it; a
+/// directory → every `.d` beneath it (flat `runs/a.d` or nested `runs/a/a.d` both work). The launch
+/// directory is the confinement root.
+fn discover_datasets(input: &str) -> Result<Vec<PathBuf>> {
+    let p = Path::new(input);
+    if is_dataset_dir(p) {
+        return Ok(vec![p.to_path_buf()]);
+    }
+    anyhow::ensure!(p.is_dir(), "{input} is not a .d folder or a directory of them");
+    let mut v = Vec::new();
+    collect_datasets(p, 0, &mut v);
+    v.sort();
+    anyhow::ensure!(!v.is_empty(), "no .d datasets found under {input}");
+    Ok(v)
+}
+
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // Keep our own INFO logs, but silence the very chatty wgpu/naga internals (e.g.
+    // "Device::maintain: waiting for submission index ..." every frame). RUST_LOG overrides.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
+        "info,wgpu_core=warn,wgpu_hal=warn,wgpu=warn,naga=warn",
+    ))
+    .init();
     let args = Args::parse();
+
+    // Point-streaming server mode (no window/GPU): serve packed points to the web shell. Multi-dataset
+    // + lazy — discover the selectable `.d`s (a single `.d`, or every `.d` under a directory) and let
+    // the frontend pick; don't eagerly load any one's metadata here.
+    if let Some(port) = args.serve {
+        let source = if args.input.eq_ignore_ascii_case("DEMO") {
+            log::info!("DEMO mode: {} frames, {} points", args.demo_frames, args.demo_points);
+            tims_viewer::serve::ServeSource::Demo(MetaIndex::demo(args.demo_frames, args.demo_points))
+        } else {
+            tims_viewer::serve::ServeSource::Datasets(discover_datasets(&args.input)?)
+        };
+        return tims_viewer::serve::serve(source, args.budget, port, args.compress, args.telemetry_dir);
+    }
 
     let (meta, is_demo) = if args.input.eq_ignore_ascii_case("DEMO") {
         log::info!(

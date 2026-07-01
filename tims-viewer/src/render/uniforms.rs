@@ -38,8 +38,10 @@ pub struct ParamsUniform {
     pub transfer: [f32; 4],
     pub point_size: f32,
     pub opacity: f32,
-    pub _pad0: f32,
-    pub _pad1: f32,
+    /// 1.0 = re-fit the window box to the full cube (zoom to selection); 0.0 = no remap.
+    pub focus: f32,
+    /// 0 = color by intensity colormap, 1 = color by DBSCAN cluster id.
+    pub color_mode: u32,
     /// Bit mask: bit0 show MS1, bit1 show MS2.
     pub ms_mask: u32,
     pub colormap_id: u32,
@@ -68,7 +70,9 @@ pub struct VolumeUniform {
     /// Multiplier applied to the sampled (normalized) voxel value to recover raw
     /// intensity before the transfer function (mirrors VolumeGrid::density_scale).
     pub density_scale: f32,
-    pub _pad: [f32; 3],
+    /// 1.0 = re-fit the window box to the full cube (zoom to selection); 0.0 = no remap.
+    pub focus: f32,
+    pub _pad: [f32; 2],
 }
 
 impl Default for VolumeUniform {
@@ -83,7 +87,8 @@ impl Default for VolumeUniform {
             colormap_id: 0,
             n_colormaps: 1,
             density_scale: 1.0,
-            _pad: [0.0; 3],
+            focus: 0.0,
+            _pad: [0.0; 2],
         }
     }
 }
@@ -93,20 +98,27 @@ impl Default for VolumeUniform {
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 pub struct CompactionUniform {
     pub point_count: u32,
-    pub _pad: [u32; 3],
+    /// Invocations per dispatch row (`groups_x * workgroup_size`). The compaction is
+    /// dispatched as a 2D workgroup grid so neither dimension exceeds wgpu's 65535 limit
+    /// at large point counts; the shader rebuilds the linear index as
+    /// `gid.x + gid.y * row_stride`.
+    pub row_stride: u32,
+    pub _pad: [u32; 2],
 }
 
 impl Default for ParamsUniform {
     fn default() -> Self {
         ParamsUniform {
             filter_min: [-1.0, -1.0, -1.0, 0.0],
-            filter_max: [1.0, 1.0, 1.0, 0.0],
+            // .w = intensity range; default to pass-through (max = +inf) so the shader's
+            // intensity cull never rejects everything before state.params() sets a real range.
+            filter_max: [1.0, 1.0, 1.0, f32::INFINITY],
             transfer: [2.0, 1.0, 1e5, 1.0],
             point_size: 2.5,
             opacity: 0.6,
-            _pad0: 0.0,
-            _pad1: 0.0,
-            ms_mask: 0b11,
+            focus: 0.0,
+            color_mode: 0,
+            ms_mask: 0b01, // MS1-only by default (matches AppState)
             colormap_id: 0,
             render_mode: 0,
             n_colormaps: 1,

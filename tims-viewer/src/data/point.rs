@@ -2,6 +2,25 @@
 
 use bytemuck::{Pod, Zeroable};
 
+/// Number of evenly spaced RT slices each DIA window footprint is drawn at. Shared here (a
+/// both-targets module) so the native loader and the wasm overlay use one value — the geometry
+/// must match on both sides of the `/windows` endpoint.
+pub const DIA_WINDOW_RT_SLICES: usize = 6;
+
+/// One DIA/MIDIA isolation window's selection footprint in **real units**: an `(m/z × 1/K0)`
+/// rectangle (mobility already converted from scan numbers). Group ids color the interleaved
+/// isolation bands. The native loader produces these for the `/windows` endpoint; the wasm client
+/// re-normalizes them to its region bounds (so they align with the cloud and off-region windows
+/// clip). Shared here so both sides use one struct definition.
+#[derive(Clone, Copy, Debug)]
+pub struct WindowRect {
+    pub group: u32,
+    pub mz0: f64,
+    pub mz1: f64,
+    pub im0: f64,
+    pub im1: f64,
+}
+
 /// One renderable data point, packed for the GPU as instance data.
 ///
 /// Layout is 32 bytes, 16-byte aligned, so a `Vec<GpuPoint>` uploads directly as a
@@ -21,19 +40,24 @@ pub struct GpuPoint {
     pub weight: f32,
     /// Bit flags. bit0: 0 = MS1/precursor, 1 = MS2/fragment.
     pub flags: u32,
+    /// `_pad[0]` doubles as the DBSCAN cluster id for cluster coloring (`NO_CLUSTER` =
+    /// noise/unclustered); `_pad[1]` is reserved padding to keep the 32-byte layout.
     pub _pad: [u32; 2],
 }
 
 impl GpuPoint {
     pub const MS2_FLAG: u32 = 1;
+    /// Cluster-id sentinel for noise / not-yet-clustered points (rendered grey).
+    pub const NO_CLUSTER: u32 = u32::MAX;
 
     /// `wgpu` vertex-buffer layout describing the instance step-mode attributes.
     pub fn layout() -> wgpu::VertexBufferLayout<'static> {
-        const ATTRS: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+        const ATTRS: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
             0 => Float32x3, // pos
             1 => Float32,   // intensity
             2 => Float32,   // weight
             3 => Uint32,    // flags
+            4 => Uint32,    // cluster id (_pad[0])
         ];
         wgpu::VertexBufferLayout {
             array_stride: std::mem::size_of::<GpuPoint>() as wgpu::BufferAddress,

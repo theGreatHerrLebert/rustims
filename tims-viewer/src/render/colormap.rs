@@ -38,27 +38,33 @@ fn anchors(map: usize) -> &'static [[u8; 3]] {
     }
 }
 
+/// RGB at normalized position `t∈[0,1]` for colormap `map` (CPU mirror of the LUT).
+/// The egui colorbar and the GPU LUT both go through this anchor-lerp so they can't drift.
+pub fn sample(map: usize, t: f32) -> [u8; 3] {
+    let a = anchors(map);
+    let segs = a.len() - 1;
+    let t = t.clamp(0.0, 1.0);
+    let fseg = t * segs as f32;
+    let seg = (fseg.floor() as usize).min(segs - 1);
+    let local = fseg - seg as f32;
+    let c0 = a[seg];
+    let c1 = a[seg + 1];
+    let lerp = |i: usize| (c0[i] as f32 + (c1[i] as f32 - c0[i] as f32) * local).round() as u8;
+    [lerp(0), lerp(1), lerp(2)]
+}
+
 /// Build the RGBA8 LUT pixel data, row-major (`width=256`, `height=N`).
 pub fn build_lut_rgba8() -> (Vec<u8>, u32, u32) {
     let n = COLORMAP_NAMES.len();
     let mut data = vec![0u8; LUT_WIDTH * n * 4];
     for map in 0..n {
-        let a = anchors(map);
-        let segs = a.len() - 1;
         for x in 0..LUT_WIDTH {
             let t = x as f32 / (LUT_WIDTH - 1) as f32;
-            let fseg = t * segs as f32;
-            let seg = (fseg.floor() as usize).min(segs - 1);
-            let local = fseg - seg as f32;
-            let c0 = a[seg];
-            let c1 = a[seg + 1];
-            let lerp = |i: usize| {
-                (c0[i] as f32 + (c1[i] as f32 - c0[i] as f32) * local).round() as u8
-            };
+            let rgb = sample(map, t);
             let idx = (map * LUT_WIDTH + x) * 4;
-            data[idx] = lerp(0);
-            data[idx + 1] = lerp(1);
-            data[idx + 2] = lerp(2);
+            data[idx] = rgb[0];
+            data[idx + 1] = rgb[1];
+            data[idx + 2] = rgb[2];
             data[idx + 3] = 255;
         }
     }
@@ -117,4 +123,52 @@ pub fn create_lut_texture(
         ..Default::default()
     });
     (texture, view, sampler)
+}
+
+/// Distinct color per window group. Shared by the annotation overlay (DIA isolation windows) and
+/// the egui group legend. Render-safe (no native deps), so it lives here rather than in the native
+/// loader.
+///
+/// Hue advances by the GOLDEN ANGLE per group rather than a plain `group/n` ramp: a linear ramp
+/// gives adjacent groups nearly-identical hues (indistinguishable when a run has many windows),
+/// whereas the golden angle lands consecutive groups ~137° apart on the wheel while still covering
+/// it evenly. A parity brightness step adds a second cue so neighbours differ in value too. The
+/// color depends only on `group`, so the overlay and legend stay in lockstep regardless of `n_groups`.
+pub fn group_color(group: u32, _n_groups: u32) -> [f32; 3] {
+    let g = group.saturating_sub(1) as f32;
+    let h = (g * 0.618_034).fract(); // golden-ratio conjugate ≈ 137.5° steps
+    let v = if group % 2 == 0 { 0.82 } else { 1.0 };
+    hsv_to_rgb(h, 0.7, v)
+}
+
+/// HSV (all in [0,1] except hue which wraps) to linear-ish RGB for line colors.
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
+    let i = (h * 6.0).floor();
+    let f = h * 6.0 - i;
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - f * s);
+    let t = v * (1.0 - (1.0 - f) * s);
+    match (i as i32).rem_euclid(6) {
+        0 => [v, t, p],
+        1 => [q, v, p],
+        2 => [p, v, t],
+        3 => [p, q, v],
+        4 => [t, p, v],
+        _ => [v, p, q],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sample_endpoints_match_anchors() {
+        // Viridis anchors run [68,1,84] -> ... -> [253,231,37].
+        assert_eq!(sample(0, 0.0), [68, 1, 84]);
+        assert_eq!(sample(0, 1.0), [253, 231, 37]);
+        // Out-of-range t clamps to the endpoints.
+        assert_eq!(sample(0, -1.0), [68, 1, 84]);
+        assert_eq!(sample(0, 2.0), [253, 231, 37]);
+    }
 }

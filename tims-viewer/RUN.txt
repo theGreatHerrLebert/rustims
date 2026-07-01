@@ -1,0 +1,67 @@
+tims-viewer — start commands (3 terminals)
+==========================================
+
+Open http://localhost:8080/?port=8090  → go to the ① Data tab to pick a dataset.
+Point the server at a FOLDER of .d datasets to get the picker (a single .d works
+too, the picker just stays hidden). Example folder below holds 3 datasets.
+
+
+1) POINT SERVER  (multi-dataset; the folder is the confinement root)
+-------------------------------------------------------------------
+cd /Users/davidteschner/Promotion/rustims
+# (rebuild only if Rust changed since last time)
+cargo build -p tims-viewer --release
+./target/release/tims-viewer /Users/davidteschner/Promotion/midia/timsim --serve 8090 --budget 12000000
+# Over a network, add --compress: zstd-compresses /points when the browser supports it (~2.6x,
+# 356MB -> 138MB; transparent client-side decode). Leave it off for localhost (raw is faster).
+# PROD deploy: add --telemetry-dir <dir> to enable optional in-app error telemetry + a user
+# feedback widget, appended as JSONL to <dir>/telemetry.jsonl and <dir>/feedback.jsonl (kept
+# in-house, no external SaaS). Omit it for local dev — endpoints stay off, the frontend hides the
+# feedback button and sends nothing. Tail the logs:  tail -f <dir>/feedback.jsonl
+
+
+2) WEB APP  (release = the fast wasm)
+-------------------------------------
+cd /Users/davidteschner/Promotion/rustims/tims-viewer/web
+trunk serve --release
+
+
+3) CLUSTER SERVICE  (optional — sklearn DBSCAN + HDBSCAN; auto-detected by the UI)
+---------------------------------------------------------------------------------
+cd /Users/davidteschner/Promotion/rustims
+python tims-viewer/cluster_service.py --port 8091
+
+
+4) ACQUISITION SIDECAR  (optional, WIP — live annotated playback; auto-detected)
+--------------------------------------------------------------------------------
+# Needs imspy_simulation IN SYNC with the compiled imspy_connector. The base envs are
+# stale; use thesis/.venv (or rebuild: cd imspy_connector && maturin develop).
+# Point it at a prepared synthetic-sim DB (synthetic_data.db), NOT a .d.
+/Users/davidteschner/Promotion/thesis/.venv/bin/python tims-viewer/acquisition_service.py \
+    --db /Users/davidteschner/Promotion/timsim/TIMSIM-DIA/synthetic_data.db --port 8092
+# Big sims (e.g. the 2GB 250K MIDIA blueprints) take minutes to init the eager builder. Use
+# --max-peptides N for a ~seconds startup over a slice (full frame schedule kept; ~2s per 2k peptides):
+#   ... --db .../MIDIA-250K-NOISY-CHRONO-FRAG/synthetic_data.db --port 8092 --max-peptides 5000
+# Status today: the viewer DETECTS it (logs the run meta to the browser console). The
+# play/pause/timeline UI is the next slice — no visible playback yet. Override URL: ?acq=<base>.
+
+
+5) MIDIA VOILA NOTEBOOK  (separate tool — the imspy-vis dashboard, NOT the web viewer)
+-------------------------------------------------------------------------------------
+# An independent Voila app (ipywidgets + plotly) for loading a run, slicing by RT off the
+# TIC, and tuning HDBSCAN on the precursor/MIDIA point clouds. Unrelated to the WebGPU
+# viewer above — listed here only so the launch command lives in one place.
+cd /Users/davidteschner/Promotion/rustims
+voila packages/imspy-vis/notebooks/midia_vis.ipynb
+# Point it at a different run / browse folder (defaults are baked into the notebook):
+#   MIDIA_RUN_PATH=/path/to/run.d MIDIA_BROWSE_DIR=/path/to/folder-of-runs \
+#     voila packages/imspy-vis/notebooks/midia_vis.ipynb
+# First-time setup (same env): pip install voila && pip install -e packages/imspy-vis
+
+
+Notes
+-----
+- Swap the /midia/timsim path for any directory of .d folders (scanned recursively).
+- ?port=8090 tells the web where the point server is. ?cluster=<url> / ?clusterport=N
+  override the cluster service (default http://localhost:8091/cluster).
+- Switching datasets reloads the page with ?dataset=N — a clean re-init.
