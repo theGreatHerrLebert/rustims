@@ -44,6 +44,10 @@ struct LoadResult {
     points: Arc<[u8]>,
     meta: Arc<[u8]>,
     n_points: usize,
+    /// Lazily-populated zstd-compressed `points` (only when `--compress` + a zstd client). The raw
+    /// body is cached; without this the compressed form is re-encoded (level 3 over ~356 MB,
+    /// 0.3–0.9 s) on every request. Encoded once on first compressed request; a race re-encodes once.
+    points_zstd: std::sync::OnceLock<Arc<[u8]>>,
 }
 
 /// Output of a build: the cacheable result plus the intensity reference the full-run build seeds
@@ -438,7 +442,7 @@ fn handle(req: Request, hub: &Hub) -> std::io::Result<()> {
         let (region, budget) = parse_query(&url, &state);
         return match get_or_build(&state, &region, budget) {
             Ok(lr) if want_points => {
-                respond_points(req, lr.points.clone(), hub.compress)
+                respond_points(req, lr.clone(), hub.compress)
             }
             Ok(lr) => respond_bytes(req, lr.meta.clone(), "application/json"),
             Err(e) => req.respond(
@@ -676,6 +680,7 @@ fn build_load_result(
             points: body,
             meta: Arc::from(meta_json.into_bytes().into_boxed_slice()),
             n_points,
+            points_zstd: std::sync::OnceLock::new(),
         },
         i_hist,
         i_p99,
@@ -722,31 +727,45 @@ fn accepts_zstd(req: &Request) -> bool {
 /// `Accept-Encoding: zstd` (the browser then decompresses `Content-Encoding: zstd` transparently — no
 /// client code). When compression is enabled the response carries `Vary: Accept-Encoding` so a shared
 /// cache/proxy can't hand a zstd body to a client that didn't ask. Falls back to raw on encode error.
-fn respond_points(req: Request, body: Arc<[u8]>, compress: bool) -> std::io::Result<()> {
+fn respond_points(req: Request, lr: Arc<LoadResult>, compress: bool) -> std::io::Result<()> {
     if !compress {
-        return respond_bytes(req, body, "application/octet-stream");
+        return respond_bytes(req, lr.points.clone(), "application/octet-stream");
     }
     if accepts_zstd(&req) {
-        match zstd::encode_all(&body[..], 3) {
-            Ok(z) => {
-                let len = z.len();
-                return req.respond(Response::new(
-                    StatusCode(200),
-                    vec![
-                        cors(),
-                        header("Content-Type", "application/octet-stream"),
-                        header("Content-Encoding", "zstd"),
-                        header("Vary", "Accept-Encoding"),
-                    ],
-                    Cursor::new(z),
-                    Some(len),
-                    None,
-                ));
-            }
-            Err(e) => log::warn!("zstd encode failed ({e}); sending raw points"),
+        // Serve (and memoize) the compressed body from the cache — encode at most once per cached
+        // (region,budget) instead of re-zstd'ing ~356 MB on every request.
+        let z = match lr.points_zstd.get() {
+            Some(z) => Some(z.clone()),
+            None => match zstd::encode_all(&lr.points[..], 3) {
+                Ok(v) => {
+                    let z: Arc<[u8]> = Arc::from(v.into_boxed_slice());
+                    let _ = lr.points_zstd.set(z.clone()); // first writer wins; a race re-encodes once
+                    Some(z)
+                }
+                Err(e) => {
+                    log::warn!("zstd encode failed ({e}); sending raw points");
+                    None
+                }
+            },
+        };
+        if let Some(z) = z {
+            let len = z.len();
+            return req.respond(Response::new(
+                StatusCode(200),
+                vec![
+                    cors(),
+                    header("Content-Type", "application/octet-stream"),
+                    header("Content-Encoding", "zstd"),
+                    header("Vary", "Accept-Encoding"),
+                ],
+                Cursor::new(z),
+                Some(len),
+                None,
+            ));
         }
     }
     // Raw, but still Vary — this route negotiates, so caches must key on Accept-Encoding.
+    let body = lr.points.clone();
     let len = body.len();
     req.respond(Response::new(
         StatusCode(200),
@@ -946,6 +965,7 @@ fn empty_result(meta: &MetaIndex, region: &Region4D) -> Built {
             points: Arc::from(Vec::<u8>::new().into_boxed_slice()),
             meta: Arc::from(meta_json.into_bytes().into_boxed_slice()),
             n_points: 0,
+            points_zstd: std::sync::OnceLock::new(),
         },
         i_hist: vec![0u32; I_HIST_BINS],
         i_p99: 1.0,
