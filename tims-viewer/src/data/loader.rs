@@ -172,12 +172,18 @@ const LOGI_FINE: usize = 256;
 /// Upper bound of the fixed intensity log range (log10), generous for timsTOF intensities.
 const LOGI_HI: f32 = 8.0;
 
-/// Bin a normalized-cube coordinate in `[-1, 1]` into `[0, HIST_BINS)`. Equal-width cells: scale by
-/// the bin count and clamp, so every bin covers `1/N` of the range (vs `*(N-1)`, which leaves the
-/// last bin degenerate — only exactly `1.0` — and misaligns the strips/maps from UI fractions).
+/// Bin a normalized-cube coordinate in `[-1, 1]` into `[0, bins)`. Equal-width cells: scale by the
+/// bin count and clamp, so every bin covers `1/N` of the range (vs `*(N-1)`, which leaves the last
+/// bin degenerate — only exactly `1.0` — and misaligns the strips/maps from UI fractions). The one
+/// place this cube→bin-index convention lives; shared by hbin/pbin/peak_cell.
+#[inline]
+fn bin(n: f32, bins: usize) -> usize {
+    (((n * 0.5 + 0.5).clamp(0.0, 1.0) * bins as f32) as usize).min(bins.saturating_sub(1))
+}
+
 #[inline]
 fn hbin(n: f32) -> usize {
-    ((((n * 0.5 + 0.5).clamp(0.0, 1.0)) * HIST_BINS as f32) as usize).min(HIST_BINS - 1)
+    bin(n, HIST_BINS)
 }
 
 /// Side length of each 2D projection minimap (m/z·1/K0·RT plane heatmaps).
@@ -185,15 +191,13 @@ pub const PROJ_BINS: usize = 96;
 /// Bin a normalized-cube coordinate in `[-1, 1]` into `[0, PROJ_BINS)` (equal-width cells).
 #[inline]
 fn pbin(n: f32) -> usize {
-    ((((n * 0.5 + 0.5).clamp(0.0, 1.0)) * PROJ_BINS as f32) as usize).min(PROJ_BINS - 1)
+    bin(n, PROJ_BINS)
 }
 
 /// Map a normalized-cube position to a coarse peak-grid cell index.
 #[inline]
 fn peak_cell(pos: [f32; 3]) -> u32 {
-    let axis = |n: f32, dim: u32| -> u32 {
-        (((n * 0.5 + 0.5).clamp(0.0, 1.0) * dim as f32) as u32).min(dim - 1)
-    };
+    let axis = |n: f32, dim: u32| -> u32 { bin(n, dim as usize) as u32 };
     let x = axis(pos[0], PEAK_DIMS[0]);
     let y = axis(pos[1], PEAK_DIMS[1]);
     let z = axis(pos[2], PEAK_DIMS[2]);

@@ -797,10 +797,7 @@ fn collect(
                     if points.len() < capacity {
                         points.push(p);
                     } else {
-                        rng ^= rng << 13;
-                        rng ^= rng >> 7;
-                        rng ^= rng << 17;
-                        let j = (rng % seen) as usize;
+                        let j = (xorshift64(&mut rng) % seen) as usize;
                         if j < capacity {
                             points[j] = p;
                         }
@@ -890,18 +887,22 @@ fn intensity_percentiles(points: &[GpuPoint]) -> (f32, f32, f32) {
     (pct(0.01), pct(0.50), pct(0.99))
 }
 
-/// In-place Fisher-Yates shuffle with a seeded xorshift64 (deterministic, no `rand` dependency).
-/// Decorrelates the loader's RT-ordered emission so a prefix of the array is a uniform subsample.
+/// One step of a xorshift64 PRNG (deterministic, no `rand` dependency). Shared by the reservoir
+/// sampler in `collect` and the Fisher-Yates shuffle below.
+#[inline]
+fn xorshift64(state: &mut u64) -> u64 {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    *state
+}
+
+/// In-place Fisher-Yates shuffle with a seeded xorshift64. Decorrelates the loader's RT-ordered
+/// emission so a prefix of the array is a uniform subsample.
 fn shuffle_points(points: &mut [GpuPoint]) {
     let mut s: u64 = 0x9E37_79B9_7F4A_7C15;
-    let mut next = || {
-        s ^= s << 13;
-        s ^= s >> 7;
-        s ^= s << 17;
-        s
-    };
     for i in (1..points.len()).rev() {
-        points.swap(i, (next() % (i as u64 + 1)) as usize);
+        points.swap(i, (xorshift64(&mut s) % (i as u64 + 1)) as usize);
     }
 }
 
