@@ -642,8 +642,11 @@ fn build_load_result(
     let (i_p1, i_p50, i_p99) = stats.unwrap_or_else(|| intensity_percentiles(&points));
     let i_hist = intensity_linear_hist(&points, i_p99);
 
-    let body: Arc<[u8]> =
-        Arc::from(bytemuck::cast_slice::<GpuPoint, u8>(&points).to_vec().into_boxed_slice());
+    // One copy into the Arc allocation, not two: `Arc::from(&[u8])` copies the byte view directly,
+    // vs the old `.to_vec().into_boxed_slice()` which memcpy'd the whole 356 MB into a Vec first and
+    // then again into the Arc. (Can't reinterpret the Vec<GpuPoint> allocation as Vec<u8> in place —
+    // bytemuck::cast_vec requires equal alignment, and GpuPoint is align-4.)
+    let body: Arc<[u8]> = Arc::from(bytemuck::cast_slice::<GpuPoint, u8>(&points));
     drop(points);
 
     // Cycle duration: the run-level mean RT gap between consecutive MS1 (precursor) frames. The web
