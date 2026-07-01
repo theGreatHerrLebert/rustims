@@ -1382,7 +1382,16 @@ async fn acq_prefetch(gfx: Rc<RefCell<Gfx>>, start: u32, count: u32, meta: AcqMe
                 g.acq_buffer.extend(frames);
             }
         }
-        Err(e) => log::warn!("acq batch [{start},{}) failed: {e}", start + count),
+        Err(e) => {
+            log::warn!("acq batch [{start},{}) failed: {e}", start + count);
+            // Roll the fetch frontier back so this batch is RETRIED next tick instead of leaving a
+            // permanent hole in the played stream. Only when we're still the current frontier (no
+            // newer advance/reset owns it). A transient sidecar hiccup self-heals; a dead sidecar
+            // stalls visibly rather than silently skipping frames.
+            if g.acq_fetch_next == start + count {
+                g.acq_fetch_next = start;
+            }
+        }
     }
 }
 
@@ -1569,6 +1578,13 @@ async fn fetch_cluster(svc: &str, flat: &[f32], query: &str) -> Result<Vec<i32>,
     let opts = web_sys::RequestInit::new();
     opts.set_method("POST");
     opts.set_body(&arr.buffer());
+    // Abort after 30s so a hung/half-open cluster service can't pin the Run button forever (the user
+    // can still Stop sooner). Generous enough for a legitimate sklearn run over the capped point set.
+    if let Ok(controller) = web_sys::AbortController::new() {
+        opts.set_signal(Some(&controller.signal()));
+        let cb = wasm_bindgen::closure::Closure::once_into_js(move || controller.abort());
+        let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(cb.unchecked_ref(), 30000);
+    }
     let url = with_query(svc, query);
     let resp_val = wasm_bindgen_futures::JsFuture::from(window.fetch_with_str_and_init(&url, &opts))
         .await
@@ -2897,7 +2913,13 @@ fn create_cluster_worker(gfx: &Rc<RefCell<Gfx>>) -> Option<web_sys::Worker> {
             if !job_matches(&gfx_msg.borrow()) {
                 return; // no pending / superseded job — drop this reply
             }
-            if let Some((idx, gen, _)) = gfx_msg.borrow_mut().cluster_pending.take() {
+            // Take the pending job in its OWN statement so the borrow_mut RefMut is dropped before
+            // finish_clustering (which re-borrows mutably). In edition 2021 an `if let` scrutinee
+            // temporary lives to the end of the body, so borrowing inline here would double-borrow
+            // and panic on every worker completion (the Python path drops its borrow for the same
+            // reason).
+            let pending = gfx_msg.borrow_mut().cluster_pending.take();
+            if let Some((idx, gen, _)) = pending {
                 if labels.len() != idx.len() {
                     return; // malformed reply — never index past the survivor set
                 }
@@ -4152,18 +4174,8 @@ fn wire_controls(gfx: &Rc<RefCell<Gfx>>) {
         g.filter_dirty = true;
         invalidate_clusters_mut(g);
     });
-    // The volume bakes the floor in at deposit time, so it must re-voxel to reflect a floor change.
-    // Do that only on slider RELEASE / number commit (the "change" event), not on every continuous
-    // "input" tick — otherwise dragging the floor in Volume mode re-deposits the whole cloud per
-    // frame. The point cloud still tracks the floor live via the input handler above.
-    for id in ["floor", "floor-n"] {
-        if let Some(el) = by_id::<web_sys::HtmlInputElement>(id) {
-            let gfx = gfx.clone();
-            add_listener(el.as_ref(), "change", move |_e: web_sys::Event| {
-                gfx.borrow_mut().vol_needs_grid = true;
-            });
-        }
-    }
+    // (The volume re-voxel on floor RELEASE is wired where the volume controls are bound — a "change"
+    // listener on floor/floor-n, gated on Volume mode. No duplicate handler here.)
 
     // Filters
     on_toggle("ms-1", gfx, |g, on| if on { g.params.ms_mask = 0b01; g.filter_dirty = true; g.vol_needs_grid = true; invalidate_clusters_mut(g); });
