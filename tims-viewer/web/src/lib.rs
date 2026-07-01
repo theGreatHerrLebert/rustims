@@ -275,10 +275,14 @@ fn submit_feedback() {
 /// called `(visited, total)` ~every 1% so the worker can post progress back to the main thread.
 #[wasm_bindgen]
 pub fn cluster_dbscan_flat(flat: &[f32], min_pts: usize, eps: f32, progress: &JsValue) -> Vec<i32> {
-    let pts: Vec<[f32; 3]> = flat.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    // Reinterpret the flat xyz buffer as [f32;3] triples with no copy ([f32;3] and f32 share align 4).
+    // Truncate any trailing partial triple first — matches the old chunks_exact drop-remainder
+    // behavior and avoids a cast_slice length panic on malformed input.
+    let n = flat.len() - flat.len() % 3;
+    let pts: &[[f32; 3]] = bytemuck::cast_slice(&flat[..n]);
     let total = pts.len() as f64;
     let cb = progress.dyn_ref::<js_sys::Function>();
-    dbscan_with_progress(&pts, eps, min_pts, |visited| {
+    dbscan_with_progress(pts, eps, min_pts, |visited| {
         if let Some(f) = cb {
             let _ =
                 f.call2(&JsValue::NULL, &JsValue::from_f64(visited as f64), &JsValue::from_f64(total));
@@ -2796,8 +2800,8 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         let g = gfx.borrow();
         let p = &g.params;
         let (fmin, fmax, ms) = (p.filter_min, p.filter_max, p.ms_mask);
-        let mut idx: Vec<usize> = Vec::new();
-        let mut positions: Vec<[f32; 3]> = Vec::new();
+        let mut idx: Vec<usize> = Vec::with_capacity(g.cpu_points.len());
+        let mut positions: Vec<[f32; 3]> = Vec::with_capacity(g.cpu_points.len());
         for (i, pt) in g.cpu_points.iter().enumerate() {
             let pos = pt.pos;
             if pos[0] < fmin[0]
@@ -2879,7 +2883,6 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
     // POST the scaled points to the service and colour by its labels. Else the wasm path below.
     if gfx.borrow().use_python_cluster {
         let svc = cluster_service_url();
-        let flat: Vec<f32> = positions.iter().flatten().copied().collect();
         let (job, query) = {
             let mut g = gfx.borrow_mut();
             g.next_cluster_job = g.next_cluster_job.wrapping_add(1);
@@ -2897,7 +2900,9 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
         show_status("clustering (python)…");
         let gfx2 = gfx.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            let result = fetch_cluster(&svc, &flat, &query).await;
+            // Reinterpret the [f32;3] positions as a flat f32 slice with no intermediate copy
+            // (fetch_cluster's Float32Array::from does the one unavoidable copy into JS).
+            let result = fetch_cluster(&svc, bytemuck::cast_slice(&positions), &query).await;
             // Only consume the reply if it's still THIS job — a Stop / invalidate / newer Run
             // supersedes it (the un-aborted fetch would otherwise steal the new pending job).
             let mut g = gfx2.borrow_mut();
@@ -2932,13 +2937,15 @@ fn run_clustering(gfx: &Rc<RefCell<Gfx>>) {
     // move.
     if idx.len() > WORKER_THRESHOLD {
         if let Some(worker) = ensure_cluster_worker(gfx) {
-            let flat: Vec<f32> = positions.iter().flatten().copied().collect();
+            // Zero-copy view of the positions as a flat f32 slice (post_cluster_job's
+            // Float32Array::from does the one copy into JS).
+            let flat: &[f32] = bytemuck::cast_slice(&positions);
             let job = {
                 let mut g = gfx.borrow_mut();
                 g.next_cluster_job = g.next_cluster_job.wrapping_add(1);
                 g.next_cluster_job
             };
-            if post_cluster_job(&worker, &flat, eps, min_pts, job) {
+            if post_cluster_job(&worker, flat, eps, min_pts, job) {
                 gfx.borrow_mut().cluster_pending = Some((idx, gen, job));
                 set_cluster_progress(Some(0.0)); // worker reports ticks back; bar advances live
                 set_cluster_running(true); // button becomes "Stop clustering"

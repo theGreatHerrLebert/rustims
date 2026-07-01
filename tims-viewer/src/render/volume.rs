@@ -126,10 +126,17 @@ impl VolumeGrid {
         if nz.is_empty() {
             return (1.0, 2.0);
         }
-        nz.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        let pct = |q: f32| nz[(((nz.len() - 1) as f32) * q) as usize];
-        let lo = pct(0.50).max(1e-6); // median: voxels below it are sparse fringe
-        let hi = pct(0.999).max(lo * 1.0001);
+        // Two order statistics (median, p99.9) via partial select (O(n)) instead of a full sort of
+        // up to ~6.3M voxels on every re-voxel. select_nth places the k-th smallest at index k, so
+        // nz[k] equals the sorted value — same result as before. Indices are < len (empty handled).
+        let cmp = |a: &f32, b: &f32| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal);
+        let lo_i = (((nz.len() - 1) as f32) * 0.50) as usize;
+        let hi_i = (((nz.len() - 1) as f32) * 0.999) as usize;
+        nz.select_nth_unstable_by(hi_i, cmp);
+        let hi_raw = nz[hi_i];
+        nz.select_nth_unstable_by(lo_i, cmp); // reorders, but hi_raw is already read
+        let lo = nz[lo_i].max(1e-6); // median: voxels below it are sparse fringe
+        let hi = hi_raw.max(lo * 1.0001);
         (lo, hi)
     }
 
