@@ -41,7 +41,7 @@ pub enum LoadMsg {
     /// Fractional load progress in `[0, 1]`.
     Progress(f32),
     /// Robust intensity percentiles (p1/p50/p99) for transfer-function defaults.
-    Stats { i_min: f32, i_max: f32, i_med: f32 },
+    Stats { i_p1: f32, i_p99: f32, i_p50: f32 },
     /// Per-axis distribution histograms (each `HIST_BINS` long) for the levels-style filter
     /// UI. m/z·1/K0·RT bin linearly over the cube bounds; `intensity` is data-tight log,
     /// spanning `[i_lo, i_hi]` (the kept sample's min/max intensity).
@@ -482,10 +482,10 @@ fn run_loader(
             let i = ((reservoir.len() as f32 - 1.0) * q).round() as usize;
             reservoir[i.min(reservoir.len() - 1)]
         };
-        let i_min = p(0.01).max(1.0);
-        let i_med = p(0.50).max(i_min);
-        let i_max = p(0.99).max(i_med * 1.0001);
-        send_cancellable!(LoadMsg::Stats { i_min, i_max, i_med });
+        let i_p1 = p(0.01).max(1.0);
+        let i_p50 = p(0.50).max(i_p1);
+        let i_p99 = p(0.99).max(i_p50 * 1.0001);
+        send_cancellable!(LoadMsg::Stats { i_p1, i_p99, i_p50 });
     }
 
     // Rebin the fine fixed-range intensity histogram into the data's actual log range so the
@@ -804,9 +804,9 @@ mod tests {
                     }
                     points += p.len();
                 }
-                Ok(LoadMsg::Stats { i_min, i_max, i_med }) => {
-                    assert!(i_min > 0.0 && i_max > i_min);
-                    assert!(i_med >= i_min && i_med <= i_max);
+                Ok(LoadMsg::Stats { i_p1, i_p99, i_p50 }) => {
+                    assert!(i_p1 > 0.0 && i_p99 > i_p1);
+                    assert!(i_p50 >= i_p1 && i_p50 <= i_p99);
                     saw_stats = true;
                 }
                 // The only non-panic exit: reaching past the loop proves Done arrived.

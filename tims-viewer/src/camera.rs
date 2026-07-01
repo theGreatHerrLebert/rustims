@@ -89,20 +89,23 @@ impl OrbitCamera {
     pub fn set_axis_view(&mut self, axis: AxisView) {
         self.target = Vec3::ZERO;
         self.distance = 4.0;
-        match axis {
-            AxisView::Mz => {
-                self.yaw = std::f32::consts::FRAC_PI_2;
-                self.pitch = 0.0;
-            }
-            AxisView::Mobility => {
-                self.yaw = 0.0;
-                self.pitch = PITCH_LIMIT;
-            }
-            AxisView::Rt => {
-                self.yaw = 0.0;
-                self.pitch = 0.0;
-            }
-        }
+        // `perm()` maps DATA axes onto WORLD axes under the current roll (m/z→[X,Y,Z], 1/K0→[Y,Z,X],
+        // RT→[Z,X,Y] for roll 0/1/2). The camera yaw/pitch are world-space, so snap to look down the
+        // WORLD axis the requested data axis currently occupies — otherwise, after "Roll up", the m/z
+        // button would look down whatever data axis happens to sit on world-X. roll 0 reduces to the
+        // identity mapping (Mz→X, Mobility→Y, Rt→Z), i.e. the original behavior, unchanged.
+        let world_axis = match (axis, self.roll % 3) {
+            (AxisView::Mz, 0) | (AxisView::Mobility, 2) | (AxisView::Rt, 1) => 0u8, // world X
+            (AxisView::Mz, 1) | (AxisView::Mobility, 0) | (AxisView::Rt, 2) => 1u8, // world Y (up)
+            _ => 2u8,                                                               // world Z
+        };
+        let (yaw, pitch) = match world_axis {
+            0 => (std::f32::consts::FRAC_PI_2, 0.0),
+            1 => (0.0, PITCH_LIMIT),
+            _ => (0.0, 0.0),
+        };
+        self.yaw = yaw;
+        self.pitch = pitch;
     }
 
     fn eye(&self) -> Vec3 {

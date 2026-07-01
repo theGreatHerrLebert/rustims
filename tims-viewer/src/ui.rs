@@ -124,10 +124,13 @@ fn filters_section(ui: &mut egui::Ui, state: &mut AppState) {
             ui.separator();
             ui.label("Windows (distribution + range)");
             let (rb, mb, ib) = (state.bounds.rt, state.bounds.mz, state.bounds.im);
-            hist_filter(ui, "RT (s)", &mut state.rt_window, rb.min, rb.max, &state.hist_rt, false);
-            hist_filter(ui, "m/z (Th)", &mut state.mz_window, mb.min, mb.max, &state.hist_mz, false);
-            hist_filter(ui, "1/K0", &mut state.im_window, ib.min, ib.max, &state.hist_im, false);
+            hist_filter(ui, "RT (s)", &mut state.rt_window, rb.min, rb.max, &state.hist_rt, false, true);
+            hist_filter(ui, "m/z (Th)", &mut state.mz_window, mb.min, mb.max, &state.hist_mz, false, true);
+            hist_filter(ui, "1/K0", &mut state.im_window, ib.min, ib.max, &state.hist_im, false, true);
             let (idlo, idhi) = (state.i_data_lo as f64, state.i_data_hi as f64);
+            // Intensity range is a placeholder (i_data_hi = 1e6) until the loader's Stats land
+            // (i_p99 > 0) — only then are the window clamps safe to apply.
+            let intensity_known = state.i_p99 > 0.0;
             hist_filter(
                 ui,
                 "intensity (log)",
@@ -136,6 +139,7 @@ fn filters_section(ui: &mut egui::Ui, state: &mut AppState) {
                 idhi,
                 &state.hist_intensity,
                 true,
+                intensity_known,
             );
             ui.checkbox(&mut state.focus, "Focus to window (zoom in)");
             if ui.button("Reset windows").clicked() {
@@ -740,6 +744,7 @@ fn hist_filter(
     hi: f64,
     hist: &[u32],
     log: bool,
+    known: bool,
 ) {
     ui.label(label);
     if !hist.is_empty() && hi > lo {
@@ -778,6 +783,10 @@ fn hist_filter(
             painter.rect_filled(bar, egui::Rounding::ZERO, color);
         }
     }
+    // Snapshot before the sliders so we can undo the slider's range-clamp while the range is only a
+    // placeholder (stats not yet in): otherwise the pass-all sentinel window (max = ∞) gets pinned to
+    // the placeholder `hi` and transiently culls the brightest points until the real range lands.
+    let saved = (win.min, win.max);
     let mut smin = egui::Slider::new(&mut win.min, lo..=hi).text("min");
     let mut smax = egui::Slider::new(&mut win.max, lo..=hi).text("max");
     if log {
@@ -786,14 +795,19 @@ fn hist_filter(
     }
     ui.add(smin);
     ui.add(smax);
-    // Keep the range ordered AND non-degenerate: a zero-width window would collapse the
-    // focus (zoom-to-window) remap onto a single line via the shader's 1e-6 halfspan clamp.
-    let eps = (hi - lo) * 1e-3;
-    win.min = win.min.clamp(lo, hi - eps);
-    if win.max < win.min + eps {
-        win.max = win.min + eps;
+    if known {
+        // Keep the range ordered AND non-degenerate: a zero-width window would collapse the
+        // focus (zoom-to-window) remap onto a single line via the shader's 1e-6 halfspan clamp.
+        let eps = (hi - lo) * 1e-3;
+        win.min = win.min.clamp(lo, hi - eps);
+        if win.max < win.min + eps {
+            win.max = win.min + eps;
+        }
+        win.max = win.max.min(hi);
+    } else {
+        win.min = saved.0;
+        win.max = saved.1;
     }
-    win.max = win.max.min(hi);
 }
 
 fn fmt_count(n: u64) -> String {

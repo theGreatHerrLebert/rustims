@@ -76,8 +76,17 @@ fn cs_main(@builtin(global_invocation_id) gid : vec3<u32>) {
         return;
     }
 
-    // Frustum cull (with a margin so splats near the edge aren't clipped early).
-    let clip = cam.view_proj * vec4<f32>(p.pos, 1.0);
+    // Frustum cull (with a margin so splats near the edge aren't clipped early). Cull against the
+    // SAME position the draw shader renders: when "focus to window" is on it refits points into the
+    // focus box, so a point can be on-screen after the refit while its raw pos is outside the frustum.
+    // Culling raw pos here would silently drop those visible points before the draw pass.
+    var fpos = p.pos;
+    if (params.focus > 0.5) {
+        let center = (params.filter_min.xyz + params.filter_max.xyz) * 0.5;
+        let halfspan = max((params.filter_max.xyz - params.filter_min.xyz) * 0.5, vec3<f32>(1e-6));
+        fpos = (p.pos - center) / halfspan;
+    }
+    let clip = cam.view_proj * vec4<f32>(fpos, 1.0);
     if (clip.w <= 0.0) {
         return;
     }

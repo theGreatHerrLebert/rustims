@@ -212,7 +212,9 @@ impl Hub {
 /// Resolve the `State` for dataset `id`, building (and caching, LRU-evicting) it on first request.
 /// The build runs outside the lock so a multi-second load can't block other datasets' requests.
 fn get_or_build_state(hub: &Hub, id: usize) -> Result<Arc<State>> {
-    if let Some(s) = hub.states.lock().unwrap().get(id) {
+    // Poison-safe throughout (like the cache lock in get_or_build): a build that panics on a corrupt
+    // `.d` must not poison these mutexes and take every later request for this — or any — dataset down.
+    if let Some(s) = hub.states.lock().unwrap_or_else(|p| p.into_inner()).get(id) {
         return Ok(s);
     }
     // Single-flight per dataset: hold this id's build lock so concurrent first-touches (a switch's
@@ -220,17 +222,23 @@ fn get_or_build_state(hub: &Hub, id: usize) -> Result<Arc<State>> {
     let build_lock = hub
         .build_locks
         .lock()
-        .unwrap()
+        .unwrap_or_else(|p| p.into_inner())
         .entry(id)
         .or_default()
         .clone();
-    let _guard = build_lock.lock().unwrap();
+    let _guard = build_lock.lock().unwrap_or_else(|p| p.into_inner());
     // Re-check: another thread may have built it while we waited on the build lock.
-    if let Some(s) = hub.states.lock().unwrap().get(id) {
+    if let Some(s) = hub.states.lock().unwrap_or_else(|p| p.into_inner()).get(id) {
         return Ok(s);
     }
-    let state = Arc::new(build_state(hub.plan_for(id)?)?);
-    hub.states.lock().unwrap().insert(id, state.clone());
+    let plan = hub.plan_for(id)?;
+    // Contain a build panic (malformed run → rustdf/loader/bytemuck can panic) as an error instead
+    // of unwinding through the held build_lock (which would poison it and cascade the worker pool
+    // down). Catching here also lets the guard drop cleanly, leaving the lock usable for a retry.
+    let state = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| build_state(plan)))
+        .map_err(|_| anyhow::anyhow!("dataset {id} build panicked (corrupt or unreadable data)"))??;
+    let state = Arc::new(state);
+    hub.states.lock().unwrap_or_else(|p| p.into_inner()).insert(id, state.clone());
     Ok(state)
 }
 
@@ -466,7 +474,8 @@ fn parse_query(url: &str, state: &State) -> (Region4D, usize) {
     // two distinct requests round to the same key but expect different results).
     r = snap_region(r);
     // Cap the budget to the server pool (also guards the downstream `budget * 85` from overflow).
-    (r, budget.clamp(1, state.default_budget))
+    // `.max(1)` on the ceiling so a `--budget 0` misconfig can't make clamp(1, 0) panic (min > max).
+    (r, budget.clamp(1, state.default_budget.max(1)))
 }
 
 /// Round a region onto the same grid the cache key quantizes to, so key and bounds stay consistent.
@@ -798,7 +807,7 @@ fn collect(
                     }
                 }
             }
-            Ok(LoadMsg::Stats { i_min, i_max, i_med }) => stats = Some((i_min, i_med, i_max)),
+            Ok(LoadMsg::Stats { i_p1, i_p99, i_p50 }) => stats = Some((i_p1, i_p50, i_p99)),
             Ok(LoadMsg::Histograms {
                 mz, im, rt, proj_mz_im, proj_mz_rt, proj_im_rt, ..
             }) => {

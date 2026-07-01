@@ -585,12 +585,12 @@ impl Gfx {
                     }
                 }
                 Ok(LoadMsg::Progress(p)) => self.state.load_progress = p,
-                Ok(LoadMsg::Stats { i_min, i_max, i_med }) => {
+                Ok(LoadMsg::Stats { i_p1, i_p99, i_p50 }) => {
                     // Stash the raw, mode-independent percentiles so any later mode switch
                     // or Auto button can re-run the heuristic from scratch.
-                    self.state.i_p1 = i_min;
-                    self.state.i_med = i_med;
-                    self.state.i_p99 = i_max;
+                    self.state.i_p1 = i_p1;
+                    self.state.i_med = i_p50;
+                    self.state.i_p99 = i_p99;
                     // Auto-expose the point cloud the moment the range is known (the cloud
                     // snaps legible without slider tweaks). Volume re-ranges on Done.
                     if self.state.view_mode == ViewMode::Points && self.state.may_auto_transfer()
