@@ -14,6 +14,10 @@ cargo build -p tims-viewer --release
 ./target/release/tims-viewer /Users/davidteschner/Promotion/midia/timsim --serve 8090 --budget 12000000
 # Over a network, add --compress: zstd-compresses /points when the browser supports it (~2.6x,
 # 356MB -> 138MB; transparent client-side decode). Leave it off for localhost (raw is faster).
+# PROD deploy: add --telemetry-dir <dir> to enable optional in-app error telemetry + a user
+# feedback widget, appended as JSONL to <dir>/telemetry.jsonl and <dir>/feedback.jsonl (kept
+# in-house, no external SaaS). Omit it for local dev — endpoints stay off, the frontend hides the
+# feedback button and sends nothing. Tail the logs:  tail -f <dir>/feedback.jsonl
 
 
 2) WEB APP  (release = the fast wasm)
