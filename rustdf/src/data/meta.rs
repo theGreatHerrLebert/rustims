@@ -82,11 +82,31 @@ pub struct MzCalibration {
     pub digitizer_delay: f64,
     pub t1: f64,
     pub t2: f64,
+    pub dc1: f64,
+    pub dc2: f64,
     pub c0: f64,
     pub c1: f64,
     pub c2: f64,
     pub c3: f64,
     pub c4: f64,
+}
+
+/// Ion-mobility (1/K0) calibration data from the `TimsCalibration` table.
+/// Coefficients feed the SDK-free scan <-> 1/K0 conversion (ModelType 2).
+#[derive(Debug, Clone)]
+pub struct TimsCalibration {
+    pub id: i64,
+    pub model_type: i64,
+    pub c0: f64,
+    pub c1: f64,
+    pub c2: f64,
+    pub c3: f64,
+    pub c4: f64,
+    pub c5: f64,
+    pub c6: f64,
+    pub c7: f64,
+    pub c8: f64,
+    pub c9: f64,
 }
 
 #[derive(Debug)]
@@ -415,12 +435,15 @@ pub fn read_dia_ms_ms_windows(
 /// This provides the coefficients needed for accurate TOF to m/z conversion
 /// without requiring the Bruker SDK.
 ///
-/// The calibration formula is:
-///   tof_time = (tof_index + 0.5) * digitizer_timebase + digitizer_delay
-///   sqrt(mz) = c0 + c1*tof_time + c2*tof_time^2 + ...
+/// The calibration curve expresses flight time as a function of mass:
+///   tof_time = tof_index * digitizer_timebase + digitizer_delay
+///   tof_time = c0 + b*sqrt(m) + c2*m + c3*m^1.5,   b = sqrt(1e12 / c1)
+/// inverted to give m/z from a TOF index (see `data::calibration::MzCalibrator`).
 ///
-/// For model_type 2 (most common), the formula simplifies to:
-///   sqrt(mz) = (tof_time - c1) / c0
+/// For model_type 2 (modern instruments) the base curve reduces to
+///   sqrt(mz) = (tof_time - c0) / sqrt(1e12 / c1)
+/// (c2/c3 are NOT curve terms in model 2). This base is accurate to ~10 ppm; the
+/// remaining error is a proprietary degree-6 correction polynomial in c8..c14.
 pub fn read_mz_calibration(
     bruker_d_folder_name: &str,
 ) -> Result<Vec<MzCalibration>, Box<dyn std::error::Error>> {
@@ -428,7 +451,7 @@ pub fn read_mz_calibration(
     let conn = Connection::open(db_path)?;
 
     // Query MzCalibration table
-    let query = "SELECT Id, ModelType, DigitizerTimebase, DigitizerDelay, T1, T2, C0, C1, C2, C3, C4 FROM MzCalibration";
+    let query = "SELECT Id, ModelType, DigitizerTimebase, DigitizerDelay, T1, T2, dC1, dC2, C0, C1, C2, C3, C4 FROM MzCalibration";
 
     let calibrations: Result<Vec<MzCalibration>, _> = conn
         .prepare(query)?
@@ -440,11 +463,47 @@ pub fn read_mz_calibration(
                 digitizer_delay: row.get(3)?,
                 t1: row.get(4)?,
                 t2: row.get(5)?,
-                c0: row.get(6)?,
-                c1: row.get(7)?,
-                c2: row.get(8)?,
-                c3: row.get(9)?,
-                c4: row.get(10)?,
+                dc1: row.get(6)?,
+                dc2: row.get(7)?,
+                c0: row.get(8)?,
+                c1: row.get(9)?,
+                c2: row.get(10)?,
+                c3: row.get(11)?,
+                c4: row.get(12)?,
+            })
+        })?
+        .collect();
+
+    Ok(calibrations?)
+}
+
+/// Read ion-mobility calibration data from the `TimsCalibration` table.
+/// Provides the C0..C9 coefficients for SDK-free scan <-> 1/K0 conversion.
+pub fn read_tims_calibration(
+    bruker_d_folder_name: &str,
+) -> Result<Vec<TimsCalibration>, Box<dyn std::error::Error>> {
+    let db_path = Path::new(bruker_d_folder_name).join("analysis.tdf");
+    let conn = Connection::open(db_path)?;
+
+    let query =
+        "SELECT Id, ModelType, C0, C1, C2, C3, C4, C5, C6, C7, C8, C9 FROM TimsCalibration";
+
+    let calibrations: Result<Vec<TimsCalibration>, _> = conn
+        .prepare(query)?
+        .query_map([], |row| {
+            Ok(TimsCalibration {
+                id: row.get(0)?,
+                model_type: row.get(1)?,
+                c0: row.get(2)?,
+                c1: row.get(3)?,
+                c2: row.get(4)?,
+                c3: row.get(5)?,
+                c4: row.get(6)?,
+                c5: row.get(7)?,
+                c6: row.get(8)?,
+                c7: row.get(9)?,
+                c8: row.get(10)?,
+                c9: row.get(11)?,
             })
         })?
         .collect();

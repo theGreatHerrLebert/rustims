@@ -1,4 +1,5 @@
 pub mod acquisition;
+pub mod calibration;
 pub mod dataset;
 pub mod dda;
 pub mod dia;
