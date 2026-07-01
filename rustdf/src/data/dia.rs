@@ -486,6 +486,44 @@ impl TimsDatasetDIA {
         }
     }
 
+    /// Create a DIA dataset using the exact SDK-free Bruker calibration formulas.
+    ///
+    /// See [`crate::data::calibration`]: reads the `MzCalibration` /
+    /// `TimsCalibration` tables and needs no Bruker SDK at build or runtime.
+    /// 1/K0 is machine-exact; m/z is bit-exact for MzCalibration ModelType 1 and
+    /// accurate to a few ppm for ModelType 2.
+    pub fn new_with_bruker_formula(
+        data_path: &str,
+        in_memory: bool,
+        calibration_frame_id: u32,
+    ) -> Self {
+        let meta_data = read_meta_data_sql(data_path).unwrap();
+        let global_meta_data = read_global_meta_sql(data_path).unwrap();
+        let dia_ms_mis_info = read_dia_ms_ms_info(data_path).unwrap();
+        let dia_ms_ms_windows = read_dia_ms_ms_windows(data_path).unwrap();
+
+        let loader = match in_memory {
+            true => TimsDataLoader::new_in_memory_with_bruker_formula(
+                data_path,
+                calibration_frame_id,
+            ),
+            false => {
+                TimsDataLoader::new_lazy_with_bruker_formula(data_path, calibration_frame_id)
+            }
+        };
+
+        let dia_index = DiaIndex::new(&meta_data, &dia_ms_mis_info, &dia_ms_ms_windows);
+
+        TimsDatasetDIA {
+            loader,
+            global_meta_data,
+            meta_data,
+            dia_ms_ms_info: dia_ms_mis_info,
+            dia_ms_ms_windows,
+            dia_index,
+        }
+    }
+
     /// Create a DIA dataset with regression-derived m/z calibration.
     ///
     /// This method uses externally-provided m/z calibration coefficients (e.g., from

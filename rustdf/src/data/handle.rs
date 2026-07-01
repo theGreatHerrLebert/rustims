@@ -363,11 +363,119 @@ impl IndexConverter for BrukerLibTimsDataConverter {
     }
 }
 
+/// SDK-free converter using the exact Bruker calibration formulas.
+///
+/// Reads the `MzCalibration` and `TimsCalibration` tables from analysis.tdf and
+/// evaluates the published calibration curves directly (see
+/// [`crate::data::calibration`]). Verified against the Bruker SDK:
+///   * scan <-> 1/K0 : machine-precision exact (ModelType 2).
+///   * TOF  <-> m/z  : bit-exact for MzCalibration ModelType 1; ModelType 2 uses
+///     the same C0/C1/C2 quadratic-in-sqrt(m) curve and reproduces the SDK to a
+///     few ppm (the proprietary ModelType-2 C8..C14 fine correction is not
+///     modelled).
+///
+/// This is a **fixed-calibration** converter: it captures one frame's
+/// calibration rows + temperatures at build time and applies them to every
+/// frame, ignoring the per-call `frame_id` (like the other SDK-free converters
+/// `Simple`/`Calibrated`/`Lookup`). Valid because the coefficients are
+/// effectively constant across a run; use the SDK-backed `BrukerLib` converter
+/// if a run genuinely carries multiple calibration rows.
+pub struct BrukerFormulaConverter {
+    pub mz: crate::data::calibration::MzCalibrator,
+    pub im: crate::data::calibration::MobilityCalibrator,
+    pub mz_model_type: i64,
+}
+
+impl BrukerFormulaConverter {
+    /// Build the converter from a `.d` folder, using `frame_id`'s calibration
+    /// row and per-frame temperatures (coefficients are near-constant per run).
+    pub fn from_d_folder(
+        data_path: &str,
+        frame_id: u32,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        use crate::data::calibration::{MobilityCalibrator, MzCalibrator};
+        use crate::data::meta::{read_mz_calibration, read_tims_calibration};
+
+        let tdf = PathBuf::from(data_path).join("analysis.tdf");
+        let con = rusqlite::Connection::open(&tdf)?;
+        let (t1, t2, mz_id, tims_id): (f64, f64, i64, i64) = con.query_row(
+            "SELECT T1, T2, MzCalibration, TimsCalibration FROM Frames WHERE Id = ?1",
+            [frame_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+
+        let mzc = read_mz_calibration(data_path)?
+            .into_iter()
+            .find(|c| c.id == mz_id)
+            .ok_or("MzCalibration row not found")?;
+        let tc = read_tims_calibration(data_path)?
+            .into_iter()
+            .find(|c| c.id == tims_id)
+            .ok_or("TimsCalibration row not found")?;
+
+        // Reject calibration models this converter does not implement, rather
+        // than silently mis-computing (m/z model 2 is the default branch).
+        if mzc.model_type != 1 && mzc.model_type != 2 {
+            return Err(format!("unsupported MzCalibration ModelType {}", mzc.model_type).into());
+        }
+        if tc.model_type != 2 {
+            return Err(format!("unsupported TimsCalibration ModelType {}", tc.model_type).into());
+        }
+
+        let mz = MzCalibrator::new(
+            mzc.model_type,
+            mzc.digitizer_timebase,
+            mzc.digitizer_delay,
+            mzc.t1,
+            mzc.t2,
+            mzc.dc1,
+            mzc.dc2,
+            mzc.c0,
+            mzc.c1,
+            mzc.c2,
+            mzc.c3,
+            mzc.c4,
+            t1,
+            t2,
+        );
+        let im = MobilityCalibrator::new(
+            tc.c0, tc.c1, tc.c2, tc.c3, tc.c4, tc.c5, tc.c6, tc.c7, tc.c8, tc.c9,
+        );
+        Ok(Self { mz, im, mz_model_type: mzc.model_type })
+    }
+}
+
+impl IndexConverter for BrukerFormulaConverter {
+    fn tof_to_mz(&self, _frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64> {
+        tof_values.iter().map(|&t| self.mz.tof_to_mz(t)).collect()
+    }
+    fn mz_to_tof(&self, _frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32> {
+        mz_values.iter().map(|&m| self.mz.mz_to_tof(m)).collect()
+    }
+    fn scan_to_inverse_mobility(&self, _frame_id: u32, scan_values: &Vec<u32>) -> Vec<f64> {
+        scan_values
+            .iter()
+            .map(|&s| self.im.scan_to_one_over_k0(s))
+            .collect()
+    }
+    fn inverse_mobility_to_scan(
+        &self,
+        _frame_id: u32,
+        inverse_mobility_values: &Vec<f64>,
+    ) -> Vec<u32> {
+        inverse_mobility_values
+            .iter()
+            .map(|&v| self.im.one_over_k0_to_scan(v))
+            .collect()
+    }
+}
+
 pub enum TimsIndexConverter {
     Simple(SimpleIndexConverter),
     Calibrated(CalibratedIndexConverter),
     BrukerLib(BrukerLibTimsDataConverter),
     Lookup(LookupIndexConverter),
+    BrukerFormula(BrukerFormulaConverter),
 }
 
 impl IndexConverter for TimsIndexConverter {
@@ -377,6 +485,7 @@ impl IndexConverter for TimsIndexConverter {
             TimsIndexConverter::Calibrated(converter) => converter.tof_to_mz(frame_id, tof_values),
             TimsIndexConverter::BrukerLib(converter) => converter.tof_to_mz(frame_id, tof_values),
             TimsIndexConverter::Lookup(converter) => converter.tof_to_mz(frame_id, tof_values),
+            TimsIndexConverter::BrukerFormula(converter) => converter.tof_to_mz(frame_id, tof_values),
         }
     }
 
@@ -386,6 +495,7 @@ impl IndexConverter for TimsIndexConverter {
             TimsIndexConverter::Calibrated(converter) => converter.mz_to_tof(frame_id, mz_values),
             TimsIndexConverter::BrukerLib(converter) => converter.mz_to_tof(frame_id, mz_values),
             TimsIndexConverter::Lookup(converter) => converter.mz_to_tof(frame_id, mz_values),
+            TimsIndexConverter::BrukerFormula(converter) => converter.mz_to_tof(frame_id, mz_values),
         }
     }
 
@@ -401,6 +511,9 @@ impl IndexConverter for TimsIndexConverter {
                 converter.scan_to_inverse_mobility(frame_id, scan_values)
             }
             TimsIndexConverter::Lookup(converter) => {
+                converter.scan_to_inverse_mobility(frame_id, scan_values)
+            }
+            TimsIndexConverter::BrukerFormula(converter) => {
                 converter.scan_to_inverse_mobility(frame_id, scan_values)
             }
         }
@@ -422,6 +535,9 @@ impl IndexConverter for TimsIndexConverter {
                 converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
             }
             TimsIndexConverter::Lookup(converter) => {
+                converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
+            }
+            TimsIndexConverter::BrukerFormula(converter) => {
                 converter.inverse_mobility_to_scan(frame_id, inverse_mobility_values)
             }
         }
@@ -1031,6 +1147,44 @@ impl TimsDataLoader {
             mz_upper,
             im_lookup,
         ));
+
+        let mut file_path = PathBuf::from(data_path);
+        file_path.push("analysis.tdf_bin");
+        let mut infile = File::open(file_path).unwrap();
+        let mut data = Vec::new();
+        infile.read_to_end(&mut data).unwrap();
+
+        TimsDataLoader::InMemory(TimsInMemoryLoader {
+            raw_data_layout,
+            index_converter,
+            compressed_data: data,
+        })
+    }
+
+    /// Create a lazy loader using the exact SDK-free Bruker calibration formulas.
+    ///
+    /// Builds a [`BrukerFormulaConverter`] from the `MzCalibration` /
+    /// `TimsCalibration` tables (frame `calibration_frame_id`, default 1 — the
+    /// coefficients are near-constant per run). Needs no Bruker SDK at build or
+    /// runtime; 1/K0 is machine-exact and m/z is bit-exact for MzCalibration
+    /// ModelType 1 (few ppm for ModelType 2).
+    pub fn new_lazy_with_bruker_formula(data_path: &str, calibration_frame_id: u32) -> Self {
+        let raw_data_layout = TimsRawDataLayout::new(data_path);
+        let index_converter = TimsIndexConverter::BrukerFormula(
+            BrukerFormulaConverter::from_d_folder(data_path, calibration_frame_id).unwrap(),
+        );
+        TimsDataLoader::Lazy(TimsLazyLoder {
+            raw_data_layout,
+            index_converter,
+        })
+    }
+
+    /// In-memory counterpart of [`Self::new_lazy_with_bruker_formula`].
+    pub fn new_in_memory_with_bruker_formula(data_path: &str, calibration_frame_id: u32) -> Self {
+        let raw_data_layout = TimsRawDataLayout::new(data_path);
+        let index_converter = TimsIndexConverter::BrukerFormula(
+            BrukerFormulaConverter::from_d_folder(data_path, calibration_frame_id).unwrap(),
+        );
 
         let mut file_path = PathBuf::from(data_path);
         file_path.push("analysis.tdf_bin");

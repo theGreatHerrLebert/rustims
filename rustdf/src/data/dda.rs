@@ -288,6 +288,31 @@ impl TimsDatasetDDA {
         TimsDatasetDDA { loader, pasef_meta }
     }
 
+    /// Create a DDA dataset using the exact SDK-free Bruker calibration formulas.
+    ///
+    /// Reads the `MzCalibration` / `TimsCalibration` tables and converts axes
+    /// with [`crate::data::calibration`] — no Bruker SDK at build or runtime.
+    /// 1/K0 is machine-exact; m/z is bit-exact for MzCalibration ModelType 1 and
+    /// accurate to a few ppm for ModelType 2. `calibration_frame_id` selects the
+    /// frame whose calibration is used (default 1; near-constant per run).
+    pub fn new_with_bruker_formula(
+        data_path: &str,
+        in_memory: bool,
+        calibration_frame_id: u32,
+    ) -> Self {
+        let loader = match in_memory {
+            true => TimsDataLoader::new_in_memory_with_bruker_formula(
+                data_path,
+                calibration_frame_id,
+            ),
+            false => {
+                TimsDataLoader::new_lazy_with_bruker_formula(data_path, calibration_frame_id)
+            }
+        };
+        let pasef_meta = read_pasef_frame_ms_ms_info(data_path).unwrap();
+        TimsDatasetDDA { loader, pasef_meta }
+    }
+
     /// Check if the Bruker SDK is being used for index conversion.
     /// Returns false for both Simple and Lookup converters (which are thread-safe).
     pub fn uses_bruker_sdk(&self) -> bool {
