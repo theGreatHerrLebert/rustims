@@ -125,12 +125,20 @@ pub fn create_lut_texture(
     (texture, view, sampler)
 }
 
-/// Distinct color per window group, by evenly spacing hue around the wheel. Shared by the
-/// annotation overlay (DIA isolation windows) and the egui group legend. Render-safe (no
-/// native deps), so it lives here rather than in the native loader.
-pub fn group_color(group: u32, n_groups: u32) -> [f32; 3] {
-    let h = (group.saturating_sub(1) as f32) / (n_groups.max(1) as f32);
-    hsv_to_rgb(h, 0.7, 1.0)
+/// Distinct color per window group. Shared by the annotation overlay (DIA isolation windows) and
+/// the egui group legend. Render-safe (no native deps), so it lives here rather than in the native
+/// loader.
+///
+/// Hue advances by the GOLDEN ANGLE per group rather than a plain `group/n` ramp: a linear ramp
+/// gives adjacent groups nearly-identical hues (indistinguishable when a run has many windows),
+/// whereas the golden angle lands consecutive groups ~137° apart on the wheel while still covering
+/// it evenly. A parity brightness step adds a second cue so neighbours differ in value too. The
+/// color depends only on `group`, so the overlay and legend stay in lockstep regardless of `n_groups`.
+pub fn group_color(group: u32, _n_groups: u32) -> [f32; 3] {
+    let g = group.saturating_sub(1) as f32;
+    let h = (g * 0.618_034).fract(); // golden-ratio conjugate ≈ 137.5° steps
+    let v = if group % 2 == 0 { 0.82 } else { 1.0 };
+    hsv_to_rgb(h, 0.7, v)
 }
 
 /// HSV (all in [0,1] except hue which wraps) to linear-ish RGB for line colors.
