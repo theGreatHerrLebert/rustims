@@ -381,7 +381,7 @@ impl PyTimsFragmentDDA {
 }
 
 /// Statistical moments of a signal distribution
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PySignalMoments {
     inner: SignalMoments,
@@ -487,7 +487,7 @@ impl PyPrecursorMS1Signal {
 }
 
 /// Input coordinates for MS1 extraction
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyPrecursorCoord {
     inner: PrecursorCoord,

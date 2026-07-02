@@ -55,7 +55,7 @@ where
 /// # Default: adaptive with 3× noise
 /// mode = PyThresholdMode.default()
 /// ```
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyThresholdMode {
     pub inner: ThresholdMode,
@@ -135,7 +135,7 @@ impl From<PyThresholdMode> for ThresholdMode {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyRawPoints {
     pub inner: RawPoints,
@@ -186,7 +186,7 @@ impl PyRawPoints {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyClusterResult1D {
     pub inner: ClusterResult1D,
@@ -494,7 +494,7 @@ impl PyTofScanPlanGroup {
         // --- collect frames/times and discover TOF scale
         let (frame_ids_sorted, frame_times, scale, rows, global_num_scans, views) = {
             let ds_bound = ds.bind(py);
-            let ds_obj: &Bound<PyTimsDatasetDIA> = ds_bound.downcast()?;
+            let ds_obj: &Bound<PyTimsDatasetDIA> = ds_bound.cast()?;
             let ds_ref = ds_obj.borrow();
 
             // 1) RT-sort MS2 frames for this group
@@ -645,7 +645,7 @@ impl PyTofScanPlanGroup {
         self.windows_idx.len()
     }
 
-    fn __getitem__(&self, py: Python<'_>, idx: &Bound<PyAny>) -> PyResult<PyObject> {
+    fn __getitem__(&self, py: Python<'_>, idx: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         // int (supports negative)
         if let Ok(i_signed) = idx.extract::<isize>() {
             let n = self.windows_idx.len() as isize;
@@ -659,7 +659,7 @@ impl PyTofScanPlanGroup {
         }
 
         // slice
-        if let Ok(slice) = idx.downcast::<PySlice>() {
+        if let Ok(slice) = idx.cast::<PySlice>() {
             let indices = slice.indices(self.windows_idx.len() as isize)?;
             let (start, stop, step) = (indices.start, indices.stop, indices.step);
             let out = PyList::empty(py);
@@ -717,25 +717,25 @@ impl PyTofScanPlanGroup {
 
         let indices: Vec<usize> = (start..end).collect();
 
-        // Build all grids without holding the GIL
-        let built: Vec<Result<TofScanWindowGrid, String>> = py.allow_threads(|| {
-            if self.views.is_some() {
-                // Fully GIL-free path when views are precomputed
+        // Build all grids. The views path is fully GIL-free (no dataset access),
+        // so it runs under `detach`. The dataset path borrows the Python dataset
+        // in `build_window`, so it must hold the GIL; `build_window` already
+        // parallelizes internally over frames, so the outer loop stays serial on
+        // the GIL thread. (The previous code released the GIL and re-fabricated a
+        // token via the now-removed `assume_gil_acquired`, which was unsound.)
+        let built: Vec<Result<TofScanWindowGrid, String>> = if self.views.is_some() {
+            py.detach(|| {
                 indices
                     .par_iter()
                     .map(|&i| Ok(self.build_window_from_views(i)))
                     .collect()
-            } else {
-                // Fall back to calling build_window under an assumed GIL.
-                indices
-                    .par_iter()
-                    .map(|&i| {
-                        let py = unsafe { Python::assume_gil_acquired() };
-                        self.build_window(py, i).map_err(|e| format!("{e}"))
-                    })
-                    .collect()
-            }
-        });
+            })
+        } else {
+            indices
+                .iter()
+                .map(|&i| self.build_window(py, i).map_err(|e| format!("{e}")))
+                .collect()
+        };
 
         // Convert to Python objects, preserving order and surfacing any errors
         let mut out = Vec::with_capacity(built.len());
@@ -793,7 +793,7 @@ impl PyTofScanPlanGroup {
             let fids = self.frame_ids_sorted[lo..=hi].to_vec();
             let frames = {
                 let ds_bound = self.ds.bind(py);
-                let ds_obj: &Bound<PyTimsDatasetDIA> = ds_bound.downcast()?;
+                let ds_obj: &Bound<PyTimsDatasetDIA> = ds_bound.cast()?;
                 let ds_ref = ds_obj.borrow();
                 ds_ref.inner.get_slice(fids, self.num_threads).frames
             };
@@ -970,7 +970,7 @@ impl PyTofScanPlan {
         // ---- Borrow only inside this block; collect everything we need, then drop the borrow.
         let (frame_ids_sorted, frame_times, scale, rows, global_num_scans, views) = {
             let ds_bound = ds.bind(py);
-            let ds_obj: &Bound<PyTimsDatasetDIA> = ds_bound.downcast()?;
+            let ds_obj: &Bound<PyTimsDatasetDIA> = ds_bound.cast()?;
             let ds_ref = ds_obj.borrow();
 
             // 1) RT-sort MS1 frames
@@ -1149,7 +1149,7 @@ impl PyTofScanPlan {
         }
     }
 
-    fn __getitem__(&self, py: Python<'_>, idx: &Bound<PyAny>) -> PyResult<PyObject> {
+    fn __getitem__(&self, py: Python<'_>, idx: &Bound<PyAny>) -> PyResult<Py<PyAny>> {
         // integer first
         if let Ok(i_signed) = idx.extract::<isize>() {
             let n = self.windows_idx.len() as isize;
@@ -1163,7 +1163,7 @@ impl PyTofScanPlan {
         }
 
         // slice
-        if let Ok(slice) = idx.downcast::<PySlice>() {
+        if let Ok(slice) = idx.cast::<PySlice>() {
             let indices = slice.indices(self.windows_idx.len() as isize)?;
             let (start, stop, step) = (indices.start, indices.stop, indices.step);
             let out = PyList::empty(py);
@@ -1221,23 +1221,21 @@ impl PyTofScanPlan {
         let end = (start + count).min(n);
         let indices: Vec<usize> = (start..end).collect();
 
-        let built: Vec<Result<TofScanWindowGrid, String>> = py.allow_threads(|| {
-            if self.views.is_some() {
+        // See get_batch_par above: views path is GIL-free (detach); the dataset
+        // path holds the GIL and relies on build_window's internal parallelism.
+        let built: Vec<Result<TofScanWindowGrid, String>> = if self.views.is_some() {
+            py.detach(|| {
                 indices
                     .par_iter()
                     .map(|&i| Ok(self.build_window_from_views(i)))
                     .collect()
-            } else {
-                indices
-                    .par_iter()
-                    .map(|&i| {
-                        let py = unsafe { Python::assume_gil_acquired() };
-                        // now build_window returns Result, so map_err makes sense
-                        self.build_window(py, i).map_err(|e| format!("{e}"))
-                    })
-                    .collect()
-            }
-        });
+            })
+        } else {
+            indices
+                .iter()
+                .map(|&i| self.build_window(py, i).map_err(|e| format!("{e}")))
+                .collect()
+        };
 
         let mut out = Vec::with_capacity(built.len());
         for item in built {
@@ -1266,7 +1264,7 @@ impl PyTofScanPlan {
             let fids = self.frame_ids_sorted[lo..=hi].to_vec();
             let frames = {
                 let ds_bound = self.ds.bind(py);
-                let ds_obj: &Bound<PyTimsDatasetDIA> = ds_bound.downcast()?;  // <-- `?` now valid
+                let ds_obj: &Bound<PyTimsDatasetDIA> = ds_bound.cast()?;  // <-- `?` now valid
                 let ds_ref = ds_obj.borrow();
                 ds_ref.inner.get_slice(fids, self.num_threads).frames
             };
@@ -1386,7 +1384,7 @@ impl PyTofScanPlan {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyFit1D {
     pub inner: Fit1D,
@@ -1619,7 +1617,7 @@ impl PyRtPeak1D {
         let min_width = min_width.max(1);
 
         // ---- Heavy work in parallel, GIL released ------------------------
-        let peaks: Vec<RtPeak1D> = py.allow_threads(|| {
+        let peaks: Vec<RtPeak1D> = py.detach(|| {
             (0..n)
                 .into_par_iter()
                 .map(|i| {
@@ -2095,7 +2093,7 @@ impl PyImPeak1D {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyTofScanWindowGrid {
     pub inner: TofScanWindowGrid,
@@ -2406,7 +2404,7 @@ impl PyTimsDatasetDIA {
             };
 
             // ---- Run the core DIA clustering --------------------------------
-            let mut results = py.allow_threads(|| {
+            let mut results = py.detach(|| {
                 self.inner.clusters_for_group(
                     window_group,
                     tof_step,
@@ -2557,7 +2555,7 @@ impl PyTimsDatasetDIA {
             };
 
             // ---- Run the core MS1 clustering --------------------------------
-            let mut results = py.allow_threads(|| {
+            let mut results = py.detach(|| {
                 self.inner.clusters_for_precursor(
                     tof_step,
                     &im_rs,
@@ -3078,7 +3076,7 @@ pub fn save_clusters_bin(
 ) -> PyResult<()> {
     let mut rust_clusters = Vec::with_capacity(clusters.len());
 
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         for c in clusters {
             let inner = &c.borrow(py).inner;
 
@@ -3137,7 +3135,7 @@ pub fn save_clusters_parquet(
 ) -> PyResult<()> {
     let mut rust_clusters = Vec::with_capacity(clusters.len());
 
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         for c in clusters {
             let inner = &c.borrow(py).inner;
 
@@ -3214,7 +3212,7 @@ pub fn save_pseudo_spectra_bin(
 ) -> PyResult<()> {
     let mut rust_spectra = Vec::with_capacity(spectra.len());
 
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         for s in spectra {
             let inner = &s.borrow(py).inner;
             // No heavy fields to strip, just clone the whole thing
@@ -3234,7 +3232,7 @@ pub fn load_pseudo_spectra_bin(
     let spectra = cio::load_pseudo_bincode(path)
         .map_err(|e| exceptions::PyIOError::new_err(e.to_string()))?;
 
-    Python::with_gil(|py| {
+    Python::attach(|py| {
         let mut out = Vec::with_capacity(spectra.len());
         for spec in spectra {
             let obj = Py::new(py, PyPseudoSpectrum { inner: spec })
@@ -3309,7 +3307,7 @@ impl PyTofRtGrid {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyAssignmentResult {
     pub inner: AssignmentResult,
@@ -3342,7 +3340,7 @@ impl PyAssignmentResult {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyPseudoBuildResult {
     pub inner: PseudoBuildResult,
@@ -3474,7 +3472,7 @@ impl PyScoredHit {
 }
 
 use std::sync::Arc;
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyCandidateOpts {
     pub(crate) inner: CandidateOpts,

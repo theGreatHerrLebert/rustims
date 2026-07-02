@@ -7,7 +7,7 @@ use crate::py_mz_spectrum::{PyTimsSpectrum};
 
 use crate::py_tims_frame::{PyTimsFrame, PyTimsFrameVectorized};
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyTimsSlice {
     pub inner: TimsSlice,
@@ -177,7 +177,7 @@ impl PyTimsSlice {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyTimsSliceVectorized {
     pub inner: TimsSliceVectorized,

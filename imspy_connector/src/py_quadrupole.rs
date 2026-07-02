@@ -6,7 +6,7 @@ use mscore::timstof::quadrupole::{IonTransmission, PASEFMeta, TimsTransmissionDD
 use crate::py_mz_spectrum::PyMzSpectrum;
 use crate::py_tims_frame::PyTimsFrame;
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyPasefMeta {
     pub inner : PASEFMeta,

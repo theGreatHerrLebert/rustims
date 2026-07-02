@@ -33,7 +33,7 @@ impl PyAcquisitionScheme {
         // I/O errors map to OSError/FileNotFoundError via PyErr::from; release the
         // GIL while reading the .d's SQLite metadata.
         let inner = py
-            .allow_threads(|| AcquisitionScheme::from_bruker_d(path))
+            .detach(|| AcquisitionScheme::from_bruker_d(path))
             .map_err(PyErr::from)?;
         Ok(Self { inner })
     }
@@ -43,7 +43,7 @@ impl PyAcquisitionScheme {
     #[staticmethod]
     pub fn from_thermo_raw(py: Python<'_>, path: &str) -> PyResult<Self> {
         let inner = py
-            .allow_threads(|| AcquisitionScheme::from_thermo_raw(path))
+            .detach(|| AcquisitionScheme::from_thermo_raw(path))
             .map_err(PyErr::from)?;
         Ok(Self { inner })
     }
@@ -61,7 +61,7 @@ impl PyAcquisitionScheme {
         path: &str,
     ) -> PyResult<Vec<(u32, f64, u8, Option<f64>, Option<f64>, Option<f64>)>> {
         let sched = py
-            .allow_threads(|| AcquisitionScheme::thermo_frame_schedule(path))
+            .detach(|| AcquisitionScheme::thermo_frame_schedule(path))
             .map_err(PyErr::from)?;
         Ok(sched
             .into_iter()
@@ -106,7 +106,7 @@ impl PyAcquisitionScheme {
             }
         };
         let inner = py
-            .allow_threads(|| {
+            .detach(|| {
                 AcquisitionScheme::from_sciex_wiff(path, cycle_time_s, gradient_length_s, ce)
             })
             .map_err(PyErr::from)?;
@@ -142,7 +142,7 @@ impl PyAcquisitionScheme {
             }
         };
         let rows = py
-            .allow_threads(|| {
+            .detach(|| {
                 AcquisitionScheme::from_sciex_wiff(path, cycle_time_s, gradient_length_s, ce)
                     .map(|s| s.dia_frame_schedule())
             })
@@ -336,7 +336,7 @@ impl PyThermoRawWriter {
             }
         }
         let mut w = py
-            .allow_threads(|| ThermoRawWriter::from_template(template, out))
+            .detach(|| ThermoRawWriter::from_template(template, out))
             .map_err(PyErr::from)?
             .with_allow_partial(allow_partial);
         if let Some(tol) = overlay_merge_tol_ppm {
@@ -419,7 +419,7 @@ impl PyThermoRawWriter {
         if self.finalized {
             return Err(PyRuntimeError::new_err("writer already finalized"));
         }
-        py.allow_threads(|| self.inner.finalize())
+        py.detach(|| self.inner.finalize())
             .map_err(writer_err)?;
         self.finalized = true;
         Ok(())
@@ -461,7 +461,7 @@ pub fn legacy_frame_projection(
     n_steps: Option<usize>,
     num_threads: usize,
 ) -> Vec<Vec<(u32, f64)>> {
-    py.allow_threads(|| {
+    py.detach(|| {
         rustdf::sim::projector::project_time_legacy(
             &rt_mus, &rt_sigmas, &rt_lambdas, &frame_ids, &frame_times, rt_cycle_length, target_p,
             step_size, n_steps, remove_epsilon, num_threads,
@@ -506,7 +506,7 @@ pub fn legacy_scan_projection_par(
     step_size: f64,
     num_threads: usize,
 ) -> Vec<Vec<(i32, f64)>> {
-    py.allow_threads(|| {
+    py.detach(|| {
         rustdf::sim::projector::project_mobility_legacy_par(
             &means, &sigmas, &scan_ids, &scan_mobilities, im_cycle_length, target_p, step_size,
             num_threads,
@@ -538,7 +538,7 @@ pub fn accurate_frame_projection(
     }
     let intervals: Vec<(f64, f64)> =
         event_starts.into_iter().zip(event_ends).collect();
-    Ok(py.allow_threads(|| {
+    Ok(py.detach(|| {
         mscore::algorithm::utility::project_emg_over_events_par(
             &intervals, rt_mus, rt_sigmas, rt_lambdas, target_p, step_size,
             num_threads.max(1), n_steps,
@@ -562,7 +562,7 @@ pub fn accurate_scan_projection(
     step_size: f64,
     num_threads: usize,
 ) -> Vec<Vec<(i32, f64)>> {
-    py.allow_threads(|| {
+    py.detach(|| {
         rustdf::sim::projector::project_mobility_accurate_par(
             &means, &sigmas, &mobility_grid, target_p, step_size, num_threads,
         )
@@ -687,7 +687,7 @@ pub fn write_astral_raw(
         superimpose_ppm,
     };
     let s = py
-        .allow_threads(|| {
+        .detach(|| {
             run(Path::new(db_path), Path::new(template_path), Path::new(out_path), opts)
         })
         .map_err(PyValueError::new_err)?;
@@ -708,7 +708,7 @@ pub fn rewindow_thermo_template(
 ) -> PyResult<usize> {
     use rustdf::sim::acquisition::rewindow_thermo_template as run;
     use std::path::Path;
-    py.allow_threads(|| run(Path::new(src_path), Path::new(dst_path), isolation_width))
+    py.detach(|| run(Path::new(src_path), Path::new(dst_path), isolation_width))
         .map_err(PyValueError::new_err)
 }
 
@@ -728,7 +728,7 @@ pub fn render_dia_mzml(
 ) -> PyResult<(usize, usize, usize, usize)> {
     use std::path::Path;
     let s = py
-        .allow_threads(|| {
+        .detach(|| {
             rustdf::sim::mzml::render_db_to_mzml(
                 Path::new(db_path),
                 Path::new(out_path),

@@ -64,7 +64,7 @@ use crate::py_tims_frame::PyTimsFrame;
 ///     individual fragment ion based on its complementary fragment (more accurate but slower)
 /// * `min_probability` - Minimum probability threshold for isotope transmission (default: 0.5)
 /// * `max_isotopes` - Maximum number of isotope peaks to consider (default: 10)
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyIsotopeTransmissionConfig {
     pub inner: IsotopeTransmissionConfig,
@@ -633,7 +633,7 @@ pub fn write_spectral_library_tsv(
 ) -> PyResult<(usize, usize)> {
     use pyo3::exceptions::PyValueError;
     use std::path::Path;
-    py.allow_threads(|| {
+    py.detach(|| {
         rustdf::sim::library::build_spectral_library_tsv(
             Path::new(out_path),
             &modified_sequences,

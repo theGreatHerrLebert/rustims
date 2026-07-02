@@ -6,7 +6,7 @@ use mscore::timstof::spectrum::{TimsSpectrum};
 use pyo3::types::{PyList, PyTuple};
 use std::sync::OnceLock;
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyMsType {
     pub inner: MsType,
@@ -27,7 +27,7 @@ impl PyMsType {
     pub fn ms_type_numeric(&self) -> i32 { self.inner.ms_type_numeric() }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct PyMzSpectrum {
     pub inner: MzSpectrum,
     // Cached numpy arrays
@@ -148,7 +148,7 @@ impl PyMzSpectrum {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyMzSpectrumVectorized {
     pub inner: MzSpectrumVectorized,
@@ -188,7 +188,7 @@ impl PyMzSpectrumVectorized {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct PyIndexedMzSpectrum {
     pub inner: IndexedMzSpectrum,
     // Cached numpy arrays
@@ -262,7 +262,7 @@ impl PyIndexedMzSpectrum {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct PyTimsSpectrum {
     pub inner: TimsSpectrum,
     // Cached numpy arrays
