@@ -419,6 +419,14 @@ written into the raw output file**; there is no annotated-raw writer. Instead yo
 **stream** annotated frames in Python, on demand, straight from
 `synthetic_data.db`.
 
+> **▶ Start here: the onboarding notebook.** A runnable, end-to-end walkthrough of
+> everything in this section — building annotated precursor **and** fragment frames,
+> reading the per-peak `.df`, assembling m/z–ion-mobility and m/z–retention-time maps,
+> understanding the `to_dense_windows_with_labels` output (what `N` and `Y` are and why
+> `overlapping=True` produces duplicate cells), and a small PyTorch training loop — lives
+> at [`notebooks/AnnotatedFrames_Onboarding.ipynb`](notebooks/AnnotatedFrames_Onboarding.ipynb).
+> Point it at any TimSim run's `synthetic_data.db` and run top-to-bottom.
+
 > **Package layout note (latest `main`).** The monolithic `imspy` package has
 > been split into modular packages, so imports differ from older notebooks/the
 > paper's examples. In particular `from imspy.simulation…` → `from
