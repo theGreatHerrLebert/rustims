@@ -6,7 +6,7 @@ use mscore::timstof::spectrum_processing::{
     deisotope_spectrum, filter_top_n, process_spectrum,
 };
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PySpectrumProcessingConfig {
     pub inner: SpectrumProcessingConfig,
@@ -60,7 +60,7 @@ impl PySpectrumProcessingConfig {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyPreprocessedSpectrum {
     pub inner: PreprocessedSpectrum,

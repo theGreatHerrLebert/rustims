@@ -18,7 +18,7 @@ use crate::py_dia::PyClusterResult1D;
 // PyAveragineLut – optional, but now used for cosine gating too
 // ---------------------------------------------------------------
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyAveragineLut {
     pub inner: AveragineLut,
@@ -105,7 +105,7 @@ impl PyAveragineLut {
 // PySimpleFeatureParams – controls the greedy builder
 // ---------------------------------------------------------------
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PySimpleFeatureParams {
     pub inner: SimpleFeatureParams,
@@ -197,7 +197,7 @@ impl PySimpleFeatureParams {
 // PySimpleFeature – thin wrapper around SimpleFeature
 // ---------------------------------------------------------------
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PySimpleFeature {
     pub inner: SimpleFeature,

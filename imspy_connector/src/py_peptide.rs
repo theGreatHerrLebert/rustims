@@ -55,7 +55,7 @@ impl PyPeptideIon {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyPeptideProductIonSeries {
     pub inner: PeptideProductIonSeries,
@@ -133,7 +133,7 @@ impl PyPeptideProductIonSeriesCollection {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyPeptideSequence {
     pub inner: PeptideSequence,
@@ -276,7 +276,7 @@ impl PyPeptideSequence {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyPeptideProductIon {
     pub inner: PeptideProductIon,

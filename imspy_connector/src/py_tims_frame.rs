@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 
 use crate::py_mz_spectrum::{PyIndexedMzSpectrum, PyTimsSpectrum};
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyRawTimsFrame {
     pub inner: RawTimsFrame,
@@ -71,7 +71,7 @@ impl PyRawTimsFrame {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 pub struct PyTimsFrame {
     pub inner: TimsFrame,
     // Cached numpy arrays - lazily initialized on first access (stored as Py<PyAny> for Clone)
@@ -309,7 +309,7 @@ impl PyTimsFrame {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyTimsFrameVectorized {
     pub inner: TimsFrameVectorized,

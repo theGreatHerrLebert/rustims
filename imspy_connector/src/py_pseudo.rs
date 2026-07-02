@@ -4,7 +4,7 @@ use rustdf::cluster::pseudo::{PseudoFragment, PseudoSpectrum};
 use crate::py_dia::PyClusterResult1D;
 use crate::py_feature::PySimpleFeature;
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyPseudoFragment {
     mz: f32,
@@ -37,7 +37,7 @@ impl PyPseudoFragment {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone, Debug)]
 pub struct PyPseudoSpectrum {
     pub inner: PseudoSpectrum,

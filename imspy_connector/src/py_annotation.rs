@@ -5,7 +5,7 @@ use mscore::simulation::annotation::{SourceType, SignalAttributes, ContributionS
 use mscore::data::peptide::FragmentType;
 use numpy::{IntoPyArray, PyArray1, PyArrayMethods};
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyTimsSpectrumAnnotated {
     pub inner: TimsSpectrumAnnotated,
@@ -98,7 +98,7 @@ impl PyTimsSpectrumAnnotated {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyTimsFrameAnnotated {
     pub inner: TimsFrameAnnotated,
@@ -279,7 +279,7 @@ impl PyTimsFrameAnnotated {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyMzSpectrumAnnotated {
     pub inner: MzSpectrumAnnotated,
@@ -325,7 +325,7 @@ impl PyMzSpectrumAnnotated {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyPeakAnnotation {
     pub inner: Vec<ContributionSource>,
@@ -345,7 +345,7 @@ impl PyPeakAnnotation {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PySourceType {
     inner: SourceType,
@@ -374,7 +374,7 @@ fn fragment_type_from_str(s: &str) -> Option<FragmentType> {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PySignalAttributes {
     inner: SignalAttributes,
@@ -412,7 +412,7 @@ impl PySignalAttributes {
     pub fn description(&self) -> Option<String> { self.inner.description() }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyContributionSource {
     pub inner: ContributionSource,
