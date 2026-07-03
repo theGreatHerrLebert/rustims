@@ -1,6 +1,7 @@
 pub mod frame;
 pub mod slice;
 pub mod collision;
+pub mod lsh;
 pub mod quadrupole;
 pub mod spectrum;
 pub mod spectrum_processing;
