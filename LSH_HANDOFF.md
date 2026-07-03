@@ -393,3 +393,47 @@ analyte's elution frames (rather than pick one apex frame) — averaging could s
 transient chimeric neighbours while reinforcing the analyte's persistent fragments;
 worth a look, but the oracle single-frame result suggests dechimerization is the real
 fix.
+
+## PIVOT: dataset-level similarity search (2026-07-03)
+
+Per-spectrum MBR via LSH is chimericity-limited and will never beat a peptide-centric
+search. New target (better fit for hashing): **quickly say how close dataset A is to
+dataset B** — QC, replicate/batch checks, run clustering. Aggregating a whole run into
+one fingerprint makes chimericity irrelevant (summarize composition, don't resolve
+analytes). Endgame = **keyspace similarity** (compare datasets by their SimHash band-key
+occupancy distribution — compact, streaming, hash-native). `dataset_similarity` example
+is the feature-space REFERENCE to validate that against.
+
+### v1 feature-space reference (`rustdf/examples/dataset_similarity.rs`)
+Per run -> L2-normed fingerprint over binned (m/z 0.01 x mobility 0.01), intensity-
+weighted (sqrt), denoised (floor 100), from 800 frames sampled across the gradient.
+Compare by exact cosine (profile) + Jaccard (composition). MS1 vs MS2 selectable.
+
+**Validation on the TimSim zoo (MS2): every designed pair recovered as nearest
+neighbour.**
+
+| dataset | NN by cosine | cos | relationship |
+|---------|--------------|-----|--------------|
+| MBR-PAIR-A | MBR-PAIR-B | 0.639 | replicate (RT/IM drift) |
+| MBR-PAIR-A-NOISY | MBR-PAIR-B-NOISY | 0.550 | noisy replicate |
+| CLEAN-DIA-YEAST | SUPERIMPOSE-DIA-YEAST | 0.638 | same template |
+| CLEAN-MIDIA-YEAST | SUPERIMPOSE-MIDIA-YEAST | 0.517 | same template |
+| MIDIA-250K-NOISY-CHRONO-FRAG | MIDIA-250K-NOISY-FRAG | 0.254 | same HeLa/MIDIA family |
+
+Similarity ordering is correct: replicate/template 0.5-0.64 >> same-sample-diff-scheme
+~0.18 (yeast DIA<->MIDIA) > diff-sample 0.08-0.14 (yeast<->HeLa). Chimericity irrelevant.
+
+**Caveats:**
+1. **Hub bias** — the densest run (SUPERIMPOSE-MIDIA, 2.1M tokens) is the spurious NN of
+   several unrelated sparse datasets. Fix: TF-IDF down-weight ubiquitous tokens, or use
+   Jaccard (union-normalized, less hub-prone).
+2. **MS2 mixes sample + scheme + blank noise.** clean-A<->noisy-A only 0.06 (blank
+   overlay dominates the fp), noisy-A<->noisy-B 0.55 (shared blank structure too). MS1
+   (precursor landscape) should isolate SAMPLE identity — run next.
+
+### Next
+1. MS1 fingerprint (scheme-independent sample identity) — separate the axes.
+2. Hub-bias fix (IDF weighting).
+3. **Keyspace sketch**: hash each unit -> SimHash band keys -> per-dataset key-occupancy
+   histogram; compare by cosine/Jaccard/MinHash. Show it recovers this reference ordering
+   at a fraction of the size = the deliverable.
