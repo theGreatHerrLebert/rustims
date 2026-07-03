@@ -273,3 +273,45 @@ production MBR: (1) re-run with `add_real_data_noise=true`; (2) sweep drift
 gate; (3) add abundance variation (intensity_variation_std) for biological-replicate
 realism; (4) widen/relax the mobility gate as IM drift grows. Each will lower recall —
 the question is the operating curve, not existence, which is now established.
+
+### Cross-run MBR with real-data noise ON (2026-07-03)
+
+Regenerated the pair with `add_real_data_noise=true` (real 0.1% FA blank overlay,
+`reference_noise_intensity_max=150000`), same seed-7 peptides + same RT/IM drift.
+Configs `rustdf/examples/mbr/mbr_pair_{a,b}_noisy.toml`.
+
+| metric (cross-run, same analyte) | clean | noise-on |
+|----------------------------------|-------|----------|
+| units / run | 113k | **586k (5x)** |
+| fraction labeled | 98% | 38% |
+| TRUE same-analyte pair cosine, median | 0.919 | **0.007** |
+| ... frac >=0.7 | 0.75 | 0.13 |
+| LSH (64,32) recall | 0.565 | **0.073** |
+| LSH (64,32) returned-pair cosine frac>=0.7 | 1.00 | **1.00** |
+| LSH (32,16) cand-cos median / recall | 0.906 / 0.73 | **0.000 / 0.13** |
+
+**What happened.** The blank overlay adds ~70 background windows/frame (unit count
+5x, 62% pure-noise units). After top-25 peak-picking, most analyte windows are
+polluted by run-specific noise peaks, so the same analyte's A vs B windows stop
+sharing their top peaks -> median true-pair cosine collapses 0.92 -> 0.007.
+
+**But MBR survives at (64,32):** it still returns ONLY genuine matches (median 0.944,
+100% >=0.7), just far fewer (recall 0.073). Precision is intact; yield drops. (32,16)
+drowns in noise-noise collisions (3.3M candidates, median cand-cos 0).
+
+**Two caveats — do not over-conclude from recall 0.07:**
+1. **No denoising before unitization.** The harness hashes raw mobility-window top-25
+   with no min-intensity / min-signal filter. A pre-hash threshold (drop noise-only
+   windows; require a peak above the local floor) should recover most of the lost
+   recall. This is a REPRESENTATION gap, not an LSH failure — the (64,32) 100%-purity
+   result proves the hash still works on windows that survive.
+2. **Thin-run SNR.** The blank noise floor is absolute (150000) but this run has only
+   20k peptides -> sparse analyte layer -> worse SNR than a full-density (250k) run
+   using the same floor. Recall here is likely pessimistic vs a realistic dense run.
+
+**Net.** Existence of cross-run matching is robust (clean AND noisy, (64,32) returns
+100% true-cosine pairs). The operating recall is noise-limited and hinges on a
+denoising/peak-filtering step that the current representation lacks. Next, in order:
+(a) add a min-intensity/min-peak filter to unit building and re-run noisy;
+(b) SNR-matched noise or a dense run; (c) drift sweep. The headline "does it work"
+is yes; the recall curve is a representation-robustness problem to solve next.
