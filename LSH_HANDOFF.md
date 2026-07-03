@@ -177,3 +177,50 @@ cosine 0.95, 100% >=0.7); (32,16) is a wider net (median 0.55, 48% >=0.7).**
 - The mobility gate remains load-bearing; SDK-free + `mem` gives parallel reads for
   the full build. Ion-sharing labels should be retired as a similarity proxy — score
   candidates by cosine directly.
+
+### dRT stratification — the recurrence signal is intra-elution-peak (2026-07-03)
+
+Bucketed the (m,n) candidate-pair cosines by |ΔRT| (label-independent). This tests
+whether the "recurrence" the hash finds is trivial elution-neighbour redundancy
+(small ΔRT) or genuine cross-time recurrence (large ΔRT).
+
+(64,32) candidate pairs — pure at every ΔRT, but ~97% are within 15 s:
+
+| ΔRT | % of cand | median cos | frac>=0.7 |
+|-----|-----------|-----------|-----------|
+| 0-2 s   | 40.0% | 0.950 | 1.00 |
+| 2-5 s   | 25.2% | 0.950 | 1.00 |
+| 5-15 s  | 31.9% | 0.949 | 1.00 |
+| 15-45 s |  2.9% | 0.952 | 1.00 |
+| 45-120 s| 0.03% (32 pairs) | 0.79 | 0.84 |
+| 120 s+  | 0.02% (18 pairs) | 0.80 | 0.72 |
+
+(32,16) — high cosine only survives to ~15 s, then a cliff to cosine≈0 (the
+long-ΔRT candidates are spurious band collisions, not similar spectra):
+
+| ΔRT | median cos | frac>=0.7 |
+|-----|-----------|-----------|
+| 0-2 s   | 0.913 | 0.92 |
+| 5-15 s  | 0.883 | 0.75 |
+| 15-45 s | 0.000 | 0.10 |
+| 45-120 s| 0.000 | 0.01 |
+
+**Conclusion — reframes the use case.** ~97% of genuinely-similar pairs sit within
+15 s ΔRT = inside one elution peak (timsTOF FWHM ~10-30 s). The hash finds
+**elution-neighbour redundancy, not cross-time recurrence.** This is physically
+expected: in a single DIA run each analyte elutes once, so there is no long-range
+recurrence to find — hence the high-cosine mass vanishes past ~15-45 s.
+
+Therefore:
+- **What the within-run hash is genuinely good for:** unsupervised
+  **denoising / redundancy collapse / 4D-feature construction** — group the
+  co-eluting, co-mobile, cosine-similar mobility-window units of one elution peak
+  into a single representative. Proven, valuable, but it is *peak/feature detection*,
+  not MBR.
+- **"Recurrence/MBR within one run" was chasing a signal that does not exist** in a
+  single DIA acquisition. MBR is inherently cross-run and remains **untested**: it
+  needs index-A / query-B on a same-scheme TimSim replicate pair (handoff step 4).
+  The within-run experiments cannot validate or refute MBR.
+- Next decisive experiment: simulate a small same-scheme replicate pair (same
+  peptides+abundances, 2 seeds, short gradient) and measure cosine survival of the
+  SAME analyte across the two runs. That is the real MBR test.

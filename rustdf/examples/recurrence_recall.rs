@@ -105,6 +105,11 @@ fn main() {
     let ds = TimsDatasetDIA::new("NO_SDK", &path, false, false);
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
 
+    // frame_id -> retention time (s), to stratify candidate pairs by dRT:
+    // is the recurrence signal trivial elution-neighbour redundancy (small dRT)
+    // or genuine cross-time recurrence (large dRT)?
+    let frame_time: HashMap<i32, f64> = ds.meta_data.iter().map(|m| (m.id as i32, m.time)).collect();
+
     let mut ms2: Vec<(u32, f64)> = ds
         .meta_data
         .iter()
@@ -316,6 +321,9 @@ fn main() {
         // confounded ion-label proxy — for recurrence, high candidate cosine IS
         // the win, whatever ion story produced it.
         let mut cand_cos: Vec<f64> = Vec::new();
+        // dRT stratification: bucket each candidate pair's cosine by |t_u - t_c|.
+        let rt_edges = [0.0f64, 2.0, 5.0, 15.0, 45.0, 120.0, f64::INFINITY];
+        let mut rt_buckets: Vec<Vec<f64>> = vec![Vec::new(); rt_edges.len() - 1];
         for u in 0..units.len() {
             let um = &units[u].meta;
             let mut cands = HashSet::new();
@@ -336,7 +344,13 @@ fn main() {
                     pair_true += 1;
                 }
                 if c > u {
-                    cand_cos.push(cosine(&units[u].features, &units[c].features));
+                    let cos = cosine(&units[u].features, &units[c].features);
+                    cand_cos.push(cos);
+                    let drt = (frame_time.get(&units[u].meta.frame_id).copied().unwrap_or(0.0)
+                        - frame_time.get(&units[c].meta.frame_id).copied().unwrap_or(0.0))
+                        .abs();
+                    let b = rt_edges.iter().rposition(|&e| drt >= e).unwrap_or(0).min(rt_buckets.len() - 1);
+                    rt_buckets[b].push(cos);
                 }
             }
             if has_sibling(u) {
@@ -364,5 +378,24 @@ fn main() {
             pair_seen as f64 / units.len() as f64,
             cq, cfrac,
         );
+        // dRT stratification of candidate-pair cosine (label-independent):
+        // does high cosine survive beyond the immediate elution neighbourhood?
+        println!("        dRT bucket   pairs   %-of-cand   median-cos   frac>=0.7");
+        let total_cand = cand_cos.len().max(1) as f64;
+        for (bi, bucket) in rt_buckets.iter().enumerate() {
+            let (lo, hi) = (rt_edges[bi], rt_edges[bi + 1]);
+            let name = if hi.is_infinite() { format!("{:>4.0}s+   ", lo) } else { format!("{:>4.0}-{:<4.0}s", lo, hi) };
+            let (med, f07) = if bucket.is_empty() {
+                (f64::NAN, 0.0)
+            } else {
+                let mut v = bucket.clone();
+                v.sort_by(|a, b| a.total_cmp(b));
+                (v[v.len() / 2], v.iter().filter(|&&c| c >= 0.7).count() as f64 / v.len() as f64)
+            };
+            println!(
+                "        {:>10}  {:>6}   {:>8.1}%   {:>10.3}   {:>9.2}",
+                name, bucket.len(), 100.0 * bucket.len() as f64 / total_cand, med, f07,
+            );
+        }
     }
 }
