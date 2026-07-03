@@ -92,35 +92,19 @@ impl LshScheme for MinHash {
     }
 }
 
-/// Jaccard similarity of two feature-id sets given as sorted sparse vectors
-/// (unique, ascending ids — as `MzFeatureMap::features` produces).
+/// Jaccard similarity of two feature-id sets. Order- and duplicate-independent
+/// (built from sets), matching the set semantics of `signature`/`min_hashes` —
+/// so `verify` never disagrees with the hasher on unsorted or repeated ids.
 fn jaccard(a: &[(i64, f32)], b: &[(i64, f32)]) -> f32 {
-    let (mut i, mut j) = (0usize, 0usize);
-    let (mut inter, mut uni) = (0usize, 0usize);
-    while i < a.len() && j < b.len() {
-        match a[i].0.cmp(&b[j].0) {
-            std::cmp::Ordering::Less => {
-                uni += 1;
-                i += 1;
-            }
-            std::cmp::Ordering::Greater => {
-                uni += 1;
-                j += 1;
-            }
-            std::cmp::Ordering::Equal => {
-                inter += 1;
-                uni += 1;
-                i += 1;
-                j += 1;
-            }
-        }
+    use std::collections::HashSet;
+    let sa: HashSet<i64> = a.iter().map(|&(id, _)| id).collect();
+    let sb: HashSet<i64> = b.iter().map(|&(id, _)| id).collect();
+    if sa.is_empty() && sb.is_empty() {
+        return 0.0;
     }
-    uni += (a.len() - i) + (b.len() - j);
-    if uni == 0 {
-        0.0
-    } else {
-        inter as f32 / uni as f32
-    }
+    let inter = sa.intersection(&sb).count();
+    let uni = sa.len() + sb.len() - inter;
+    inter as f32 / uni as f32
 }
 
 #[cfg(test)]
@@ -157,6 +141,16 @@ mod tests {
     fn disjoint_sets_have_zero_jaccard() {
         let h = MinHash::new(1, 4, 2).unwrap();
         assert_eq!(h.verify(&set(&[1, 2, 3]), &set(&[4, 5, 6])), 0.0);
+    }
+
+    #[test]
+    fn verify_is_order_and_duplicate_independent() {
+        // Set semantics: unsorted + repeated ids must not change Jaccard, so
+        // verify agrees with the (order-independent) signature.
+        let h = MinHash::new(1, 4, 2).unwrap();
+        let a = vec![(2i64, 1.0f32), (1, 1.0), (2, 1.0)]; // unsorted, dup
+        let b = vec![(1i64, 1.0f32), (2, 1.0)];
+        assert!((h.verify(&a, &b) - 1.0).abs() < 1e-6);
     }
 
     /// Correctness gate: measured per-min-hash agreement tracks Jaccard.

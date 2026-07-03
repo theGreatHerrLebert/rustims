@@ -295,7 +295,9 @@ pub fn frame_to_units(
             let sl = &slices[i];
             for idx in sl.start..sl.end {
                 let val = cfg.transform.apply(intensity[idx]);
-                if val > 0.0 {
+                // Require a valid m/z here so invalid peaks can't consume a
+                // top-N slot and then get discarded in the splat.
+                if val > 0.0 && mz[idx] > 0.0 {
                     wpeaks.push((mz[idx], val));
                 }
             }
@@ -568,6 +570,37 @@ mod tests {
         // The weakest (m/z 200) must be gone.
         let weak = m.coord(200.0).round() as i64;
         assert!(top2[0].features.iter().all(|&(id, _)| (id - weak).abs() > 8));
+    }
+
+    #[test]
+    fn top_n_ignores_invalid_mz() {
+        // A high-intensity peak at m/z 0 must not steal a top-N slot and drop a
+        // valid weaker peak.
+        let frame = make_frame(
+            1,
+            MsType::FragmentDia,
+            0.0,
+            vec![0, 0, 0],
+            vec![0.0, 500.0, 900.0], // m/z 0 is invalid but strongest
+            vec![100.0, 5.0, 4.0],
+            vec![1.0; 3],
+        );
+        let cfg = WindowConfig {
+            half_width: 0,
+            stride: 1,
+            transform: IntensityTransform::None,
+            feature_map: map(),
+            top_n: Some(2),
+        };
+        let units = frame_to_units(&frame, &cfg, &[]);
+        let m = map();
+        for mz in [500.0, 900.0] {
+            let c = m.coord(mz).round() as i64;
+            assert!(
+                units[0].features.iter().any(|&(id, _)| (id - c).abs() <= 8),
+                "valid peak at m/z {mz} was displaced by the invalid one"
+            );
+        }
     }
 
     #[test]
