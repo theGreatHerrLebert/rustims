@@ -315,3 +315,42 @@ denoising/peak-filtering step that the current representation lacks. Next, in or
 (a) add a min-intensity/min-peak filter to unit building and re-run noisy;
 (b) SNR-matched noise or a dense run; (c) drift sweep. The headline "does it work"
 is yes; the recall curve is a representation-robustness problem to solve next.
+
+### Denoising recovers noisy MBR — top-N sub-sampling is the wrong knob (2026-07-03)
+
+Follow-up to the noise-on collapse. Two representation levers, tested on the noisy
+pair via `mbr_crossrun` args `[min_peak_intensity] [top_n|all]`:
+
+Raw peak-intensity distribution (noisy .d): **p50=5, p90=68, p99=483, max ~200k**.
+=> each mobility window holds a few strong real fragments buried in ~100+ intensity-5
+blank-overlay noise peaks. `top_n=25` by count then spends ~20/25 slots on noise.
+
+(1) **Drop top-N, keep ALL peaks** (let squared intensity weighting suppress noise):
+true-pair cosine median 0.007->0.050, (32,16) recall 0.13->0.21. Helps, but under the
+`sqrt` transform ||v||^2 = total window intensity, so the ~2k injected noise-intensity
+still swamps WEAK analytes. Necessary, not sufficient.
+
+(2) **Intensity floor (denoise) — the real lever.** all-peaks + floor sweep:
+
+| floor | units (labeled%) | true-pair cos p50 | frac>=0.7 | (32,16) recall | (64,32) recall |
+|-------|------------------|-------------------|-----------|----------------|----------------|
+| 0     | 586k (38%) | 0.050 | 0.22 | 0.208 | 0.046 |
+| 30    | 495k (39%) | 0.004 | 0.14 | 0.128 | 0.045 |
+| 100   | 121k (51%) | ~0 (p75 0.84) | 0.32 | 0.294 | 0.153 |
+| 300   | 16.6k (95%) | **0.884** | **0.81** | **0.748** | 0.438 |
+| 1000  | 6.9k (98%) | 0.899 | 0.86 | **0.799** | 0.494 |
+
+At floor 300-1000 the NOISY pair matches the CLEAN pair (clean: recall 0.73, cosine
+0.92). **The noise collapse was entirely a denoising problem.** Removing the sub-300
+intensity-5 blank background restores full cross-run MBR performance; recall at floor
+1000 (0.80) even exceeds clean because denoising also sharpens the signal windows.
+
+**Recommended representation for noisy data:** all-peaks + a signal floor (drop top-N).
+The flat intensity floor works because TimSim blank noise is LOW-intensity; on real
+data prefer a coherence filter (peak must persist across >=k adjacent scans/frames —
+analytes form mobility/RT traces, noise does not). Floor is a coverage/precision dial:
+higher floor = fewer analytes but each matched better.
+
+Harness: `mbr_crossrun` now takes `[min_peak_intensity=0] [top_n=25|all|N]` and
+prints the raw-intensity percentiles (floor=0). `filter_frame` does the pre-hash
+denoise by rebuilding a parallel-array TimsFrame.

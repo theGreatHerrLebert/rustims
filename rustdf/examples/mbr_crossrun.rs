@@ -22,6 +22,7 @@ use std::env;
 
 use mscore::algorithm::lsh::simhash::{CosineSimHash, Projection};
 use mscore::algorithm::lsh::LshScheme;
+use mscore::timstof::frame::TimsFrame;
 use mscore::timstof::lsh::{frame_to_units, FrameUnit, IntensityTransform, MzFeatureMap, WindowConfig};
 use rayon::prelude::*;
 use rusqlite::Connection;
@@ -66,10 +67,28 @@ fn cosine(a: &[(i64, f32)], b: &[(i64, f32)]) -> f64 {
 
 struct Ion { ion_id: i64, peptide_id: i64, mz: f64, rel_ab: f64, scans: Vec<i32>, scan_ab: Vec<f32> }
 
+/// Drop peaks below a raw-intensity floor, rebuilding a parallel-array TimsFrame.
+/// This is the pre-hash denoiser: remove the blank-overlay noise peaks BEFORE
+/// top-N picking so they can't pollute an analyte window's signature.
+fn filter_frame(f: &TimsFrame, floor: f64) -> TimsFrame {
+    let keep: Vec<usize> = (0..f.ims_frame.intensity.len()).filter(|&i| f.ims_frame.intensity[i] >= floor).collect();
+    TimsFrame::new(
+        f.frame_id,
+        f.ms_type.clone(),
+        f.ims_frame.retention_time,
+        keep.iter().map(|&i| f.scan[i]).collect(),
+        keep.iter().map(|&i| f.ims_frame.mobility[i]).collect(),
+        keep.iter().map(|&i| f.tof[i]).collect(),
+        keep.iter().map(|&i| f.ims_frame.mz[i]).collect(),
+        keep.iter().map(|&i| f.ims_frame.intensity[i]).collect(),
+    )
+}
+
 /// Build mobility-window units for the middle `n_frames` MS2 frames of one run and
 /// label each by its DOMINANT ion (argmax local abundance), using that run's own DB
-/// (frame_occurrence reflects this run's drifted RT). Returns (units, dominant-label).
-fn build_labeled(path: &str, db_path: &str, n_frames: usize) -> (Vec<FrameUnit>, Vec<Option<i64>>) {
+/// (frame_occurrence reflects this run's drifted RT). `min_int` drops peaks below a
+/// raw-intensity floor before unitization (0 = no denoising). Returns (units, label).
+fn build_labeled(path: &str, db_path: &str, n_frames: usize, min_int: f64, top_n: Option<usize>) -> (Vec<FrameUnit>, Vec<Option<i64>>) {
     let ds = TimsDatasetDIA::new("NO_SDK", path, false, false);
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
     let mut ms2: Vec<(u32, f64)> = ds.meta_data.iter().filter(|m| m.ms_ms_type != 0).map(|m| (m.id as u32, m.time)).collect();
@@ -79,8 +98,19 @@ fn build_labeled(path: &str, db_path: &str, n_frames: usize) -> (Vec<FrameUnit>,
     let slice_set: HashSet<i32> = slice.iter().map(|&f| f as i32).collect();
 
     let map = MzFeatureMap::new(2.0, 6.0).unwrap();
-    let cfg = WindowConfig { half_width: HALF_WIDTH, stride: STRIDE, transform: IntensityTransform::Sqrt, feature_map: map, top_n: Some(TOP_N) };
-    let frames = ds.get_slice(slice.clone(), threads).frames;
+    let cfg = WindowConfig { half_width: HALF_WIDTH, stride: STRIDE, transform: IntensityTransform::Sqrt, feature_map: map, top_n };
+    let frames0 = ds.get_slice(slice.clone(), threads).frames;
+    if min_int <= 0.0 {
+        let mut ints: Vec<f64> = frames0.iter().flat_map(|f| f.ims_frame.intensity.iter().copied()).collect();
+        ints.sort_by(|a, b| a.total_cmp(b));
+        let q = |p: f64| if ints.is_empty() { 0.0 } else { ints[((p * (ints.len() - 1) as f64) as usize).min(ints.len() - 1)] };
+        println!("  [{}] raw peak intensity: n={} p50 {:.0} p90 {:.0} p99 {:.0} max {:.0}", path.rsplit('/').next().unwrap_or(""), ints.len(), q(0.5), q(0.9), q(0.99), q(1.0));
+    }
+    let frames: Vec<TimsFrame> = if min_int > 0.0 {
+        frames0.par_iter().map(|f| filter_frame(f, min_int)).collect()
+    } else {
+        frames0
+    };
     let dia = &ds;
     let units: Vec<FrameUnit> = frames.par_iter().flat_map_iter(|f| frame_to_units(f, &cfg, &segments(dia, f.frame_id))).collect();
 
@@ -148,9 +178,18 @@ fn main() {
     let b_d = env::args().nth(3).unwrap();
     let b_db = env::args().nth(4).unwrap();
     let n_frames: usize = env::args().nth(5).and_then(|s| s.parse().ok()).unwrap_or(100000);
+    let min_int: f64 = env::args().nth(6).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    // 7th arg: top-N peak cap. "all"/"0" = keep ALL peaks (let intensity weighting
+    // suppress noise); a number = old top-N sub-sampling.
+    let top_n: Option<usize> = match env::args().nth(7).as_deref() {
+        None => Some(TOP_N),
+        Some("all") | Some("0") => None,
+        Some(s) => s.parse().ok(),
+    };
+    println!("min_peak_intensity floor = {min_int}   top_n = {:?}", top_n);
 
-    let (units_a, lab_a) = build_labeled(&a_d, &a_db, n_frames);
-    let (units_b, lab_b) = build_labeled(&b_d, &b_db, n_frames);
+    let (units_a, lab_a) = build_labeled(&a_d, &a_db, n_frames, min_int, top_n);
+    let (units_b, lab_b) = build_labeled(&b_d, &b_db, n_frames, min_int, top_n);
     let la = lab_a.iter().filter(|l| l.is_some()).count();
     let lb = lab_b.iter().filter(|l| l.is_some()).count();
     println!("A units {} ({} labeled)  |  B units {} ({} labeled)", units_a.len(), la, units_b.len(), lb);
