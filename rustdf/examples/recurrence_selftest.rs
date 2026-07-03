@@ -99,7 +99,8 @@ fn main() {
         return;
     }
 
-    let hasher = CosineSimHash::new(0xC0FFEE, 24, 10, Projection::Gaussian).unwrap();
+    // Realistic banding for the cost estimate: paper's (64,32). Hash cost ∝ m·n.
+    let hasher = CosineSimHash::new(0xC0FFEE, 64, 32, Projection::Gaussian).unwrap();
     let t = Instant::now();
     let sigs: Vec<Vec<u64>> = units.par_iter().map(|u| hasher.signature(&u.features)).collect();
     let hash_t = t.elapsed();
@@ -122,58 +123,66 @@ fn main() {
         full_units / 1e6, full_build, mem_gb,
     );
 
+    let _ = &sigs; // scale-timing signatures (above); the sweep re-hashes per config
+
     if units.len() > ANALYSIS_CAP {
         println!("\n(slice too large for the O(n) self-query analysis; scale numbers above)");
         return;
     }
 
-    // --- self-query analysis (uses precomputed sigs) ---
-    let mut tables = vec![HashMap::<u64, Vec<u32>>::new(); hasher.num_bands()];
-    for (u, sig) in sigs.iter().enumerate() {
-        for (band, &key) in sig.iter().enumerate() {
-            tables[band].entry(key).or_default().push(u as u32);
-        }
-    }
-    let candidates = |sig: &[u64]| -> HashSet<u32> {
-        let mut s = HashSet::new();
-        for (band, key) in sig.iter().enumerate() {
-            if let Some(v) = tables[band].get(key) {
-                s.extend(v.iter().copied());
+    // --- band-parameter sweep ---
+    // AND-of-OR scheme (Teschner et al., PMC9301846): m OR-bands, each of n bits
+    // that must ALL match; candidate = >=1 band matches. Larger n sharpens the
+    // cosine threshold and collapses random candidate volume. (24x10 = the
+    // too-permissive setting I started with; 16-32 bits = the paper's regime.)
+    let n = units.len();
+    println!("\n--- band sweep (self-query, real m/z, top-{TOP_N}) ---");
+    println!("{:>9} {:>9} {:>10} {:>10} {:>9}", "m x n", "cand/q", "gated/q", "self-retr", "recur");
+    // (24,10) = my too-permissive start; (32,16)/(64,32)/(32,32) = paper's
+    // reported configs [(64,32) = the "stricter discrimination" one]; (64,64)
+    // = the stricter high-n end from the paper's supplementary heatmap.
+    for &(m, nbits) in &[(24usize, 10usize), (32, 16), (64, 32), (32, 32), (64, 64)] {
+        let h = CosineSimHash::new(0xC0FFEE, m, nbits, Projection::Gaussian).unwrap();
+        let sgs: Vec<Vec<u64>> = units.par_iter().map(|u| h.signature(&u.features)).collect();
+        let mut tbl = vec![HashMap::<u64, Vec<u32>>::new(); m];
+        for (u, sig) in sgs.iter().enumerate() {
+            for (band, &key) in sig.iter().enumerate() {
+                tbl[band].entry(key).or_default().push(u as u32);
             }
         }
-        s
-    };
-
-    let n = units.len();
-    let (mut self_hit, mut cand_sum, mut gated_sum, mut recur_hit) = (0usize, 0usize, 0usize, 0usize);
-    for i in 0..n {
-        let (q, qm) = (&units[i].features, &units[i].meta);
-        let cands = candidates(&sigs[i]);
-        cand_sum += cands.len();
-        if cands.contains(&(i as u32)) {
-            self_hit += 1;
-        }
-        let mut gated = 0usize;
-        let mut sibling = false;
-        for &u in &cands {
-            let um = &units[u as usize].meta;
-            if (um.center_scan - qm.center_scan).abs() <= MOB_GATE_SCANS {
-                gated += 1;
-                if u != i as u32 && um.frame_id != qm.frame_id && cosine(q, &units[u as usize].features) >= RECUR_COS {
-                    sibling = true;
+        let (mut self_hit, mut cand_sum, mut gated_sum, mut recur_hit) = (0usize, 0usize, 0usize, 0usize);
+        for i in 0..n {
+            let (q, qm) = (&units[i].features, &units[i].meta);
+            let mut cands = HashSet::new();
+            for (band, &key) in sgs[i].iter().enumerate() {
+                if let Some(v) = tbl[band].get(&key) {
+                    cands.extend(v.iter().copied());
                 }
             }
+            cand_sum += cands.len();
+            if cands.contains(&(i as u32)) {
+                self_hit += 1;
+            }
+            let (mut gated, mut sibling) = (0usize, false);
+            for &u in &cands {
+                let um = &units[u as usize].meta;
+                if (um.center_scan - qm.center_scan).abs() <= MOB_GATE_SCANS {
+                    gated += 1;
+                    if u != i as u32 && um.frame_id != qm.frame_id && cosine(q, &units[u as usize].features) >= RECUR_COS {
+                        sibling = true;
+                    }
+                }
+            }
+            gated_sum += gated;
+            if sibling {
+                recur_hit += 1;
+            }
         }
-        gated_sum += gated;
-        if sibling {
-            recur_hit += 1;
-        }
+        let nf = n as f64;
+        println!(
+            "{:>4} x {:<3} {:>9.1} {:>10.1} {:>10.3} {:>9.3}",
+            m, nbits, cand_sum as f64 / nf, gated_sum as f64 / nf, self_hit as f64 / nf, recur_hit as f64 / nf,
+        );
     }
-    let nf = n as f64;
-    println!(
-        "\n--- self-query (real m/z, top-{TOP_N}) ---\n\
-         self-retrieval {:.3}   cand/q {:.1}   after mobility gate {:.1}\n\
-         sibling recurrence (same mobility, other frame, cos>={RECUR_COS}): {:.3}",
-        self_hit as f64 / nf, cand_sum as f64 / nf, gated_sum as f64 / nf, recur_hit as f64 / nf,
-    );
+    println!("(recur = same-mobility/other-frame sibling at cos>={RECUR_COS}; strict n only catches high-cosine pairs)");
 }
