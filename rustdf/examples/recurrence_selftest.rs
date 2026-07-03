@@ -63,7 +63,9 @@ fn main() {
     let in_memory = env::args().nth(3).map(|s| matches!(s.as_str(), "mem" | "1" | "true")).unwrap_or(false);
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
     println!("opening {path}  (in_memory={in_memory}, threads={threads}) ...");
-    let ds = TimsDatasetDIA::new("NO_SDK", &path, in_memory, false);
+    // SDK-free Bruker-formula calibration (reads the model from the tdf) —
+    // accurate m/z without the ~5 Da boundary-model warning, works on macOS too.
+    let ds = TimsDatasetDIA::new_with_bruker_formula(&path, in_memory, 1);
 
     let mut ms2: Vec<(u32, f64)> = ds
         .meta_data
