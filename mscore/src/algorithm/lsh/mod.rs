@@ -15,6 +15,7 @@
 //! m/z < 1). Hashing is a deterministic, dependency-free `splitmix64` mix so
 //! signatures are reproducible across machines.
 
+pub mod minhash;
 pub mod simhash;
 
 /// A single splitmix64 finalizer step — a fast, well-distributed 64-bit mix.
