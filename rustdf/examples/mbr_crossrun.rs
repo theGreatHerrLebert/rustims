@@ -88,7 +88,7 @@ fn filter_frame(f: &TimsFrame, floor: f64) -> TimsFrame {
 /// label each by its DOMINANT ion (argmax local abundance), using that run's own DB
 /// (frame_occurrence reflects this run's drifted RT). `min_int` drops peaks below a
 /// raw-intensity floor before unitization (0 = no denoising). Returns (units, label).
-fn build_labeled(path: &str, db_path: &str, n_frames: usize, min_int: f64, top_n: Option<usize>) -> (Vec<FrameUnit>, Vec<Option<i64>>) {
+fn build_labeled(path: &str, db_path: &str, n_frames: usize, min_int: f64, top_n: Option<usize>) -> (Vec<FrameUnit>, Vec<Option<i64>>, Vec<f64>) {
     let ds = TimsDatasetDIA::new("NO_SDK", path, false, false);
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
     let mut ms2: Vec<(u32, f64)> = ds.meta_data.iter().filter(|m| m.ms_ms_type != 0).map(|m| (m.id as u32, m.time)).collect();
@@ -144,10 +144,11 @@ fn build_labeled(path: &str, db_path: &str, n_frames: usize, min_int: f64, top_n
     for (idx, ion) in ions.iter().enumerate() {
         for &f in &pep_frames[&ion.peptide_id] { frame_ions.entry(f).or_default().push(idx); }
     }
-    let labels: Vec<Option<i64>> = units.par_iter().map(|u| {
+    // per unit: (dominant ion, that ion's frame_abundance at this frame = apex weight)
+    let labeled: Vec<(Option<i64>, f64)> = units.par_iter().map(|u| {
         let (f, cs) = (u.meta.frame_id, u.meta.center_scan);
         let mzwin = isolation_window(dia, f, cs);
-        let mut best: Option<(i64, f64)> = None;
+        let mut best: Option<(i64, f64, f64)> = None; // (ion, local, fab)
         if let Some(cand) = frame_ions.get(&f) {
             for &ii in cand {
                 let ion = &ions[ii];
@@ -159,12 +160,35 @@ fn build_labeled(path: &str, db_path: &str, n_frames: usize, min_int: f64, top_n
                 if !matched { continue; }
                 let fab = pep_frame_ab.get(&ion.peptide_id).and_then(|m| m.get(&f)).copied().unwrap_or(0.0) as f64;
                 let local = ion.rel_ab * fab * sab;
-                if best.map_or(true, |(_, b)| local > b) { best = Some((ion.ion_id, local)); }
+                if best.map_or(true, |(_, b, _)| local > b) { best = Some((ion.ion_id, local, fab)); }
             }
         }
-        best.map(|(iid, _)| iid)
+        match best { Some((iid, _, fab)) => (Some(iid), fab), None => (None, 0.0) }
     }).collect();
-    (units, labels)
+    let labels: Vec<Option<i64>> = labeled.iter().map(|(l, _)| *l).collect();
+    let apex_w: Vec<f64> = labeled.iter().map(|(_, w)| *w).collect();
+    (units, labels, apex_w)
+}
+
+/// Oracle apex aggregation: collapse each analyte (dominant ion) to its single
+/// elution-apex unit — the labeled unit in the frame of max frame_abundance.
+/// Uses the label only to CONSTRUCT the ideal grouping, so this is an upper bound
+/// on what label-free within-run clustering could achieve for MBR.
+fn reduce_apex(units: Vec<FrameUnit>, labels: Vec<Option<i64>>, apex_w: Vec<f64>) -> (Vec<FrameUnit>, Vec<Option<i64>>) {
+    let mut best: HashMap<i64, (usize, f64)> = HashMap::new();
+    for (i, l) in labels.iter().enumerate() {
+        if let Some(iid) = l {
+            let w = apex_w[i];
+            best.entry(*iid).and_modify(|e| { if w > e.1 { *e = (i, w); } }).or_insert((i, w));
+        }
+    }
+    let mut ru = Vec::new();
+    let mut rl = Vec::new();
+    for (iid, (i, _)) in best {
+        ru.push(units[i].clone());
+        rl.push(Some(iid));
+    }
+    (ru, rl)
 }
 
 fn pct(sorted: &[f64], p: f64) -> f64 {
@@ -186,10 +210,21 @@ fn main() {
         Some("all") | Some("0") => None,
         Some(s) => s.parse().ok(),
     };
-    println!("min_peak_intensity floor = {min_int}   top_n = {:?}", top_n);
+    // 8th arg: "apex" collapses each analyte to its elution-apex unit per run
+    // (oracle upper bound on B); default = per-frame units (current behaviour).
+    let apex = matches!(env::args().nth(8).as_deref(), Some("apex"));
+    println!("min_peak_intensity floor = {min_int}   top_n = {:?}   mode = {}", top_n, if apex { "apex-representative" } else { "per-frame" });
 
-    let (units_a, lab_a) = build_labeled(&a_d, &a_db, n_frames, min_int, top_n);
-    let (units_b, lab_b) = build_labeled(&b_d, &b_db, n_frames, min_int, top_n);
+    let (units_a, lab_a, apw_a) = build_labeled(&a_d, &a_db, n_frames, min_int, top_n);
+    let (units_b, lab_b, apw_b) = build_labeled(&b_d, &b_db, n_frames, min_int, top_n);
+    let (units_a, lab_a, units_b, lab_b) = if apex {
+        let (ua, la) = reduce_apex(units_a, lab_a, apw_a);
+        let (ub, lb) = reduce_apex(units_b, lab_b, apw_b);
+        println!("apex reduction: A {} representatives, B {} representatives", ua.len(), ub.len());
+        (ua, la, ub, lb)
+    } else {
+        (units_a, lab_a, units_b, lab_b)
+    };
     let la = lab_a.iter().filter(|l| l.is_some()).count();
     let lb = lab_b.iter().filter(|l| l.is_some()).count();
     println!("A units {} ({} labeled)  |  B units {} ({} labeled)", units_a.len(), la, units_b.len(), lb);

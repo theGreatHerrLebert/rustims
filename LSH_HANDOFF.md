@@ -354,3 +354,42 @@ higher floor = fewer analytes but each matched better.
 Harness: `mbr_crossrun` now takes `[min_peak_intensity=0] [top_n=25|all|N]` and
 prints the raw-intensity percentiles (floor=0). `filter_frame` does the pre-hash
 denoise by rebuilding a parallel-array TimsFrame.
+
+### Oracle-apex test: the wall is chimericity, not RT redundancy (2026-07-03)
+
+Followed the floor-tuning caveat: absolute floors of 300-1000 over-fit the SIM's
+low-intensity blank noise (p90=68) and won't transfer, so all numbers below use a
+conservative **floor 100** (clearly above the noise band, not reaching into fragment
+territory). `mbr_crossrun` 8th arg `apex` collapses each analyte to its elution-apex
+unit (frame of max frame_abundance) using the label ONLY to construct the ideal
+grouping — an oracle upper bound on what label-free within-run clustering (option B)
+could do.
+
+| floor 100, all-peaks, noisy | per-frame | apex (oracle) |
+|-----------------------------|-----------|---------------|
+| units / representatives | 121k | **11k (11x fewer)** |
+| true-pair cos p75 / frac>=0.7 | 0.835 / 0.32 | 0.772 / 0.29 |
+| (32,16) recall | 0.294 | 0.229 |
+| (64,32) recall | 0.153 | 0.078 |
+| (32,16) cand-cos median / cand/q | 0.000 / 2.69 | **0.812 / 0.55** |
+| (64,32) cand-cos frac>=0.7 | 1.00 | 1.00 |
+
+**Verdict on option B (RT/apex aggregation): does NOT raise the MBR recall ceiling.**
+Apex-vs-apex true-pair cosine median is still **0.000** — collapsing RT doesn't help
+because each apex window is STILL a ~8-ion chimeric mixture, and RT drift changes which
+neighbours co-isolate at A's apex vs B's apex. The bottleneck is chimericity, not
+elution redundancy.
+
+**But apex is still the right index SHAPE:** 11x fewer units, and candidate quality
+jumps (median cand-cosine 0.0 -> 0.81, cand/q 2.7 -> 0.55). A production MBR index must
+emit one representative per analyte anyway, so apex's recall 0.23 is the honest
+"one-per-analyte" number; per-frame's 0.29 is inflated by duplicate match attempts.
+
+**Where this redirects us:** to raise recall we must DECHIMERIZE the window (option C:
+isolate single-analyte spectra via light feature deconvolution) so cosine means
+"same analyte". Apex aggregation should still be adopted for dedup/efficiency, but it
+is not the recall lever. An untested variant of B remains: SUM the spectrum across an
+analyte's elution frames (rather than pick one apex frame) — averaging could suppress
+transient chimeric neighbours while reinforcing the analyte's persistent fragments;
+worth a look, but the oracle single-frame result suggests dechimerization is the real
+fix.
