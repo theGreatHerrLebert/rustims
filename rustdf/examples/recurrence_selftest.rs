@@ -55,10 +55,15 @@ fn cosine(a: &[(i64, f32)], b: &[(i64, f32)]) -> f64 {
 }
 
 fn main() {
-    let path = env::args().nth(1).expect("usage: recurrence_selftest <path.d> [n_frames]");
+    let path = env::args().nth(1).expect("usage: recurrence_selftest <path.d> [n_frames] [mem]");
     let n_frames: usize = env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(40);
-    println!("opening {path} ...");
-    let ds = TimsDatasetDIA::new("NO_SDK", &path, false, false);
+    // Third arg "mem"/"1" loads the whole .d into RAM → the in-memory loader's
+    // get_slice is rayon-parallel (the lazy loader reads serially). Worth it on
+    // a big box for the full dataset; needs enough RAM to hold the .d.
+    let in_memory = env::args().nth(3).map(|s| matches!(s.as_str(), "mem" | "1" | "true")).unwrap_or(false);
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8);
+    println!("opening {path}  (in_memory={in_memory}, threads={threads}) ...");
+    let ds = TimsDatasetDIA::new("NO_SDK", &path, in_memory, false);
 
     let mut ms2: Vec<(u32, f64)> = ds
         .meta_data
@@ -83,7 +88,7 @@ fn main() {
 
     // --- build (timed) ---
     let t = Instant::now();
-    let frames = ds.get_slice(slice.clone(), 8).frames;
+    let frames = ds.get_slice(slice.clone(), threads).frames;
     let read_t = t.elapsed();
 
     let dia = &ds; // borrow for the parallel closure
