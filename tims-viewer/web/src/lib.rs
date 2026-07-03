@@ -136,6 +136,7 @@ pub fn start() {
     wasm_bindgen_futures::spawn_local(async {
         if let Err(e) = run().await {
             log::error!("{e}");
+            hide_loading(); // don't leave the veil covering the error
             show_status(&format!("tims-viewer could not start: {e}"));
         }
     });
@@ -1038,6 +1039,9 @@ async fn run() -> Result<(), String> {
         cb.forget(); // lives for the page; cancellation is a Phase-4 (embedding) concern
     }
 
+    // The cloud is fetched, built, and uploaded — drop the loading veil so the first frame shows through.
+    hide_loading();
+
     // requestAnimationFrame render loop (the callback receives the frame timestamp).
     let f = Rc::new(RefCell::new(None));
     let g = f.clone();
@@ -1170,6 +1174,19 @@ fn show_status(msg: &str) {
         .and_then(|d| d.get_element_by_id("status"))
     {
         el.set_text_content(Some(msg));
+    }
+}
+
+/// Dismiss the loading veil (the `#loading` overlay is visible by default on every page load, so it
+/// covers the initial load AND a dataset switch — a switch reloads the page). Idempotent: called
+/// once the first cloud is built and about to render, and again on a fatal start error so the veil
+/// never traps the page (the error surfaces via `#status`).
+fn hide_loading() {
+    if let Some(el) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.get_element_by_id("loading"))
+    {
+        let _ = el.set_class_name("hidden");
     }
 }
 
