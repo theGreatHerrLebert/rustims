@@ -92,3 +92,88 @@ cargo run --release --example recurrence_recall -p rustdf -- \
 ## Commit trail (branch, newest last)
 Phase 0 SimHash → Phase 1 driver → MinHash+spike → top-N+self-test → band sweep →
 Codex fixes → default Bruker-formula calibration → ground-truth recall harness.
+
+---
+
+## Scale-run update (monster3, 120 threads — 2026-07-03)
+
+Runs on the beefier box. **Two handoff expectations were corrected — see below.**
+
+### Full-dataset build IS feasible (task 3, `... 32020 mem`)
+- **3,061,009 units** (96/frame, 117 feat/unit after top-25).
+- `mem` (in-memory, SDK-free BrukerFormula) reads all 32020 frames in **1.03 s**
+  (parallel; no SDK lock) — confirms the "go SDK-free for PAR reads" call.
+- Build (hash, (64,32)) **232.75 s** (~3.9 min), the 99%-dominant cost, as projected.
+- **Peak RSS ~35 GB** (not the ~4 GB "feature store" figure — that was the store
+  only; peak holds raw .d + decoded frames + units + signatures at once). Fine on a
+  big box; size the machine for ~35 GB, not 4.
+
+### Bigger recall run (task 2, n=2000 frames, 194,071 units)
+Robust now (n=2382-4513 true pairs vs 177 before). **Two labels A/B (task 4):**
+
+TRUE cross-frame same-ion pair cosine — **median 0.000 under BOTH labels**:
+| label | n | p75 | p90 | frac>=0.7 | frac>=0.9 |
+|-------|---|-----|-----|-----------|-----------|
+| shares-any-ion | 2382 | 0.624 | 0.900 | 0.22 | 0.10 |
+| dominant-ion   | 4513 | 0.612 | 0.921 | 0.23 | 0.12 |
+
+**CORRECTION 1 — the dominant-ion relabel (handoff step 2) did NOT help.** It barely
+moved the true-pair cosine tail (frac>=0.7 0.23 vs 0.22) and *collapsed* the ion-label
+precision (below). Reason: in ~8-ion chimeric windows the abundance-argmax ion is
+frame-unstable, so genuinely-similar recurrences often get *different* dominant labels.
+The bottleneck is chimericity, not the label — a better label cant fix it.
+
+---
+
+## Scale-run update (monster3, 120 threads — 2026-07-03)
+
+Runs on the beefier box. **Two handoff expectations were corrected — see below.**
+
+### Full-dataset build IS feasible (task 3, `... 32020 mem`)
+- **3,061,009 units** (96/frame, 117 feat/unit after top-25).
+- `mem` (in-memory, SDK-free BrukerFormula) reads all 32020 frames in **1.03 s**
+  (parallel; no SDK lock) — confirms the "go SDK-free for PAR reads" call.
+- Build (hash, (64,32)) **232.75 s** (~3.9 min), the 99%-dominant cost, as projected.
+- **Peak RSS ~35 GB** (not the ~4 GB "feature store" figure — that was the store
+  only; peak holds raw .d + decoded frames + units + signatures at once). Fine on a
+  big box; size the machine for ~35 GB, not 4.
+
+### Bigger recall run (task 2, n=2000 frames, 194,071 units)
+Robust now (n=2382-4513 true pairs vs 177 before). **Two labels A/B (task 4):**
+
+TRUE cross-frame same-ion pair cosine — **median 0.000 under BOTH labels**:
+
+| label | n | p75 | p90 | frac>=0.7 | frac>=0.9 |
+|-------|---|-----|-----|-----------|-----------|
+| shares-any-ion | 2382 | 0.624 | 0.900 | 0.22 | 0.10 |
+| dominant-ion   | 4513 | 0.612 | 0.921 | 0.23 | 0.12 |
+
+**CORRECTION 1 — the dominant-ion relabel (handoff step 2) did NOT help.** It barely
+moved the true-pair cosine tail (frac>=0.7 0.23 vs 0.22) and *collapsed* the ion-label
+precision (below). Reason: in ~8-ion chimeric windows the abundance-argmax ion is
+frame-unstable, so genuinely-similar recurrences often get *different* dominant labels.
+The bottleneck is chimericity, not the label — a better label can't fix it.
+
+LSH recall / ion-label precision / cand/q, plus the **label-independent TRUE cosine of
+the pairs LSH returns** (this is the honest recurrence metric):
+
+| m x n | recall (any/dom) | ion-prec any | ion-prec dom | cand/q | cand-cos p50 | p90 | frac>=0.7 |
+|-------|------------------|--------------|--------------|--------|--------------|-----|-----------|
+| 32x16 | 0.30 / 0.19 | 0.409 | 0.095 | 3.53 | **0.555** | 0.960 | **0.48** |
+| 64x32 | 0.20 / 0.12 | 0.813 | 0.185 | 0.94 | **0.950** | 0.982 | **1.00** |
+
+**CORRECTION 2 — ion-label precision is the wrong yardstick.** It measures ion-label
+agreement (confounded by chimericity), and at scale it is far below the small-n
+80-91% (any-label: 0.41/0.81). Judged against *actual spectral similarity* (cand-cos),
+the index is excellent: **(64,32) returns essentially only near-duplicates (median
+cosine 0.95, 100% >=0.7); (32,16) is a wider net (median 0.55, 48% >=0.7).**
+
+### Verdict for recurrence / MBR: VIABLE.
+- **(64,32)** = high-purity near-duplicate / recurrence finder (median cand cosine
+  0.95, 100% >=0.7, 0.94 cand/q). Use when you want clean recurring-spectrum pairs.
+- **(32,16)** = broader recall net (median 0.55, 48% >=0.7, 3.5 cand/q). Use when you
+  also want moderate-similarity recurrences and will re-score candidates by exact
+  cosine (cheap: cand/q is small). The re-score step makes its 48% purity a non-issue.
+- The mobility gate remains load-bearing; SDK-free + `mem` gives parallel reads for
+  the full build. Ion-sharing labels should be retired as a similarity proxy — score
+  candidates by cosine directly.
