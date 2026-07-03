@@ -179,6 +179,10 @@ pub struct WindowConfig {
     pub transform: IntensityTransform,
     /// m/z → feature-index mapping.
     pub feature_map: MzFeatureMap,
+    /// Optional top-N peak picking per window (by transformed intensity) before
+    /// splatting — turns a dense noisy mobility window into a spectrum-like
+    /// sparse bag, the way real spectral matching does. `None` keeps all peaks.
+    pub top_n: Option<usize>,
 }
 
 /// Metadata for one indexed unit. DIA isolation-window fields (`window_group`)
@@ -282,17 +286,31 @@ pub fn frame_to_units(
         let win_lo = (center.scan - w).max(seg.0);
         let win_hi = (center.scan + w).min(seg.1);
 
-        // Slices are sorted by scan → the window is a contiguous run.
+        // Slices are sorted by scan → the window is a contiguous run. Gather
+        // the window's transformed peaks first (so top-N can pick among them).
         let first = slices.partition_point(|sl| sl.scan < win_lo);
-        let mut acc: HashMap<i64, f64> = HashMap::new();
+        let mut wpeaks: Vec<(f64, f64)> = Vec::new();
         let mut i = first;
         while i < slices.len() && slices[i].scan <= win_hi {
             let sl = &slices[i];
             for idx in sl.start..sl.end {
                 let val = cfg.transform.apply(intensity[idx]);
-                cfg.feature_map.splat_into(mz[idx], val, &mut acc);
+                if val > 0.0 {
+                    wpeaks.push((mz[idx], val));
+                }
             }
             i += 1;
+        }
+        // Optional top-N peak picking by transformed intensity.
+        if let Some(n) = cfg.top_n {
+            if wpeaks.len() > n {
+                wpeaks.select_nth_unstable_by(n, |a, b| b.1.total_cmp(&a.1));
+                wpeaks.truncate(n);
+            }
+        }
+        let mut acc: HashMap<i64, f64> = HashMap::new();
+        for &(m, v) in &wpeaks {
+            cfg.feature_map.splat_into(m, v, &mut acc);
         }
 
         let features = finalize(acc);
@@ -421,6 +439,7 @@ mod tests {
             stride: 1,
             transform: IntensityTransform::None,
             feature_map: map(),
+            top_n: None,
         };
         let units = frame_to_units(&frame, &cfg, &[]);
         assert_eq!(units.len(), 3);
@@ -453,6 +472,7 @@ mod tests {
             stride: 1,
             transform: IntensityTransform::None,
             feature_map: map(),
+            top_n: None,
         };
         let win = WindowConfig { half_width: 1, ..raw.clone() };
 
@@ -494,6 +514,7 @@ mod tests {
             stride: 1,
             transform: IntensityTransform::None,
             feature_map: map(),
+            top_n: None,
         };
         let m = map();
         let hi_region = m.coord(1000.0) - 1000.0; // comfortably below the 1000-m/z bins
@@ -516,6 +537,40 @@ mod tests {
     }
 
     #[test]
+    fn top_n_picks_strongest_peaks() {
+        // One scan with 5 peaks of increasing intensity; top_n=2 must keep only
+        // the two strongest (highest m/z here) → far fewer features than all-5.
+        let frame = make_frame(
+            1,
+            MsType::FragmentDia,
+            0.0,
+            vec![0, 0, 0, 0, 0],
+            vec![200.0, 400.0, 600.0, 800.0, 1000.0],
+            vec![1.0, 2.0, 3.0, 4.0, 5.0],
+            vec![1.0; 5],
+        );
+        let base = WindowConfig {
+            half_width: 0,
+            stride: 1,
+            transform: IntensityTransform::None,
+            feature_map: map(),
+            top_n: None,
+        };
+        let all = frame_to_units(&frame, &base, &[]);
+        let top2 = frame_to_units(&frame, &WindowConfig { top_n: Some(2), ..base.clone() }, &[]);
+        assert!(top2[0].features.len() < all[0].features.len());
+        // The two strongest peaks are at m/z 800 and 1000 → their bins survive.
+        let m = map();
+        for mz in [800.0, 1000.0] {
+            let c = m.coord(mz).round() as i64;
+            assert!(top2[0].features.iter().any(|&(id, _)| (id - c).abs() <= 8));
+        }
+        // The weakest (m/z 200) must be gone.
+        let weak = m.coord(200.0).round() as i64;
+        assert!(top2[0].features.iter().all(|&(id, _)| (id - weak).abs() > 8));
+    }
+
+    #[test]
     fn negative_scans_are_skipped() {
         // A sentinel scan of -1 must not produce a unit, and its peak must not
         // leak into any window (parity with rustdf's build_scan_slices).
@@ -533,6 +588,7 @@ mod tests {
             stride: 1,
             transform: IntensityTransform::None,
             feature_map: map(),
+            top_n: None,
         };
         let units = frame_to_units(&frame, &cfg, &[]);
         assert!(units.iter().all(|u| u.meta.center_scan >= 0));
@@ -558,6 +614,7 @@ mod tests {
             stride: 1,
             transform: IntensityTransform::Sqrt,
             feature_map: map(),
+            top_n: None,
         };
         let units = frame_to_units(&frame, &cfg, &[]);
         let h = CosineSimHash::new(0xABCD, 32, 12, Projection::Gaussian).unwrap();
