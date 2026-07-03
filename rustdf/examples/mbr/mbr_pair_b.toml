@@ -1,0 +1,121 @@
+# =============================================================================
+# TIMSIM — MBR replicate pair, RUN B (replicate of A).
+# from_existing = MBR-PAIR-A: SAME peptides / ions / abundances / windows.
+# The ONLY differences vs A are per-analyte Gaussian RT + IM drift (below) plus
+# the independent stochastic realization of the acquisition. This is the MBR test:
+# does the hash match the SAME analyte across A and B despite realistic drift?
+# =============================================================================
+
+[paths]
+save_path      = "/globalscratch/dateschn/sim_output"
+reference_path = "/globalscratch/dateschn/raw/dia/blanks/G241217_011_Slot2-2_1_16312.d"
+fasta_path     = "/globalscratch/dateschn/raw/fasta/hela/uniprotkb_proteome_UP000005640_AND_revi_2024_05_21.fasta"
+modifications  = ""
+existing_path  = "/globalscratch/dateschn/sim_output/MBR-PAIR-A"
+
+[experiment]
+experiment_name      = "MBR-PAIR-B"
+acquisition_type     = "DIA"
+gradient_length      = 700.0
+use_reference_layout = true
+reference_in_memory  = false
+use_bruker_sdk       = true
+apply_fragmentation  = true
+from_existing        = true
+silent_mode          = false
+
+[digestion]
+n_proteins                 = 20000
+num_peptides_total         = 400000
+num_sample_peptides        = 20000
+sample_peptides            = true
+sample_seed                = 7
+digest_proteins            = true
+remove_degenerate_peptides = false
+cleave_at                  = "KR"
+restrict                   = "P"
+missed_cleavages           = 2
+min_len                    = 7
+max_len                    = 30
+decoys                     = false
+upscale_factor             = 100000
+
+[models]
+rt_model              = ""
+ccs_model             = ""
+intensity_model       = ""
+rt_model_kind         = "chronologer"
+chronologer_base_path = "/globalscratch/dateschn/primitives/chronologer/models/Chronologer_20220601193755.pt"
+
+[retention_time]
+min_rt_percent                     = 2.0
+exclude_accumulated_gradient_start = true
+target_p                           = 0.999
+sampling_step_size                 = 0.001
+n_steps                            = 1000
+remove_epsilon                     = 1e-4
+
+[ion_mobility]
+use_inverse_mobility_std_mean = true
+inverse_mobility_std_mean     = 0.009
+
+[charge_states]
+p_charge                     = 0.8
+max_charge                   = 4
+min_charge_contrib           = 0.005
+binomial_charge_model        = false
+normalize_charge_states      = true
+charge_state_one_probability = 0.0
+
+[isotopic_pattern]
+isotope_k             = 8
+isotope_min_intensity = 1
+isotope_centroid      = true
+
+[fragment_intensity]
+fragment_intensity_model = ""
+down_sample_factor       = 0.0
+
+[noise]
+noise_frame_abundance         = true
+noise_scan_abundance          = true
+mz_noise_precursor            = true
+precursor_noise_ppm           = 5.0
+mz_noise_fragment             = true
+fragment_noise_ppm            = 5.0
+mz_noise_uniform              = false
+add_real_data_noise           = false
+reference_noise_intensity_max = 150000.0
+
+# The MBR drift. re_scale_rt=false keeps A's timeline; the *_variation_std keys
+# add zero-mean Gaussian per-analyte jitter on top (add_normal_noise):
+#   rt_variation_std           — seconds of RT drift (peak FWHM here ~10-30 s)
+#   ion_mobility_variation_std — 1/K0 drift (intrinsic peak std is 0.009)
+# NO intensity_variation_std -> abundances stay identical ("IM and RT shift only").
+[variation]
+re_scale_rt                = false
+rt_variation_std           = 3.0
+ion_mobility_variation_std = 0.003
+
+[acquisition]
+round_collision_energy    = true
+collision_energy_decimals = 0
+
+[proteome_mix]
+proteome_mix         = false
+multi_fasta_dilution = ""
+
+[phosphorylation]
+phospho_mode = false
+
+[performance]
+num_threads         = -1
+batch_size          = 2048
+frame_batch_size    = 500
+lazy_frame_assembly = false
+use_gpu             = true
+gpu_memory_limit_gb = 16
+
+[logging]
+log_level = "INFO"
+log_file  = "MBR-PAIR-B.run.log"

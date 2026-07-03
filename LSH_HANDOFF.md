@@ -224,3 +224,52 @@ Therefore:
 - Next decisive experiment: simulate a small same-scheme replicate pair (same
   peptides+abundances, 2 seeds, short gradient) and measure cosine survival of the
   SAME analyte across the two runs. That is the real MBR test.
+
+### Cross-run MBR test — the hash DOES match the same analyte across runs (2026-07-03)
+
+Built the replicate pair the single-run experiments needed. TimSim `from_existing`
+template mode: **MBR-PAIR-A** (fresh, 20k sampled peptides, 700 s DIA, diaPASEF
+reference layout, real-data-noise OFF) → **MBR-PAIR-B** = `from_existing=A` with the
+ONLY differences being per-analyte Gaussian **RT drift std=3.0 s** and **IM drift
+std=0.003** (1/K0) — same peptides, ions, abundances, and crucially the **same
+`ion_id` space** (verified identical), so "same analyte in A and B" is exact ground
+truth. Configs: `rustdf/examples/mbr/mbr_pair_{a,b}.toml`. Harness:
+`rustdf/examples/mbr_crossrun.rs` (index A, query B). Runtime ~20 s for the full
+pair (~114k units each) on monster3.
+
+A units 113,493 (110,812 labeled) | B units 114,878 (112,218 labeled).
+Distinct dominant ions: A 11,466 / B 11,487 / **shared 10,379**.
+
+**TRUE cross-run same-dominant-ion pair cosine** (best A twin per B unit, n=98,485):
+
+| p10 | p25 | p50 | p75 | p90 | frac>=0.7 | frac>=0.9 |
+|-----|-----|-----|-----|-----|-----------|-----------|
+| 0.000 | 0.711 | **0.919** | 0.961 | 0.980 | **0.75** | 0.57 |
+
+Contrast the WITHIN-run number: median **0.000**. Across runs the *same analyte*
+recurs at median cosine **0.92** — because we are now comparing the same analyte's
+window to its replica (same co-isolated neighbourhood + tiny drift + independent
+noise), not two different chimeric windows that merely share a minor ion.
+
+**LSH cross-run retrieval (B query -> A index):**
+
+| m x n | recall | ion-prec | cand/q | cand-cos p50 | p90 | frac>=0.7 |
+|-------|--------|----------|--------|--------------|-----|-----------|
+| 32x16 | **0.728** | 0.314 | 9.52 | 0.906 | 0.969 | 0.84 |
+| 64x32 | **0.565** | 0.390 | 4.48 | 0.946 | 0.979 | **1.00** |
+
+(ion-prec is the same confounded metric as before — dominant-ion instability, not a
+retrieval failure; cand-cos is the honest yardstick and it is excellent.)
+
+**Verdict: MBR is viable.** Cross-run, the SimHash index matches the same analyte at
+high cosine — the capability that provably does NOT exist within one run. (32,16)
+recovers ~73% of matchable analytes; (64,32) is a purity-1.0 near-duplicate matcher
+at ~57% recall. This is the intended MBR use case, demonstrated.
+
+**Caveats / next (honest):** this is an optimistic pair — real-data noise OFF, small
+drift, identical abundances ("IM+RT shift only", as scoped). Before claiming
+production MBR: (1) re-run with `add_real_data_noise=true`; (2) sweep drift
+(rt_variation_std, ion_mobility_variation_std) incl. IM drift past the |Δscan|<=5
+gate; (3) add abundance variation (intensity_variation_std) for biological-replicate
+realism; (4) widen/relax the mobility gate as IM drift grows. Each will lower recall —
+the question is the operating curve, not existence, which is now established.
