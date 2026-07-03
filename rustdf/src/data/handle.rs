@@ -954,7 +954,9 @@ pub enum TimsDataLoader {
 ///   loaded (missing / wrong arch / mismatched version) this now **falls back** (with a warning)
 ///   instead of panicking.
 /// - Otherwise (or after that fallback): derive an accurate calibration from the SDK if the
-///   `bruker_lib_path` is usable, else the simple boundary model (~5 Da error on some datasets).
+///   `bruker_lib_path` is usable; else the SDK-free Bruker-formula calibration
+///   read from the tdf; else, as a last resort, the simple boundary model
+///   (~5 Da error on some datasets).
 fn build_index_converter(
     bruker_lib_path: &str,
     data_path: &str,
@@ -966,6 +968,9 @@ fn build_index_converter(
     mz_lower: f64,
     mz_upper: f64,
 ) -> TimsIndexConverter {
+    // Reference frame for the SDK-free Bruker-formula calibration (coefficients
+    // are near-constant per run; frame 1 always exists).
+    const DEFAULT_CALIBRATION_FRAME_ID: u32 = 1;
     if use_bruker_sdk {
         match BrukerLibTimsDataConverter::try_new(bruker_lib_path, data_path) {
             Ok(converter) => return TimsIndexConverter::BrukerLib(converter),
@@ -975,20 +980,26 @@ fn build_index_converter(
             ),
         }
     }
-    // Derive an accurate calibration via the SDK if possible, else the simple boundary model.
-    match derive_mz_calibration(bruker_lib_path, data_path, tof_max_index) {
-        Some((intercept, slope)) => TimsIndexConverter::Calibrated(CalibratedIndexConverter::new(
+    // Derive an accurate calibration via the SDK if possible.
+    if let Some((intercept, slope)) = derive_mz_calibration(bruker_lib_path, data_path, tof_max_index)
+    {
+        return TimsIndexConverter::Calibrated(CalibratedIndexConverter::new(
             intercept,
             slope,
             im_lower,
             im_upper,
             scan_max_index,
-        )),
-        None => {
+        ));
+    }
+    // SDK-free accurate calibration: the Bruker formula read straight from the
+    // tdf (m/z + 1/K0). Preferred over the simple boundary model; only falls
+    // through to it if the tdf has no supported calibration model.
+    match BrukerFormulaConverter::from_d_folder(data_path, DEFAULT_CALIBRATION_FRAME_ID) {
+        Ok(converter) => TimsIndexConverter::BrukerFormula(converter),
+        Err(e) => {
             eprintln!(
-                "Warning: Could not derive m/z calibration from SDK. \
-                Using simple boundary model which may have ~5 Da error on some datasets. \
-                This typically happens on macOS where Bruker SDK is not available."
+                "Warning: SDK-free Bruker-formula m/z calibration unavailable ({e}); \
+                using the simple boundary model, which may have ~5 Da error on some datasets."
             );
             TimsIndexConverter::Simple(SimpleIndexConverter::from_boundaries(
                 mz_lower,
