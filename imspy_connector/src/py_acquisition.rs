@@ -737,7 +737,7 @@ pub fn has_mzml() -> bool {
 /// file stays purely synthetic).
 #[cfg(feature = "sciex")]
 #[pyfunction]
-#[pyo3(signature = (db_path, template_path, out_dir, num_threads=4, quad_k=15.0, max_ms1_peaks=2000, max_ms2_peaks=800, precursor_noise_ppm=0.0, fragment_noise_ppm=0.0, overlay_ppm=0.0, spike_scale=1.0, preserve_template_partial=false))]
+#[pyo3(signature = (db_path, template_path, out_dir, num_threads=4, quad_k=15.0, max_ms1_peaks=2000, max_ms2_peaks=800, precursor_noise_ppm=0.0, fragment_noise_ppm=0.0, overlay_ppm=0.0, spike_scale=1.0, preserve_template_partial=false, profile_path=None))]
 #[allow(clippy::too_many_arguments)]
 pub fn write_sciex_wiff(
     py: Python<'_>,
@@ -753,6 +753,7 @@ pub fn write_sciex_wiff(
     overlay_ppm: f64,
     spike_scale: f64,
     preserve_template_partial: bool,
+    profile_path: Option<&str>,
 ) -> PyResult<(usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, bool)> {
     use rustdf::sim::sciex_dispatch::{write_sciex_wiff as run, SciexWriteOptions};
     use std::path::Path;
@@ -776,9 +777,10 @@ pub fn write_sciex_wiff(
         spike_scale,
         preserve_template_partial,
     };
+    let profile = profile_path.map(Path::new);
     let s = py
         .allow_threads(|| {
-            run(Path::new(db_path), Path::new(template_path), Path::new(out_dir), opts)
+            run(Path::new(db_path), Path::new(template_path), Path::new(out_dir), opts, profile)
         })
         .map_err(PyValueError::new_err)?;
     Ok((
@@ -806,6 +808,16 @@ pub fn sciex_template_cycles(template_path: &str) -> PyResult<usize> {
         .map_err(PyValueError::new_err)
 }
 
+/// Enumerate the physical scan blocks of a `.wiff.scan` in file order, returning
+/// `(cal_a, cal_b)` per block. Index = block order (the same enumeration the native writer and
+/// a template profile use). For the offline template characterizer. Requires `sciex`.
+#[cfg(feature = "sciex")]
+#[pyfunction]
+pub fn sciex_scan_blocks(scan_path: &str) -> PyResult<Vec<(f64, f64)>> {
+    use std::path::Path;
+    rustdf::sim::sciex_dispatch::scan_block_cals(Path::new(scan_path)).map_err(PyValueError::new_err)
+}
+
 #[pymodule]
 pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAcquisitionScheme>()?;
@@ -828,5 +840,7 @@ pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(write_sciex_wiff, m)?)?;
     #[cfg(feature = "sciex")]
     m.add_function(wrap_pyfunction!(sciex_template_cycles, m)?)?;
+    #[cfg(feature = "sciex")]
+    m.add_function(wrap_pyfunction!(sciex_scan_blocks, m)?)?;
     Ok(())
 }

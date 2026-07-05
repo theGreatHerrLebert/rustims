@@ -418,6 +418,82 @@ fn copy_bundle(template_wiff: &Path, out_dir: &Path, new_scan: &[u8]) -> Result<
     out_wiff.ok_or_else(|| format!("output .wiff ({wiff_name}) was not placed in {out_dir:?}"))
 }
 
+// --- per-template profile (exact roles + seeds from a pwiz characterization) ----------------
+
+/// One authorable block from a template characterization: its `scan_blocks` index, MS level, and
+/// exact low-mass-cutoff seed `cut_n` (derived from pwiz's reported spectra). Blocks absent from
+/// the profile's `authored` list are cleared. A profile lets the writer author ANY pwiz-readable
+/// template without the metadata role model or the closed-form seed (both fit to K562) — the fix
+/// for cross-lab / cross-method templates where those K562-anchored heuristics don't hold.
+#[derive(serde::Deserialize)]
+pub struct ProfileBlock {
+    pub block: usize,
+    pub ms: u8,
+    pub cut_n: i64,
+}
+
+/// A template characterization: the SWATH window count + the ordered authorable blocks.
+#[derive(serde::Deserialize)]
+pub struct TemplateProfile {
+    pub n_windows: usize,
+    pub authored: Vec<ProfileBlock>,
+}
+
+/// Enumerate the physical scan blocks' `(cal_a, cal_b)` in file order — for the offline template
+/// characterizer, which needs the exact same block enumeration the writer + profiles use.
+pub fn scan_block_cals(scan_path: &Path) -> Result<Vec<(f64, f64)>, String> {
+    let scan = std::fs::read(scan_path).map_err(|e| format!("read {scan_path:?}: {e}"))?;
+    Ok(scan_blocks(&scan).iter().map(|b| (b.cal_a, b.cal_b)).collect())
+}
+
+fn load_profile(path: &Path) -> Result<TemplateProfile, String> {
+    let s = std::fs::read_to_string(path).map_err(|e| format!("read profile {path:?}: {e}"))?;
+    serde_json::from_str(&s).map_err(|e| format!("parse profile {path:?}: {e}"))
+}
+
+/// Group a profile's authored blocks into whole `1 + N` cycles (each MS1 starts a cycle; MS2
+/// blocks append in order) + a per-block `cut_n` map. Non-full cycles and unlisted blocks are
+/// cleared. Returns `(layout, cut_n map, n_windows)`.
+fn layout_from_profile(
+    p: &TemplateProfile,
+    n_blocks: usize,
+) -> Result<(Layout, HashMap<usize, i64>, usize), String> {
+    if p.n_windows == 0 {
+        return Err("profile has 0 SWATH windows".into());
+    }
+    let period = 1 + p.n_windows;
+    let mut cutn = HashMap::new();
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut cur: Vec<usize> = Vec::new();
+    for e in &p.authored {
+        if e.block >= n_blocks {
+            return Err(format!("profile block {} out of range ({n_blocks} blocks)", e.block));
+        }
+        cutn.insert(e.block, e.cut_n);
+        if e.ms == 1 && !cur.is_empty() {
+            groups.push(std::mem::take(&mut cur));
+        }
+        cur.push(e.block);
+    }
+    if !cur.is_empty() {
+        groups.push(cur);
+    }
+    // Keep only whole cycles (1 MS1 + N MS2); clear everything else.
+    let mut layout = Layout::default();
+    let mut authored: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    for g in groups {
+        if g.len() == period {
+            authored.extend(&g);
+            layout.cycles.push(Cycle { blocks: g });
+        }
+    }
+    if layout.cycles.is_empty() {
+        return Err(format!("profile has no whole {period}-block cycles"));
+    }
+    layout.partial = (0..n_blocks).filter(|i| !authored.contains(i)).collect();
+    Ok((layout, cutn, p.n_windows))
+}
+
 // --- driver --------------------------------------------------------------------------------
 
 /// Render the no-IM DIA DB at `db_path` and author it into the ZenoTOF `template_wiff`,
@@ -425,11 +501,14 @@ fn copy_bundle(template_wiff: &Path, out_dir: &Path, new_scan: &[u8]) -> Result<
 ///
 /// The sim may cover fewer cycles than the template (authored first, the rest cleared) but not
 /// more. Authoring uses the grow rebuild (arbitrary peaks/scan) with full `Idx` retranslation.
+/// With `profile_path`, roles + seeds come from a per-template characterization (exact, works on
+/// any pwiz-readable template); without it, the K562-fit role model + closed-form seed are used.
 pub fn write_sciex_wiff(
     db_path: &Path,
     template_wiff: &Path,
     out_dir: &Path,
     opts: SciexWriteOptions,
+    profile_path: Option<&Path>,
 ) -> Result<SciexWriteSummary, String> {
     use crate::sim::dia_render::render_dia_scans_each;
 
@@ -448,13 +527,27 @@ pub fn write_sciex_wiff(
 
     // Template: method (window count) + spectra bytes (mutable — edited in place).
     let method = read_method(template_wiff).map_err(|e| format!("read .wiff method: {e}"))?;
-    let n_windows = method.swath_windows.len();
     let scan_path = format!("{}.scan", template_wiff.to_string_lossy());
     let scan = std::fs::read(&scan_path).map_err(|e| format!("read {scan_path}: {e}"))?;
     let blocks = scan_blocks(&scan);
 
-    let layout = label_layout(&blocks, n_windows)?;
+    // Layout + per-block cut_n: from a per-template profile (exact, any template) if given, else
+    // the K562-fit metadata role model + closed-form seed.
+    let (layout, cutn_override, n_windows) = match profile_path {
+        Some(pp) => {
+            let prof = load_profile(pp)?;
+            layout_from_profile(&prof, blocks.len())?
+        }
+        None => (label_layout(&blocks, method.swath_windows.len())?, HashMap::new(), method.swath_windows.len()),
+    };
     let n_cycles = layout.cycles.len();
+    // cut_n for a block: profile override (exact) or the closed-form recovery from the header.
+    let cut_n_of = |bidx: usize, b: &ScanBlock| -> Result<i64, String> {
+        match cutn_override.get(&bidx) {
+            Some(&c) => Ok(c),
+            None => Ok(seed_cut_n(read_hdr(&scan, b.ff)?, b.cal_a, b.cal_b)),
+        }
+    };
 
     // Render the simulated DB (collect; the walk yields acquisition order: MS1 then windows).
     let mut rendered = Vec::new();
@@ -522,7 +615,7 @@ pub fn write_sciex_wiff(
     for (ci, cyc) in layout.cycles.iter().enumerate() {
         for (pos, &bidx) in cyc.blocks.iter().enumerate() {
             let b = &blocks[bidx];
-            let cut_n = seed_cut_n(read_hdr(&scan, b.ff)?, b.cal_a, b.cal_b);
+            let cut_n = cut_n_of(bidx, b)?;
             if ci < sim_cycles {
                 let desc = &rendered[ri];
                 ri += 1;
@@ -578,7 +671,7 @@ pub fn write_sciex_wiff(
     } else {
         for &bidx in &layout.partial {
             let b = &blocks[bidx];
-            let cut_n = seed_cut_n(read_hdr(&scan, b.ff)?, b.cal_a, b.cal_b);
+            let cut_n = cut_n_of(bidx, b)?;
             let tokens = clear_tokens(b, cut_n)?;
             if push_edit(bidx, tokens) {
                 blocks_cleared += 1;

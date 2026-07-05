@@ -448,6 +448,10 @@ def get_default_settings() -> dict:
         # Overlay-only: spike-in strength vs the real background (synthetic peaks scaled so their
         # per-scan max = spike_scale * the scan's real-peak max). >1 dominant, <1 trace.
         'sciex_spike_scale': 1.0,
+        # Per-template profile (exact roles + seeds from an offline characterization; see
+        # jobs/sciex_characterize.py). Required for templates the K562-fit heuristics don't fit
+        # (different instrument unit / acquisition method). None -> use the heuristics.
+        'sciex_profile': None,
 
         # Waters SONAR build-from-parameters (instrument=waters_synapt_xs; NO template file).
         # SONAR is a scanning-quadrupole DIA fully described by these; the schedule is
@@ -2051,6 +2055,7 @@ def main():
                 precursor_noise_ppm=config.sciex_precursor_noise_ppm,
                 overlay_ppm=config.sciex_overlay_ppm,
                 spike_scale=config.sciex_spike_scale,
+                profile_path=config.sciex_profile,
             )
         )
         out_wiff = str(Path(save_path) / Path(_wiff).name)
