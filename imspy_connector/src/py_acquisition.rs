@@ -737,7 +737,7 @@ pub fn has_mzml() -> bool {
 /// file stays purely synthetic).
 #[cfg(feature = "sciex")]
 #[pyfunction]
-#[pyo3(signature = (db_path, template_path, out_dir, num_threads=4, quad_k=15.0, max_ms1_peaks=2000, max_ms2_peaks=800, precursor_noise_ppm=0.0, fragment_noise_ppm=0.0, overlay_ppm=0.0, preserve_template_partial=false))]
+#[pyo3(signature = (db_path, template_path, out_dir, num_threads=4, quad_k=15.0, max_ms1_peaks=2000, max_ms2_peaks=800, precursor_noise_ppm=0.0, fragment_noise_ppm=0.0, overlay_ppm=0.0, spike_scale=1.0, preserve_template_partial=false))]
 #[allow(clippy::too_many_arguments)]
 pub fn write_sciex_wiff(
     py: Python<'_>,
@@ -751,6 +751,7 @@ pub fn write_sciex_wiff(
     precursor_noise_ppm: f64,
     fragment_noise_ppm: f64,
     overlay_ppm: f64,
+    spike_scale: f64,
     preserve_template_partial: bool,
 ) -> PyResult<(usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, bool)> {
     use rustdf::sim::sciex_dispatch::{write_sciex_wiff as run, SciexWriteOptions};
@@ -772,6 +773,7 @@ pub fn write_sciex_wiff(
         precursor_noise_ppm,
         fragment_noise_ppm,
         overlay_ppm,
+        spike_scale,
         preserve_template_partial,
     };
     let s = py

@@ -69,6 +69,11 @@ pub struct SciexWriteOptions {
     /// mode. `0` (default) = pure-synthetic (template peaks replaced). The value documents the
     /// intended merge tolerance; the union is at the block's TOF-bin (`n`) resolution.
     pub overlay_ppm: f64,
+    /// Overlay-only: how strong the simulated spike-in peaks are relative to the real template
+    /// background — the synthetic peaks are scaled so their per-scan max = `spike_scale × the
+    /// scan's real-peak max`. `1.0` (default) ≈ comparable to the background; `> 1` makes the
+    /// spike-ins dominant, `< 1` makes them trace. Ignored in pure-synthetic mode.
+    pub spike_scale: f64,
     /// Keep the template's real peaks in leading/trailing partial-cycle blocks instead of
     /// clearing them. Default `false` — preserving real signal in a "synthetic" file is
     /// leakage; only enable deliberately (the summary always reports how many were kept).
@@ -87,6 +92,7 @@ impl Default for SciexWriteOptions {
             precursor_noise_ppm: 0.0,
             fragment_noise_ppm: 0.0,
             overlay_ppm: 0.0,
+            spike_scale: 1.0,
             preserve_template_partial: false,
         }
     }
@@ -279,14 +285,15 @@ fn apply_mz_noise(peaks: &[(f64, f32)], ppm: f64) -> Vec<(f64, f32)> {
 const INTENSITY_FULL_SCALE: f64 = 50_000.0;
 
 /// Convert simulated `(m/z, intensity)` peaks to `(n, intensity)`: m/z→n per the block cal,
-/// dropping peaks at/below the cutoff, and scaling intensities per-scan to integer counts that
-/// preserve the relative pattern. No dedupe/cap yet (see [`finalize_peaks`]).
+/// dropping peaks at/below the cutoff, and scaling intensities per-scan so the max maps to
+/// `full_scale` (preserving the relative pattern). No dedupe/cap yet (see [`finalize_peaks`]).
 fn sim_to_n(
     peaks: &[(f64, f32)],
     cal_a: f64,
     cal_b: f64,
     cut_n: i64,
     noise_ppm: f64,
+    full_scale: f64,
 ) -> Vec<(i64, u32)> {
     let src = apply_mz_noise(peaks, noise_ppm);
     let max_it = src
@@ -297,7 +304,7 @@ fn sim_to_n(
     if max_it <= 0.0 {
         return Vec::new();
     }
-    let scale = INTENSITY_FULL_SCALE / max_it;
+    let scale = full_scale.max(1.0) / max_it;
     let mut nv: Vec<(i64, u32)> = Vec::with_capacity(src.len());
     for (mz, inten) in src {
         if !mz.is_finite() || mz <= 0.0 || !inten.is_finite() || inten <= 0.0 {
@@ -435,6 +442,9 @@ pub fn write_sciex_wiff(
             return Err(format!("{name} must be finite and >= 0, got {v}"));
         }
     }
+    if !opts.spike_scale.is_finite() || opts.spike_scale <= 0.0 {
+        return Err(format!("spike_scale must be finite and > 0, got {}", opts.spike_scale));
+    }
 
     // Template: method (window count) + spectra bytes (mutable — edited in place).
     let method = read_method(template_wiff).map_err(|e| format!("read .wiff method: {e}"))?;
@@ -529,10 +539,24 @@ pub fn write_sciex_wiff(
                 } else {
                     (opts.max_ms2_peaks, opts.fragment_noise_ppm)
                 };
-                let mut nv = sim_to_n(&desc.peaks, b.cal_a, b.cal_b, cut_n, ppm);
-                if opts.overlay_ppm > 0.0 {
-                    // Spike-in: keep the template's real peaks, add the simulated ones on top.
-                    nv.extend(decode_template_peaks(&scan, b, cut_n));
+                // In overlay mode, scale the synthetic peaks relative to the scan's real-peak
+                // background (spike_scale) so the spike-in strength is controllable; pure-
+                // synthetic uses the fixed full scale.
+                let (full_scale, real) = if opts.overlay_ppm > 0.0 {
+                    let real = decode_template_peaks(&scan, b, cut_n);
+                    let real_max = real.iter().map(|&(_, i)| i).max().unwrap_or(0) as f64;
+                    let fs = if real_max > 0.0 {
+                        (opts.spike_scale * real_max).max(1.0)
+                    } else {
+                        INTENSITY_FULL_SCALE
+                    };
+                    (fs, Some(real))
+                } else {
+                    (INTENSITY_FULL_SCALE, None)
+                };
+                let mut nv = sim_to_n(&desc.peaks, b.cal_a, b.cal_b, cut_n, ppm, full_scale);
+                if let Some(real) = real {
+                    nv.extend(real); // spike-in: real⊕sim
                 }
                 let tokens = author_tokens(&finalize_peaks(nv, cap), cut_n)?;
                 if push_edit(bidx, tokens) {
@@ -647,7 +671,7 @@ mod tests {
         let cut_n = seed_cut_n(2_440_200, a, cal_b);
         // Peaks above this block's cutoff (~893 m/z); the two at 1000.0 merge to one n.
         let peaks = vec![(1200.0_f64, 5000.0_f32), (1000.0, 9000.0), (1000.0, 1000.0)];
-        let real = finalize_peaks(sim_to_n(&peaks, a, cal_b, cut_n, 0.0), 10);
+        let real = finalize_peaks(sim_to_n(&peaks, a, cal_b, cut_n, 0.0, INTENSITY_FULL_SCALE), 10);
         assert_eq!(real.len(), 2, "1000.0 merged, 1200.0 kept");
         let payload = author_tokens(&real, cut_n).expect("author");
         let dec = sciexwiff::wiffscan::decode_stream(&payload, 0, cut_n, 64, false).expect("decode");
@@ -673,7 +697,7 @@ mod tests {
         let cal_b = -12.9765;
         let cut_n = seed_cut_n(2_440_200, a, cal_b);
         let peaks = vec![(1000.0_f64, 0.001_f32), (1100.0, 0.5), (1200.0, 20.0)];
-        let nv = sim_to_n(&peaks, a, cal_b, cut_n, 0.0);
+        let nv = sim_to_n(&peaks, a, cal_b, cut_n, 0.0, INTENSITY_FULL_SCALE);
         let max = nv.iter().map(|&(_, i)| i).max().unwrap();
         let min = nv.iter().map(|&(_, i)| i).min().unwrap();
         assert!(max >= 40_000, "top peak scaled to ~full scale, got {max}");

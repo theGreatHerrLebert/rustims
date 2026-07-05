@@ -445,6 +445,9 @@ def get_default_settings() -> dict:
         # Spike-in / overlay: > 0 keeps the template's real peaks and adds the simulated ones on
         # top (real⊕sim); 0 = pure-synthetic (template peaks replaced).
         'sciex_overlay_ppm': 0.0,
+        # Overlay-only: spike-in strength vs the real background (synthetic peaks scaled so their
+        # per-scan max = spike_scale * the scan's real-peak max). >1 dominant, <1 trace.
+        'sciex_spike_scale': 1.0,
 
         # Waters SONAR build-from-parameters (instrument=waters_synapt_xs; NO template file).
         # SONAR is a scanning-quadrupole DIA fully described by these; the schedule is
@@ -2047,6 +2050,7 @@ def main():
                 fragment_noise_ppm=config.sciex_fragment_noise_ppm,
                 precursor_noise_ppm=config.sciex_precursor_noise_ppm,
                 overlay_ppm=config.sciex_overlay_ppm,
+                spike_scale=config.sciex_spike_scale,
             )
         )
         out_wiff = str(Path(save_path) / Path(_wiff).name)
