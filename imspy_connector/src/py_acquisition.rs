@@ -726,6 +726,84 @@ pub fn has_mzml() -> bool {
     cfg!(feature = "mzml")
 }
 
+/// Author a no-IM DIA `synthetic_data.db` into a real SCIEX ZenoTOF `.wiff` template,
+/// producing a pure-synthetic native `.wiff` + `.wiff.scan` (and siblings) in `out_dir`.
+/// Renders MS1 (precursor marginal) + MS2 (per-window fragments) and writes the simulated
+/// peaks into each template block via the reverse-engineered role model + `.wiff.scan` codec.
+/// Returns `(scans, ms1, ms2, ms2_nonempty, blocks_authored, blocks_cleared, blocks_preserved,
+/// blocks_verbatim, cycles, windows, length_preserving)`. Requires the `sciex` feature. The sim may cover fewer
+/// cycles than the template (the rest are cleared) but not more. `preserve_template_partial`
+/// keeps real template peaks in partial-cycle blocks (default `false` = clear them, so the
+/// file stays purely synthetic).
+#[cfg(feature = "sciex")]
+#[pyfunction]
+#[pyo3(signature = (db_path, template_path, out_dir, num_threads=4, quad_k=15.0, max_ms1_peaks=2000, max_ms2_peaks=800, precursor_noise_ppm=0.0, fragment_noise_ppm=0.0, overlay_ppm=0.0, preserve_template_partial=false))]
+#[allow(clippy::too_many_arguments)]
+pub fn write_sciex_wiff(
+    py: Python<'_>,
+    db_path: &str,
+    template_path: &str,
+    out_dir: &str,
+    num_threads: usize,
+    quad_k: f64,
+    max_ms1_peaks: usize,
+    max_ms2_peaks: usize,
+    precursor_noise_ppm: f64,
+    fragment_noise_ppm: f64,
+    overlay_ppm: f64,
+    preserve_template_partial: bool,
+) -> PyResult<(usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, bool)> {
+    use rustdf::sim::sciex_dispatch::{write_sciex_wiff as run, SciexWriteOptions};
+    use std::path::Path;
+    for (name, v) in [
+        ("precursor_noise_ppm", precursor_noise_ppm),
+        ("fragment_noise_ppm", fragment_noise_ppm),
+        ("overlay_ppm", overlay_ppm),
+    ] {
+        if !v.is_finite() || v < 0.0 {
+            return Err(PyValueError::new_err(format!("{name} must be finite and >= 0, got {v}")));
+        }
+    }
+    let opts = SciexWriteOptions {
+        num_threads,
+        quad_k,
+        max_ms1_peaks,
+        max_ms2_peaks,
+        precursor_noise_ppm,
+        fragment_noise_ppm,
+        overlay_ppm,
+        preserve_template_partial,
+    };
+    let s = py
+        .allow_threads(|| {
+            run(Path::new(db_path), Path::new(template_path), Path::new(out_dir), opts)
+        })
+        .map_err(PyValueError::new_err)?;
+    Ok((
+        s.scans,
+        s.ms1,
+        s.ms2,
+        s.ms2_nonempty,
+        s.blocks_authored,
+        s.blocks_cleared,
+        s.blocks_preserved,
+        s.blocks_verbatim,
+        s.cycles,
+        s.windows,
+        s.length_preserving,
+    ))
+}
+
+/// Count acquisition cycles (MS1 markers) in a SCIEX ZenoTOF `.wiff` template, so the
+/// simulator can build the DB to match (one sim cycle per template MS1). Requires `sciex`.
+#[cfg(feature = "sciex")]
+#[pyfunction]
+pub fn sciex_template_cycles(template_path: &str) -> PyResult<usize> {
+    use std::path::Path;
+    rustdf::sim::sciex_dispatch::sciex_template_cycles(Path::new(template_path))
+        .map_err(PyValueError::new_err)
+}
+
 #[pymodule]
 pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAcquisitionScheme>()?;
@@ -744,5 +822,9 @@ pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     #[cfg(feature = "mzml")]
     m.add_function(wrap_pyfunction!(render_dia_mzml, m)?)?;
     m.add_function(wrap_pyfunction!(has_mzml, m)?)?;
+    #[cfg(feature = "sciex")]
+    m.add_function(wrap_pyfunction!(write_sciex_wiff, m)?)?;
+    #[cfg(feature = "sciex")]
+    m.add_function(wrap_pyfunction!(sciex_template_cycles, m)?)?;
     Ok(())
 }

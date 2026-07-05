@@ -10,6 +10,12 @@ members = [
 
 resolver = "2"
 
+# HELD-BRANCH DEV OVERRIDE — STRIP BEFORE PUSH. Builds the `sciex` feature against the local
+# sciexwiff checkout while its writer commits are held (unpushed). Before pushing: remove this
+# stanza AND bump rustdf's sciexwiff `rev` to the pushed writer commit. Absolute path = local only.
+[patch."https://github.com/theGreatHerrLebert/sciexwiff"]
+sciexwiff = { path = "/home/administrator/thermo-raw-spike/sciexwiff" }
+
 [profile.release]
 debug = true
 overflow-checks = true

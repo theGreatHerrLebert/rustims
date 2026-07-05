@@ -4,11 +4,15 @@ pub mod astral_dispatch;
 pub mod containers;
 pub mod dda;
 pub mod dia;
+#[cfg(any(feature = "mzml", feature = "sciex"))]
+pub mod dia_render;
 pub mod handle;
 pub mod lazy_builder;
 pub mod library;
 #[cfg(feature = "mzml")]
 pub mod mzml;
+#[cfg(feature = "sciex")]
+pub mod sciex_dispatch;
 pub mod precursor;
 pub mod projector;
 pub mod scheme;

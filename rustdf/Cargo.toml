@@ -41,7 +41,10 @@ bincode = "1.3.3"
 polars = { version = "0.43.1", features = ["ndarray", "parquet", "dtype-u8"] }
 # Thermo .raw writer (private repo; only built with the `thermo` feature)
 thermorawfile = { git = "https://github.com/theGreatHerrLebert/thermorawfile", rev = "9f4c0affe60a639759883fb569d3c9f5f7601856", optional = true }
-# SCIEX .wiff method reader (private repo; only built with the `sciex` feature)
+# SCIEX .wiff method reader + .wiff.scan spectra writer (private repo; only built with the `sciex` feature).
+# NOTE: rev is the last PUSHED commit (needed so cargo can resolve the source); the workspace
+# [patch] redirects to the local checkout that has the unpushed writer. Bump this rev to the
+# pushed writer commit and drop the [patch] once sciexwiff is published.
 sciexwiff = { git = "https://github.com/theGreatHerrLebert/sciexwiff", rev = "ef7c0cd7e59d3b51160e446cbe3af240d230668d", optional = true }
 # Open mzML writer (Joshua Klein's mzdata); only built with the `mzml` feature. The
 # vendor-neutral output path: render -> mzML (readable by DiaNN/alphaDIA, mzprov-signable).

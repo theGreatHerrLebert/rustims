@@ -434,6 +434,17 @@ def get_default_settings() -> dict:
         'sciex_cycle_time_s': 3.5,
         'sciex_ce_intercept': 5.0,
         'sciex_ce_slope_per_mz': 0.045,
+        # Author native .wiff.scan spectra into the template instead of open mzML. Requires the
+        # connector built with the `sciex` feature; the sim schedule is matched to the template's
+        # cycle count (authored cycles fill it, extras cleared). Off -> mzML (the portable path).
+        'sciex_native': False,
+        # Gaussian m/z noise (≈ppm at 3σ) added at native authoring, so a search engine has a
+        # mass-error distribution to calibrate against (a zero-error spectrum is degenerate).
+        'sciex_precursor_noise_ppm': 5.0,
+        'sciex_fragment_noise_ppm': 8.0,
+        # Spike-in / overlay: > 0 keeps the template's real peaks and adds the simulated ones on
+        # top (real⊕sim); 0 = pure-synthetic (template peaks replaced).
+        'sciex_overlay_ppm': 0.0,
 
         # Waters SONAR build-from-parameters (instrument=waters_synapt_xs; NO template file).
         # SONAR is a scanning-quadrupole DIA fully described by these; the schedule is
@@ -1343,10 +1354,24 @@ def main():
         from .jobs.sciex_acquisition import SciexAcquisitionBuilder
         _wiff = thermo_template_path(config)
         logger.info(f"  SCIEX build-from-.wiff ({instrument}): {_wiff}")
+        # Native authoring writes into the template's fixed block schedule, so match the sim's
+        # cycle count to the template (codex #6): keep the user's gradient for the elution model
+        # and set cycle_time = gradient / template_cycles, so every template cycle is filled.
+        _sciex_cycle_time = config.sciex_cycle_time_s
+        if config.sciex_native:
+            import imspy_connector
+            if imspy_connector.py_acquisition.has_sciex():
+                _tcyc = imspy_connector.py_acquisition.sciex_template_cycles(_wiff)
+                if _tcyc > 0:
+                    _sciex_cycle_time = config.gradient_length / _tcyc
+                    logger.info(
+                        f"  native: matching {_tcyc} template cycles "
+                        f"(cycle_time {_sciex_cycle_time:.4f}s over {config.gradient_length}s gradient)"
+                    )
         acquisition_builder = SciexAcquisitionBuilder(
             str(Path(save_path) / name),
             _wiff,
-            cycle_time_s=config.sciex_cycle_time_s,
+            cycle_time_s=_sciex_cycle_time,
             gradient_length_s=config.gradient_length,
             ce_intercept=config.sciex_ce_intercept,
             ce_slope_per_mz=config.sciex_ce_slope_per_mz,
@@ -2001,6 +2026,36 @@ def main():
                 key_path=config.provenance_key_path,
                 logger=logger,
             )
+    elif is_sciex_instrument(instrument) and config.sciex_native:
+        # SCIEX ZenoTOF SWATH, NATIVE: author the synthesized DIA frames into the real .wiff
+        # template's .wiff.scan spectra (pure-synthetic native vendor file), instead of mzML.
+        # Length-preserving in-place authoring (the template Idx stays valid); the sim schedule
+        # fills the template's cycles, extras are cleared. Requires the `sciex` feature.
+        import imspy_connector
+        logger.info(section_header(f"Authoring native .wiff.scan ({instrument})", use_unicode))
+        if not imspy_connector.py_acquisition.has_sciex():
+            raise RuntimeError(
+                "connector built without the `sciex` feature — rebuild with "
+                "`maturin build --features sciex` for native .wiff.scan output, or set "
+                "sciex_native=false for open mzML"
+            )
+        db_path = acquisition_builder.synthetics_handle.database_path
+        _wiff = thermo_template_path(config)
+        (n_scan, n_ms1, n_ms2, n_ms2_nz, n_auth, n_clear, n_pres, n_verb, n_cyc, n_win, _lp) = (
+            imspy_connector.py_acquisition.write_sciex_wiff(
+                db_path, _wiff, str(save_path), num_threads,
+                fragment_noise_ppm=config.sciex_fragment_noise_ppm,
+                precursor_noise_ppm=config.sciex_precursor_noise_ppm,
+                overlay_ppm=config.sciex_overlay_ppm,
+            )
+        )
+        out_wiff = str(Path(save_path) / Path(_wiff).name)
+        logger.info(
+            f"  SCIEX native -> {out_wiff}: {n_scan} scans | {n_ms1} MS1 | {n_ms2} MS2 "
+            f"({n_ms2_nz} non-empty) | {n_cyc} cycles x {n_win} windows | "
+            f"{n_auth} blocks authored, {n_clear} cleared"
+            + (f", {n_verb} kept verbatim (real signal)" if n_verb else "")
+        )
     elif is_sciex_instrument(instrument):
         # SCIEX ZenoTOF SWATH: render the synthesized DIA frames to open mzML (the
         # proprietary .wiff.scan spectra are not authored). mzML is readable by

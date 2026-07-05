@@ -163,94 +163,20 @@ pub fn render_db_to_mzml(
     num_threads: usize,
     quad_k: f64,
 ) -> Result<MzMlWriteSummary, String> {
-    use std::collections::HashMap;
+    use crate::sim::dia_render::render_dia_scans_each;
 
-    use mscore::timstof::quadrupole::WindowTransmission;
-
-    use crate::sim::acquisition::ScanDescriptor;
-    use crate::sim::dia::TimsTofSyntheticsFrameBuilderDIA;
-    use crate::sim::handle::TimsTofSyntheticsDataHandle;
-    use crate::sim::scheme::DataMode;
-
-    let builder = TimsTofSyntheticsFrameBuilderDIA::new(db_path, false, num_threads)
-        .map_err(|e| format!("open DB: {e}"))?;
-    let handle =
-        TimsTofSyntheticsDataHandle::new(db_path).map_err(|e| format!("open DB handle: {e}"))?;
-
-    // frame -> (center, width, ce) for MS2 frames, via the DB window tables.
-    let wg = handle
-        .read_window_group_settings()
-        .map_err(|e| format!("read windows: {e}"))?;
-    // One window per group is the no-IM DIA invariant; reject conflicting duplicate rows
-    // (silently keeping the last would mis-render) and non-positive widths.
-    let mut by_group: HashMap<u32, (f64, f64, f64)> = HashMap::new();
-    for w in &wg {
-        let v = (w.isolation_mz as f64, w.isolation_width as f64, w.collision_energy as f64);
-        if v.1 <= 0.0 {
-            return Err(format!(
-                "window_group {} has non-positive isolation width {}",
-                w.window_group, v.1
-            ));
-        }
-        if let Some(prev) = by_group.insert(w.window_group, v) {
-            if prev != v {
-                return Err(format!(
-                    "conflicting dia_ms_ms_windows rows for window_group {}: {prev:?} vs {v:?} \
-                     (render_db_to_mzml expects one window per group, no-IM DIA)",
-                    w.window_group
-                ));
-            }
-        }
-    }
-    let f2g = handle
-        .read_frame_to_window_group()
-        .map_err(|e| format!("read frame->group: {e}"))?;
-    let mut frame_window: HashMap<u32, (f64, f64, f64)> = HashMap::new();
-    for r in &f2g {
-        if let Some(&w) = by_group.get(&r.window_group) {
-            frame_window.insert(r.frame_id, w);
-        }
-    }
-
-    let prec_set = &builder.precursor_frame_builder.precursor_frame_id_set;
-    let mut frame_ids: Vec<u32> = builder
-        .precursor_frame_builder
-        .frames
-        .iter()
-        .map(|f| f.frame_id)
-        .collect();
-    frame_ids.sort_unstable();
-
-    // Stream: open the writer and emit each frame as it is rendered, so peak memory is
-    // one scan, not the whole run (a 28k-frame run is a ~1.5 GB mzML).
+    // Stream: open the writer and emit each frame as it is rendered (shared render walk), so
+    // peak memory is one scan, not the whole run (a 28k-frame run is a ~1.5 GB mzML).
     let file = std::fs::File::create(out_path).map_err(|e| format!("create {out_path:?}: {e}"))?;
     let mut writer = MzMLWriter::new(file);
-    let (mut ms1, mut ms2, mut ms2_nonempty, mut total) = (0usize, 0usize, 0usize, 0usize);
-    for frame_id in frame_ids {
-        let desc = if prec_set.contains(&frame_id) {
-            let ev = builder
-                .precursor_frame_builder
-                .render_precursor_scan(frame_id, DataMode::Centroid);
-            ms1 += 1;
-            ScanDescriptor::from_rendered_event(&ev, 0.0)?
-        } else {
-            let (center, width, ce) = *frame_window
-                .get(&frame_id)
-                .ok_or_else(|| format!("MS2 frame {frame_id} has no window in the DB tables"))?;
-            let wt = WindowTransmission::new(center, width, quad_k);
-            let ev = builder.render_fragment_scan(frame_id, &wt, ce, DataMode::Centroid);
-            ms2 += 1;
-            ScanDescriptor::from_rendered_event(&ev, ce)?
-        };
+    let mut total = 0usize;
+    let counts = render_dia_scans_each(db_path, num_threads, quad_k, |desc| {
         let isolation = desc.isolation.map(|w| MzMlIsolation {
             center_mz: w.center_mz,
             lower_mz: w.center_mz - w.width_mz / 2.0,
             upper_mz: w.center_mz + w.width_mz / 2.0,
             collision_energy: w.collision_energy,
         });
-        if isolation.is_some() && !desc.peaks.is_empty() {
-            ms2_nonempty += 1;
-        }
         let scan = MzMlScan {
             ms_level: desc.ms_level,
             retention_time_s: desc.retention_time,
@@ -258,11 +184,18 @@ pub fn render_db_to_mzml(
             intensity: desc.peaks.iter().map(|(_, i)| *i).collect(),
             isolation,
         };
-        write_one_scan(&mut writer, total, &scan).map_err(|e| format!("write scan {total}: {e}"))?;
+        write_one_scan(&mut writer, total, &scan)
+            .map_err(|e| format!("write scan {total}: {e}"))?;
         total += 1;
-    }
+        Ok(())
+    })?;
     writer.close().map_err(|e| format!("close mzML: {e}"))?;
-    Ok(MzMlWriteSummary { scans: total, ms1, ms2, ms2_nonempty })
+    Ok(MzMlWriteSummary {
+        scans: counts.scans,
+        ms1: counts.ms1,
+        ms2: counts.ms2,
+        ms2_nonempty: counts.ms2_nonempty,
+    })
 }
 
 #[cfg(test)]
