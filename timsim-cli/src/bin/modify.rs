@@ -61,9 +61,18 @@ struct Args {
     #[arg(long)]
     mods: Option<PathBuf>,
 
-    /// Directory for `modforms.parquet` and `modifications.parquet`.
+    /// Where to write the modforms.
     #[arg(long)]
-    out: Option<PathBuf>,
+    out_modforms: Option<PathBuf>,
+
+    /// Where to write the modification spec.
+    ///
+    /// An explicit path, not a directory, so that every artifact this tool produces is NAMED by the
+    /// caller. A stage that emits files a caller cannot name cannot be wired into a DAG — its
+    /// outputs are invisible to the dependency graph, so nothing downstream can declare that it
+    /// depends on them. (necroflow refuses such a rule outright, which is how this was found.)
+    #[arg(long)]
+    out_modifications: Option<PathBuf>,
 
     /// Discard modforms below this fraction of a peptide's molecules.
     ///
@@ -279,7 +288,12 @@ fn main() -> Result<()> {
 
     let peptides_path = a.peptides.ok_or_else(|| anyhow::anyhow!("--peptides is required"))?;
     let mods_path = a.mods.ok_or_else(|| anyhow::anyhow!("--mods is required (see --example)"))?;
-    let out_dir = a.out.ok_or_else(|| anyhow::anyhow!("--out is required"))?;
+    let mf_path = a
+        .out_modforms
+        .ok_or_else(|| anyhow::anyhow!("--out-modforms is required"))?;
+    let ms_path = a
+        .out_modifications
+        .ok_or_else(|| anyhow::anyhow!("--out-modifications is required"))?;
 
     let mods = parse_mods(&mods_path)?;
 
@@ -420,7 +434,11 @@ fn main() -> Result<()> {
     }
 
     // ── write ────────────────────────────────────────────────────────────────
-    std::fs::create_dir_all(&out_dir)?;
+    for p in [&mf_path, &ms_path] {
+        if let Some(d) = p.parent() {
+            std::fs::create_dir_all(d)?;
+        }
+    }
 
     let mut pos_b = ListBuilder::new(UInt32Builder::new());
     let mut nam_b = ListBuilder::new(StringBuilder::new());
@@ -477,8 +495,6 @@ fn main() -> Result<()> {
             (total_loss / n_peptides.max(1) as f64).to_string(),
         ),
     ];
-    let mf_path = out_dir.join("modforms.parquet");
-    let ms_path = out_dir.join("modifications.parquet");
     timsim_schema::write_with(&mf_path, MF::TABLE, &mf, &producer("timsim-modify"), None, &meta)?;
     timsim_schema::write(&ms_path, MODS::TABLE, &ms, &producer("timsim-modify"), None)?;
 

@@ -306,6 +306,13 @@ def get_default_settings() -> dict:
         'seed': 41,
         'from_v2': False,
         'v2_path': None,
+        # Explicit per-artifact paths. A content-addressed DAG (necroflow) gives every artifact its
+        # own fingerprint-derived path, so there is no flat v2_path directory to point at.
+        'v2_proteome': None,
+        'v2_peptides': None,
+        'v2_occurrences': None,
+        'v2_peptide_quantities': None,
+        'v2_precursors': None,
         'v2_sample': None,          # which sample of the design; default = first
         'v2_total_events': 2.5e9,   # the declared abundance scale (see load_from_v2)
         # Detection stand-in until `design_eligibility` exists. Defaults to v1's own peptide budget
@@ -657,8 +664,16 @@ class SimulationConfig:
             for other in ('from_existing', 'from_findings'):
                 if self._config.get(other):
                     raise ValueError(f"Cannot use both 'from_v2' and '{other}' at the same time")
-            if not self._config.get('v2_path'):
-                raise ValueError("'from_v2' requires 'v2_path' (the directory of v2 Parquet artifacts)")
+            # Artifacts may arrive as a directory (the conventional layout) or as explicit
+            # per-artifact paths. A content-addressed DAG has no flat directory to point at, so
+            # requiring one would make timsim un-orchestratable.
+            _explicit = ('v2_proteome', 'v2_peptides', 'v2_occurrences', 'v2_peptide_quantities')
+            _missing = [k for k in _explicit if not self._config.get(k)]
+            if not self._config.get('v2_path') and _missing:
+                raise ValueError(
+                    "'from_v2' needs either 'v2_path' (a directory of v2 Parquet artifacts) or an "
+                    f"explicit path for each artifact. Missing: {', '.join(_missing)}"
+                )
 
             # Refuse, rather than half-support, the thing v2 exists to replace.
             #
@@ -1219,6 +1234,27 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
         default=None,
         help="Override findings_path from config (enables from_findings mode)"
     )
+    # Explicit per-artifact inputs. A content-addressed DAG gives every artifact its own
+    # fingerprint-derived path, so there is no flat --from-v2 directory to point at; a stage whose
+    # inputs can only be found by convention cannot be orchestrated.
+    for _flag, _key in [
+        ("--v2-proteome", "v2_proteome"),
+        ("--v2-peptides", "v2_peptides"),
+        ("--v2-occurrences", "v2_occurrences"),
+        ("--v2-peptide-quantities", "v2_peptide_quantities"),
+        ("--v2-precursors", "v2_precursors"),
+    ]:
+        parser.add_argument(
+            _flag, type=str, default=None, dest=_key,
+            help=f"Explicit path to the v2 {_key[3:].replace('_', ' ')} artifact "
+                 f"(overrides --from-v2; enables from_v2 on its own)",
+        )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="RNG seed. A fixed seed reproduces a run exactly; VARY IT ACROSS REPLICATES.",
+    )
     parser.add_argument(
         "--intensity-multiplier",
         type=float,
@@ -1376,8 +1412,18 @@ def main():
         # Passing --from-v2 is the whole switch; no separate boolean to forget.
         overrides['from_v2'] = True
         overrides['v2_path'] = cli_args.v2_path
+    for _key in ('v2_proteome', 'v2_peptides', 'v2_occurrences',
+                 'v2_peptide_quantities', 'v2_precursors'):
+        _val = getattr(cli_args, _key, None)
+        if _val:
+            overrides[_key] = _val
+            # Naming the artifacts IS the switch, exactly as --from-v2 is; there is no separate
+            # boolean to forget to set.
+            overrides['from_v2'] = True
     if cli_args.v2_sample:
         overrides['v2_sample'] = cli_args.v2_sample
+    if cli_args.seed is not None:
+        overrides['seed'] = cli_args.seed
     if cli_args.intensity_multiplier is not None:
         overrides['intensity_multiplier'] = cli_args.intensity_multiplier
     if cli_args.resume:
@@ -1784,6 +1830,11 @@ def main():
         handoff = load_from_v2(
             v2_dir=config.v2_path,
             sample_id=config.v2_sample,
+            proteome_path=config.v2_proteome,
+            peptides_path=config.v2_peptides,
+            occurrences_path=config.v2_occurrences,
+            quantities_path=config.v2_peptide_quantities,
+            precursors_path=config.v2_precursors,
             total_events=config.v2_total_events,
             max_peptides=_v2_cap,
             max_peptide_length=config.v2_max_peptide_length,

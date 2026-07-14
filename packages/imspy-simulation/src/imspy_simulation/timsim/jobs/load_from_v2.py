@@ -27,6 +27,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 
 @dataclass
@@ -69,8 +70,14 @@ def _require(path: Path) -> Path:
 
 
 def load_from_v2(
-    v2_dir: str | Path,
+    v2_dir: str | Path | None = None,
     sample_id: Optional[str] = None,
+    *,
+    proteome_path: str | Path | None = None,
+    peptides_path: str | Path | None = None,
+    occurrences_path: str | Path | None = None,
+    quantities_path: str | Path | None = None,
+    precursors_path: str | Path | None = None,
     total_events: float = 1e5 * 25_000,
     max_peptides: Optional[int] = None,
     max_peptide_length: int = 30,
@@ -79,9 +86,21 @@ def load_from_v2(
 ) -> V2Handoff:
     """Build v1's ``proteins`` and ``peptides`` DataFrames from a v2 artifact directory.
 
+    Artifacts may be given either as a **directory** (the convenient case: the five files sit
+    together under their conventional names) or as **explicit paths**, one per artifact.
+
+    The explicit form is not a nicety. A content-addressed DAG gives every artifact its own path,
+    derived from the fingerprint of the computation that produced it — there IS no flat directory, and
+    a stage whose inputs can only be found by convention cannot be wired into one. The same rule that
+    forces a tool to *name* its outputs forces it to accept *named* inputs. (Discovered by wiring this
+    into necroflow, which is exactly the sort of thing only wiring it up reveals.)
+
     Args:
         v2_dir: directory holding ``proteome.parquet``, ``peptides.parquet``,
-            ``peptide_occurrences.parquet`` and ``peptide_quantities.parquet``.
+            ``peptide_occurrences.parquet``, ``peptide_quantities.parquet`` and optionally
+            ``precursors.parquet``. Ignored for any artifact given an explicit path.
+        proteome_path, peptides_path, occurrences_path, quantities_path, precursors_path:
+            explicit locations, overriding ``v2_dir``.
         sample_id: which sample of the design to render. Defaults to the first, sorted.
             **One v1 run is one sample** — a design with six samples is six v1 runs, which is
             exactly the fan-out the structure/quantity split exists to make cheap.
@@ -131,11 +150,22 @@ def load_from_v2(
             > survives. v2 keeps them apart; this bridge is where they collapse.
         verbose: print the bridge that was crossed.
     """
-    d = Path(v2_dir)
-    proteome = pd.read_parquet(_require(d / "proteome.parquet"))
-    peptides = pd.read_parquet(_require(d / "peptides.parquet"))
-    occurrences = pd.read_parquet(_require(d / "peptide_occurrences.parquet"))
-    quantities = pd.read_parquet(_require(d / "peptide_quantities.parquet"))
+    d = Path(v2_dir) if v2_dir is not None else None
+    def _at(explicit, name: str) -> Path:
+        """Explicit path wins; otherwise fall back to the conventional name under v2_dir."""
+        if explicit is not None:
+            return Path(explicit)
+        if d is None:
+            raise ValueError(
+                f"no path given for {name!r} and no v2_dir to fall back on. Pass either a v2_dir "
+                f"containing the conventional artifact names, or an explicit path for each artifact."
+            )
+        return d / name
+
+    proteome = pd.read_parquet(_require(_at(proteome_path, "proteome.parquet")))
+    peptides = pd.read_parquet(_require(_at(peptides_path, "peptides.parquet")))
+    occurrences = pd.read_parquet(_require(_at(occurrences_path, "peptide_occurrences.parquet")))
+    quantities = pd.read_parquet(_require(_at(quantities_path, "peptide_quantities.parquet")))
 
     # ── pick the sample ───────────────────────────────────────────────────────
     samples = sorted(quantities["sample_id"].unique())
@@ -214,8 +244,38 @@ def load_from_v2(
     # **r = +0.008** and **43.6% of peptides differed by more than 10×** between the propensity used
     # to build `events` and the propensity recorded as their ground truth. The chain silently stopped
     # being invertible. Read the artifact.
-    prec_path = d / "precursors.parquet"
-    prec_all = pd.read_parquet(prec_path) if prec_path.exists() else None
+    prec_path = _at(precursors_path, "precursors.parquet")
+    # Read only the columns this bridge uses, and only the rows belonging to peptides that survived
+    # the cuts above.
+    #
+    # The naive `pd.read_parquet(prec_path)` loads the WHOLE table. That is fine for an unmodified
+    # proteome and fatal for a modified one: a phospho occupancy of 0.30 (an enrichment) produced a
+    # **3.1 GB** precursors.parquet, and two of these running in parallel under an orchestrator got
+    # the process killed by the kernel. The blow-up is real chemistry — an enrichment genuinely does
+    # have that many species — so the load has to be honest about it rather than the table smaller.
+    #
+    # A row-group filter on `peptide_id` pushes the selection into the Parquet reader, so only the
+    # peptides this sample actually renders are ever materialised.
+    prec_all = None
+    if prec_path.exists():
+        _cols = [
+            "peptide_id",
+            "charge",
+            "mz",
+            "charge_fraction",
+            "ionization_propensity",
+            "modform_fraction",
+        ]
+        _schema = pq.ParquetFile(prec_path).schema_arrow.names
+        _cols = [c for c in _cols if c in _schema]
+        # `peptide_id` is a u64 content hash, so the filter values must stay UNSIGNED. Handing
+        # pyarrow a Python list here makes it infer int64 and overflow on any id above 2^63.
+        _keep = pep["peptide_id"].to_numpy(dtype=np.uint64)
+        prec_all = pd.read_parquet(
+            prec_path,
+            columns=_cols,
+            filters=[("peptide_id", "in", _keep)],
+        )
 
     if prec_all is not None:
         propensity = prec_all.groupby("peptide_id")["ionization_propensity"].first()
