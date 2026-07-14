@@ -16,6 +16,29 @@ pub const WATER_MONOISOTOPIC: f64 = 18.010_565;
 /// A residue whose mass we do not know. Real databases contain these (`X` unknown,
 /// `B` = D/N, `Z` = E/Q, `J` = I/L), and silently guessing a mass for them would corrupt
 /// the mass balance without saying so.
+///
+/// # Selenocysteine (`U`) is refused, deliberately
+///
+/// An earlier version gave `U` a mass, and that was worse than refusing it, in two compounding
+/// ways.
+///
+/// **It was inconsistent.** `mass` knew `U`; [`crate::isotope::composition`] did not. So a
+/// selenopeptide passed the digest, got a mass, entered `peptides.parquet` — and was then *silently
+/// dropped* by `timsim-precursors`, because it could not be given an isotope envelope. It existed in
+/// the structure and had no ions. (Found by review.)
+///
+/// **The mass itself mixed conventions.** The value used, 150.95364, is cysteine with **⁸⁰Se — the
+/// most *abundant* selenium isotope**. But *monoisotopic* means the **lightest** isotope, which for
+/// selenium is ⁷⁴Se and gives 144.95959. The isotope machinery convolves upward from the lightest,
+/// so simply adding selenium to the composition table would have placed the envelope's monoisotopic
+/// peak **6 Da below** the m/z computed from this mass — every selenopeptide silently ~6 Da wrong,
+/// with a perfectly plausible-looking comb.
+///
+/// Selenium is genuinely modellable (six stable isotopes: ⁷⁴ 0.89%, ⁷⁶ 9.37%, ⁷⁷ 7.63%, ⁷⁸ 23.77%,
+/// ⁸⁰ 49.61%, ⁸² 8.73%) and doing it properly means a 9-wide abundance array **and** a decision about
+/// which convention the monoisotopic mass follows. Until that is done, `U` is refused at the first
+/// boundary — the digest — where it is counted and reported. Roughly 25 human proteins are
+/// selenoproteins; losing them loudly beats simulating them wrongly in silence.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct UnknownResidue(pub char);
 
@@ -47,7 +70,6 @@ fn average_residue(aa: u8) -> Option<f64> {
         b'R' => 156.187_5,
         b'Y' => 163.176_0,
         b'W' => 186.213_2,
-        b'U' => 150.037_9, // selenocysteine
         _ => return None,
     })
 }
@@ -74,7 +96,6 @@ fn monoisotopic_residue(aa: u8) -> Option<f64> {
         b'R' => 156.101_111,
         b'Y' => 163.063_329,
         b'W' => 186.079_313,
-        b'U' => 150.953_64, // selenocysteine
         _ => return None,
     })
 }
@@ -163,6 +184,32 @@ mod tests {
     fn non_standard_residues_are_refused() {
         assert_eq!(average("PEPTXDEK"), Err(UnknownResidue('X')));
         assert_eq!(monoisotopic("PEPTBDEK"), Err(UnknownResidue('B')));
-        assert!(average("PEPTUDEK").is_ok(), "selenocysteine is known");
+    }
+
+    /// **Selenocysteine must be refused by mass EXACTLY as it is by composition.**
+    ///
+    /// It previously had a mass but no elemental composition, so a selenopeptide passed the digest,
+    /// entered the artifacts, and was then silently dropped by the ion layer — present in the
+    /// structure, absent from the ions. Two tables disagreeing about which residues exist is the
+    /// same class of bug as two stages disagreeing about a bound.
+    ///
+    /// This test asserts they agree, rather than asserting either one in isolation — which is the
+    /// only form that can fail against the bug.
+    #[test]
+    fn mass_and_composition_agree_on_which_residues_exist() {
+        for aa in "ACDEFGHIKLMNPQRSTVWY".chars() {
+            let seq = format!("PEPT{aa}DEK");
+            assert!(monoisotopic(&seq).is_ok(), "{aa} must have a mass");
+            assert!(crate::isotope::composition(&seq).is_ok(), "{aa} must have a composition");
+        }
+        for aa in ['U', 'X', 'B', 'Z', 'J'] {
+            let seq = format!("PEPT{aa}DEK");
+            assert!(monoisotopic(&seq).is_err(), "{aa} must be refused by mass");
+            assert!(
+                crate::isotope::composition(&seq).is_err(),
+                "{aa} must be refused by composition — a residue with a mass but no composition \
+                 gets a peptide into the digest and then silently no ions"
+            );
+        }
     }
 }
