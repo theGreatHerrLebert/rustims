@@ -1,9 +1,12 @@
 import os
 import sys
 import math
+import hashlib
 
 # Silence verbose package outputs before importing them
 os.environ["WANDB_SILENT"] = "true"
+
+import numpy as np
 
 import platform
 import argparse
@@ -79,6 +82,7 @@ from imspy_simulation.timsim.jobs.simulate_ion_mobilities_and_variance import si
 from imspy_simulation.timsim.jobs.simulate_peptides import simulate_peptides
 from imspy_simulation.timsim.jobs.simulate_phosphorylation import simulate_phosphorylation
 from imspy_simulation.timsim.jobs.simulate_proteins import simulate_proteins
+from imspy_simulation.timsim.jobs.load_from_v2 import load_from_v2
 from imspy_simulation.timsim.jobs.simulate_scan_distributions_with_variance import (
     simulate_scan_distributions_with_variance
 )
@@ -290,6 +294,23 @@ def get_default_settings() -> dict:
         'existing_path': None,
         'from_findings': False,
         'findings_path': None,
+        # ── the timsim v2 handoff (the strangler seam) ──────────────────────
+        # v2 owns the SAMPLE (proteome -> digest -> design -> yield); v1 keeps the entire
+        # MEASUREMENT axis (RT, charge, CCS, fragments, frame assembly, the .d writer).
+        # When set, v1 loads its `proteins`/`peptides` tables from v2's Parquet artifacts
+        # instead of running its own digest, then continues from simulate_retention_times
+        # exactly as it does today. Absent, v1 behaves precisely as before.
+        'from_v2': False,
+        'v2_path': None,
+        'v2_sample': None,          # which sample of the design; default = first
+        'v2_total_events': 2.5e9,   # the declared abundance scale (see load_from_v2)
+        # Detection stand-in until `design_eligibility` exists. Defaults to v1's own peptide budget
+        # (`num_sample_peptides`) rather than None — a v2 digest emits the COMPLETE peptide space
+        # (~3.5M for HYE), and handing all of it to v1's RT/charge/CCS/fragment prediction would
+        # exhaust memory. `None` explicitly means "no cap", for the caller who really wants it.
+        'v2_max_peptides': -1,      # -1 = follow num_sample_peptides; None = uncapped
+        'v2_max_peptide_length': 30,  # the fragment model's hard limit (a MEASUREMENT constraint)
+        'v2_flyability': 'lognormal',  # stand-in for a structural ionization_propensity column
         'intensity_multiplier': 1.0,
         # Shared event-scaling denominator across conditions; None = per-sample
         # median (legacy). Set the SAME value for every condition (A/B/...) of a
@@ -628,6 +649,55 @@ class SimulationConfig:
         if self._config.get('from_findings') and self._config.get('from_existing'):
             raise ValueError("Cannot use both 'from_findings' and 'from_existing' at the same time")
 
+        if self._config.get('from_v2'):
+            for other in ('from_existing', 'from_findings'):
+                if self._config.get(other):
+                    raise ValueError(f"Cannot use both 'from_v2' and '{other}' at the same time")
+            if not self._config.get('v2_path'):
+                raise ValueError("'from_v2' requires 'v2_path' (the directory of v2 Parquet artifacts)")
+
+            # Refuse, rather than half-support, the thing v2 exists to replace.
+            #
+            # v1's phospho mode runs the simulator TWICE — once with the phosphate on site A, once on
+            # site B — and recovers which is which from the output FILENAME. The two positional
+            # isomers never coexist in one run, so the ground-truth site probability has to be
+            # fabricated (the published benchmark literally does `SIM["site_probability"] = 1.0`).
+            #
+            # v2's answer is `timsim-modify`: positional isomers are distinct modforms that coexist
+            # in a single run, with real site-level truth. Quietly applying the old hack to the new
+            # path would produce a plausible file with an invented answer key — the exact failure
+            # this redesign exists to abolish. So: fail loudly, and say what to do instead.
+            # Refuse legacy proteome mixing: v2's `mix` IS the proteome mix, done properly.
+            #
+            # v1 mixes by applying `multi_fasta_dilution` factors to per-FASTA event counts, and the
+            # expected fold changes then have to be typed into an analysis script by hand (the
+            # published benchmark has HYE's 1.0 / 0.667 / 3.0 literally in a plotting cell).
+            #
+            # v2's design.toml declares the mixture as MASS FRACTIONS per organism and *derives*
+            # `true_log2fc` from the final amounts — so it survives spike-ins and compositional
+            # dilution. Running both would apply the mixture twice.
+            if self._config.get('proteome_mix'):
+                raise ValueError(
+                    "'from_v2' does not support 'proteome_mix'.\n"
+                    "  v2's design.toml already declares the mixture, as mass fractions per "
+                    "organism:\n"
+                    "      mix = { HUMAN = 0.65, YEAST = 0.15, ECOLI = \"rest\" }\n"
+                    "  and DERIVES true_log2fc from the final amounts, rather than requiring you to "
+                    "type the expected ratios into an analysis script.\n"
+                    "  Applying v1's dilution factors on top would mix the sample twice."
+                )
+
+            if self._config.get('phospho_mode'):
+                raise ValueError(
+                    "'from_v2' does not support 'phospho_mode'.\n"
+                    "  v1's phospho mode simulates ONE site per run and recovers it from the "
+                    "filename; the two positional isomers never coexist, so the site-level ground "
+                    "truth has to be invented.\n"
+                    "  v2 models modforms directly (timsim-modify): positional isomers coexist in "
+                    "one run with real site truth. Wiring that through this handoff is pending; "
+                    "until then this combination is refused rather than silently mis-simulated."
+                )
+
         # A Thermo build-from-template run (Astral/Orbitrap) is built from a Thermo .raw
         # template, NOT a Bruker reference .d — so it requires a template path in place
         # of reference_path (the lean, Bruker-independent build-from-template path).
@@ -646,7 +716,12 @@ class SimulationConfig:
         if self._config.get('from_findings'):
             required = ['save_path', 'findings_path'] if is_template_based else ['save_path', ref_key, 'findings_path']
         else:
-            required = ['save_path', 'fasta_path'] if is_template_based else ['save_path', ref_key, 'fasta_path']
+            # A v2 handoff loads its proteins and peptides from Parquet, so a FASTA is not just
+            # unnecessary — demanding one would force the caller to name a file that is never read.
+            needs_fasta = not self._config.get('from_v2')
+            required = ['save_path'] if is_template_based else ['save_path', ref_key]
+            if needs_fasta:
+                required.append('fasta_path')
         missing = [key for key in required if not self._config.get(key)]
 
         if missing:
@@ -1098,6 +1173,25 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
         help="Path to the TOML configuration file"
     )
     parser.add_argument(
+        "--from-v2",
+        type=str,
+        default=None,
+        metavar="DIR",
+        dest="v2_path",
+        help=(
+            "Drive the simulation from timsim v2 artifacts in DIR (proteome.parquet, "
+            "peptides.parquet, peptide_occurrences.parquet, peptide_quantities.parquet). "
+            "v1 skips its own digest and continues from retention-time prediction. "
+            "Writes id_map.parquet so v2's ground truth can be joined back to the output."
+        ),
+    )
+    parser.add_argument(
+        "--v2-sample",
+        type=str,
+        default=None,
+        help="Which sample of the v2 design to render (default: the first). One v1 run = one sample.",
+    )
+    parser.add_argument(
         "--save-path", "-s",
         type=str,
         default=None,
@@ -1274,6 +1368,12 @@ def main():
     if cli_args.findings_path:
         overrides['findings_path'] = cli_args.findings_path
         overrides['from_findings'] = True
+    if cli_args.v2_path:
+        # Passing --from-v2 is the whole switch; no separate boolean to forget.
+        overrides['from_v2'] = True
+        overrides['v2_path'] = cli_args.v2_path
+    if cli_args.v2_sample:
+        overrides['v2_sample'] = cli_args.v2_sample
     if cli_args.intensity_multiplier is not None:
         overrides['intensity_multiplier'] = cli_args.intensity_multiplier
     if cli_args.resume:
@@ -1457,6 +1557,7 @@ def main():
     rt_sigma = None
     rt_lambda = None
     peptides, proteins, ions = None, None, None
+    _v2_ions = None   # the ion layer from timsim-precursors, if the v2 handoff supplied one
     pasef_meta = None
     precursors = None
 
@@ -1637,7 +1738,92 @@ def main():
     fastas = get_fasta_file_paths(config.fasta_path) if config.fasta_path else {}
     protein_list, peptide_list = [], []
 
-    if not config.from_existing and not config.from_findings and not resume_after:
+    if config.from_v2 and not resume_after:
+        logger.info(section_header("Loading timsim v2 Sample", use_unicode))
+        # -1 means "use v1's own budget" — the peptide count v1 was designed around.
+        _v2_cap = config.v2_max_peptides
+        if _v2_cap == -1:
+            _v2_cap = config.num_sample_peptides
+        handoff = load_from_v2(
+            v2_dir=config.v2_path,
+            sample_id=config.v2_sample,
+            total_events=config.v2_total_events,
+            max_peptides=_v2_cap,
+            max_peptide_length=config.v2_max_peptide_length,
+            flyability=config.v2_flyability,
+            verbose=not config.silent_mode,
+        )
+        proteins = handoff.proteins
+        peptides = handoff.peptides
+        _v2_ions = handoff.ions   # None if timsim-precursors was not run
+        # The answer key across the id bridge. Without it, v2's ground truth cannot be
+        # joined back to v1's output and the whole exercise is pointless.
+        _v2_id_map_path = os.path.join(config.save_path, 'id_map.parquet')
+        os.makedirs(config.save_path, exist_ok=True)
+        handoff.id_map.to_parquet(_v2_id_map_path, index=False)
+        if not config.silent_mode:
+            logger.info(f"    id_map         : {_v2_id_map_path}")
+
+        # v1's RT prediction lives inside the FASTA branch below, so the v2 path must run it
+        # itself. This is the seam: v2 owns the SAMPLE, v1 owns the MEASUREMENT, and retention
+        # time is the first measurement.
+        logger.info(section_header("Simulating Retention Times", use_unicode))
+        rt_model = config.rt_model or config.koina_rt_model
+        if rt_model:
+            logger.info(f"  Using RT model: {rt_model}")
+        peptides = simulate_retention_times(
+            peptides=peptides,
+            verbose=not config.silent_mode,
+            gradient_length=acquisition_builder.gradient_length,
+            use_koina_model=rt_model,
+        )
+
+        # The void-volume correction, which on the FASTA path lives inside `simulate_peptides`
+        # (digest_fasta.py) and would otherwise be silently skipped here — an UNINTENDED divergence,
+        # and by the acceptance criterion any diff not on the intended-changes list is a bug.
+        #
+        # What it corrects is a PREDICTOR ARTEFACT, not chemistry: the RT model has no way to say
+        # "this peptide does not elute", so it piles everything it cannot place into the first
+        # instants of the gradient. v1 thins that population back down to the median bin density
+        # rather than deleting it, which is the right shape — a real void volume is sparse, not empty.
+        #
+        # v1 selects the survivors with a bulk `np.random.choice` (row-order dependent, so adding one
+        # peptide reshuffles which of them live). Here the choice is **identity-keyed** on the
+        # sequence, so a peptide's fate depends on the peptide, not on its neighbours — the same
+        # correction, without v1's B8 defect.
+        if config.exclude_accumulated_gradient_start and len(peptides):
+            _rt_col = "retention_time_gru_predictor"
+            _min_rt = acquisition_builder.gradient_length * config.min_rt_percent / 100.0
+            _rt = peptides[_rt_col].to_numpy()
+            _low = _rt <= _min_rt
+            if _low.any():
+                _bin = 0.1
+                _counts = np.histogram(_rt, bins=np.arange(0, _rt.max() + _bin, _bin))[0]
+                _median = float(np.median(_counts[_counts > 0])) if (_counts > 0).any() else 0.0
+                _keep_n = int((_min_rt / _bin) * _median)
+
+                # Identity-keyed rank: hash each low-RT peptide's sequence to [0,1) and keep the
+                # lowest `_keep_n`. Deterministic, order-independent, stable under resampling.
+                _seqs = peptides.loc[_low, "sequence"].to_numpy()
+                _rank = np.array(
+                    [int.from_bytes(hashlib.blake2b(s.encode(), digest_size=8).digest(), "big")
+                     / float(1 << 64) for s in _seqs]
+                )
+                _survive = np.zeros(len(_seqs), dtype=bool)
+                if _keep_n > 0:
+                    _survive[np.argsort(_rank)[:_keep_n]] = True
+
+                _mask = np.ones(len(peptides), dtype=bool)
+                _mask[np.where(_low)[0]] = _survive
+                _dropped = int((~_mask).sum())
+                peptides = peptides[_mask].reset_index(drop=True)
+                logger.info(
+                    f"  Void-volume correction: dropped {_dropped:,} of {int(_low.sum()):,} peptides "
+                    f"predicted below {_min_rt:.1f}s ({config.min_rt_percent}% of gradient), "
+                    f"thinning to the median bin density"
+                )
+
+    elif not config.from_existing and not config.from_findings and not resume_after:
         logger.info(section_header("Processing FASTA Files", use_unicode))
         for fasta_name, fasta_path in fastas.items():
             if not config.silent_mode:
@@ -1818,7 +2004,30 @@ def main():
             not config.from_findings or findings_result is None or not findings_result.has_im
         )
 
-        if need_charge:
+        if _v2_ions is not None:
+            # The ion layer comes from timsim-precursors. v1's own charge-state job is skipped.
+            #
+            # This is INTENDED PHYSICS CHANGE #1 (see TIMSIM_V2_PLAN.md §6.4): per-site gas-phase
+            # basicity (R > K >> H) instead of one probability for every basic site. A fully-tryptic
+            # peptide comes out 82% doubly charged rather than v1's 56% (with 26% singly charged).
+            #
+            # v2 also DELETES ions above the charge cap rather than renormalising the survivors —
+            # v1 drops any charge below `min_charge_contrib` and then divides the rest by what
+            # survived (`predictors.py:121`), which hands the discarded ions' abundance to the
+            # remaining charge states and inflates them.
+            logger.info(section_header("Charge States (from timsim v2)", use_unicode))
+            mz_lower = acquisition_builder.tdf_writer.helper_handle.mz_lower
+            mz_upper = acquisition_builder.tdf_writer.helper_handle.mz_upper
+
+            ions = pd.merge(_v2_ions, peptides, on="peptide_id")
+            before = len(ions)
+            ions = ions[(ions.mz >= mz_lower) & (ions.mz <= mz_upper)]
+            if not config.silent_mode:
+                logger.info(f"  {len(ions):,} precursors from timsim-precursors")
+                logger.info(f"  {before - len(ions):,} outside the instrument m/z range "
+                            f"[{mz_lower:.0f}, {mz_upper:.0f}]")
+
+        elif need_charge:
             logger.info(section_header("Simulating Charge States", use_unicode))
             # JOB 5: Charge states
             ions = simulate_charge_states(
