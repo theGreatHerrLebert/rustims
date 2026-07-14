@@ -365,16 +365,25 @@ def load_from_v2(
     if prec_all is not None:
         prec = prec_all[prec_all["peptide_id"].isin(pep_int)]
         if not prec.empty:
+            # v1 calls this `relative_abundance` and uses it as
+            # `intensity = events * relative_abundance`. `events` already carries the flyability —
+            # and carries the SAME `ionization_propensity` this table declares — so multiplying the
+            # propensity in here as well would double-count it.
+            #
+            # `modform_fraction` DOES belong here, because `events` is per-PEPTIDE while an ion
+            # belongs to one modform. Without it, every modform of a peptide would be emitted at the
+            # peptide's full abundance and a phosphopeptide present in 2% of molecules would be
+            # simulated as though it were present in all of them. It is 1.0 when timsim-modify was
+            # not run, so this term is a no-op on an unmodified sample rather than a special case.
+            rel = prec["charge_fraction"].to_numpy().astype(float)
+            if "modform_fraction" in prec.columns:
+                rel = rel * prec["modform_fraction"].to_numpy().astype(float)
+
             ions_v1 = pd.DataFrame(
                 {
                     "peptide_id": prec["peptide_id"].map(pep_int).to_numpy(),
                     "charge": prec["charge"].to_numpy().astype(int),
-                    # v1 calls this `relative_abundance` and uses it as
-                    # `intensity = events * relative_abundance`. `events` already carries the
-                    # flyability — and now carries the SAME `ionization_propensity` this table
-                    # declares — so this must be the CHARGE FRACTION alone. Multiplying the
-                    # propensity in here as well would double-count it.
-                    "relative_abundance": prec["charge_fraction"].to_numpy().astype(float),
+                    "relative_abundance": rel,
                     "mz": prec["mz"].to_numpy().astype(float),
                 }
             ).sort_values(["peptide_id", "charge"]).reset_index(drop=True)

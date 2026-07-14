@@ -153,6 +153,7 @@ pub mod modifications {
     pub const SITE: &str = "site";
     pub const OCCUPANCY: &str = "occupancy";
     pub const MASS_DELTA: &str = "mass_delta";
+    pub const COMPOSITION: &str = "composition";
     pub const BLOCKS_CLEAVAGE: &str = "blocks_cleavage";
     pub const STAGE: &str = "stage";
 
@@ -191,6 +192,10 @@ pub mod modifications {
                 Field::new(SITE, DataType::Utf8, false),
                 Field::new(OCCUPANCY, DataType::Float64, false),
                 Field::new(MASS_DELTA, DataType::Float64, false),
+                // Elemental formula, e.g. "HO3P". A modification RESHAPES the isotope envelope, it
+                // does not merely shift the mass — so the composition, not just the delta, is what
+                // downstream needs. It is also the cross-check on `mass_delta`.
+                Field::new(COMPOSITION, DataType::Utf8, false),
                 Field::new(BLOCKS_CLEAVAGE, DataType::Boolean, false),
                 // "protein" (before the protease) | "peptide" (after it). Load-bearing: only a
                 // pre-digestion protein-level mod can block cleavage, and pyroglutamate forms on a
@@ -269,6 +274,8 @@ pub mod precursors {
     pub const TABLE: &str = "precursors";
     pub const PRECURSOR_ID: &str = "precursor_id";
     pub const PEPTIDE_ID: &str = "peptide_id";
+    pub const MODFORM_ID: &str = "modform_id";
+    pub const MODFORM_FRACTION: &str = "modform_fraction";
     pub const CHARGE: &str = "charge";
     pub const MZ: &str = "mz";
     pub const ISOTOPE_INTENSITY: &str = "isotope_intensity";
@@ -282,7 +289,7 @@ pub mod precursors {
     ///
     /// # The factorisation is the ground truth
     ///
-    /// `ion_amol = peptide_amol × ionization_propensity × charge_fraction`
+    /// `ion_amol = peptide_amol × modform_fraction × ionization_propensity × charge_fraction`
     ///
     /// Each multiplier is its own column, so the chain is **invertible**: an ion's amount divided by
     /// its charge fraction and its flyability recovers the peptide, and the peptide divided by
@@ -299,6 +306,11 @@ pub mod precursors {
             vec![
                 Field::new(PRECURSOR_ID, DataType::UInt64, false),
                 Field::new(PEPTIDE_ID, DataType::UInt64, false),
+                // The modform this ion comes from. The UNMODIFIED form is a modform like any other,
+                // so this is never null: a run without `timsim-modify` gives every peptide one
+                // modform at fraction 1.0. That uniformity is why there is no special case here.
+                Field::new(MODFORM_ID, DataType::UInt64, false),
+                Field::new(MODFORM_FRACTION, DataType::Float32, false),
                 Field::new(CHARGE, DataType::UInt8, false),
                 Field::new(MZ, DataType::Float64, false),
                 Field::new(

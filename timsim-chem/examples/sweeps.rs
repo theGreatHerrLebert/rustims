@@ -42,22 +42,22 @@ fn main() {
             if seen.insert(s) { peps.push(s.to_string()); }
         }
     }
-    let m = |n: &str, u: u32, t: &str, si: Site, o: f64, dm: f64, st: Stage| Modification {
+    let m = |n: &str, u: u32, t: &str, si: Site, o: f64, dm: f64, st: Stage, f: &str| Modification {
         name: n.into(), unimod_id: u, targets: t.into(), site: si,
-        occupancy: o, mass_delta: dm, blocks_cleavage: false, stage: st };
+        occupancy: o, mass_delta: dm, composition: f.into(), blocks_cleavage: false, stage: st };
 
     let mut universe = Vec::new();
     for (label, mods) in [
         ("none", vec![]),
         ("standard", vec![
-            m("Carbamidomethyl",4,"C",Site::Residue,0.98,57.02146,Stage::Protein),
-            m("Oxidation",35,"M",Site::Residue,0.05,15.99491,Stage::Peptide),
-            m("Acetyl(N-term)",1,"",Site::NTerm,0.01,42.01057,Stage::Protein)]),
+            m("Carbamidomethyl",4,"C",Site::Residue,0.98,57.02146,Stage::Protein, "C2H3NO"),
+            m("Oxidation",35,"M",Site::Residue,0.05,15.99491,Stage::Peptide, "O"),
+            m("Acetyl(N-term)",1,"",Site::NTerm,0.01,42.01057,Stage::Protein, "C2H2O")]),
         ("+phospho 2%", vec![
-            m("Carbamidomethyl",4,"C",Site::Residue,0.98,57.02146,Stage::Protein),
-            m("Oxidation",35,"M",Site::Residue,0.05,15.99491,Stage::Peptide),
-            m("Acetyl(N-term)",1,"",Site::NTerm,0.01,42.01057,Stage::Protein),
-            m("Phospho",21,"STY",Site::Residue,0.02,79.96633,Stage::Protein)]),
+            m("Carbamidomethyl",4,"C",Site::Residue,0.98,57.02146,Stage::Protein, "C2H3NO"),
+            m("Oxidation",35,"M",Site::Residue,0.05,15.99491,Stage::Peptide, "O"),
+            m("Acetyl(N-term)",1,"",Site::NTerm,0.01,42.01057,Stage::Protein, "C2H2O"),
+            m("Phospho",21,"STY",Site::Residue,0.02,79.96633,Stage::Protein, "HO3P")]),
     ] {
         for floor in [1e-2, 1e-3, 1e-4, 1e-5] {
             let r: Vec<(u64,u64,f64)> = peps.par_iter().map(|s| {

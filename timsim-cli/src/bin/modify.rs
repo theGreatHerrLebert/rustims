@@ -103,6 +103,8 @@ struct ModSpec {
     site: String,
     occupancy: f64,
     mass_delta: f64,
+    /// Elemental formula, e.g. "HO3P". Cross-checked against `mass_delta`.
+    composition: String,
     #[serde(default)]
     blocks_cleavage: bool,
     #[serde(default = "default_stage")]
@@ -127,6 +129,7 @@ unimod_id       = 4
 targets         = "C"
 occupancy       = 0.98        # this is just the alkylation efficiency
 mass_delta      = 57.021464
+composition     = "C2H3NO"
 stage           = "protein"   # reduction/alkylation precedes digestion
 
 [[modification]]
@@ -135,6 +138,7 @@ unimod_id       = 35
 targets         = "M"
 occupancy       = 0.05        # largely a handling artefact
 mass_delta      = 15.994915
+composition     = "O"
 stage           = "peptide"   # forms on the peptide, after the protease
 
 [[modification]]
@@ -143,6 +147,7 @@ unimod_id       = 21
 targets         = "STY"
 occupancy       = 0.02        # a REGULATED site; most STY are far below this
 mass_delta      = 79.966331
+composition     = "HO3P"     # the formula RESHAPES the envelope; the delta alone would not
 stage           = "protein"
 
 # Blocks trypsin: a modified lysine is not cleaved, so the peptide spanning it carries a
@@ -153,6 +158,7 @@ unimod_id       = 121
 targets         = "K"
 occupancy       = 0.001
 mass_delta      = 114.042927
+composition     = "C4H6N2O2"
 blocks_cleavage = true
 stage           = "protein"
 "#;
@@ -214,6 +220,7 @@ fn parse_mods(path: &PathBuf) -> Result<Vec<Modification>> {
             site,
             occupancy: m.occupancy,
             mass_delta: m.mass_delta,
+            composition: m.composition,
             blocks_cleavage: m.blocks_cleavage,
             stage,
         };
@@ -455,6 +462,7 @@ fn main() -> Result<()> {
             Arc::new(StringArray::from(mods.iter().map(|m| site_str(m.site)).collect::<Vec<_>>())),
             Arc::new(Float64Array::from(mods.iter().map(|m| m.occupancy).collect::<Vec<_>>())),
             Arc::new(Float64Array::from(mods.iter().map(|m| m.mass_delta).collect::<Vec<_>>())),
+            Arc::new(StringArray::from(mods.iter().map(|m| m.composition.clone()).collect::<Vec<_>>())),
             Arc::new(BooleanArray::from(mods.iter().map(|m| m.blocks_cleavage).collect::<Vec<_>>())),
             Arc::new(StringArray::from(mods.iter().map(|m| stage_str(m.stage)).collect::<Vec<_>>())),
         ],

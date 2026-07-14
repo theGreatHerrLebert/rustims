@@ -85,6 +85,7 @@ fn read_modifications(path: &PathBuf) -> Result<Vec<Modification>> {
         let targets = col_str(&b, MODS::TARGETS);
         let site = col_str(&b, MODS::SITE);
         let stage = col_str(&b, MODS::STAGE);
+        let comp = col_str(&b, MODS::COMPOSITION);
         let occ = col_f64(&b, MODS::OCCUPANCY);
         let delta = col_f64(&b, MODS::MASS_DELTA);
         let unimod: &UInt32Array =
@@ -108,6 +109,7 @@ fn read_modifications(path: &PathBuf) -> Result<Vec<Modification>> {
                 },
                 occupancy: occ.value(i),
                 mass_delta: delta.value(i),
+                composition: comp.value(i).to_string(),
                 blocks_cleavage: blocks.value(i),
                 stage: match stage.value(i) {
                     "protein" => Stage::Protein,

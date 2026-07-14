@@ -82,10 +82,39 @@ pub struct Modification {
     /// blocking alters *which peptides exist*, which is a digest question.
     pub blocks_cleavage: bool,
     pub stage: Stage,
+    /// Elemental composition, e.g. `"HO3P"` for phospho, `"C4H6N2O2"` for GG. Losses are written
+    /// with negative counts (`"H-3N-1"` for pyroglutamate).
+    ///
+    /// Required, not optional, because a modification is not a scalar: phospho adds HPO₃ and GG adds
+    /// C₄H₆N₂O₂, and each **reshapes the isotope envelope**, not merely shifts it. A `mass_delta`
+    /// alone would put the peaks in the right places with the wrong heights.
+    ///
+    /// It also buys an oracle. The formula's monoisotopic mass and the declared `mass_delta` are two
+    /// independent routes to one number, and [`Modification::validate`] requires them to agree — so
+    /// a typo in either is caught at load, rather than silently shifting every modified precursor's
+    /// m/z while every other number in the run stays plausible.
+    pub composition: String,
 }
 
 impl Modification {
+    /// The composition delta, parsed and cross-checked against `mass_delta`.
+    pub fn delta(&self) -> Result<crate::isotope::CompositionDelta, String> {
+        crate::isotope::parse_formula(&self.composition)
+            .map_err(|e| format!("modification {:?}: {e}", self.name))
+    }
+
     pub fn validate(&self) -> Result<(), String> {
+        // The cross-check. Two routes to one number.
+        let d = self.delta()?;
+        let from_formula = crate::isotope::delta_mass(d);
+        if (from_formula - self.mass_delta).abs() > 1e-4 {
+            return Err(format!(
+                "modification {:?}: composition {:?} weighs {from_formula:.6} Da but mass_delta \
+                 declares {:.6} Da. One of them is a typo, and either would shift every modified \
+                 precursor's m/z while leaving every other number in the run plausible.",
+                self.name, self.composition, self.mass_delta
+            ));
+        }
         if !self.occupancy.is_finite() || !(0.0..=1.0).contains(&self.occupancy) {
             return Err(format!(
                 "modification {:?}: occupancy must be finite and in [0, 1], got {}",
@@ -415,6 +444,7 @@ mod tests {
             site: Site::Residue,
             occupancy: 0.02,
             mass_delta: 79.96633,
+            composition: "HO3P".into(),
             blocks_cleavage: false,
             stage: Stage::Protein,
         }
@@ -427,6 +457,7 @@ mod tests {
             site: Site::Residue,
             occupancy: 0.05,
             mass_delta: 15.99491,
+            composition: "O".into(),
             blocks_cleavage: false,
             stage: Stage::Peptide,
         }
@@ -439,6 +470,7 @@ mod tests {
             site: Site::Residue,
             occupancy: occ,
             mass_delta: 57.02146,
+            composition: "C2H3NO".into(),
             blocks_cleavage: false,
             stage: Stage::Protein,
         }
@@ -555,11 +587,13 @@ mod tests {
     fn competing_modifications_at_one_site_are_exclusive() {
         let acetyl = Modification {
             name: "Acetyl".into(), unimod_id: 1, targets: "K".into(), site: Site::Residue,
-            occupancy: 0.3, mass_delta: 42.01057, blocks_cleavage: true, stage: Stage::Protein,
+            occupancy: 0.3, mass_delta: 42.01057, composition: "C2H2O".into(),
+            blocks_cleavage: true, stage: Stage::Protein,
         };
         let trimethyl = Modification {
             name: "Trimethyl".into(), unimod_id: 37, targets: "K".into(), site: Site::Residue,
-            occupancy: 0.2, mass_delta: 42.04695, blocks_cleavage: true, stage: Stage::Protein,
+            occupancy: 0.2, mass_delta: 42.04695, composition: "C3H6".into(),
+            blocks_cleavage: true, stage: Stage::Protein,
         };
         let (forms, stats) = enumerate_modforms("PEPTIDEK", &[acetyl, trimethyl], 0.0).unwrap();
 
@@ -571,12 +605,35 @@ mod tests {
         assert_relative_eq!(stats.mass_retained, 1.0, epsilon = 1e-12);
     }
 
+    /// **The spec cross-check fires.** A modification declares a formula AND a mass_delta — two
+    /// independent routes to one number. If they disagree, one is a typo, and either would shift
+    /// every modified precursor's m/z while leaving every other number in the run plausible. So the
+    /// disagreement must be an ERROR at load, not a silent preference for one of them.
+    ///
+    /// The case that motivates it: acetyl (C2H2O, 42.0106) and trimethyl (C3H6, 42.0470) are the
+    /// classic near-isobaric pair, 0.036 Da apart. Pairing one's formula with the other's mass is a
+    /// real mistake a human makes, and it is exactly what this catches.
+    #[test]
+    fn a_formula_that_contradicts_the_mass_delta_is_rejected() {
+        let mut m = carbamidomethyl(0.98);
+        m.name = "Acetyl".into();
+        m.composition = "C2H2O".into();  // 42.0106
+        m.mass_delta = 42.04695;         // ...but trimethyl's mass
+        let err = m.validate().unwrap_err();
+        assert!(err.contains("42.0") && err.contains("typo"), "{err}");
+
+        // Agreeing values pass.
+        m.mass_delta = 42.010565;
+        assert!(m.validate().is_ok(), "{:?}", m.validate());
+    }
+
     /// Over-subscribed occupancies are normalised: a residue cannot be more than 100% modified.
     #[test]
     fn oversubscribed_site_occupancies_are_normalised() {
         let a = Modification {
             name: "A".into(), unimod_id: 1, targets: "K".into(), site: Site::Residue,
-            occupancy: 0.8, mass_delta: 10.0, blocks_cleavage: false, stage: Stage::Protein,
+            occupancy: 0.8, mass_delta: 15.994915, composition: "O".into(),
+            blocks_cleavage: false, stage: Stage::Protein,
         };
         let mut b = a.clone();
         b.name = "B".into();
@@ -659,6 +716,7 @@ mod tests {
             site: Site::Residue,
             occupancy: occ,
             mass_delta: 114.042927,
+            composition: "C4H6N2O2".into(),
             blocks_cleavage: true,
             stage: Stage::Protein,
         }

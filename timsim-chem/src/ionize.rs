@@ -411,6 +411,15 @@ impl Flyability {
 pub struct Precursor {
     pub precursor_id: u64,
     pub peptide_id: u64,
+    /// The modform this ion comes from. **The unmodified form is a modform like any other**, so this
+    /// is always present — a peptide with no modifications simply has one, at fraction 1.0. That
+    /// uniformity is why there is no nullable column and no special case here.
+    pub modform_id: u64,
+    /// Fraction of the peptide's molecules in this modform. Another multiplier in the chain, and
+    /// its own column, so the chain stays invertible:
+    ///
+    /// `ion_amol = peptide_amol × modform_fraction × ionization_propensity × charge_fraction`
+    pub modform_fraction: f32,
     pub charge: u8,
     pub mz: f64,
     /// Relative intensities of the isotope comb, summing to 1.
@@ -446,8 +455,49 @@ impl Ionizer {
         peptide_id: u64,
         sequence: &str,
     ) -> Result<Vec<Precursor>, mass::UnknownResidue> {
-        let mono = mass::monoisotopic(sequence)?;
-        let env = isotope::envelope(sequence, self.isotope_depth)?;
+        // The bare peptide is its own (unmodified) modform, at fraction 1.
+        let comp = isotope::composition(sequence)?;
+        self.precursors_of_modform(
+            peptide_id,
+            crate::ids::modform_id(peptide_id, &[]),
+            sequence,
+            comp,
+            0.0,
+            1.0,
+        )
+    }
+
+    /// Precursors of one **modform**.
+    ///
+    /// The modification is not a scalar added to the mass. `composition` is the modform's full
+    /// elemental composition — the peptide's plus its modifications' — so the isotope envelope is
+    /// **recomputed**, not merely translated. Phospho adds HPO₃ and GG adds C₄H₆N₂O₂, and each
+    /// reshapes the comb; shifting the mass while reusing the bare peptide's envelope would put the
+    /// peaks in the right places with the wrong heights.
+    ///
+    /// # What is deliberately NOT modelled here
+    ///
+    /// `charge` and `ionization_propensity` are still computed from the **bare sequence**. Both are
+    /// wrong for a modified peptide, in known directions:
+    ///
+    /// - Acetyl-K, TMT-K and GG-K cap the lysine's ε-amine, so they **remove a basic site**. A
+    ///   modified peptide is less charged than this model says.
+    /// - Phospho carries a negative charge and depresses ionisation efficiency measurably.
+    ///
+    /// Neither is modelled because neither has a defensible number yet, and inventing one is how
+    /// `p(H) = 0.20` happened. The slot exists (the charge model is site-specific, so a blocked site
+    /// is expressible); the value does not. Recorded rather than silently approximated.
+    pub fn precursors_of_modform(
+        &self,
+        peptide_id: u64,
+        modform_id: u64,
+        sequence: &str,
+        composition: isotope::Composition,
+        mass_delta: f64,
+        modform_fraction: f32,
+    ) -> Result<Vec<Precursor>, mass::UnknownResidue> {
+        let mono = mass::monoisotopic(sequence)? + mass_delta;
+        let env = isotope::envelope_of(composition, self.isotope_depth);
         let fly = self.flyability.of(sequence, self.seed) as f32;
 
         Ok(self
@@ -455,8 +505,12 @@ impl Ionizer {
             .distribution(sequence)
             .into_iter()
             .map(|(z, frac)| Precursor {
-                precursor_id: crate::ids::precursor_id(peptide_id, z),
+                // Keyed on the MODFORM, not the peptide: a phosphopeptide and its unmodified self
+                // are different molecules with different m/z, and must not share an id.
+                precursor_id: crate::ids::precursor_id(modform_id, z),
                 peptide_id,
+                modform_id,
+                modform_fraction,
                 charge: z,
                 mz: isotope::mz(mono, z, 0),
                 isotope_intensity: env.clone(),
@@ -471,6 +525,82 @@ impl Ionizer {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
+
+    /// A modform's m/z must move by exactly the modification's mass over the charge, and its isotope
+    /// envelope must be **recomputed** from the modified composition rather than reused. A scalar
+    /// mass delta gets the first right and the second wrong — peaks in the right places, wrong
+    /// heights — and nothing downstream would notice.
+    #[test]
+    fn a_modform_shifts_the_mz_and_recomputes_the_envelope() {
+        let io = Ionizer {
+            charge: ChargeModel::realistic(),
+            flyability: Flyability::Uniform,
+            isotope_depth: 6,
+            seed: 1,
+        };
+        let seq = "AEEKSYQLQK";
+        let pid = crate::ids::peptide_id(seq);
+        let bare = io.precursors_of(pid, seq).unwrap();
+
+        // Phospho: +HO3P.
+        let d = isotope::parse_formula("HO3P").unwrap();
+        let delta = isotope::delta_mass(d);
+        let comp = isotope::composition(seq).unwrap().apply(d).unwrap();
+        let mid = crate::ids::modform_id(pid, &[(4, "Phospho")]);
+        let phos = io
+            .precursors_of_modform(pid, mid, seq, comp, delta, 0.02)
+            .unwrap();
+
+        let at = |v: &[Precursor], z: u8| -> Precursor {
+            v.iter().find(|p| p.charge == z).unwrap().clone()
+        };
+        let (b2, p2) = (at(&bare, 2), at(&phos, 2));
+
+        // m/z moves by exactly delta / z.
+        assert_relative_eq!(p2.mz - b2.mz, delta / 2.0, epsilon = 1e-9);
+        assert_relative_eq!(delta, 79.966331, epsilon = 1e-5);
+
+        // The envelope is recomputed, not copied: the extra oxygens change it.
+        assert_ne!(
+            b2.isotope_intensity, p2.isotope_intensity,
+            "a modified peptide's comb must be recomputed, not reused"
+        );
+
+        // The modform is its own species: distinct id, and the fraction is carried.
+        assert_ne!(b2.precursor_id, p2.precursor_id);
+        assert_eq!(p2.modform_id, mid);
+        assert_relative_eq!(p2.modform_fraction, 0.02, epsilon = 1e-6);
+        assert_relative_eq!(b2.modform_fraction, 1.0, epsilon = 1e-6);
+    }
+
+    /// Positional isomers are **different molecules with the same m/z** — which is exactly the
+    /// site-localisation problem. They must get distinct ids and identical masses, or the ground
+    /// truth collapses the very thing a localisation benchmark tests.
+    #[test]
+    fn positional_isomers_share_mz_but_not_identity() {
+        let io = Ionizer {
+            charge: ChargeModel::realistic(),
+            flyability: Flyability::Uniform,
+            isotope_depth: 6,
+            seed: 1,
+        };
+        let seq = "AEEKSYQLQK"; // S at 4, Y at 5
+        let pid = crate::ids::peptide_id(seq);
+        let d = isotope::parse_formula("HO3P").unwrap();
+        let delta = isotope::delta_mass(d);
+        let comp = isotope::composition(seq).unwrap().apply(d).unwrap();
+
+        let on_s = io
+            .precursors_of_modform(pid, crate::ids::modform_id(pid, &[(4, "Phospho")]), seq, comp, delta, 0.02)
+            .unwrap();
+        let on_y = io
+            .precursors_of_modform(pid, crate::ids::modform_id(pid, &[(5, "Phospho")]), seq, comp, delta, 0.02)
+            .unwrap();
+
+        assert_relative_eq!(on_s[0].mz, on_y[0].mz, epsilon = 1e-12);
+        assert_ne!(on_s[0].modform_id, on_y[0].modform_id, "same mass, different molecule");
+        assert_ne!(on_s[0].precursor_id, on_y[0].precursor_id);
+    }
 
     #[test]
     fn protonatable_sites_match_v1() {

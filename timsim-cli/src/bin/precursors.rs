@@ -7,13 +7,26 @@
 //! # The factorisation is the ground truth
 //!
 //! ```text
-//!   ion_amol = peptide_amol × ionization_propensity × charge_fraction
+//!   ion_amol = peptide_amol × modform_fraction × ionization_propensity × charge_fraction
 //! ```
 //!
 //! Each multiplier is its own column, so the chain is **invertible** — walk an ion back to its
 //! peptide, and a peptide back to its proteins. v1 collapses abundance × flyability into a single
 //! `int32` and the question *"is this peptide missing because there is little of it, or because it
 //! does not fly?"* becomes unanswerable.
+//!
+//! # Modforms
+//!
+//! With `--modforms`, each modified species gets its own precursors. A modification is not a scalar
+//! added to the mass: phospho adds HPO₃ and GG adds C₄H₆N₂O₂, so the modform's **elemental
+//! composition** is rebuilt and the isotope comb recomputed from it. Shifting the mass while reusing
+//! the bare peptide's envelope would put the peaks in the right places with the wrong heights.
+//!
+//! Positional isomers therefore coexist with identical m/z and distinct `modform_id`s — which is
+//! precisely the site-localisation problem, preserved in the ground truth rather than collapsed away.
+//!
+//! Without `--modforms`, every peptide gets one *unmodified* modform at fraction 1.0. The unmodified
+//! form is a modform like any other, so the schema and the chain are the same either way.
 
 use anyhow::Result;
 use arrow::array::{
@@ -25,13 +38,23 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use timsim_chem::ionize::{ChargeModel, Flyability, Ionizer};
 use timsim_cli::{batch, print_schema, producer};
-use timsim_schema::tables::{peptides as PEP, precursors as PRE};
+use std::collections::HashMap;
+use timsim_schema::tables::{
+    modforms as MF, modifications as MODS, peptides as PEP, precursors as PRE,
+};
 
 #[derive(Parser)]
 #[command(name = "timsim-precursors", about = "peptides -> precursors (m/z, isotopes, charge, flyability)")]
 struct Args {
     #[arg(long)]
     peptides: Option<PathBuf>,
+    /// `modforms.parquet` from `timsim-modify`. Optional.
+    ///
+    /// Without it every peptide gets one unmodified modform at fraction 1.0, which is exactly what
+    /// an unmodified sample is — so the output schema is the same either way, and there is no
+    /// special case downstream.
+    #[arg(long)]
+    modforms: Option<PathBuf>,
     #[arg(long)]
     out: Option<PathBuf>,
 
@@ -121,8 +144,14 @@ fn main() -> Result<()> {
         println!("  flyability       : {}", a.flyability);
         println!("  isotope envelope : exact from elemental composition (C,H,N,O,S), depth {}", a.isotope_depth);
         println!();
-        println!("  ion_amol = peptide_amol × ionization_propensity × charge_fraction");
+        println!("  ion_amol = peptide_amol × modform_fraction × ionization_propensity × charge_fraction");
         println!("             ^ each factor is its own column, so the chain is invertible");
+        println!();
+        println!("  NOT modelled: a modification changes basicity and ionisation efficiency.");
+        println!("  Acetyl-K / TMT-K / GG-K cap the lysine amine and REMOVE a basic site; phospho");
+        println!("  depresses response. Charge and flyability are still computed from the BARE");
+        println!("  sequence. The slot exists (the charge model is site-specific); the number does");
+        println!("  not, and inventing one is how p(H) = 0.20 happened.");
         return Ok(());
     }
 
@@ -140,10 +169,114 @@ fn main() -> Result<()> {
         }
     }
 
+    // ── modforms, if timsim-modify produced them ─────────────────────────────
+    //
+    // A modification does not merely add mass: phospho adds HPO₃ and GG adds C₄H₆N₂O₂, and each
+    // RESHAPES the isotope envelope. So each modform's full elemental composition is rebuilt (the
+    // peptide's plus its mods') and the comb recomputed from it — not translated.
+    //
+    // The composition comes from `modifications.parquet`, which sits next to `modforms.parquet`;
+    // the formula is there precisely so nothing downstream has to guess it from a scalar delta.
+    let mut modforms: HashMap<u64, Vec<(u64, Vec<String>, f64, f32)>> = HashMap::new();
+    let mut mod_delta: HashMap<String, timsim_chem::isotope::CompositionDelta> = HashMap::new();
+    if let Some(mf_path) = &a.modforms {
+        let mods_path = mf_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("modifications.parquet");
+        if !mods_path.exists() {
+            anyhow::bail!(
+                "{} exists but {} does not. The modform table names its modifications; their \
+                 elemental compositions live in the spec artifact, and without them the isotope \
+                 envelope of every modified precursor would have to be guessed from a scalar mass.",
+                mf_path.display(),
+                mods_path.display()
+            );
+        }
+        for b in timsim_schema::read(&mods_path, MODS::TABLE)? {
+            let name: &arrow::array::StringArray =
+                b.column_by_name(MODS::NAME).unwrap().as_any().downcast_ref().unwrap();
+            let comp: &arrow::array::StringArray =
+                b.column_by_name(MODS::COMPOSITION).unwrap().as_any().downcast_ref().unwrap();
+            for i in 0..b.num_rows() {
+                let d = timsim_chem::isotope::parse_formula(comp.value(i))
+                    .map_err(anyhow::Error::msg)?;
+                mod_delta.insert(name.value(i).to_string(), d);
+            }
+        }
+
+        for b in timsim_schema::read(mf_path, MF::TABLE)? {
+            let pid: &UInt64Array =
+                b.column_by_name(MF::PEPTIDE_ID).unwrap().as_any().downcast_ref().unwrap();
+            let mid: &UInt64Array =
+                b.column_by_name(MF::MODFORM_ID).unwrap().as_any().downcast_ref().unwrap();
+            let names = b.column_by_name(MF::MOD_NAMES).unwrap();
+            let names: &arrow::array::ListArray = names.as_any().downcast_ref().unwrap();
+            let delta: &Float64Array =
+                b.column_by_name(MF::MASS_DELTA).unwrap().as_any().downcast_ref().unwrap();
+            let frac: &Float64Array =
+                b.column_by_name(MF::ABUNDANCE_FRACTION).unwrap().as_any().downcast_ref().unwrap();
+            for i in 0..b.num_rows() {
+                let list = names.value(i);
+                let list: &arrow::array::StringArray = list.as_any().downcast_ref().unwrap();
+                let ns: Vec<String> =
+                    (0..arrow::array::Array::len(list)).map(|j| list.value(j).to_string()).collect();
+                modforms.entry(pid.value(i)).or_default().push((
+                    mid.value(i),
+                    ns,
+                    delta.value(i),
+                    frac.value(i) as f32,
+                ));
+            }
+        }
+    }
+    let use_modforms = !modforms.is_empty();
+
     let t = std::time::Instant::now();
     let per_peptide: Vec<Vec<timsim_chem::Precursor>> = input
         .par_iter()
-        .map(|(id, seq)| io.precursors_of(*id, seq).unwrap_or_default())
+        .map(|(id, seq)| {
+            if !use_modforms {
+                return io.precursors_of(*id, seq).unwrap_or_default();
+            }
+            let Some(forms) = modforms.get(id) else {
+                // A peptide with an amount but no modform row means the two artifacts were built
+                // from different peptide tables. Silently falling back to the unmodified form would
+                // put an ion in the run whose mass contradicts the modform table.
+                return Vec::new();
+            };
+            let Ok(base) = timsim_chem::isotope::composition(seq) else {
+                return Vec::new();
+            };
+            let mut out = Vec::new();
+            for (mid, names, delta, frac) in forms {
+                // Rebuild the modform's composition: the peptide's, plus each modification's.
+                let mut comp = base;
+                let mut ok = true;
+                for n in names {
+                    let Some(d) = mod_delta.get(n) else {
+                        ok = false;
+                        break;
+                    };
+                    match comp.apply(*d) {
+                        Ok(c) => comp = c,
+                        Err(_) => {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                if !ok {
+                    continue;
+                }
+                if let Ok(ps) =
+                    io.precursors_of_modform(*id, *mid, seq, comp, *delta, *frac)
+                {
+                    out.extend(ps);
+                }
+            }
+            out
+        })
         .collect();
     // What the charge cap discarded. A truncation whose error is unmeasured is a guess — the same
     // discipline as --max-missed-cleavages and the modform abundance floor.
@@ -154,7 +287,7 @@ fn main() -> Result<()> {
     let elapsed = t.elapsed();
 
     let mut all: Vec<&timsim_chem::Precursor> = per_peptide.iter().flatten().collect();
-    all.sort_unstable_by_key(|p| (p.peptide_id, p.charge)); // deterministic row order
+    all.sort_unstable_by_key(|p| (p.peptide_id, p.modform_id, p.charge)); // deterministic row order
     let skipped = per_peptide.iter().filter(|v| v.is_empty()).count();
 
     let n = all.len();
@@ -169,6 +302,8 @@ fn main() -> Result<()> {
     let cols: Vec<ArrayRef> = vec![
         Arc::new(UInt64Array::from(all.iter().map(|p| p.precursor_id).collect::<Vec<_>>())),
         Arc::new(UInt64Array::from(all.iter().map(|p| p.peptide_id).collect::<Vec<_>>())),
+        Arc::new(UInt64Array::from(all.iter().map(|p| p.modform_id).collect::<Vec<_>>())),
+        Arc::new(Float32Array::from(all.iter().map(|p| p.modform_fraction).collect::<Vec<_>>())),
         Arc::new(UInt8Array::from(all.iter().map(|p| p.charge).collect::<Vec<_>>())),
         Arc::new(Float64Array::from(all.iter().map(|p| p.mz).collect::<Vec<_>>())),
         Arc::new(iso.finish()),
@@ -230,7 +365,14 @@ fn main() -> Result<()> {
     }
     println!("  wall time            : {elapsed:.2?}");
     println!();
-    println!("  ion_amol = peptide_amol × ionization_propensity × charge_fraction");
+    if use_modforms {
+        println!("  modforms             : from {}", a.modforms.as_ref().unwrap().display());
+        println!("                         isotope envelopes RECOMPUTED from each modform's");
+        println!("                         elemental composition — not shifted");
+        println!("                         positional isomers share m/z and differ by modform_id");
+        println!();
+    }
+    println!("  ion_amol = peptide_amol × modform_fraction × ionization_propensity × charge_fraction");
     println!("             (each factor a column — the chain is invertible)");
     println!("  -> {}", out.display());
     Ok(())

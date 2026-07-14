@@ -11,17 +11,17 @@ use rayon::prelude::*;
 use timsim_chem::modify::{plausible_charges, Modification, Site, Stage};
 use timsim_chem::{enumerate_modforms, parse_fasta, Enumerator, Protocol};
 
-fn m(name: &str, unimod: u32, targets: &str, site: Site, occ: f64, delta: f64, blocks: bool, stage: Stage) -> Modification {
+fn m(name: &str, unimod: u32, targets: &str, site: Site, occ: f64, delta: f64, blocks: bool, stage: Stage, formula: &str) -> Modification {
     Modification { name: name.into(), unimod_id: unimod, targets: targets.into(), site,
-                   occupancy: occ, mass_delta: delta, blocks_cleavage: blocks, stage }
+                   occupancy: occ, mass_delta: delta, composition: formula.into(), blocks_cleavage: blocks, stage }
 }
 
 fn scenarios() -> Vec<(&'static str, Vec<Modification>)> {
-    let camc = m("Carbamidomethyl", 4, "C", Site::Residue, 0.98, 57.02146, false, Stage::Protein);
-    let oxid = m("Oxidation", 35, "M", Site::Residue, 0.05, 15.99491, false, Stage::Peptide);
-    let nace = m("Acetyl(N-term)", 1, "", Site::NTerm, 0.01, 42.01057, false, Stage::Protein);
-    let phos = m("Phospho", 21, "STY", Site::Residue, 0.02, 79.96633, false, Stage::Protein);
-    let phos_hi = m("Phospho(enriched)", 21, "STY", Site::Residue, 0.25, 79.96633, false, Stage::Protein);
+    let camc = m("Carbamidomethyl", 4, "C", Site::Residue, 0.98, 57.02146, false, Stage::Protein, "C2H3NO");
+    let oxid = m("Oxidation", 35, "M", Site::Residue, 0.05, 15.99491, false, Stage::Peptide, "O");
+    let nace = m("Acetyl(N-term)", 1, "", Site::NTerm, 0.01, 42.01057, false, Stage::Protein, "C2H2O");
+    let phos = m("Phospho", 21, "STY", Site::Residue, 0.02, 79.96633, false, Stage::Protein, "HO3P");
+    let phos_hi = m("Phospho(enriched)", 21, "STY", Site::Residue, 0.25, 79.96633, false, Stage::Protein, "HO3P");
     vec![
         ("unmodified (baseline)", vec![]),
         ("standard proteomics", vec![camc.clone(), oxid.clone(), nace.clone()]),
