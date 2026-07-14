@@ -1,0 +1,13 @@
+[package]
+name = "timsim-chem"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Chemistry core for timsim v2: FASTA, enzymes, and the analytic (quantitative) digest."
+
+[dependencies]
+regex = "1.11"
+rayon = "1.10"
+
+[dev-dependencies]
+approx = "0.5"

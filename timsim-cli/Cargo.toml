@@ -1,0 +1,42 @@
+[package]
+name = "timsim-cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The timsim v2 protocol tools: proteome, digest, design, yield."
+
+# Separate binaries, not `timsim <verb>`. Necroflow's cache identity can hash the binary, so
+# one binary per tool means changing the renderer does not invalidate your digest.
+[[bin]]
+name = "timsim-proteome"
+path = "src/bin/proteome.rs"
+
+[[bin]]
+name = "timsim-digest"
+path = "src/bin/digest.rs"
+
+[[bin]]
+name = "timsim-design"
+path = "src/bin/design.rs"
+
+[[bin]]
+name = "timsim-precursors"
+path = "src/bin/precursors.rs"
+
+[[bin]]
+name = "timsim-yield"
+path = "src/bin/yield.rs"
+
+[dependencies]
+timsim-chem = { path = "../timsim-chem" }
+timsim-schema = { path = "../timsim-schema" }
+arrow = "56"
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+anyhow = "1"
+rayon = "1.10"
+
+[[bin]]
+name = "timsim-modify"
+path = "src/bin/modify.rs"
