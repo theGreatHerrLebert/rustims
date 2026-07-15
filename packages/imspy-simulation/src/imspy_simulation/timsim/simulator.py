@@ -315,6 +315,8 @@ def get_default_settings() -> dict:
         'v2_precursors': None,
         'v2_ccs': None,
         'v2_rt': None,
+        'v2_modforms': None,
+        'v2_modifications': None,
         # Drift gas and temperature for CCS -> 1/K0 (Mason-Schamp). Defaults are N2 at 31.85 C,
         # which is what v1 always implicitly used; changing the gas is how you simulate a different
         # instrument on the SAME precursor CCS.
@@ -1257,6 +1259,8 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
         ("--v2-precursors", "v2_precursors"),
         ("--v2-ccs", "v2_ccs"),
         ("--v2-rt", "v2_rt"),
+        ("--v2-modforms", "v2_modforms"),
+        ("--v2-modifications", "v2_modifications"),
     ]:
         parser.add_argument(
             _flag, type=str, default=None, dest=_key,
@@ -1427,7 +1431,8 @@ def main():
         overrides['from_v2'] = True
         overrides['v2_path'] = cli_args.v2_path
     for _key in ('v2_proteome', 'v2_peptides', 'v2_occurrences',
-                 'v2_peptide_quantities', 'v2_precursors', 'v2_ccs', 'v2_rt'):
+                 'v2_peptide_quantities', 'v2_precursors', 'v2_ccs', 'v2_rt',
+                 'v2_modforms', 'v2_modifications'):
         _val = getattr(cli_args, _key, None)
         if _val:
             overrides[_key] = _val
@@ -1851,6 +1856,8 @@ def main():
             precursors_path=config.v2_precursors,
             ccs_path=config.v2_ccs,
             rt_path=config.v2_rt,
+            modforms_path=config.v2_modforms,
+            modifications_path=config.v2_modifications,
             total_events=config.v2_total_events,
             max_peptides=_v2_cap,
             max_peptide_length=config.v2_max_peptide_length,
@@ -2151,6 +2158,14 @@ def main():
             mz_upper = acquisition_builder.tdf_writer.helper_handle.mz_upper
 
             ions = pd.merge(_v2_ions, peptides, on="peptide_id")
+            # If the handoff annotated each modform's sequence ([UNIMOD:id] at the mod sites), that
+            # is the sequence v1 must fragment and score — otherwise a phosphopeptide fragments as
+            # its unmodified self and no site-determining fragment ever appears. The bare `sequence`
+            # from the peptides merge is the unmodified backbone; override it per modform where an
+            # annotation exists (unmodified modforms annotate to the same bare sequence, a no-op).
+            if "sequence_modified" in ions.columns:
+                _ann = ions["sequence_modified"].notna()
+                ions.loc[_ann, "sequence"] = ions.loc[_ann, "sequence_modified"]
             before = len(ions)
             ions = ions[(ions.mz >= mz_lower) & (ions.mz <= mz_upper)]
             if not config.silent_mode:

@@ -62,6 +62,24 @@ class V2Handoff:
     rt_index_range: Optional[tuple] = None
 
 
+def annotate_modform(bare: str, mods) -> str:
+    """Insert ``[UNIMOD:id]`` after each modified residue, giving the peptidoform sequence v1's
+    chemistry and fragment model expect.
+
+    ``mods`` is an iterable of ``(position, unimod_id)`` (0-based position). Insertions run
+    right-to-left so an earlier one does not shift the index of a later one. An unmodified modform
+    (no mods) returns the bare sequence unchanged, so this is a no-op on an unmodified sample. The
+    format matches v1's own phospho path exactly (`seq[:p+1] + "[UNIMOD:21]" + seq[p+1:]`).
+    """
+    mods = list(mods)
+    if not mods:
+        return bare
+    out = bare
+    for pos, uid in sorted(mods, key=lambda m: m[0], reverse=True):
+        out = f"{out[: pos + 1]}[UNIMOD:{uid}]{out[pos + 1:]}"
+    return out
+
+
 def _optional_artifact(explicit, base_dir, name: str) -> Optional[Path]:
     """Resolve an OPTIONAL v2 artifact, distinguishing "not requested" from "requested but missing".
 
@@ -109,6 +127,8 @@ def load_from_v2(
     precursors_path: str | Path | None = None,
     ccs_path: str | Path | None = None,
     rt_path: str | Path | None = None,
+    modforms_path: str | Path | None = None,
+    modifications_path: str | Path | None = None,
     total_events: float = 1e5 * 25_000,
     max_peptides: Optional[int] = None,
     max_peptide_length: int = 30,
@@ -295,6 +315,7 @@ def load_from_v2(
         _cols = [
             "precursor_id",
             "peptide_id",
+            "modform_id",
             "charge",
             "mz",
             "charge_fraction",
@@ -502,6 +523,44 @@ def load_from_v2(
                         f"{_miss} ions have no CCS in {ccs_p}. The precursor_ccs artifact was built "
                         f"from a different precursors table. Re-run timsim-ccs against this one."
                     )
+
+            # ── the modform sequence, so a modform fragments AS MODIFIED ───────
+            #
+            # An ion's sequence flows into v1's fragment prediction and into the localisation ground
+            # truth. Without the modification, a phosphopeptide is fragmented as its unmodified self,
+            # and the site-determining fragments never appear — the whole point of the localisation
+            # answer key. So each modform-ion carries its [UNIMOD:id]-annotated sequence, in v1's own
+            # format. Unmodified modforms annotate to the bare sequence (a no-op), so this changes
+            # nothing on an unmodified sample.
+            mf_p = _optional_artifact(modforms_path, d, "modforms.parquet")
+            ms_p = _optional_artifact(modifications_path, d, "modifications.parquet")
+            if mf_p is not None and ms_p is not None and "modform_id" in prec.columns:
+                unimod = (
+                    pd.read_parquet(ms_p, columns=["name", "unimod_id"])
+                    .set_index("name")["unimod_id"]
+                    .to_dict()
+                )
+                mf_df = pd.read_parquet(
+                    mf_p, columns=["modform_id", "mod_positions", "mod_names"]
+                )
+                mf_df = mf_df[mf_df["modform_id"].isin(set(prec["modform_id"]))]
+                bare_of = dict(zip(pep["peptide_id"], pep["sequence"]))
+                ann_by_modform = {}
+                for mid, positions, names in zip(
+                    mf_df["modform_id"], mf_df["mod_positions"], mf_df["mod_names"]
+                ):
+                    ann_by_modform[mid] = list(
+                        zip([int(p) for p in positions], [unimod[n] for n in names])
+                    )
+
+                # Key on precursor_id, because ions_v1 was re-sorted and no longer aligns with prec.
+                seq_by_precursor = {
+                    int(pcid): annotate_modform(bare_of[pid], ann_by_modform.get(mid, []))
+                    for pcid, pid, mid in zip(
+                        prec["precursor_id"], prec["peptide_id"], prec["modform_id"]
+                    )
+                }
+                ions_v1["sequence_modified"] = ions_v1["precursor_id"].map(seq_by_precursor)
 
     if verbose:
         degenerate = int((occ.groupby("peptide_id")["protein_id"].nunique() > 1).sum())
