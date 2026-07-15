@@ -24,7 +24,7 @@
 use crate::mass::{self, monoisotopic_residue, UnknownResidue};
 
 /// Which backbone series a fragment belongs to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IonType {
     /// N-terminal fragment (prefix residues).
     B,
@@ -162,6 +162,63 @@ pub fn site_determining(sequence: &str, pos_a: usize, pos_b: usize) -> Vec<(IonT
     out
 }
 
+/// The **site-determining fragments** for a modification that could sit on any of `candidates`
+/// (0-based positions — e.g. every S/T/Y for a phospho). These are the b/y ions whose m/z depends on
+/// *which* candidate carries the mod, so a search must observe at least one of them, per competing
+/// site, to localise.
+///
+/// A `b_i` distinguishes two candidates iff exactly one of them is `< i`, so it is determining iff
+/// some candidate lies below `i` and some at or above — i.e. `min(candidates) < i <= max(candidates)`.
+/// A `y_j` (spanning the last `j` residues) is the mirror. Returns `(ion_type, ordinal)`,
+/// charge-independent.
+///
+/// With fewer than two candidates there is nothing to resolve, so the set is empty — the mod is
+/// trivially localised (or unplaceable), and either way needs no fragment evidence.
+pub fn site_determining_set(seq_len: usize, candidates: &[usize]) -> Vec<(IonType, u16)> {
+    if candidates.len() < 2 {
+        return Vec::new();
+    }
+    let lo = *candidates.iter().min().unwrap();
+    let hi = *candidates.iter().max().unwrap();
+    let n = seq_len;
+    let mut out = Vec::new();
+    // b_i determining iff lo < i <= hi.
+    for i in (lo + 1)..=hi.min(n.saturating_sub(1)) {
+        out.push((IonType::B, i as u16));
+    }
+    // y_j determining iff lo < n-j <= hi  ⇔  n-hi <= j < n-lo.
+    for j in n.saturating_sub(hi)..(n - lo) {
+        if (1..n).contains(&j) {
+            out.push((IonType::Y, j as u16));
+        }
+    }
+    out
+}
+
+/// Which fragments, from a set that was actually **observed**, localise `true_pos` against every
+/// other candidate — and therefore whether the site is resolvable *from this evidence*.
+///
+/// For each competing candidate `c ≠ true_pos`, localisation needs at least one observed fragment
+/// that separates `true_pos` from `c` (spans exactly one of them). The site is **resolvable** iff
+/// every competitor is covered. This is the precise question v1's evaluation could only answer as
+/// "right composition, wrong position → unresolvable": here, *unresolvable* means specifically that
+/// the discriminating fragments were not in the data, not that the search merely failed.
+///
+/// `observed` is the set of `(ion_type, ordinal)` fragments that were rendered/observable.
+pub fn resolvable(
+    seq_len: usize,
+    true_pos: usize,
+    candidates: &[usize],
+    observed: &std::collections::HashSet<(IonType, u16)>,
+) -> bool {
+    candidates.iter().filter(|&&c| c != true_pos).all(|&c| {
+        // A fragment separates true_pos from c iff it spans exactly one of them.
+        site_determining(&"X".repeat(seq_len), true_pos, c)
+            .iter()
+            .any(|f| observed.contains(f))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -279,6 +336,57 @@ mod tests {
             );
         }
         assert!(!determining.is_empty(), "there must be fragments that localise the site");
+    }
+
+    /// The candidate-set determining fragments must be exactly the union of the pairwise ones — the
+    /// generalisation is consistent with the pairwise definition it is built from.
+    #[test]
+    fn site_determining_set_is_the_union_over_candidate_pairs() {
+        let n = 10;
+        let cands = [1usize, 4, 8];
+        let mut expected: std::collections::HashSet<(IonType, u16)> = Default::default();
+        for a in 0..cands.len() {
+            for b in (a + 1)..cands.len() {
+                for f in site_determining("X".repeat(n).as_str(), cands[a], cands[b]) {
+                    expected.insert(f);
+                }
+            }
+        }
+        let got: std::collections::HashSet<_> = site_determining_set(n, &cands).into_iter().collect();
+        assert_eq!(got, expected);
+        // Fewer than two candidates: nothing to resolve.
+        assert!(site_determining_set(n, &[3]).is_empty());
+    }
+
+    /// Resolvability is a precise, evidence-based verdict: a site is localised iff the observed
+    /// fragments separate the true site from EVERY competitor. Missing even one competitor's
+    /// discriminating fragment makes it unresolvable — the exact distinction v1 could not draw.
+    ///
+    /// The competitors must straddle the true site for a partial-evidence case to exist: covering a
+    /// competitor on one side automatically covers farther competitors on that same side (a fragment
+    /// that excludes position 5 also excludes position 8), so the uncovered one has to be on the
+    /// other side. Here the true site is in the middle, with competitors on both sides.
+    #[test]
+    fn resolvable_requires_covering_every_competitor() {
+        let n = 12;
+        let (true_pos, cands) = (5usize, vec![2usize, 5, 9]);
+
+        // Full evidence → resolvable.
+        let full: std::collections::HashSet<(IonType, u16)> =
+            site_determining_set(n, &cands).into_iter().collect();
+        assert!(resolvable(n, true_pos, &cands, &full));
+
+        // Evidence covering only the LEFT competitor (2), not the right one (9) → unresolvable.
+        let left_only: std::collections::HashSet<(IonType, u16)> =
+            site_determining(&"X".repeat(n), 5, 2).into_iter().collect();
+        let covers_right = site_determining(&"X".repeat(n), 5, 9)
+            .iter()
+            .any(|f| left_only.contains(f));
+        assert!(!covers_right, "test setup: left-side evidence must not cover the right competitor");
+        assert!(!resolvable(n, true_pos, &cands, &left_only));
+
+        // A single candidate is trivially resolvable — nothing to exclude.
+        assert!(resolvable(n, 5, &[5], &Default::default()));
     }
 
     #[test]
