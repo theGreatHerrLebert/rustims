@@ -63,21 +63,37 @@ class V2Handoff:
 
 
 def annotate_modform(bare: str, mods) -> str:
-    """Insert ``[UNIMOD:id]`` after each modified residue, giving the peptidoform sequence v1's
-    chemistry and fragment model expect.
+    """Render a modform as the peptidoform sequence v1's chemistry and fragment model expect.
 
-    ``mods`` is an iterable of ``(position, unimod_id)`` (0-based position). Insertions run
-    right-to-left so an earlier one does not shift the index of a later one. An unmodified modform
-    (no mods) returns the bare sequence unchanged, so this is a no-op on an unmodified sample. The
-    format matches v1's own phospho path exactly (`seq[:p+1] + "[UNIMOD:21]" + seq[p+1:]`).
+    ``mods`` is an iterable of ``(position, unimod_id, site)`` (0-based position; ``site`` one of
+    ``"residue"``, ``"n_term"``, ``"c_term"``). The *site* matters and cannot be inferred from the
+    position: an n-terminal modification and a modification on the first residue both sit at
+    position 0, yet v1 writes them differently — an n-terminal tag is a **prefix** before the first
+    residue (``[UNIMOD:1]PEPTIDE``), while a residue tag *follows* its residue
+    (``P[UNIMOD:21]EPTIDE``). Getting that wrong changes the fragment chemistry.
+
+    Residue insertions run right-to-left so an earlier one does not shift a later index. An
+    unmodified modform returns the bare sequence unchanged, so this is a no-op on an unmodified
+    sample.
     """
     mods = list(mods)
     if not mods:
         return bare
+    prefix = ""
+    suffix = ""
+    inserts = []
+    for pos, uid, site in mods:
+        tag = f"[UNIMOD:{uid}]"
+        if site == "n_term":
+            prefix += tag  # before the whole sequence
+        elif site == "c_term":
+            suffix += tag  # after the whole sequence
+        else:
+            inserts.append((int(pos), uid))  # after the modified residue
     out = bare
-    for pos, uid in sorted(mods, key=lambda m: m[0], reverse=True):
+    for pos, uid in sorted(inserts, key=lambda m: m[0], reverse=True):
         out = f"{out[: pos + 1]}[UNIMOD:{uid}]{out[pos + 1:]}"
-    return out
+    return f"{prefix}{out}{suffix}"
 
 
 def _optional_artifact(explicit, base_dir, name: str) -> Optional[Path]:
@@ -535,11 +551,9 @@ def load_from_v2(
             mf_p = _optional_artifact(modforms_path, d, "modforms.parquet")
             ms_p = _optional_artifact(modifications_path, d, "modifications.parquet")
             if mf_p is not None and ms_p is not None and "modform_id" in prec.columns:
-                unimod = (
-                    pd.read_parquet(ms_p, columns=["name", "unimod_id"])
-                    .set_index("name")["unimod_id"]
-                    .to_dict()
-                )
+                _ms = pd.read_parquet(ms_p, columns=["name", "unimod_id", "site"]).set_index("name")
+                unimod = _ms["unimod_id"].to_dict()
+                site_of = _ms["site"].to_dict()
                 mf_df = pd.read_parquet(
                     mf_p, columns=["modform_id", "mod_positions", "mod_names"]
                 )
@@ -549,9 +563,9 @@ def load_from_v2(
                 for mid, positions, names in zip(
                     mf_df["modform_id"], mf_df["mod_positions"], mf_df["mod_names"]
                 ):
-                    ann_by_modform[mid] = list(
-                        zip([int(p) for p in positions], [unimod[n] for n in names])
-                    )
+                    ann_by_modform[mid] = [
+                        (int(p), unimod[n], site_of[n]) for p, n in zip(positions, names)
+                    ]
 
                 # Key on precursor_id, because ions_v1 was re-sorted and no longer aligns with prec.
                 seq_by_precursor = {
