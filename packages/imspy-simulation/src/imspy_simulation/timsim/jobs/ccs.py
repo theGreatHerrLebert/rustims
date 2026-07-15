@@ -96,8 +96,11 @@ def predict_ccs(
         for k, m, c in zip(k0, mz, z)
     ])
     if k0_std is not None:
-        # v1 carries the uncertainty through the same conversion as the mean (a linearisation it
-        # already makes); we match that so parity holds, and store the width in CCS space.
+        # The width is carried through the same conversion as the mean. This is exact rather than an
+        # approximation: Mason-Schamp makes 1/K0 linear in CCS through the origin (no offset), so the
+        # conversion's derivative equals its proportionality constant, and converting a width gives
+        # exactly the propagated width. See test_ccs_mobility.py, which pins the linearity this relies
+        # on. (It also happens to match what v1's own predictor does.)
         ccs_std = np.array([
             one_over_k0_to_ccs(s, m, c, mass_gas=_MODEL_GAS_MASS, temp=_MODEL_TEMP_C)
             for s, m, c in zip(k0_std, mz, z)

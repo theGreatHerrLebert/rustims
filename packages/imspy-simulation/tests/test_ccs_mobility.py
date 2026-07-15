@@ -48,6 +48,30 @@ def test_default_gas_reproduces_the_measured_mobility():
         assert rederived == pytest.approx(measured_k0, abs=1e-12)
 
 
+def test_inverse_mobility_is_linear_in_ccs_through_the_origin():
+    """The correctness of converting a CCS *uncertainty* the same way as a CCS *value* rests on this.
+
+    Mason-Schamp makes 1/K0 = c(mz, z, gas, temp) · CCS — linear, no offset. So the map's derivative
+    equals its proportionality constant, and propagating a width (c · ccs_std) is identical to
+    running the width through ``ccs_to_one_over_k0``. It *looks* dimensionally wrong to convert a
+    standard deviation as if it were a cross section; it is exact only because of this linearity, and
+    a review flagged it, so it is pinned here. If Mason-Schamp ever gained an offset, this fails.
+    """
+    for mz, z in _IONS:
+        k0_1 = ccs_to_one_over_k0(300.0, mz, z, mass_gas=_GAS_N2, temp=_TEMP)
+        k0_2 = ccs_to_one_over_k0(600.0, mz, z, mass_gas=_GAS_N2, temp=_TEMP)
+        assert k0_2 == pytest.approx(2.0 * k0_1, rel=1e-9), "1/K0 must be proportional to CCS"
+
+        # Direct width conversion == derivative-propagated width, to machine precision.
+        ccs_mean, ccs_std = 350.0, 2.0
+        direct = ccs_to_one_over_k0(ccs_std, mz, z, mass_gas=_GAS_N2, temp=_TEMP)
+        deriv = (
+            ccs_to_one_over_k0(ccs_mean + 1e-4, mz, z, mass_gas=_GAS_N2, temp=_TEMP)
+            - ccs_to_one_over_k0(ccs_mean, mz, z, mass_gas=_GAS_N2, temp=_TEMP)
+        ) / 1e-4
+        assert direct == pytest.approx(deriv * ccs_std, rel=1e-6)
+
+
 def test_heavier_gas_raises_inverse_mobility():
     """Cross-instrument: the SAME CCS, a heavier gas, a different (higher) 1/K0. Reduced mass goes
     up, mobility goes down, 1/K0 goes up — and every ion must move the same way."""

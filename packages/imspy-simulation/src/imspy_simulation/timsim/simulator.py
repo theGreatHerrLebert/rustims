@@ -2166,7 +2166,13 @@ def main():
                 ccs_to_one_over_k0(c, m, zz, mass_gas=g, temp=t) for c, m, zz in zip(ccs, mz, z)
             ]
             ccs_std = ions["ccs_std"].to_numpy(float)
-            # Match v1's linearisation: the width is carried through the same conversion as the mean.
+            # Converting a *width* through `ccs_to_one_over_k0` looks dimensionally wrong — it is the
+            # function for a cross section, not a standard deviation. It is nonetheless exact here,
+            # for a specific reason: Mason–Schamp makes 1/K0 **linear in CCS through the origin**
+            # (1/K0 = c(m,z,gas,temp)·CCS, no offset — verified: f(2·CCS)/f(CCS) == 2 exactly). For a
+            # linear-through-origin map the derivative *is* the proportionality constant c, so
+            # propagating the width, c·ccs_std, equals `ccs_to_one_over_k0(ccs_std)`. If that relation
+            # ever gained an offset this would silently become wrong, so a test pins it.
             # Where the model reported no uncertainty, fall back to v1's configured target std.
             _std_fallback = config.inverse_mobility_std_mean or 0.008
             ions["inv_mobility_gru_predictor_std"] = [

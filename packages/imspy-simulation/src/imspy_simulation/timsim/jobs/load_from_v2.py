@@ -245,7 +245,12 @@ def load_from_v2(
     # **r = +0.008** and **43.6% of peptides differed by more than 10×** between the propensity used
     # to build `events` and the propensity recorded as their ground truth. The chain silently stopped
     # being invertible. Read the artifact.
-    prec_path = _at(precursors_path, "precursors.parquet")
+    # Optional, like CCS below: resolve a path only if one was actually given (explicitly or via
+    # v2_dir), so the "no precursors -> v1 computes its own charge states" fallback still works when
+    # the caller passes explicit paths for the four required artifacts and omits this one.
+    prec_path = Path(precursors_path) if precursors_path is not None else (
+        d / "precursors.parquet" if d is not None else None
+    )
     # Read only the columns this bridge uses, and only the rows belonging to peptides that survived
     # the cuts above.
     #
@@ -258,7 +263,7 @@ def load_from_v2(
     # A row-group filter on `peptide_id` pushes the selection into the Parquet reader, so only the
     # peptides this sample actually renders are ever materialised.
     prec_all = None
-    if prec_path.exists():
+    if prec_path is not None and prec_path.exists():
         _cols = [
             "precursor_id",
             "peptide_id",
