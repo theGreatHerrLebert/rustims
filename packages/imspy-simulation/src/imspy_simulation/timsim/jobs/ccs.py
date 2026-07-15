@@ -38,14 +38,29 @@ def predict_ccs(
     precursors: pd.DataFrame,
     peptides: pd.DataFrame,
     batch_size: int = 2048,
+    model: Optional[str] = None,
     verbose: bool = True,
-) -> pd.DataFrame:
-    """Return a ``precursor_ccs`` frame: ``precursor_id, ccs, ccs_std``.
+) -> tuple[pd.DataFrame, str]:
+    """Return ``(precursor_ccs frame, provenance)``: ``precursor_id, ccs, ccs_std``.
 
     ``precursors`` must have ``precursor_id, peptide_id, charge, mz``; ``peptides`` must have
-    ``peptide_id, sequence``.
+    ``peptide_id, sequence``. ``model`` is a model spec (see
+    :mod:`imspy_simulation.timsim.models`); ``None`` uses our default CCS model.
     """
+    from imspy_simulation.timsim.models import resolve
     from imspy_predictors.ccs import DeepPeptideIonMobilityApex
+
+    kind, model_name = resolve("ccs", model)
+    if kind == "koina":
+        # The Koina CCS models (AlphaPeptDeep, IM2Deep) return 1/K0 and need a `calcmass` column;
+        # converting that back to instrument-independent CCS is the same inversion the local path
+        # avoids. It is deliberately NOT wired blind — this environment has no network to verify it
+        # against, and shipping an unverified prediction path is exactly the mistake this project
+        # keeps catching. Wire and test it where Koina is reachable.
+        raise NotImplementedError(
+            f"CCS via Koina ({model_name!r}) is not wired yet. Use the default CCS model, or add and "
+            f"test the Koina path against a reachable Koina server."
+        )
 
     need = {"precursor_id", "peptide_id", "charge", "mz"}
     missing = need - set(precursors.columns)
@@ -90,8 +105,9 @@ def predict_ccs(
     out = df.merge(keys, on=["sequence", "charge", "mz"], how="left")
 
     if verbose:
+        print(f"    model             : {model_name}")
         print(f"    CCS range         : {ccs.min():.1f} – {ccs.max():.1f} Å²   (instrument-independent)")
-    return out[["precursor_id", "ccs", "ccs_std"]].reset_index(drop=True)
+    return out[["precursor_id", "ccs", "ccs_std"]].reset_index(drop=True), model_name
 
 
 def main(argv=None) -> int:
@@ -103,12 +119,14 @@ def main(argv=None) -> int:
     ap.add_argument("--peptides", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--batch-size", type=int, default=2048)
+    ap.add_argument("--model", default=None,
+                    help="CCS model spec: omit for our default. See imspy_simulation.timsim.models.")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args(argv)
 
     prec = pd.read_parquet(a.precursors, columns=["precursor_id", "peptide_id", "charge", "mz"])
     pep = pd.read_parquet(a.peptides, columns=["peptide_id", "sequence"])
-    ccs = predict_ccs(prec, pep, batch_size=a.batch_size, verbose=not a.quiet)
+    ccs, prov = predict_ccs(prec, pep, batch_size=a.batch_size, model=a.model, verbose=not a.quiet)
 
     a.out.parent.mkdir(parents=True, exist_ok=True)
     # Build the Arrow schema EXPLICITLY, matching timsim-schema's precursor_ccs spec — including
@@ -129,6 +147,8 @@ def main(argv=None) -> int:
             "timsim.schema_version": "2.0",
             "timsim.axis": "structure",
             "timsim.producer": "timsim-ccs",
+            # Provenance: which model produced this CCS.
+            "timsim.ccs.model": prov,
         },
     )
     table = pa.Table.from_pandas(ccs, schema=schema, preserve_index=False)

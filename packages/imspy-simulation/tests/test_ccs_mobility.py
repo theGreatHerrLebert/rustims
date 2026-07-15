@@ -115,7 +115,7 @@ def test_timsim_ccs_predict_roundtrips_through_the_model():
         "mz": mzs,
     })
     peptides = pd.DataFrame({"peptide_id": np.arange(len(seqs), dtype=np.uint64), "sequence": seqs})
-    ccs = predict_ccs(precursors, peptides, verbose=False)
+    ccs, _prov = predict_ccs(precursors, peptides, verbose=False)
 
     k0_rederived = np.array([
         ccs_to_one_over_k0(c, m, z, mass_gas=_GAS_N2, temp=_TEMP)

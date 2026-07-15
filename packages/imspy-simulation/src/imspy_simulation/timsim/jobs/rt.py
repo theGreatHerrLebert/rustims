@@ -34,22 +34,33 @@ import pandas as pd
 
 def predict_rt_index(
     peptides: pd.DataFrame,
-    backend: str = "chronologer",
+    model: Optional[str] = None,
     verbose: bool = True,
-) -> tuple[pd.DataFrame, float, float]:
-    """Return ``(peptide_rt frame, index_min, index_max)``.
+) -> tuple[pd.DataFrame, float, float, str]:
+    """Return ``(peptide_rt frame, index_min, index_max, provenance)``.
 
     ``peptides`` needs ``peptide_id, sequence``. The frame has ``peptide_id, rt_index`` with NaN for
     peptides the model rejects. ``index_min``/``index_max`` span the *predicted* (non-NaN) peptides
-    and become the reference range for the per-run seconds mapping.
+    and become the reference range for the per-run seconds mapping. ``model`` is a model spec (see
+    :mod:`imspy_simulation.timsim.models`): ``None`` for our default (Chronologer), or
+    ``"koina:<name>"`` for a Koina model.
     """
-    from imspy_predictors.rt.predictors import load_deep_retention_time_predictor
+    from imspy_simulation.timsim.models import resolve
 
-    model = load_deep_retention_time_predictor(backend=backend)
-    name = type(model).__name__
-
+    kind, name = resolve("rt", model)
     seqs = peptides["sequence"].astype(str).tolist()
-    idx = np.asarray(model.simulate_separation_times(seqs), dtype=float).flatten()
+
+    if kind == "koina":
+        from imspy_predictors.rt.predictors import predict_retention_time_with_koina
+
+        out = predict_retention_time_with_koina(model_name=name, data=peptides[["sequence"]].copy())
+        # The Koina wrapper fills a prediction column; take the last numeric column as the index.
+        idx = np.asarray(out.select_dtypes("number").iloc[:, -1], dtype=float).flatten()
+    else:
+        from imspy_predictors.rt.predictors import load_deep_retention_time_predictor
+
+        predictor = load_deep_retention_time_predictor(backend=name)
+        idx = np.asarray(predictor.simulate_separation_times(seqs), dtype=float).flatten()
 
     n_rejected = int(np.isnan(idx).sum())
     valid = idx[~np.isnan(idx)]
@@ -60,9 +71,10 @@ def predict_rt_index(
         )
     index_min, index_max = float(valid.min()), float(valid.max())
 
+    prov = f"koina:{name}" if kind == "koina" else name
     if verbose:
         print(f"  timsim-rt")
-        print(f"    model            : {name}")
+        print(f"    model            : {prov}")
         print(f"    peptides         : {len(seqs):,}")
         if n_rejected:
             print(f"    rejected         : {n_rejected:,}  (unsupported by the model → null index, "
@@ -70,8 +82,8 @@ def predict_rt_index(
         print(f"    index range      : {index_min:.2f} – {index_max:.2f}  (reference for the "
               f"per-run seconds map)")
 
-    out = pd.DataFrame({"peptide_id": peptides["peptide_id"].to_numpy(), "rt_index": idx})
-    return out, index_min, index_max
+    frame = pd.DataFrame({"peptide_id": peptides["peptide_id"].to_numpy(), "rt_index": idx})
+    return frame, index_min, index_max, prov
 
 
 def main(argv=None) -> int:
@@ -81,14 +93,14 @@ def main(argv=None) -> int:
     )
     ap.add_argument("--peptides", required=True, type=Path)
     ap.add_argument("--out", required=True, type=Path)
-    ap.add_argument("--backend", default="chronologer",
-                    help="RT model backend (default: chronologer; falls back to the transformer if "
-                         "Chronologer is unavailable)")
+    ap.add_argument("--model", default=None,
+                    help="RT model spec: omit for our default (Chronologer), or 'koina:<name>' for "
+                         "a Koina model. See imspy_simulation.timsim.models.")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args(argv)
 
     pep = pd.read_parquet(a.peptides, columns=["peptide_id", "sequence"])
-    frame, idx_min, idx_max = predict_rt_index(pep, backend=a.backend, verbose=not a.quiet)
+    frame, idx_min, idx_max, prov = predict_rt_index(pep, model=a.model, verbose=not a.quiet)
 
     a.out.parent.mkdir(parents=True, exist_ok=True)
     import pyarrow as pa
@@ -108,6 +120,9 @@ def main(argv=None) -> int:
             # samples and no consumer has to re-derive it (B13).
             "timsim.rt.index_min": repr(idx_min),
             "timsim.rt.index_max": repr(idx_max),
+            # Provenance: which model produced this index (B13 — a result is reproducible only if
+            # you know what made it).
+            "timsim.rt.model": prov,
         },
     )
     table = pa.Table.from_pandas(frame, schema=schema, preserve_index=False)
