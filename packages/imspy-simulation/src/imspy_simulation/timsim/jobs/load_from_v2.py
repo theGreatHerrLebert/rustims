@@ -62,6 +62,30 @@ class V2Handoff:
     rt_index_range: Optional[tuple] = None
 
 
+def _optional_artifact(explicit, base_dir, name: str) -> Optional[Path]:
+    """Resolve an OPTIONAL v2 artifact, distinguishing "not requested" from "requested but missing".
+
+    - An **explicit** path that does not exist is an error, not a fallback: a caller who passed
+      ``--v2-rt <path>`` wants *that* file, and a typo or stale path must fail loudly rather than
+      silently reverting to v1's own prediction and producing a plausible-but-different run.
+    - A path discovered by **directory convention** may simply be absent — that artifact was not
+      produced — in which case the caller falls back. Returns ``None``.
+    - Neither given: ``None``.
+    """
+    if explicit is not None:
+        p = Path(explicit)
+        if not p.exists():
+            raise FileNotFoundError(
+                f"{name} was requested explicitly as {p}, but it does not exist. This is a typo or a "
+                f"stale path — failing rather than silently falling back to a different model."
+            )
+        return p
+    if base_dir is not None:
+        p = base_dir / name
+        return p if p.exists() else None
+    return None
+
+
 def _require(path: Path) -> Path:
     if not path.exists():
         raise FileNotFoundError(
@@ -254,9 +278,7 @@ def load_from_v2(
     # Optional, like CCS below: resolve a path only if one was actually given (explicitly or via
     # v2_dir), so the "no precursors -> v1 computes its own charge states" fallback still works when
     # the caller passes explicit paths for the four required artifacts and omits this one.
-    prec_path = Path(precursors_path) if precursors_path is not None else (
-        d / "precursors.parquet" if d is not None else None
-    )
+    prec_path = _optional_artifact(precursors_path, d, "precursors.parquet")
     # Read only the columns this bridge uses, and only the rows belonging to peptides that survived
     # the cuts above.
     #
@@ -269,7 +291,7 @@ def load_from_v2(
     # A row-group filter on `peptide_id` pushes the selection into the Parquet reader, so only the
     # peptides this sample actually renders are ever materialised.
     prec_all = None
-    if prec_path is not None and prec_path.exists():
+    if prec_path is not None:
         _cols = [
             "precursor_id",
             "peptide_id",
@@ -470,12 +492,8 @@ def load_from_v2(
             # CCS is instrument-independent and belongs to the ion; the conversion CCS -> 1/K0 is a
             # MEASUREMENT and happens later, in the simulator, with the run's gas and temperature.
             # Here we only attach the ion property.
-            # Optional, so resolve a path only if one was actually given (explicitly or via v2_dir);
-            # never let the "required artifact" guard fire for it.
-            ccs_p = Path(ccs_path) if ccs_path is not None else (
-                d / "precursor_ccs.parquet" if d is not None else None
-            )
-            if ccs_p is not None and ccs_p.exists():
+            ccs_p = _optional_artifact(ccs_path, d, "precursor_ccs.parquet")
+            if ccs_p is not None:
                 ccs_df = pd.read_parquet(ccs_p, columns=["precursor_id", "ccs", "ccs_std"])
                 ions_v1 = ions_v1.merge(ccs_df, on="precursor_id", how="left")
                 _miss = int(ions_v1["ccs"].isna().sum())
@@ -534,12 +552,25 @@ def load_from_v2(
     # happens in the simulator with the run's gradient. Here we only attach the index, and carry the
     # reference range (over the whole peptide space) so the map is stable across samples.
     rt_index_range = None
-    rt_p = Path(rt_path) if rt_path is not None else (
-        d / "peptide_rt.parquet" if d is not None else None
-    )
-    if rt_p is not None and rt_p.exists():
+    rt_p = _optional_artifact(rt_path, d, "peptide_rt.parquet")
+    if rt_p is not None:
         rt_df = pd.read_parquet(rt_p, columns=["peptide_id", "rt_index"])
         rt_by_v2 = dict(zip(rt_df["peptide_id"].to_numpy(), rt_df["rt_index"].to_numpy()))
+
+        # A peptide ABSENT from the artifact and a peptide PRESENT with a null index are different
+        # things, and only the join can tell them apart. Absent means the RT artifact was built from
+        # a different digest — a mismatch, which must fail here rather than be silently read as "the
+        # model rejected it" and drop the peptide downstream (the CCS join guards the same way). A
+        # present-but-null index is a genuine model rejection and is allowed through.
+        _absent = ~pep["peptide_id"].isin(rt_by_v2.keys()).to_numpy()
+        if _absent.any():
+            raise ValueError(
+                f"{int(_absent.sum())} of {len(pep)} sample peptides are absent from {rt_p}. The RT "
+                f"artifact was built from a different peptides table; re-run timsim-rt against this "
+                f"one. (A peptide the model could not score belongs in the table with a null "
+                f"rt_index, not missing.)"
+            )
+
         peptides_v1 = peptides_v1.copy()
         # peptides_v1 is ordered like `pep`; map each peptide's v2 id to its index.
         peptides_v1["rt_index"] = pep["peptide_id"].map(rt_by_v2).to_numpy()
