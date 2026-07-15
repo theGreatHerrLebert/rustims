@@ -65,14 +65,20 @@ fn main() -> Result<()> {
     let peptides = a.peptides.ok_or_else(|| anyhow::anyhow!("--peptides is required"))?;
     let out = a.out.ok_or_else(|| anyhow::anyhow!("--out is required"))?;
 
-    // modification -> target residues (e.g. "Phospho" -> "STY"). A terminal mod has empty targets
-    // and is never positionally ambiguous, so it is simply absent here.
-    let mut targets: HashMap<String, String> = HashMap::new();
+    // modification -> (target residues, site). Only a RESIDUE-site mod can move along the sequence
+    // and so pose a localisation question; an `n_term`/`c_term` mod is pinned to a terminus even
+    // when it has target residues (pyroglutamate is n_term on Q, so a peptide QAQ has one possible
+    // pyro-Q site, not two). Keying off an empty target string as the "terminal" sentinel was wrong.
+    let mut mod_info: HashMap<String, (String, String)> = HashMap::new();
     for b in timsim_schema::read(&mods_p, MODS::TABLE)? {
         let name = col_str(&b, MODS::NAME);
         let tgt = col_str(&b, MODS::TARGETS);
+        let site = col_str(&b, MODS::SITE);
         for i in 0..b.num_rows() {
-            targets.insert(name.value(i).to_string(), tgt.value(i).to_string());
+            mod_info.insert(
+                name.value(i).to_string(),
+                (tgt.value(i).to_string(), site.value(i).to_string()),
+            );
         }
     }
 
@@ -134,9 +140,18 @@ fn main() -> Result<()> {
 
             for mod_name in mod_names {
                 let occupied = &by_mod[mod_name];
-                let Some(tgt) = targets.get(mod_name) else { continue };
-                if tgt.is_empty() {
-                    continue; // terminal / non-residue mod: not positionally ambiguous
+                // A modform naming a modification the spec does not describe means the two artifacts
+                // are from different runs. Silently skipping it would write a valid-looking answer
+                // key that is missing ground truth — fail, like the unknown-peptide check does.
+                let (tgt, site) = mod_info.get(mod_name).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "modform carries modification {mod_name:?}, absent from {}. The two \
+                         artifacts are from different runs.",
+                        mods_p.display()
+                    )
+                })?;
+                if site != "residue" {
+                    continue; // pinned to a terminus — not positionally ambiguous
                 }
                 // Every position this modification could occupy.
                 let candidates: Vec<usize> = bytes
