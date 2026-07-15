@@ -39,6 +39,7 @@ pub fn all() -> Vec<TableSpec> {
         precursor_ccs::spec(),
         peptide_rt::spec(),
         localization_sites::spec(),
+        fragment_intensities::spec(),
         cleavage_sites::spec(),
         samples::spec(),
         runs::spec(),
@@ -267,6 +268,46 @@ pub mod modforms {
                 Field::new(MASS_MONOISOTOPIC, DataType::Float64, false),
                 Field::new(MASS_DELTA, DataType::Float64, false),
                 Field::new(ABUNDANCE_FRACTION, DataType::Float64, false),
+            ],
+        )
+    }
+}
+
+pub mod fragment_intensities {
+    use super::*;
+    pub const TABLE: &str = "fragment_intensities";
+    pub const PRECURSOR_ID: &str = "precursor_id";
+    pub const ION_TYPE: &str = "ion_type";
+    pub const ORDINAL: &str = "ordinal";
+    pub const FRAG_CHARGE: &str = "frag_charge";
+    pub const INTENSITY: &str = "intensity";
+
+    /// Predicted fragment-ion intensities, per precursor — a spectral library. MEASUREMENT.
+    ///
+    /// The fragment half of the feature space, emitted as its own artifact rather than buried in the
+    /// render. It is a measurement, not structure: fragment intensities depend on the **collision
+    /// energy** (recorded in metadata as `timsim.fragments.collision_energy`), an instrument setting,
+    /// so the same molecules fragment differently on different acquisitions. Keeping it separate
+    /// decouples "what fragments, and how strongly" from "how a given acquisition assembles them".
+    ///
+    /// One **sparse** row per fragment above the abundance floor: b/y ions never observed are simply
+    /// absent, as in a real library. `ion_type` is `"b"`/`"y"`, `ordinal` is 1-based (how many
+    /// residues the fragment spans), `frag_charge` is the fragment's own charge. `intensity` is
+    /// normalised to the precursor's base peak.
+    ///
+    /// This joins to `localization_sites` on `(ion_type, ordinal)`: a site is *resolvable* iff its
+    /// site-determining fragments appear here with intensity — which is the whole point of the
+    /// localization answer key.
+    pub fn spec() -> TableSpec {
+        super::spec(
+            TABLE,
+            Axis::Measurement,
+            vec![
+                Field::new(PRECURSOR_ID, DataType::UInt64, false),
+                Field::new(ION_TYPE, DataType::Utf8, false),
+                Field::new(ORDINAL, DataType::UInt16, false),
+                Field::new(FRAG_CHARGE, DataType::UInt8, false),
+                Field::new(INTENSITY, DataType::Float32, false),
             ],
         )
     }
