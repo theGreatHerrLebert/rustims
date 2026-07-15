@@ -373,6 +373,8 @@ pub mod peptide_rt {
     pub const TABLE: &str = "peptide_rt";
     pub const PEPTIDE_ID: &str = "peptide_id";
     pub const RT_INDEX: &str = "rt_index";
+    pub const SIGMA_HAT: &str = "rt_sigma_hat";
+    pub const K_HAT: &str = "rt_k_hat";
 
     /// A peptide's retention-time index. STRUCTURE.
     ///
@@ -406,6 +408,20 @@ pub mod peptide_rt {
             vec![
                 Field::new(PEPTIDE_ID, DataType::UInt64, false),
                 Field::new(RT_INDEX, DataType::Float64, true),
+                // The elution PEAK SHAPE, in normalized [0, 1] coordinates — the EMG width and
+                // tailing as their Beta-distributed unit draws, before any gradient is applied.
+                //
+                // v1 sampled the absolute width per RUN, in gradient-tied units, so the same peptide
+                // eluted with a different width in different runs (a B8 non-reproducibility) and the
+                // shape could not be reused across gradients. Storing the unit draw instead — drawn
+                // once, identity-keyed on the peptide — fixes both: the render maps `sigma_hat` into
+                // the run's gradient band (`sigma_lower + sigma_hat·(sigma_upper − sigma_lower)`,
+                // where the band is a function of gradient length, and its exponent is where LC peak
+                // capacity lives) and `k_hat` onto the tailing range. A longer gradient then naturally
+                // reshapes the absolute peak while the peptide's *relative* shape is fixed and
+                // reproducible.
+                Field::new(SIGMA_HAT, DataType::Float64, false),
+                Field::new(K_HAT, DataType::Float64, false),
             ],
         )
     }

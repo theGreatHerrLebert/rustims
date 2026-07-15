@@ -62,6 +62,11 @@ class V2Handoff:
     rt_index_range: Optional[tuple] = None
 
 
+def _pq_schema_names(path) -> list:
+    """Column names of a Parquet file, without reading it."""
+    return pq.ParquetFile(path).schema_arrow.names
+
+
 def annotate_modform(bare: str, mods) -> str:
     """Render a modform as the peptidoform sequence v1's chemistry and fragment model expect.
 
@@ -627,7 +632,13 @@ def load_from_v2(
     rt_index_range = None
     rt_p = _optional_artifact(rt_path, d, "peptide_rt.parquet")
     if rt_p is not None:
-        rt_df = pd.read_parquet(rt_p, columns=["peptide_id", "rt_index"])
+        _rt_cols = ["peptide_id", "rt_index"]
+        _have_peak = {"rt_sigma_hat", "rt_k_hat"}.issubset(
+            set(_pq_schema_names(rt_p))
+        )
+        if _have_peak:
+            _rt_cols += ["rt_sigma_hat", "rt_k_hat"]
+        rt_df = pd.read_parquet(rt_p, columns=_rt_cols)
         rt_by_v2 = dict(zip(rt_df["peptide_id"].to_numpy(), rt_df["rt_index"].to_numpy()))
 
         # A peptide ABSENT from the artifact and a peptide PRESENT with a null index are different
@@ -647,6 +658,12 @@ def load_from_v2(
         peptides_v1 = peptides_v1.copy()
         # peptides_v1 is ordered like `pep`; map each peptide's v2 id to its index.
         peptides_v1["rt_index"] = pep["peptide_id"].map(rt_by_v2).to_numpy()
+        # Carry the normalized elution-peak shape too, so the render can map it into the run's
+        # gradient band and integrate — instead of v1 re-sampling a width per run.
+        if _have_peak:
+            for _c in ("rt_sigma_hat", "rt_k_hat"):
+                _m = dict(zip(rt_df["peptide_id"].to_numpy(), rt_df[_c].to_numpy()))
+                peptides_v1[_c] = pep["peptide_id"].map(_m).to_numpy()
         import pyarrow.parquet as _pq
 
         md = _pq.read_schema(rt_p).metadata or {}

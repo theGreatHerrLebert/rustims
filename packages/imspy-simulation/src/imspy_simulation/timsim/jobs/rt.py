@@ -25,11 +25,37 @@ is both more portable and more physical.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import sys
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+# The elution-peak Beta distributions, matching v1's defaults exactly (sigma ~ Beta(4,4) scaled into
+# the gradient band; k ~ Beta(1,20) scaled to the tailing range). We store the UNIT draw sigma_hat /
+# k_hat in [0,1] — the gradient band is applied at render, not here — so the shape is portable and
+# reproducible.
+_SIGMA_ALPHA, _SIGMA_BETA = 4.0, 4.0
+_K_ALPHA, _K_BETA = 1.0, 20.0
+
+
+def _identity_uniform(sequence: str, salt: str) -> float:
+    """A deterministic uniform in [0,1) keyed on (sequence, salt). Identity-keyed (B8): a peptide's
+    peak shape depends on the peptide, not on draw order or which run it is — reproducible across
+    runs and stable when other peptides are added or removed."""
+    h = hashlib.blake2b(f"{sequence}#{salt}".encode(), digest_size=8).digest()
+    return (int.from_bytes(h, "big") >> 11) / float(1 << 53)
+
+
+def _beta_hats(sequences):
+    """Per-peptide (sigma_hat, k_hat) unit Beta draws, identity-keyed on the sequence."""
+    from scipy.stats import beta as _beta
+
+    us = np.array([_identity_uniform(s, "rt_sigma") for s in sequences])
+    uk = np.array([_identity_uniform(s, "rt_k") for s in sequences])
+    return _beta.ppf(us, _SIGMA_ALPHA, _SIGMA_BETA), _beta.ppf(uk, _K_ALPHA, _K_BETA)
 
 
 def predict_rt_index(
@@ -82,7 +108,13 @@ def predict_rt_index(
         print(f"    index range      : {index_min:.2f} – {index_max:.2f}  (reference for the "
               f"per-run seconds map)")
 
-    frame = pd.DataFrame({"peptide_id": peptides["peptide_id"].to_numpy(), "rt_index": idx})
+    sigma_hat, k_hat = _beta_hats(seqs)
+    frame = pd.DataFrame({
+        "peptide_id": peptides["peptide_id"].to_numpy(),
+        "rt_index": idx,
+        "rt_sigma_hat": sigma_hat,
+        "rt_k_hat": k_hat,
+    })
     return frame, index_min, index_max, prov
 
 
@@ -110,6 +142,8 @@ def main(argv=None) -> int:
         [
             pa.field("peptide_id", pa.uint64(), nullable=False),
             pa.field("rt_index", pa.float64(), nullable=True),
+            pa.field("rt_sigma_hat", pa.float64(), nullable=False),
+            pa.field("rt_k_hat", pa.float64(), nullable=False),
         ],
         metadata={
             "timsim.table": "peptide_rt",
