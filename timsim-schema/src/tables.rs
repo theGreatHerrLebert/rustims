@@ -36,6 +36,7 @@ pub fn all() -> Vec<TableSpec> {
         modifications::spec(),
         modforms::spec(),
         precursors::spec(),
+        precursor_ccs::spec(),
         cleavage_sites::spec(),
         samples::spec(),
         runs::spec(),
@@ -264,6 +265,51 @@ pub mod modforms {
                 Field::new(MASS_MONOISOTOPIC, DataType::Float64, false),
                 Field::new(MASS_DELTA, DataType::Float64, false),
                 Field::new(ABUNDANCE_FRACTION, DataType::Float64, false),
+            ],
+        )
+    }
+}
+
+pub mod precursor_ccs {
+    use super::*;
+    pub const TABLE: &str = "precursor_ccs";
+    pub const PRECURSOR_ID: &str = "precursor_id";
+    pub const CCS: &str = "ccs";
+    pub const CCS_STD: &str = "ccs_std";
+
+    /// Collision cross section, per precursor. STRUCTURE.
+    ///
+    /// # Why CCS and not 1/K₀
+    ///
+    /// The instrument reports `1/K₀` (inverse reduced mobility), and that is what v1 stored — but
+    /// `1/K₀` is **not a property of the ion**. It is what a *particular* drift-tube measures, and it
+    /// depends on the drift gas, its temperature, and its pressure. Change the gas from N₂ to
+    /// anything else and every `1/K₀` moves, though not one molecule has changed.
+    ///
+    /// **CCS is the ion.** It is the rotationally-averaged collision cross section — a geometric
+    /// property of the molecule and its charge — and the Mason–Schamp equation turns it into `1/K₀`
+    /// *given an instrument*. So CCS belongs on the structure axis (predicted once, shared by every
+    /// run) and `1/K₀` is a **measurement**, computed per run from CCS and the run's gas/temperature
+    /// (SPEC §8, and the B14 rule: put the fact where the physics lives, not where today's instrument
+    /// needs it).
+    ///
+    /// This is what makes cross-instrument simulation possible: one CCS artifact, measured on
+    /// instrument A and instrument B, differs *only* in the gas parameters — which is exactly the
+    /// experiment v1 could not express, because it threw CCS away and kept only N₂-at-305 K `1/K₀`.
+    ///
+    /// A separate table from `precursors`, not a column on it, because it has a **different
+    /// producer**: `precursors` is pure chemistry (Rust); CCS comes from a deep model (`timsim-ccs`,
+    /// Python — the standing deep-predictor exception). One table, one producer.
+    pub fn spec() -> TableSpec {
+        super::spec(
+            TABLE,
+            Axis::Structure,
+            vec![
+                Field::new(PRECURSOR_ID, DataType::UInt64, false),
+                // Collision cross section, Å². Instrument-independent.
+                Field::new(CCS, DataType::Float64, false),
+                // Predicted uncertainty in CCS (Å²), or null if the model does not report one.
+                Field::new(CCS_STD, DataType::Float64, true),
             ],
         )
     }

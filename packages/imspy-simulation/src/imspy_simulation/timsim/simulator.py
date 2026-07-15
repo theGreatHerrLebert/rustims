@@ -313,6 +313,12 @@ def get_default_settings() -> dict:
         'v2_occurrences': None,
         'v2_peptide_quantities': None,
         'v2_precursors': None,
+        'v2_ccs': None,
+        # Drift gas and temperature for CCS -> 1/K0 (Mason-Schamp). Defaults are N2 at 31.85 C,
+        # which is what v1 always implicitly used; changing the gas is how you simulate a different
+        # instrument on the SAME precursor CCS.
+        'drift_gas_mass': 28.013,
+        'drift_temp': 31.85,
         'v2_sample': None,          # which sample of the design; default = first
         'v2_total_events': 2.5e9,   # the declared abundance scale (see load_from_v2)
         # Detection stand-in until `design_eligibility` exists. Defaults to v1's own peptide budget
@@ -1243,6 +1249,7 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
         ("--v2-occurrences", "v2_occurrences"),
         ("--v2-peptide-quantities", "v2_peptide_quantities"),
         ("--v2-precursors", "v2_precursors"),
+        ("--v2-ccs", "v2_ccs"),
     ]:
         parser.add_argument(
             _flag, type=str, default=None, dest=_key,
@@ -1413,7 +1420,7 @@ def main():
         overrides['from_v2'] = True
         overrides['v2_path'] = cli_args.v2_path
     for _key in ('v2_proteome', 'v2_peptides', 'v2_occurrences',
-                 'v2_peptide_quantities', 'v2_precursors'):
+                 'v2_peptide_quantities', 'v2_precursors', 'v2_ccs'):
         _val = getattr(cli_args, _key, None)
         if _val:
             overrides[_key] = _val
@@ -1835,6 +1842,7 @@ def main():
             occurrences_path=config.v2_occurrences,
             quantities_path=config.v2_peptide_quantities,
             precursors_path=config.v2_precursors,
+            ccs_path=config.v2_ccs,
             total_events=config.v2_total_events,
             max_peptides=_v2_cap,
             max_peptide_length=config.v2_max_peptide_length,
@@ -2134,7 +2142,49 @@ def main():
             if config.proteome_mix:
                 ions = ions.drop_duplicates(subset=['sequence', 'charge'])
 
-        if need_im:
+        if need_im and "ccs" in ions.columns:
+            # MEASUREMENT: 1/K0 from CCS, given THIS run's drift gas and temperature.
+            #
+            # v1 stored `1/K0` and threw the CCS away, so every run was implicitly N2 at 305 K.
+            # timsim-ccs keeps the CCS (a property of the ion), and the instrument enters only here.
+            # This is what makes cross-instrument simulation an experiment rather than a rebuild:
+            # the same precursor_ccs artifact, run with a different `drift_gas_mass`, is instrument B.
+            #
+            # PARITY: timsim-ccs extracted CCS by inverting the deep model's own 1/K0 at exactly
+            # these defaults (N2, 31.85 C), so with the defaults this reproduces the model's mean
+            # 1/K0 to machine precision. A non-default gas is the ONLY thing that moves it.
+            from imspy_core.chemistry import ccs_to_one_over_k0
+
+            logger.info(section_header("Ion Mobilities (from timsim v2 CCS)", use_unicode))
+            g, t = config.drift_gas_mass, config.drift_temp
+            if not config.silent_mode:
+                logger.info(f"  drift gas mass {g}, temperature {t} °C  (CCS → 1/K0, Mason–Schamp)")
+            mz = ions["mz"].to_numpy(float)
+            z = ions["charge"].to_numpy(int)
+            ccs = ions["ccs"].to_numpy(float)
+            ions["inv_mobility_gru_predictor"] = [
+                ccs_to_one_over_k0(c, m, zz, mass_gas=g, temp=t) for c, m, zz in zip(ccs, mz, z)
+            ]
+            ccs_std = ions["ccs_std"].to_numpy(float)
+            # Match v1's linearisation: the width is carried through the same conversion as the mean.
+            # Where the model reported no uncertainty, fall back to v1's configured target std.
+            _std_fallback = config.inverse_mobility_std_mean or 0.008
+            ions["inv_mobility_gru_predictor_std"] = [
+                ccs_to_one_over_k0(s, m, zz, mass_gas=g, temp=t) if np.isfinite(s) else _std_fallback
+                for s, m, zz in zip(ccs_std, mz, z)
+            ]
+            im_lo = acquisition_builder.tdf_writer.helper_handle.im_lower
+            im_hi = acquisition_builder.tdf_writer.helper_handle.im_upper
+            _n = len(ions)
+            ions = ions[
+                (ions.inv_mobility_gru_predictor >= im_lo)
+                & (ions.inv_mobility_gru_predictor <= im_hi)
+            ].reset_index(drop=True)
+            if not config.silent_mode:
+                logger.info(f"  {len(ions):,} ions in the mobility window [{im_lo:.3f}, {im_hi:.3f}]"
+                            f"  ({_n - len(ions):,} outside)")
+
+        elif need_im:
             logger.info(section_header("Simulating Ion Mobilities", use_unicode))
             # JOB 6: Ion mobilities
             if config.ccs_model:

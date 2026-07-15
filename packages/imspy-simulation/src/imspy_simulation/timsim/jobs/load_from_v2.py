@@ -78,6 +78,7 @@ def load_from_v2(
     occurrences_path: str | Path | None = None,
     quantities_path: str | Path | None = None,
     precursors_path: str | Path | None = None,
+    ccs_path: str | Path | None = None,
     total_events: float = 1e5 * 25_000,
     max_peptides: Optional[int] = None,
     max_peptide_length: int = 30,
@@ -259,6 +260,7 @@ def load_from_v2(
     prec_all = None
     if prec_path.exists():
         _cols = [
+            "precursor_id",
             "peptide_id",
             "charge",
             "mz",
@@ -442,11 +444,35 @@ def load_from_v2(
             ions_v1 = pd.DataFrame(
                 {
                     "peptide_id": prec["peptide_id"].map(pep_int).to_numpy(),
+                    # Carried so CCS can be joined per ion. With modforms, (peptide_id, charge) is
+                    # NOT unique — positional isomers share both — so the join must key on the
+                    # precursor, which is unique per (modform, charge).
+                    "precursor_id": prec["precursor_id"].to_numpy(),
                     "charge": prec["charge"].to_numpy().astype(int),
                     "relative_abundance": rel,
                     "mz": prec["mz"].to_numpy().astype(float),
                 }
             ).sort_values(["peptide_id", "charge"]).reset_index(drop=True)
+
+            # ── CCS, if timsim-ccs produced it ────────────────────────────────
+            #
+            # CCS is instrument-independent and belongs to the ion; the conversion CCS -> 1/K0 is a
+            # MEASUREMENT and happens later, in the simulator, with the run's gas and temperature.
+            # Here we only attach the ion property.
+            # Optional, so resolve a path only if one was actually given (explicitly or via v2_dir);
+            # never let the "required artifact" guard fire for it.
+            ccs_p = Path(ccs_path) if ccs_path is not None else (
+                d / "precursor_ccs.parquet" if d is not None else None
+            )
+            if ccs_p is not None and ccs_p.exists():
+                ccs_df = pd.read_parquet(ccs_p, columns=["precursor_id", "ccs", "ccs_std"])
+                ions_v1 = ions_v1.merge(ccs_df, on="precursor_id", how="left")
+                _miss = int(ions_v1["ccs"].isna().sum())
+                if _miss:
+                    raise ValueError(
+                        f"{_miss} ions have no CCS in {ccs_p}. The precursor_ccs artifact was built "
+                        f"from a different precursors table. Re-run timsim-ccs against this one."
+                    )
 
     if verbose:
         degenerate = int((occ.groupby("peptide_id")["protein_id"].nunique() > 1).sum())
