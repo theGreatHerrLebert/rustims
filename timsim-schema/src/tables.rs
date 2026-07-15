@@ -38,6 +38,7 @@ pub fn all() -> Vec<TableSpec> {
         precursors::spec(),
         precursor_ccs::spec(),
         peptide_rt::spec(),
+        localization_sites::spec(),
         cleavage_sites::spec(),
         samples::spec(),
         runs::spec(),
@@ -266,6 +267,61 @@ pub mod modforms {
                 Field::new(MASS_MONOISOTOPIC, DataType::Float64, false),
                 Field::new(MASS_DELTA, DataType::Float64, false),
                 Field::new(ABUNDANCE_FRACTION, DataType::Float64, false),
+            ],
+        )
+    }
+}
+
+pub mod localization_sites {
+    use super::*;
+    pub const TABLE: &str = "localization_sites";
+    pub const MODFORM_ID: &str = "modform_id";
+    pub const PEPTIDE_ID: &str = "peptide_id";
+    pub const MODIFICATION: &str = "modification";
+    pub const TRUE_POSITION: &str = "true_position";
+    pub const CANDIDATE_POSITIONS: &str = "candidate_positions";
+    pub const SITE_DETERMINING: &str = "site_determining";
+
+    /// The **site-localization answer key**: for a modform whose modification could sit on more than
+    /// one residue of the peptide, where it *actually* is, where it *could* be, and which fragments a
+    /// search must observe to tell them apart.
+    ///
+    /// # This is the benchmark's ground truth, not the simulator's problem
+    ///
+    /// We place the modification, so `true_position` is known by construction. Localisation is the
+    /// *search engine's* task — recovering that position from the fragment spectrum — and this table
+    /// is what it is scored against. A row exists only for an **ambiguous** modform (the modified
+    /// residue occurs ≥2 times, e.g. a phospho on a peptide with two S/T/Y); a mod with a single
+    /// candidate is trivially localised and needs no evidence.
+    ///
+    /// `site_determining` lists the `(ion_type, ordinal)` fragments — as strings like `"b3"`,
+    /// `"y5"` — whose m/z depends on which candidate carries the mod. Joining this against the
+    /// fragments a run actually rendered turns a search's wrong-site call into a precise verdict:
+    /// *unresolvable* (the discriminating fragments were not in the data — no engine could have
+    /// localised it) versus *the engine failed* (they were there and it missed). v1's evaluation
+    /// asserts the former without checking; this makes it checkable.
+    pub fn spec() -> TableSpec {
+        super::spec(
+            TABLE,
+            Axis::Structure,
+            vec![
+                Field::new(MODFORM_ID, DataType::UInt64, false),
+                Field::new(PEPTIDE_ID, DataType::UInt64, false),
+                Field::new(MODIFICATION, DataType::Utf8, false),
+                // 0-based position of the modification we actually placed.
+                Field::new(TRUE_POSITION, DataType::UInt32, false),
+                // Every 0-based position the modification could have occupied (the target residues).
+                Field::new(
+                    CANDIDATE_POSITIONS,
+                    DataType::List(Arc::new(Field::new("item", DataType::UInt32, true))),
+                    false,
+                ),
+                // The fragments that discriminate the candidates, e.g. ["b3","b4","y5"].
+                Field::new(
+                    SITE_DETERMINING,
+                    DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+                    false,
+                ),
             ],
         )
     }

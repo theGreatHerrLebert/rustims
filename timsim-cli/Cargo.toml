@@ -40,3 +40,7 @@ rayon = "1.10"
 [[bin]]
 name = "timsim-modify"
 path = "src/bin/modify.rs"
+
+[[bin]]
+name = "timsim-localization"
+path = "src/bin/localization.rs"
