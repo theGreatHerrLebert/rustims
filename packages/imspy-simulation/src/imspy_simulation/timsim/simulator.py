@@ -319,6 +319,11 @@ def get_default_settings() -> dict:
         # instrument on the SAME precursor CCS.
         'drift_gas_mass': 28.013,
         'drift_temp': 31.85,
+        # How the ion-mobility peak WIDTH is modelled.
+        #   'predicted'   : the deep model's per-ion CCS uncertainty (default; richest).
+        #   'proportional': a fixed CV of the mobility (robust, model-free; v1's approximation).
+        'ccs_std_model': 'predicted',
+        'ccs_std_cv': 0.007,
         'v2_sample': None,          # which sample of the design; default = first
         'v2_total_events': 2.5e9,   # the declared abundance scale (see load_from_v2)
         # Detection stand-in until `design_eligibility` exists. Defaults to v1's own peptide budget
@@ -2165,20 +2170,65 @@ def main():
             ions["inv_mobility_gru_predictor"] = [
                 ccs_to_one_over_k0(c, m, zz, mass_gas=g, temp=t) for c, m, zz in zip(ccs, mz, z)
             ]
+            # ── the width of the mobility peak ────────────────────────────────
+            #
+            # Two models, because there are two honest ways to get the peak width, and they answer
+            # different questions:
+            #
+            #   "predicted" (DEFAULT) — the deep model predicts a per-ion CCS uncertainty in Å²
+            #     (`ccs_std`), which genuinely varies with the peptide (CV ~0.5–0.9% here, not a
+            #     constant). This is the richest source and is used unless asked otherwise.
+            #
+            #   "proportional" — the width is a fixed fraction (CV) of the mobility itself. This is
+            #     the robust, model-free option, and it is what v1 approximated with a single target
+            #     std. Because 1/K0 is linear in CCS through the origin, a fixed CV in CCS *is* a
+            #     fixed CV in 1/K0, so this stays coherent under a change of gas.
+            #
+            # Converting the Å² width through `ccs_to_one_over_k0` looks dimensionally wrong (it is
+            # the function for a cross section, not a standard deviation) but is exact for the same
+            # linearity reason: for a linear-through-origin map the derivative is the proportionality
+            # constant, so c·ccs_std == ccs_to_one_over_k0(ccs_std). A test pins that linearity; if
+            # Mason–Schamp ever gained an offset it fails rather than silently mis-widening peaks.
             ccs_std = ions["ccs_std"].to_numpy(float)
-            # Converting a *width* through `ccs_to_one_over_k0` looks dimensionally wrong — it is the
-            # function for a cross section, not a standard deviation. It is nonetheless exact here,
-            # for a specific reason: Mason–Schamp makes 1/K0 **linear in CCS through the origin**
-            # (1/K0 = c(m,z,gas,temp)·CCS, no offset — verified: f(2·CCS)/f(CCS) == 2 exactly). For a
-            # linear-through-origin map the derivative *is* the proportionality constant c, so
-            # propagating the width, c·ccs_std, equals `ccs_to_one_over_k0(ccs_std)`. If that relation
-            # ever gained an offset this would silently become wrong, so a test pins it.
-            # Where the model reported no uncertainty, fall back to v1's configured target std.
-            _std_fallback = config.inverse_mobility_std_mean or 0.008
-            ions["inv_mobility_gru_predictor_std"] = [
-                ccs_to_one_over_k0(s, m, zz, mass_gas=g, temp=t) if np.isfinite(s) else _std_fallback
-                for s, m, zz in zip(ccs_std, mz, z)
-            ]
+            k0_mean = ions["inv_mobility_gru_predictor"].to_numpy(float)
+            cv = config.ccs_std_cv
+            if config.ccs_std_model == "proportional":
+                # The width is a fixed fraction of the mobility. Model-free and reproducible; ignores
+                # the per-ion information the deep model has. Already at the intended scale, so it is
+                # NOT rescaled below.
+                k0_std = cv * k0_mean
+                if not config.silent_mode:
+                    logger.info(f"  mobility peak width: proportional (CV {cv:.4f} of 1/K0)")
+            elif config.ccs_std_model == "predicted":
+                # The deep model's per-ion CCS std, converted linearly. It carries real per-ion
+                # information (some peptides are predicted more confidently than others), but its
+                # ABSOLUTE scale is miscalibrated — systematically too wide. So the SHAPE is kept and
+                # the population MEAN is pinned to a target below. Any ion the model could not score
+                # (NaN) gets the proportional width so a missing std never becomes a garbage peak.
+                k0_std = np.array([
+                    ccs_to_one_over_k0(s, m, zz, mass_gas=g, temp=t) if np.isfinite(s) else cv * km
+                    for s, m, zz, km in zip(ccs_std, mz, z, k0_mean)
+                ])
+                if config.use_inverse_mobility_std_mean:
+                    target = config.inverse_mobility_std_mean
+                    cur = float(np.mean(k0_std))
+                    if cur > 0:
+                        # Rescale (not shift) so ratios — the per-ion information — are preserved and
+                        # nothing goes negative. This is exactly what v1's GRU path does
+                        # (use_target_mean_std), and it is the calibration you flagged: the deep std
+                        # is informative in shape, wrong in scale.
+                        k0_std = k0_std * (target / cur)
+                    if not config.silent_mode:
+                        logger.info(f"  mobility peak width: deep per-ion CCS std, "
+                                    f"rescaled mean {cur:.4f} → target {target:.4f}")
+                elif not config.silent_mode:
+                    logger.info("  mobility peak width: deep per-ion CCS std (raw, not rescaled)")
+            else:
+                raise ValueError(
+                    f"ccs_std_model must be 'predicted' or 'proportional', got "
+                    f"{config.ccs_std_model!r}"
+                )
+            ions["inv_mobility_gru_predictor_std"] = np.maximum(k0_std, 1e-6)
             im_lo = acquisition_builder.tdf_writer.helper_handle.im_lower
             im_hi = acquisition_builder.tdf_writer.helper_handle.im_upper
             _n = len(ions)

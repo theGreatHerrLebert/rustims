@@ -17,11 +17,11 @@ experiment v1 could not express because it kept only N2-at-305K ``1/K0`` and dis
 
 # How the CCS is obtained
 
-The deep model computes CCS internally and converts it to ``1/K0`` on the way out, at a fixed default
-gas. Rather than re-tokenise and call the model's internals, we run the existing, tested predictor to
-get ``1/K0`` at that default, then **invert** ``1/K0 -> CCS`` at the *same* default. Mason-Schamp is
-exactly invertible (round-trip error ~2e-16), so this recovers the model's CCS losslessly — the
-invertibility oracle used as an extraction mechanism.
+CCS and its uncertainty are read **straight from the deep model in Å²** (``return_ccs=True``). CCS is
+what the model actually predicts; ``1/K0`` is a drift-gas-dependent measurement derived from it. So a
+tool whose whole job is the instrument-*independent* quantity should never touch a gas — and this one
+does not. (An earlier version round-tripped through ``1/K0`` and back, which was lossless but coupled
+this tool to the predictor's internal gas defaults for no reason.)
 """
 
 from __future__ import annotations
@@ -32,13 +32,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
-# The gas parameters the deep CCS model uses internally when it converts CCS -> 1/K0. We invert at
-# EXACTLY these values, so the CCS we recover is the one the model produced. They are the
-# imspy defaults (N2 at 31.85 C); if the predictor's internal defaults ever change, these must move
-# with them, and the round-trip check below will catch a mismatch loudly.
-_MODEL_GAS_MASS = 28.013
-_MODEL_TEMP_C = 31.85
 
 
 def predict_ccs(
@@ -53,7 +46,6 @@ def predict_ccs(
     ``peptide_id, sequence``.
     """
     from imspy_predictors.ccs import DeepPeptideIonMobilityApex
-    from imspy_core.chemistry import one_over_k0_to_ccs
 
     need = {"precursor_id", "peptide_id", "charge", "mz"}
     missing = need - set(precursors.columns)
@@ -78,35 +70,21 @@ def predict_ccs(
         print(f"    distinct (seq,z,mz): {len(keys):,}  ({len(keys) / len(df) * 100:.1f}% — the rest are isomers)")
 
     predictor = DeepPeptideIonMobilityApex(verbose=False)
-    k0, k0_std = predictor.simulate_ion_mobilities(
+    # Read CCS and its Å² uncertainty straight from the model — no gas, no conversion.
+    ccs, ccs_std = predictor.simulate_ion_mobilities(
         keys["sequence"].tolist(),
         keys["charge"].tolist(),
         keys["mz"].tolist(),
+        batch_size=batch_size,
         return_uncertainty=True,
+        return_ccs=True,
     )
-    k0 = np.asarray(k0, dtype=float).flatten()
-    k0_std = np.asarray(k0_std, dtype=float).flatten() if k0_std is not None else None
-
-    mz = keys["mz"].to_numpy(dtype=float)
-    z = keys["charge"].to_numpy(dtype=int)
-
-    # Invert 1/K0 -> CCS at the model's own gas defaults. Lossless (see module docstring).
-    ccs = np.array([
-        one_over_k0_to_ccs(k, m, c, mass_gas=_MODEL_GAS_MASS, temp=_MODEL_TEMP_C)
-        for k, m, c in zip(k0, mz, z)
-    ])
-    if k0_std is not None:
-        # The width is carried through the same conversion as the mean. This is exact rather than an
-        # approximation: Mason-Schamp makes 1/K0 linear in CCS through the origin (no offset), so the
-        # conversion's derivative equals its proportionality constant, and converting a width gives
-        # exactly the propagated width. See test_ccs_mobility.py, which pins the linearity this relies
-        # on. (It also happens to match what v1's own predictor does.)
-        ccs_std = np.array([
-            one_over_k0_to_ccs(s, m, c, mass_gas=_MODEL_GAS_MASS, temp=_MODEL_TEMP_C)
-            for s, m, c in zip(k0_std, mz, z)
-        ])
-    else:
-        ccs_std = np.full(len(keys), np.nan)
+    ccs = np.asarray(ccs, dtype=float).flatten()
+    ccs_std = (
+        np.asarray(ccs_std, dtype=float).flatten()
+        if ccs_std is not None
+        else np.full(len(keys), np.nan)
+    )
 
     keys = keys.assign(ccs=ccs, ccs_std=ccs_std)
     out = df.merge(keys, on=["sequence", "charge", "mz"], how="left")
@@ -151,8 +129,6 @@ def main(argv=None) -> int:
             "timsim.schema_version": "2.0",
             "timsim.axis": "structure",
             "timsim.producer": "timsim-ccs",
-            "timsim.ccs.model_gas_mass": str(_MODEL_GAS_MASS),
-            "timsim.ccs.model_temp_c": str(_MODEL_TEMP_C),
         },
     )
     table = pa.Table.from_pandas(ccs, schema=schema, preserve_index=False)

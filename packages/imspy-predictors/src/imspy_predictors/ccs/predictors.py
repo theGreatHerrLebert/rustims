@@ -473,6 +473,7 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         mz: List[float],
         batch_size: int = 1024,
         return_uncertainty: bool = False,
+        return_ccs: bool = False,
     ) -> Union[NDArray, Tuple[NDArray, NDArray]]:
         """
         Predict inverse ion mobilities for peptide sequences.
@@ -483,12 +484,16 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
             mz: List of m/z values
             batch_size: Batch size for prediction
             return_uncertainty: If True, also return predicted uncertainty (std)
+            return_ccs: If True, return the model's **CCS in Å²** (and its Å² std when
+                ``return_uncertainty``) directly, instead of converting to 1/K0. CCS is what the
+                model actually predicts; 1/K0 is a drift-gas-dependent measurement derived from it.
+                Callers that store the instrument-*independent* quantity want this, and avoid a
+                lossy-looking round trip through a gas they do not care about.
 
         Returns:
-            Inverse ion mobilities (1/K0), or tuple of (1/K0, std) if
-            return_uncertainty=True. Charges outside the model's
-            ``[1, _CHARGE_MAX]`` domain return ``NaN`` rather than
-            triggering a CUDA-side index assertion.
+            Inverse ion mobilities (1/K0) — or CCS (Å²) if ``return_ccs`` — as an array, or a tuple
+            with the std when ``return_uncertainty=True``. Charges outside the model's ``[1, 4]``
+            domain return ``NaN`` rather than triggering a CUDA-side index assertion.
         """
         self.model.eval()
 
@@ -565,6 +570,18 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
                     all_ccs_std.append(ccs_std.cpu().numpy())
 
         ccs = np.concatenate(all_ccs, axis=0).flatten()
+
+        # Return the model's CCS directly, before any drift-gas conversion. This is the raw quantity
+        # the model predicts; everything below turns it into a gas-specific 1/K0.
+        if return_ccs:
+            out_ccs = np.full(n_total, np.nan, dtype=np.float64)
+            out_ccs[valid_idx] = ccs
+            if return_uncertainty:
+                out_ccs_std = np.full(n_total, np.nan, dtype=np.float64)
+                if all_ccs_std:
+                    out_ccs_std[valid_idx] = np.concatenate(all_ccs_std, axis=0).flatten()
+                return out_ccs, out_ccs_std
+            return out_ccs
 
         # Convert CCS to inverse mobility on the valid subset, then
         # scatter back into the full output array.
