@@ -16,6 +16,7 @@ pub mod design;
 pub mod digest;
 pub mod enzyme;
 pub mod fasta;
+pub mod fragment;
 pub mod ids;
 pub mod ionize;
 pub mod isotope;

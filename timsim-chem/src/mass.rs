@@ -75,7 +75,7 @@ fn average_residue(aa: u8) -> Option<f64> {
 }
 
 #[inline]
-fn monoisotopic_residue(aa: u8) -> Option<f64> {
+pub(crate) fn monoisotopic_residue(aa: u8) -> Option<f64> {
     Some(match aa {
         b'G' => 57.021_464,
         b'A' => 71.037_114,
