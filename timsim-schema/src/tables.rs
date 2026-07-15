@@ -37,6 +37,7 @@ pub fn all() -> Vec<TableSpec> {
         modforms::spec(),
         precursors::spec(),
         precursor_ccs::spec(),
+        peptide_rt::spec(),
         cleavage_sites::spec(),
         samples::spec(),
         runs::spec(),
@@ -265,6 +266,49 @@ pub mod modforms {
                 Field::new(MASS_MONOISOTOPIC, DataType::Float64, false),
                 Field::new(MASS_DELTA, DataType::Float64, false),
                 Field::new(ABUNDANCE_FRACTION, DataType::Float64, false),
+            ],
+        )
+    }
+}
+
+pub mod peptide_rt {
+    use super::*;
+    pub const TABLE: &str = "peptide_rt";
+    pub const PEPTIDE_ID: &str = "peptide_id";
+    pub const RT_INDEX: &str = "rt_index";
+
+    /// A peptide's retention-time index. STRUCTURE.
+    ///
+    /// # Why an index and not seconds
+    ///
+    /// v1 stored retention time in **seconds**, which is not a property of the peptide — it is what a
+    /// *particular* LC gradient produces. Run the same peptide on a 30-minute gradient and a 2-hour
+    /// gradient and the seconds differ, though the molecule is unchanged.
+    ///
+    /// **The peptide's property is its hydrophobicity** — where it sits in the elution *order*, and
+    /// how far from its neighbours. Chronologer predicts exactly that (as minutes on a reference
+    /// gradient, an affine image of hydrophobicity). Storing the index and mapping it to seconds per
+    /// run is the same B14 split as CCS→1/K₀: the index is structure, the elution time is a
+    /// measurement (SPEC §8, change #4).
+    ///
+    /// This is what makes runs comparable across gradients — the RT analog of cross-instrument
+    /// mobility. It is also *more physical* than v1: v1 linearly stretched each sample's index range
+    /// to fill `[0, gradient]`, so a peptide's RT depended on what else was in the tube. With a fixed
+    /// reference range (carried in this artifact's metadata, `timsim.rt.index_min`/`index_max`,
+    /// computed over the whole peptide space), a peptide always lands at the same gradient *fraction*,
+    /// independent of the sample.
+    ///
+    /// A separate table from `peptides`, because the producer differs: `peptides` is Rust chemistry;
+    /// the index comes from a deep model (`timsim-rt`, Python — the deep-predictor exception). The
+    /// index is **nullable**: Chronologer rejects some peptides (unsupported mods, out-of-range
+    /// length), and a rejected peptide has no index rather than a fabricated one.
+    pub fn spec() -> TableSpec {
+        super::spec(
+            TABLE,
+            Axis::Structure,
+            vec![
+                Field::new(PEPTIDE_ID, DataType::UInt64, false),
+                Field::new(RT_INDEX, DataType::Float64, true),
             ],
         )
     }

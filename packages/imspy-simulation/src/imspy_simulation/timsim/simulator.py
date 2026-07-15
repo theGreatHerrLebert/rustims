@@ -314,6 +314,7 @@ def get_default_settings() -> dict:
         'v2_peptide_quantities': None,
         'v2_precursors': None,
         'v2_ccs': None,
+        'v2_rt': None,
         # Drift gas and temperature for CCS -> 1/K0 (Mason-Schamp). Defaults are N2 at 31.85 C,
         # which is what v1 always implicitly used; changing the gas is how you simulate a different
         # instrument on the SAME precursor CCS.
@@ -1255,6 +1256,7 @@ BRUKER timsTOF instrument. All configuration is provided via a TOML file.
         ("--v2-peptide-quantities", "v2_peptide_quantities"),
         ("--v2-precursors", "v2_precursors"),
         ("--v2-ccs", "v2_ccs"),
+        ("--v2-rt", "v2_rt"),
     ]:
         parser.add_argument(
             _flag, type=str, default=None, dest=_key,
@@ -1425,7 +1427,7 @@ def main():
         overrides['from_v2'] = True
         overrides['v2_path'] = cli_args.v2_path
     for _key in ('v2_proteome', 'v2_peptides', 'v2_occurrences',
-                 'v2_peptide_quantities', 'v2_precursors', 'v2_ccs'):
+                 'v2_peptide_quantities', 'v2_precursors', 'v2_ccs', 'v2_rt'):
         _val = getattr(cli_args, _key, None)
         if _val:
             overrides[_key] = _val
@@ -1848,6 +1850,7 @@ def main():
             quantities_path=config.v2_peptide_quantities,
             precursors_path=config.v2_precursors,
             ccs_path=config.v2_ccs,
+            rt_path=config.v2_rt,
             total_events=config.v2_total_events,
             max_peptides=_v2_cap,
             max_peptide_length=config.v2_max_peptide_length,
@@ -1868,16 +1871,43 @@ def main():
         # v1's RT prediction lives inside the FASTA branch below, so the v2 path must run it
         # itself. This is the seam: v2 owns the SAMPLE, v1 owns the MEASUREMENT, and retention
         # time is the first measurement.
-        logger.info(section_header("Simulating Retention Times", use_unicode))
-        rt_model = config.rt_model or config.koina_rt_model
-        if rt_model:
-            logger.info(f"  Using RT model: {rt_model}")
-        peptides = simulate_retention_times(
-            peptides=peptides,
-            verbose=not config.silent_mode,
-            gradient_length=acquisition_builder.gradient_length,
-            use_koina_model=rt_model,
-        )
+        _grad = acquisition_builder.gradient_length
+        if handoff.rt_index_range is not None and "rt_index" in peptides.columns:
+            # MEASUREMENT: index -> seconds on THIS run's gradient.
+            #
+            # The peptide carries a hydrophobicity INDEX (from timsim-rt); the elution time is what a
+            # particular gradient makes of it. Mapping index -> [0, gradient] with the reference range
+            # (the index span over the WHOLE peptide space, carried in the artifact) means a peptide
+            # lands at the same gradient *fraction* in every sample — the portability the index
+            # exists for. v1 instead stretched each sample's own min..max to fill the gradient, so a
+            # peptide's RT moved with whatever else was in the tube.
+            logger.info(section_header("Retention Times (from timsim v2 index)", use_unicode))
+            lo, hi = handoff.rt_index_range
+            idx = peptides["rt_index"].to_numpy(float)
+            span = hi - lo
+            if span <= 0:
+                raise ValueError(f"degenerate rt_index reference range [{lo}, {hi}]")
+            rt = (idx - lo) / span * _grad
+            # A peptide the RT model rejected (null index) has no elution time. Drop it rather than
+            # place it at an arbitrary point — same discipline as a peptide with no CCS.
+            _n = len(peptides)
+            peptides = peptides.assign(retention_time_gru_predictor=rt)
+            peptides = peptides[np.isfinite(peptides["retention_time_gru_predictor"])].reset_index(drop=True)
+            if not config.silent_mode:
+                _drop = _n - len(peptides)
+                logger.info(f"  index [{lo:.2f}, {hi:.2f}] → [0, {_grad:.0f}]s"
+                            + (f"; dropped {_drop} peptides the model rejected" if _drop else ""))
+        else:
+            logger.info(section_header("Simulating Retention Times", use_unicode))
+            rt_model = config.rt_model or config.koina_rt_model
+            if rt_model:
+                logger.info(f"  Using RT model: {rt_model}")
+            peptides = simulate_retention_times(
+                peptides=peptides,
+                verbose=not config.silent_mode,
+                gradient_length=_grad,
+                use_koina_model=rt_model,
+            )
 
         # The void-volume correction, which on the FASTA path lives inside `simulate_peptides`
         # (digest_fasta.py) and would otherwise be silently skipped here — an UNINTENDED divergence,

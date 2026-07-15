@@ -33,6 +33,7 @@ gui = [
 [project.scripts]
 timsim = "imspy_simulation.timsim.simulator:main"
 timsim-ccs = "imspy_simulation.timsim.jobs.ccs:main"
+timsim-rt = "imspy_simulation.timsim.jobs.rt:main"
 timsim-gui = "imspy_simulation.timsim.gui:main"
 timsim-eval = "imspy_simulation.timsim.groundtruth_eval:main"
 

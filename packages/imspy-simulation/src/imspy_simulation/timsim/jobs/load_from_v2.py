@@ -55,6 +55,11 @@ class V2Handoff:
     #:    (``predictors.py:121``) — so a 3-site peptide's real 1+ ions vanish and their abundance is
     #:    handed to 2+/3+, inflating them. v2 deletes the mass and reports it.
     ions: Optional[pd.DataFrame] = None
+    #: `(index_min, index_max)` reference range for mapping the peptides' `rt_index` to seconds on a
+    #: run's gradient, or `None` if `timsim-rt` was not run (v1 predicts its own RT then). The range
+    #: is over the whole peptide space, so a peptide lands at the same gradient *fraction* regardless
+    #: of the sample — the portability the RT index exists for.
+    rt_index_range: Optional[tuple] = None
 
 
 def _require(path: Path) -> Path:
@@ -79,6 +84,7 @@ def load_from_v2(
     quantities_path: str | Path | None = None,
     precursors_path: str | Path | None = None,
     ccs_path: str | Path | None = None,
+    rt_path: str | Path | None = None,
     total_events: float = 1e5 * 25_000,
     max_peptides: Optional[int] = None,
     max_peptide_length: int = 30,
@@ -522,6 +528,35 @@ def load_from_v2(
             print(f"    ion layer       : none (no precursors.parquet) — v1 will compute its own "
                   f"charge states")
 
+    # ── retention-time index, if timsim-rt produced one ──────────────────────
+    #
+    # The index is a peptide property (hydrophobicity); mapping it to seconds is a MEASUREMENT and
+    # happens in the simulator with the run's gradient. Here we only attach the index, and carry the
+    # reference range (over the whole peptide space) so the map is stable across samples.
+    rt_index_range = None
+    rt_p = Path(rt_path) if rt_path is not None else (
+        d / "peptide_rt.parquet" if d is not None else None
+    )
+    if rt_p is not None and rt_p.exists():
+        rt_df = pd.read_parquet(rt_p, columns=["peptide_id", "rt_index"])
+        rt_by_v2 = dict(zip(rt_df["peptide_id"].to_numpy(), rt_df["rt_index"].to_numpy()))
+        peptides_v1 = peptides_v1.copy()
+        # peptides_v1 is ordered like `pep`; map each peptide's v2 id to its index.
+        peptides_v1["rt_index"] = pep["peptide_id"].map(rt_by_v2).to_numpy()
+        import pyarrow.parquet as _pq
+
+        md = _pq.read_schema(rt_p).metadata or {}
+        lo = md.get(b"timsim.rt.index_min")
+        hi = md.get(b"timsim.rt.index_max")
+        if lo is not None and hi is not None:
+            rt_index_range = (float(lo), float(hi))
+        else:
+            # No stored reference range: fall back to the range present in this artifact. Less
+            # portable across samples, but never silently wrong.
+            _v = rt_df["rt_index"].to_numpy()
+            _v = _v[np.isfinite(_v)]
+            rt_index_range = (float(_v.min()), float(_v.max())) if _v.size else None
+
     return V2Handoff(
         proteins=proteins_v1,
         peptides=peptides_v1,
@@ -529,4 +564,5 @@ def load_from_v2(
         event_scale=event_scale,
         sample_id=sample_id,
         ions=ions_v1,
+        rt_index_range=rt_index_range,
     )
