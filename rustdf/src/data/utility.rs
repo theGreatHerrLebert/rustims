@@ -34,10 +34,16 @@ pub fn zstd_decompress(compressed_data: &[u8]) -> io::Result<Vec<u8>> {
 /// * `compressed_data` - A vector of u8 that holds the compressed data
 ///
 pub fn zstd_compress(decompressed_data: &[u8], compression_level: i32) -> io::Result<Vec<u8>> {
-    let mut encoder = zstd::Encoder::new(Vec::new(), compression_level)?;
-    encoder.write_all(decompressed_data)?;
-    let compressed_data = encoder.finish()?;
-    Ok(compressed_data)
+    // Use the ONE-SHOT (`bulk`) compressor, NOT the streaming `zstd::Encoder`. The streaming encoder
+    // omits the Frame_Content_Size field from the zstd frame header (it can't know the size upfront),
+    // producing FHD flag 0. Real Bruker `.d` files and the Python writer both WRITE the decompressed
+    // size into the header (FHD flag 1/2). Bruker's SDK / DiaNN's tdf reader relies on that field to
+    // pre-size the decompression buffer per frame; without it the reader falls into a pathological
+    // re-read/retry decode path that makes loading O(n²) (a run that should take ~1 min hangs for
+    // hours). The decompressed payload is byte-identical either way — only the container header differs.
+    // The one-shot API knows the length, so it always emits the content size. THIS is the long-standing
+    // "Rust writer produces DiaNN-unreadable .d" bug that forced the Python writer.
+    zstd::bulk::compress(decompressed_data, compression_level)
 }
 
 /// Deduplicate `(scan, tof)` pairs (summing their intensities) and return the
