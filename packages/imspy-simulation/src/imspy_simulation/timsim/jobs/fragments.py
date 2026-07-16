@@ -24,11 +24,14 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import defaultdict
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 # Authoritative from flatten_prosit_array's source: axis-2 index 0 is a y ion, index 1 is a b ion.
 # Pinned by test_fragment_decode.py against that function.
@@ -73,19 +76,43 @@ def predict_tensors(sequences, charges, collision_energies, model: Optional[str]
     return pred, name
 
 
-def predict_fragments(
+def fragment_schema(prov: str, collision_energy: float) -> pa.Schema:
+    """The ``fragment_intensities`` (measurement) schema, stamped with model + CE provenance."""
+    return pa.schema(
+        [
+            pa.field("precursor_id", pa.uint64(), nullable=False),
+            pa.field("ion_type", pa.string(), nullable=False),
+            pa.field("ordinal", pa.uint16(), nullable=False),
+            pa.field("frag_charge", pa.uint8(), nullable=False),
+            pa.field("intensity", pa.float32(), nullable=False),
+        ],
+        metadata={
+            "timsim.table": "fragment_intensities",
+            "timsim.schema_version": "2.0",
+            "timsim.axis": "measurement",
+            "timsim.producer": "timsim-fragments",
+            "timsim.fragments.model": prov,
+            "timsim.fragments.collision_energy": repr(float(collision_energy)),
+        },
+    )
+
+
+def predict_fragment_batches(
     precursors: pd.DataFrame,
     collision_energy: float,
     floor: float = 1e-3,
     model: Optional[str] = None,
+    chunk: int = 2_000_000,
     verbose: bool = True,
-) -> tuple[pd.DataFrame, str]:
-    """Return ``(fragment_intensities frame, provenance)``.
+) -> tuple[str, pa.Schema, "Iterator[pa.RecordBatch]"]:
+    """Streaming core: ``(provenance, schema, generator of RecordBatch)``.
 
     ``precursors`` must have ``precursor_id, sequence, charge`` (the sequence being the modform's
-    [UNIMOD]-annotated sequence, so a modified peptide fragments as modified). One row per fragment
-    with intensity above ``floor``, normalised to the peptide's base peak; structurally-absent slots
-    (Prosit marks them -1) are dropped.
+    [UNIMOD]-annotated sequence, so a modified peptide fragments as modified). Each distinct
+    ``(sequence, charge)`` is decoded ONCE and fanned out over the precursors that share it, emitted in
+    row-groups of ``chunk`` fragments. Peak memory is one chunk — not the full ~n_precursors×54-row
+    frame, which at scale cost ~17 GB (and a slow per-row ``.iloc`` loop). Rows above ``floor``;
+    structurally-absent slots (Prosit marks them -1) are dropped.
     """
     need = {"precursor_id", "sequence", "charge"}
     missing = need - set(precursors.columns)
@@ -103,27 +130,60 @@ def predict_fragments(
     tensors, prov = predict_tensors(
         keys["sequence"], keys["charge"], [collision_energy] * len(keys), model=model
     )
+    schema = fragment_schema(prov, collision_energy)
 
-    # Decode each (29,2,3) tensor directly — no flatten, no slot arithmetic.
-    rows = {"sequence": [], "charge": [], "ion_type": [], "ordinal": [], "frag_charge": [], "intensity": []}
-    for i in range(len(keys)):
-        for it, ordinal, fc, v in decode_tensor(tensors[i], floor):
-            rows["sequence"].append(keys["sequence"].iloc[i])
-            rows["charge"].append(int(keys["charge"].iloc[i]))
-            rows["ion_type"].append(it)
-            rows["ordinal"].append(ordinal)
-            rows["frag_charge"].append(fc)
-            rows["intensity"].append(v)
-    decoded = pd.DataFrame(rows)
+    # key -> the precursor_ids sharing it, built with numpy .values (no pandas scalar indexing in the
+    # hot path — that indexing, not the model, was the bulk of the old runtime).
+    key2pids: dict = defaultdict(list)
+    for pid, s, c in zip(
+        precursors["precursor_id"].values, precursors["sequence"].values, precursors["charge"].values
+    ):
+        key2pids[(s, int(c))].append(int(pid))
+    key_tuples = list(zip(keys["sequence"].values, keys["charge"].astype(int).values))
 
-    out = precursors[["precursor_id", "sequence", "charge"]].merge(
-        decoded, on=["sequence", "charge"], how="inner"
+    def batches():
+        bp, bi, bo, bf, bv = [], [], [], [], []
+        total = 0
+        for i, key in enumerate(key_tuples):
+            frags = list(decode_tensor(tensors[i], floor))  # decode this key once
+            if not frags:
+                continue
+            for pid in key2pids.get(key, ()):
+                for it, ordinal, fc, v in frags:
+                    bp.append(pid); bi.append(it); bo.append(ordinal); bf.append(fc); bv.append(v)
+            if len(bp) >= chunk:
+                yield pa.record_batch(
+                    [pa.array(bp, pa.uint64()), pa.array(bi, pa.string()), pa.array(bo, pa.uint16()),
+                     pa.array(bf, pa.uint8()), pa.array(bv, pa.float32())], schema=schema)
+                total += len(bp)
+                bp, bi, bo, bf, bv = [], [], [], [], []
+        if bp:
+            yield pa.record_batch(
+                [pa.array(bp, pa.uint64()), pa.array(bi, pa.string()), pa.array(bo, pa.uint16()),
+                 pa.array(bf, pa.uint8()), pa.array(bv, pa.float32())], schema=schema)
+            total += len(bp)
+        if verbose:
+            print(f"    model             : {prov}")
+            print(f"    fragment rows      : {total:,}  (above floor {floor:g})")
+
+    return prov, schema, batches()
+
+
+def predict_fragments(
+    precursors: pd.DataFrame,
+    collision_energy: float,
+    floor: float = 1e-3,
+    model: Optional[str] = None,
+    verbose: bool = True,
+) -> tuple[pd.DataFrame, str]:
+    """Return ``(fragment_intensities frame, provenance)`` — the in-memory convenience wrapper around
+    :func:`predict_fragment_batches`. Materialises the whole frame, so for large inputs prefer the
+    streaming batch generator (that is what the CLI uses)."""
+    prov, schema, batches = predict_fragment_batches(
+        precursors, collision_energy, floor=floor, model=model, verbose=verbose
     )
-    out = out[["precursor_id", "ion_type", "ordinal", "frag_charge", "intensity"]]
-    if verbose:
-        print(f"    model             : {prov}")
-        print(f"    fragment rows      : {len(out):,}  (above floor {floor:g})")
-    return out.reset_index(drop=True), prov
+    table = pa.Table.from_batches(list(batches), schema=schema)
+    return table.to_pandas(), prov
 
 
 def main(argv=None) -> int:
@@ -145,33 +205,18 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     prec = pd.read_parquet(a.precursors)
-    frame, prov = predict_fragments(
+    a.out.parent.mkdir(parents=True, exist_ok=True)
+
+    # Stream row-groups straight to the file: the full fragment frame is never resident.
+    _prov, schema, batches = predict_fragment_batches(
         prec, a.collision_energy, floor=a.floor, model=a.model, verbose=not a.quiet
     )
-
-    a.out.parent.mkdir(parents=True, exist_ok=True)
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
-    schema = pa.schema(
-        [
-            pa.field("precursor_id", pa.uint64(), nullable=False),
-            pa.field("ion_type", pa.string(), nullable=False),
-            pa.field("ordinal", pa.uint16(), nullable=False),
-            pa.field("frag_charge", pa.uint8(), nullable=False),
-            pa.field("intensity", pa.float32(), nullable=False),
-        ],
-        metadata={
-            "timsim.table": "fragment_intensities",
-            "timsim.schema_version": "2.0",
-            "timsim.axis": "measurement",
-            "timsim.producer": "timsim-fragments",
-            "timsim.fragments.model": prov,
-            "timsim.fragments.collision_energy": repr(float(a.collision_energy)),
-        },
-    )
-    table = pa.Table.from_pandas(frame, schema=schema, preserve_index=False)
-    pq.write_table(table, a.out)
+    writer = pq.ParquetWriter(a.out, schema)
+    try:
+        for batch in batches:
+            writer.write_table(pa.Table.from_batches([batch], schema=schema))
+    finally:
+        writer.close()
     if not a.quiet:
         print(f"  -> {a.out}")
     return 0
