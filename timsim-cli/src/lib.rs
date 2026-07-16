@@ -17,7 +17,18 @@ use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
 use std::sync::Arc;
 
+/// DIA schedule replay + diagonal transmission — only when the `tdf` feature pulls mscore/rustdf.
+#[cfg(feature = "tdf")]
+pub mod dia;
+/// MS2 (DIA fragment) emission + its independent conservation oracle.
+#[cfg(feature = "tdf")]
+pub mod ms2;
+pub mod render;
+pub mod sequences;
 pub mod spec;
+/// Peptide-ion spectra (precursor + fragment) via mscore — only when the `tdf` feature pulls mscore.
+#[cfg(feature = "tdf")]
+pub mod spectrum;
 
 /// Build a record batch against a registered table's schema, so the column order and types
 /// come from the schema rather than from the caller's memory.

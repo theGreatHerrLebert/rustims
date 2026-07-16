@@ -40,6 +40,7 @@ pub fn all() -> Vec<TableSpec> {
         peptide_rt::spec(),
         localization_sites::spec(),
         fragment_intensities::spec(),
+        ion_spectra::spec(),
         cleavage_sites::spec(),
         samples::spec(),
         runs::spec(),
@@ -268,6 +269,40 @@ pub mod modforms {
                 Field::new(MASS_MONOISOTOPIC, DataType::Float64, false),
                 Field::new(MASS_DELTA, DataType::Float64, false),
                 Field::new(ABUNDANCE_FRACTION, DataType::Float64, false),
+            ],
+        )
+    }
+}
+
+pub mod ion_spectra {
+    use super::*;
+    pub const TABLE: &str = "ion_spectra";
+    pub const PRECURSOR_ID: &str = "precursor_id";
+    pub const MS_LEVEL: &str = "ms_level";
+    pub const MZ: &str = "mz";
+    pub const INTENSITY: &str = "intensity";
+
+    /// The **instrument-independent** spectra of a peptide ion — one MS1 (precursor isotopes) and one
+    /// MS2 (fragment isotopes) — as pure `(m/z, intensity)`. MEASUREMENT.
+    ///
+    /// This is the seam that makes the render a *projector*. The chemistry (which peaks exist, at what
+    /// m/z, how intense) is computed once from the peptide ion (mscore isotopic spectra + Prosit
+    /// fragment intensities) and carries no instrument geometry. A per-run projector then maps each
+    /// peak onto where it lands in the raw data — timsTOF `(frame, scan, tof)` with diagonal quadrupole
+    /// transmission, or a non-IMS `(scan, m/z)` layout — so one spectrum artifact drives any instrument.
+    ///
+    /// **Two rows per ion**, keyed by `ms_level` (1 = precursor, 2 = fragment; extensible to MS3+).
+    /// The MS2 row is the FULL fragment spectrum; transmission gating is the projector's job, not the
+    /// spectrum's. `mz`/`intensity` are equal-length lists (the sparse peak list, isotope-expanded).
+    pub fn spec() -> TableSpec {
+        super::spec(
+            TABLE,
+            Axis::Measurement,
+            vec![
+                Field::new(PRECURSOR_ID, DataType::UInt64, false),
+                Field::new(MS_LEVEL, DataType::UInt8, false),
+                Field::new(MZ, DataType::List(Arc::new(Field::new("item", DataType::Float64, true))), false),
+                Field::new(INTENSITY, DataType::List(Arc::new(Field::new("item", DataType::Float32, true))), false),
             ],
         )
     }

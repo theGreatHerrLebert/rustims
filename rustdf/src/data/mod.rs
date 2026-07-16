@@ -6,4 +6,5 @@ pub mod dia;
 pub mod handle;
 pub mod meta;
 pub mod raw;
+pub mod tdf_writer;
 pub mod utility;

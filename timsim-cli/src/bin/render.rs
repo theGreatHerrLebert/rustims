@@ -1,0 +1,743 @@
+//! `timsim-render` — the measurement stage: render the instrument-independent feature space into a
+//! real Bruker timsTOF `.d` (MS1-only for this milestone).
+//!
+//! Pipeline: read `precursors` + `peptide_rt` → place each precursor on the acquisition grid (m/z→TOF
+//! and 1/K0→scan, rt_index→frame) → stream-render isotope envelopes with the proven sweep
+//! ([`timsim_cli::render::stream_render_flat`]) → write frames through the Rust-native
+//! [`rustdf::data::tdf_writer::TdfWriter`].
+//!
+//! Two calibration modes:
+//!   - **`--reference-d <PATH>`** (recommended): copy the Bruker `MzCalibration`/`TimsCalibration`/
+//!     `GlobalMetadata`/`Segments` verbatim from a real `.d`, derive the acquisition geometry
+//!     (num_scans, TOF/mobility ranges) from it, and PLACE ions with that same calibration
+//!     ([`MzCalibrator`]/[`MobilityCalibrator`], ModelType 2). A vendor reader (openTIMS/DiaNN via the
+//!     Bruker SDK) then derives correct m/z and 1/K0 because placement and coefficients agree.
+//!   - **fallback** (no reference): the reference-free `SimpleIndexConverter` (sqrt TOF↔m/z, linear
+//!     scan↔1/K0) from CLI ranges — a valid, self-consistent file for our own tooling.
+
+use anyhow::{anyhow, Result};
+use arrow::array::{Array, Float32Array, Float64Array, ListArray, StringArray, UInt64Array, UInt8Array};
+use clap::Parser;
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use mscore::chemistry::formulas::ccs_to_one_over_reduced_mobility;
+use timsim_schema::tables::ion_spectra as SP;
+use timsim_schema::tables::precursor_ccs as CCS;
+
+use rustdf::data::calibration::{MobilityCalibrator, MzCalibrator};
+use rustdf::data::handle::{
+    IndexConverter, SimpleIndexConverter, TimsData, TimsIndexConverter, TimsLazyLoder,
+    TimsRawDataLayout,
+};
+use rustdf::data::meta::{read_global_meta_sql, read_meta_data_sql, read_mz_calibration, read_tims_calibration};
+use rustdf::data::tdf_writer::{RenderedFrame, TdfWriter, TdfWriterConfig};
+use rustdf::data::utility::flatten_scan_values;
+use timsim_cli::render::{stream_render_flat, Geometry, Ion};
+use timsim_schema::tables::{peptide_rt as RT, precursors as PRE};
+
+#[derive(Parser)]
+#[command(name = "timsim-render", about = "feature space -> streaming render -> MS1 Bruker .d")]
+struct Args {
+    #[arg(long)]
+    precursors: PathBuf,
+    #[arg(long)]
+    peptide_rt: PathBuf,
+    /// The instrument-independent spectra (`timsim-spectra` output). The render is a pure PROJECTOR:
+    /// it reads each ion's materialised MS1 spectrum and places its peaks onto the acquisition grid.
+    #[arg(long)]
+    ion_spectra: PathBuf,
+    /// `precursor_ccs` artifact. When given, each precursor's mobility is CCS→1/K0 (Mason-Schamp,
+    /// per-run gas/temperature) — physical mobility, required for a search engine. Without it, mobility
+    /// falls back to a non-physical m/z trend (fine for format checks, not for DiaNN).
+    #[arg(long)]
+    precursor_ccs: Option<PathBuf>,
+    /// `peptide_quantities` artifact — the per-sample biological abundance axis. When given, each ion's
+    /// intensity is scaled by `amount_amol × ionization_propensity × modform_fraction` (v1's `events`),
+    /// restoring the ~6-order dynamic range real DIA data has. WITHOUT it only `charge_fraction` varies,
+    /// so every peptide renders at ~the same level (~1 order) — no intense anchors, which a search
+    /// engine needs to calibrate against.
+    #[arg(long)]
+    peptide_quantities: Option<PathBuf>,
+    /// Which sample of the design to render (default: first sorted). One render is one sample.
+    #[arg(long)]
+    sample: Option<String>,
+    /// Output `.d` directory (overwritten if it exists).
+    #[arg(long)]
+    out: PathBuf,
+    /// Reference `.d` to copy Bruker calibration/metadata from and place ions with. Omit for the
+    /// reference-free Simple calibration.
+    #[arg(long)]
+    reference_d: Option<PathBuf>,
+    #[arg(long, default_value_t = 3000, value_parser = clap::value_parser!(u32).range(1..))]
+    n_frames: u32,
+    /// Mobility scans per frame (ignored in --reference-d mode: taken from the reference).
+    #[arg(long, default_value_t = 709, value_parser = clap::value_parser!(u32).range(1..))]
+    n_scans: u32,
+    #[arg(long, default_value_t = 30.0)]
+    sigma_frames: f64,
+    #[arg(long, default_value_t = 4.0)]
+    sigma_scans: f64,
+    #[arg(long, default_value_t = 3.0)]
+    n_sigma: f64,
+    /// Simple-mode m/z and 1/K0 ranges + digitizer size (ignored in --reference-d mode).
+    #[arg(long, default_value_t = 100.0)]
+    mz_min: f64,
+    #[arg(long, default_value_t = 1700.0)]
+    mz_max: f64,
+    #[arg(long, default_value_t = 0.6)]
+    im_min: f64,
+    #[arg(long, default_value_t = 1.6)]
+    im_max: f64,
+    #[arg(long, default_value_t = 400_000)]
+    digitizer_num_samples: u32,
+    #[arg(long, default_value_t = 0.1)]
+    cycle_seconds: f64,
+    #[arg(long, default_value_t = 100_000.0)]
+    intensity_scale: f64,
+    /// Drop quantised (scan, tof) bins whose intensity is below this floor. Emulates a peak-picking
+    /// cutoff: without it, the 2-D Gaussian spread emits a haze of intensity-1 bins that dominate the
+    /// peak count and drown the chromatographic shape in quantisation noise. `1` keeps every non-zero
+    /// bin (legacy behaviour).
+    #[arg(long, default_value_t = 1)]
+    min_peak_intensity: u32,
+    /// Incomplete fragmentation (DIA only): the fraction of each precursor that survives the quad
+    /// INTACT and bleeds into the MS2 windows, drawn per-ion (identity-keyed on precursor id) in
+    /// `[min, max]`. Default `0..0` = full fragmentation. Mirrors v1's `precursor_survival_min/max`;
+    /// set e.g. `--precursor-survival-max 0.3` for v1's PFRAG-MED regime.
+    #[arg(long, default_value_t = 0.0)]
+    precursor_survival_min: f64,
+    #[arg(long, default_value_t = 0.0)]
+    precursor_survival_max: f64,
+    #[arg(long, default_value_t = 0)]
+    limit: usize,
+    /// Render a DIA run: interleave MS1 + MS2 frames on the reference `.d`'s cycle, gate fragments by
+    /// the diagonal quadrupole transmission. Requires `--reference-d` (a DIA `.d` for the schedule).
+    #[arg(long, default_value_t = false)]
+    dia: bool,
+    /// After writing, reopen the `.d` through the rustims reader and report what round-trips.
+    #[arg(long, default_value_t = false)]
+    verify: bool,
+}
+
+/// The acquisition geometry + calibration used to place ions. Closures hide whether the calibration
+/// is the reference's Bruker model or the Simple fallback.
+struct Placement {
+    n_scans: u32,
+    tof_max: u32,
+    mz_min: f64,
+    mz_max: f64,
+    im_min: f64,
+    im_max: f64,
+    reference_d: Option<String>,
+    to_tof: Box<dyn Fn(f64) -> u32>,
+    to_scan: Box<dyn Fn(f64) -> u32>,
+    to_mz: Box<dyn Fn(u32) -> f64>,
+}
+
+fn build_placement(a: &Args) -> Result<Placement> {
+    match &a.reference_d {
+        Some(ref_d) => {
+            let ref_s = ref_d.to_str().unwrap().to_string();
+            let gm = read_global_meta_sql(&ref_s).map_err(|e| anyhow!("read reference GlobalMetadata: {e}"))?;
+            let frames = read_meta_data_sql(&ref_s).map_err(|e| anyhow!("read reference Frames: {e}"))?;
+            let f0 = frames.first().ok_or_else(|| anyhow!("reference .d has no frames"))?;
+            let n_scans = frames.iter().map(|f| f.num_scans).max().unwrap_or(0) as u32;
+
+            // Build the pure-Rust ModelType-2 calibrators from the reference coefficients + frame temps.
+            // Select the SAME calibration rows the copied Frames reference (f0's ids) — a reference with
+            // several calibrations would otherwise place peaks with coefficients that disagree with what
+            // the output stores, so a vendor reader would derive wrong m/z / mobility.
+            let mzc_row = read_mz_calibration(&ref_s).map_err(|e| anyhow!("{e}"))?
+                .into_iter().find(|c| c.id == f0.mz_calibration)
+                .ok_or_else(|| anyhow!("no MzCalibration with id {} in reference", f0.mz_calibration))?;
+            let mz = MzCalibrator::new(
+                mzc_row.model_type, mzc_row.digitizer_timebase, mzc_row.digitizer_delay,
+                mzc_row.t1, mzc_row.t2, mzc_row.dc1, mzc_row.dc2,
+                mzc_row.c0, mzc_row.c1, mzc_row.c2, mzc_row.c3, mzc_row.c4, f0.t_1, f0.t_2,
+            );
+            let mz_for_tof = MzCalibrator::new(
+                mzc_row.model_type, mzc_row.digitizer_timebase, mzc_row.digitizer_delay,
+                mzc_row.t1, mzc_row.t2, mzc_row.dc1, mzc_row.dc2,
+                mzc_row.c0, mzc_row.c1, mzc_row.c2, mzc_row.c3, mzc_row.c4, f0.t_1, f0.t_2,
+            );
+            let tc_row = read_tims_calibration(&ref_s).map_err(|e| anyhow!("{e}"))?
+                .into_iter().find(|c| c.id == f0.tims_calibration)
+                .ok_or_else(|| anyhow!("no TimsCalibration with id {} in reference", f0.tims_calibration))?;
+            let mob = MobilityCalibrator::new(
+                tc_row.c0, tc_row.c1, tc_row.c2, tc_row.c3, tc_row.c4,
+                tc_row.c5, tc_row.c6, tc_row.c7, tc_row.c8, tc_row.c9,
+            );
+
+            eprintln!(
+                "  reference .d: {}  (num_scans {}, tof_max {}, m/z {:.0}-{:.0}, 1/K0 {:.2}-{:.2})",
+                ref_s, n_scans, gm.tof_max_index, gm.mz_acquisition_range_lower,
+                gm.mz_acquisition_range_upper, gm.one_over_k0_range_lower, gm.one_over_k0_range_upper,
+            );
+            Ok(Placement {
+                n_scans,
+                tof_max: gm.tof_max_index,
+                mz_min: gm.mz_acquisition_range_lower,
+                mz_max: gm.mz_acquisition_range_upper,
+                im_min: gm.one_over_k0_range_lower,
+                im_max: gm.one_over_k0_range_upper,
+                reference_d: Some(ref_s),
+                to_tof: Box::new(move |m| mz_for_tof.mz_to_tof(m)),
+                to_scan: Box::new(move |k0| mob.one_over_k0_to_scan(k0)),
+                to_mz: Box::new(move |tof| mz.tof_to_mz(tof)),
+            })
+        }
+        None => {
+            let conv = SimpleIndexConverter::from_boundaries(
+                a.mz_min, a.mz_max, a.digitizer_num_samples, a.im_min, a.im_max, a.n_scans - 1,
+            );
+            let (tof_intercept, tof_slope) = (conv.tof_intercept, conv.tof_slope);
+            let (scan_intercept, scan_slope) = (conv.scan_intercept, conv.scan_slope);
+            Ok(Placement {
+                n_scans: a.n_scans,
+                tof_max: a.digitizer_num_samples,
+                mz_min: a.mz_min,
+                mz_max: a.mz_max,
+                im_min: a.im_min,
+                im_max: a.im_max,
+                reference_d: None,
+                // tof = (sqrt(mz) - tof_intercept) / tof_slope ; scan = (1/K0 - scan_intercept) / scan_slope
+                to_tof: Box::new(move |m| ((m.sqrt() - tof_intercept) / tof_slope).max(0.0) as u32),
+                to_scan: Box::new(move |k0| ((k0 - scan_intercept) / scan_slope).max(0.0) as u32),
+                to_mz: Box::new(move |tof| {
+                    let c = SimpleIndexConverter {
+                        tof_intercept,
+                        tof_slope,
+                        scan_intercept,
+                        scan_slope,
+                    };
+                    c.tof_to_mz(0, &vec![tof])[0]
+                }),
+            })
+        }
+    }
+}
+
+fn main() -> Result<()> {
+    let a = Args::parse();
+    if !(a.intensity_scale.is_finite() && a.intensity_scale > 0.0) {
+        return Err(anyhow!("--intensity-scale must be finite and > 0, got {}", a.intensity_scale));
+    }
+    let p = build_placement(&a)?;
+    let g = Geometry {
+        n_frames: a.n_frames,
+        n_scans: p.n_scans,
+        sigma_frames: a.sigma_frames,
+        sigma_scans: a.sigma_scans,
+        n_sigma: a.n_sigma,
+    };
+
+    // peptide_id -> rt_index.
+    let mut rt: HashMap<u64, f64> = HashMap::new();
+    for b in timsim_schema::read(&a.peptide_rt, RT::TABLE)? {
+        let id: &UInt64Array = b.column_by_name(RT::PEPTIDE_ID).unwrap().as_any().downcast_ref().unwrap();
+        let idx: &Float64Array = b.column_by_name(RT::RT_INDEX).unwrap().as_any().downcast_ref().unwrap();
+        for i in 0..b.num_rows() {
+            if Array::is_valid(idx, i) {
+                rt.insert(id.value(i), idx.value(i));
+            }
+        }
+    }
+    // The index -> frame mapping MUST use the artifact's fixed reference range (stamped over the whole
+    // peptide space), NOT the min/max of whatever subset is loaded — otherwise the same peptide lands
+    // at a different frame depending on `--limit` or which sample is rendered, defeating the whole
+    // point of a portable RT index (rt.py stamps these precisely so no consumer re-derives them).
+    let md = timsim_schema::metadata(&a.peptide_rt)?;
+    let parse = |key: &str| -> Result<f64> {
+        md.get(key)
+            .ok_or_else(|| anyhow!("peptide_rt missing {key} — cannot map rt index to frames"))?
+            .trim()
+            .parse::<f64>()
+            .map_err(|e| anyhow!("bad {key}: {e}"))
+    };
+    let lo = parse("timsim.rt.index_min")?;
+    let hi = parse("timsim.rt.index_max")?;
+    let span = (hi - lo).max(1e-9);
+
+    if a.dia {
+        return run_dia(&a, &p, &g, &rt, lo, span);
+    }
+
+    // ── project: place each ion's materialised MS1 spectrum onto the grid ──────
+    // The instrument-independent MS1 spectrum lives in ion_spectra; the render only PROJECTS it. Load
+    // precursor_id -> MS1 peaks (ms_level 1). (MS2 rows are the projector's business once DIA lands.)
+    let mut ms1: HashMap<u64, Vec<(f64, f32)>> = HashMap::new();
+    for b in timsim_schema::read(&a.ion_spectra, SP::TABLE)? {
+        let pcid: &UInt64Array = b.column_by_name(SP::PRECURSOR_ID).unwrap().as_any().downcast_ref().unwrap();
+        let level: &UInt8Array = b.column_by_name(SP::MS_LEVEL).unwrap().as_any().downcast_ref().unwrap();
+        let mz: &ListArray = b.column_by_name(SP::MZ).unwrap().as_any().downcast_ref().unwrap();
+        let inten: &ListArray = b.column_by_name(SP::INTENSITY).unwrap().as_any().downcast_ref().unwrap();
+        for i in 0..b.num_rows() {
+            if level.value(i) != 1 {
+                continue;
+            }
+            let mzv = mz.value(i);
+            let mzv: &Float64Array = mzv.as_any().downcast_ref().unwrap();
+            let iv = inten.value(i);
+            let iv: &Float32Array = iv.as_any().downcast_ref().unwrap();
+            let peaks: Vec<(f64, f32)> = (0..mzv.len()).map(|k| (mzv.value(k), iv.value(k))).collect();
+            ms1.insert(pcid.value(i), peaks);
+        }
+    }
+
+    // Precursors give each ion its placement coordinates: CCS -> mobility scan, peptide_id -> elution
+    // frame. The peaks themselves come from the materialised spectrum, projected via m/z -> TOF.
+    let ccs = load_ccs(&a.precursor_ccs)?;
+    let amounts = load_amounts(&a.peptide_quantities, &a.sample)?;
+    let mut ions: Vec<Ion> = Vec::new();
+    let mut skipped = 0usize;
+    'outer: for b in timsim_schema::read(&a.precursors, PRE::TABLE)? {
+        let pcid: &UInt64Array = b.column_by_name(PRE::PRECURSOR_ID).unwrap().as_any().downcast_ref().unwrap();
+        let pid: &UInt64Array = b.column_by_name(PRE::PEPTIDE_ID).unwrap().as_any().downcast_ref().unwrap();
+        let mz: &Float64Array = b.column_by_name(PRE::MZ).unwrap().as_any().downcast_ref().unwrap();
+        let chg: &UInt8Array = b.column_by_name(PRE::CHARGE).unwrap().as_any().downcast_ref().unwrap();
+        let frac: &Float32Array = b.column_by_name(PRE::CHARGE_FRACTION).unwrap().as_any().downcast_ref().unwrap();
+        let ionz: &Float32Array = b.column_by_name(PRE::IONIZATION_PROPENSITY).unwrap().as_any().downcast_ref().unwrap();
+        let mff: &Float32Array = b.column_by_name(PRE::MODFORM_FRACTION).unwrap().as_any().downcast_ref().unwrap();
+        for i in 0..b.num_rows() {
+            let Some(spec) = ms1.get(&pcid.value(i)) else { continue }; // no materialised spectrum
+            let Some(&rt_index) = rt.get(&pid.value(i)) else { continue };
+            // Map the index range onto the LAST valid 0-based frame (n_frames - 1); scaling by n_frames
+            // puts index_max one frame past the end (and disagrees with the DIA path).
+            let apex_frame = (rt_index - lo) / span * (a.n_frames as f64 - 1.0);
+            let scan = place_scan(pcid.value(i), mz.value(i), chg.value(i).max(1) as u32, &ccs, &p);
+
+            let peaks: Vec<(u32, f32)> = spec
+                .iter()
+                .filter_map(|&(m, inten)| {
+                    if m < p.mz_min || m > p.mz_max {
+                        None // out of the acquisition range — the instrument wouldn't record it
+                    } else {
+                        // Highest valid TOF index is DigitizerNumSamples = tof_max - 1; tof_max itself
+                        // is one past the declared range and some readers reject it.
+                        Some(((p.to_tof)(m).min(p.tof_max.saturating_sub(1)), inten))
+                    }
+                })
+                .collect();
+            if peaks.is_empty() {
+                skipped += 1;
+                continue;
+            }
+            let amount = amounts.get(&pid.value(i)).copied().unwrap_or(1.0);
+            let abundance = amount * ionz.value(i) as f64 * mff.value(i) as f64 * frac.value(i) as f64;
+            ions.push(Ion { apex_frame, scan_center: scan as f64, abundance, peaks });
+            if a.limit > 0 && ions.len() >= a.limit {
+                break 'outer;
+            }
+        }
+    }
+    eprintln!(
+        "  projected {} ions ({} skipped: no in-range peaks) — rendering to {}",
+        ions.len(), skipped, a.out.display()
+    );
+
+    // ── render -> write ──────────────────────────────────────────────────────
+    let _ = std::fs::remove_dir_all(&a.out);
+    let cfg = TdfWriterConfig {
+        num_scans: p.n_scans,
+        digitizer_num_samples: p.tof_max.saturating_sub(1),
+        mz_range: (p.mz_min, p.mz_max),
+        one_over_k0_range: (p.im_min, p.im_max),
+        compression_level: 1,
+        scan_mode: 9,
+        reference_d: p.reference_d.clone(),
+    };
+    let mut writer = TdfWriter::create(&a.out, cfg).map_err(|e| anyhow!("{e}"))?;
+
+    let mut next_fid: u32 = 1;
+    let mut total_peaks: u64 = 0;
+    let mut err: Result<()> = Ok(());
+    stream_render_flat(&ions, &g, |e| {
+        if err.is_err() {
+            return;
+        }
+        let target = e.frame + 1;
+        while next_fid < target {
+            if let Err(x) = write_frame(&mut writer, next_fid, 0, a.cycle_seconds, Vec::new(), Vec::new(), Vec::new()) {
+                err = Err(x);
+                return;
+            }
+            next_fid += 1;
+        }
+        let (scans, tofs, ints) = dedup_and_quantise(e.triples, a.intensity_scale, a.min_peak_intensity);
+        total_peaks += scans.len() as u64;
+        if let Err(x) = write_frame(&mut writer, target, 0, a.cycle_seconds, scans, tofs, ints) {
+            err = Err(x);
+            return;
+        }
+        next_fid = target + 1;
+    });
+    err?;
+    while next_fid <= a.n_frames {
+        write_frame(&mut writer, next_fid, 0, a.cycle_seconds, Vec::new(), Vec::new(), Vec::new())?;
+        next_fid += 1;
+    }
+    writer.finalize().map_err(|e| anyhow!("{e}"))?;
+    println!(
+        "  wrote {} frames, {} MS1 peaks ({} calibration) -> {}",
+        a.n_frames, total_peaks,
+        if p.reference_d.is_some() { "reference Bruker" } else { "Simple" },
+        a.out.display()
+    );
+
+    if a.verify {
+        verify(&a.out, &p)?;
+    }
+    Ok(())
+}
+
+/// One-shot latch so a saturating `intensity_scale` warns once, not once per frame.
+static SATURATION_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Sum a frame's (possibly duplicated) triples in f64 per (scan, tof), then quantise. Summing before
+/// quantising keeps co-eluting sub-quantum signal (the invariant the throughput bench enforces).
+///
+/// The quantum is `intensity_scale`. Bins below `floor` counts are dropped (a peak-picking cutoff);
+/// bins whose scaled value exceeds `u32::MAX` would be silently clipped by the `as u32` saturating cast,
+/// so we detect that and warn ONCE — a saturated frame means `intensity_scale` is too hot for the most
+/// abundant ion and the dynamic range is being crushed at the top (calibrate the scale down).
+fn dedup_and_quantise(triples: &[(u32, u32, f64)], scale: f64, floor: u32) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
+    debug_assert!(scale.is_finite() && scale > 0.0, "intensity_scale must be finite and > 0");
+    const CEIL: f64 = u32::MAX as f64;
+    let mut summed: HashMap<(u32, u32), f64> = HashMap::with_capacity(triples.len());
+    for &(scan, tof, v) in triples {
+        *summed.entry((scan, tof)).or_insert(0.0) += v;
+    }
+    let (mut scans, mut tofs, mut ints) = (Vec::new(), Vec::new(), Vec::new());
+    for ((scan, tof), v) in summed {
+        let scaled = v * scale;
+        if scaled >= CEIL
+            && !SATURATION_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            eprintln!(
+                "  WARNING: intensity saturated a u32 bin (scaled {:.3e} >= {:.3e}) — --intensity-scale \
+                 is too high for the most abundant ion; top of the dynamic range is being clipped",
+                scaled, CEIL
+            );
+        }
+        let q = scaled.min(CEIL) as u32;
+        if q < floor.max(1) {
+            continue;
+        }
+        scans.push(scan);
+        tofs.push(tof);
+        ints.push(q);
+    }
+    (scans, tofs, ints)
+}
+
+/// Standard TIMS gas / temperature for Mason-Schamp (N2 at ~305 K — the imspy defaults the CCS model
+/// was trained against). These are the "per-run" settings the CCS→1/K0 conversion needs.
+const MASS_GAS: f64 = 28.013;
+const TEMP: f64 = 31.85;
+const T_DIFF: f64 = 273.15;
+
+/// `precursor_id -> CCS` (Å²), or an empty map if no artifact is given.
+fn load_ccs(path: &Option<PathBuf>) -> Result<HashMap<u64, f64>> {
+    let mut out = HashMap::new();
+    let Some(path) = path else { return Ok(out) };
+    for b in timsim_schema::read(path, CCS::TABLE)? {
+        let pcid: &UInt64Array = b.column_by_name(CCS::PRECURSOR_ID).unwrap().as_any().downcast_ref().unwrap();
+        let ccs: &Float64Array = b.column_by_name(CCS::CCS).unwrap().as_any().downcast_ref().unwrap();
+        for i in 0..b.num_rows() {
+            out.insert(pcid.value(i), ccs.value(i));
+        }
+    }
+    Ok(out)
+}
+
+/// `peptide_id -> amount_amol` for one sample of the design (the first sorted `sample_id` if `sample`
+/// is None). Empty map when no `peptide_quantities` path is given — the caller then falls back to a
+/// unit amount, i.e. abundance driven by charge/ionisation propensities only.
+fn load_amounts(path: &Option<PathBuf>, sample: &Option<String>) -> Result<HashMap<u64, f64>> {
+    use timsim_schema::tables::peptide_quantities as PQ;
+    let mut out = HashMap::new();
+    let Some(path) = path else { return Ok(out) };
+
+    // Resolve the sample: the caller's choice, or the first sorted id present.
+    let chosen = match sample {
+        Some(s) => s.clone(),
+        None => {
+            let mut samples: Vec<String> = Vec::new();
+            for b in timsim_schema::read(path, PQ::TABLE)? {
+                let s: &StringArray = b.column_by_name(PQ::SAMPLE_ID).unwrap().as_any().downcast_ref().unwrap();
+                for i in 0..b.num_rows() {
+                    samples.push(s.value(i).to_string());
+                }
+            }
+            samples.sort();
+            samples.dedup();
+            samples.into_iter().next().ok_or_else(|| anyhow!("{} has no samples", path.display()))?
+        }
+    };
+
+    for b in timsim_schema::read(path, PQ::TABLE)? {
+        let pid: &UInt64Array = b.column_by_name(PQ::PEPTIDE_ID).unwrap().as_any().downcast_ref().unwrap();
+        let sid: &StringArray = b.column_by_name(PQ::SAMPLE_ID).unwrap().as_any().downcast_ref().unwrap();
+        let amt: &Float64Array = b.column_by_name(PQ::AMOUNT_AMOL).unwrap().as_any().downcast_ref().unwrap();
+        for i in 0..b.num_rows() {
+            if sid.value(i) == chosen {
+                out.insert(pid.value(i), amt.value(i));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Deterministic `u64 -> [0, 1)` (splitmix64 finaliser). Identity-keyed randomness: the same id always
+/// maps to the same value, so per-ion draws (e.g. survival) don't reshuffle when the ion set changes.
+fn hash01(x: u64) -> f64 {
+    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    (z >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// The mobility scan for a precursor: physical CCS→1/K0 (Mason-Schamp) when its CCS is known, else a
+/// non-physical m/z trend. The 1/K0 is clamped to the acquisition band, then mapped to a scan by the
+/// run's mobility calibration.
+fn place_scan(pcid: u64, mz: f64, charge: u32, ccs: &HashMap<u64, f64>, p: &Placement) -> f64 {
+    let one_over_k0 = match ccs.get(&pcid) {
+        Some(&c) => ccs_to_one_over_reduced_mobility(c, mz, charge, MASS_GAS, TEMP, T_DIFF),
+        None => {
+            let f = ((mz - p.mz_min) / (p.mz_max - p.mz_min)).clamp(0.0, 1.0);
+            p.im_min + (p.im_max - p.im_min) * f
+        }
+    };
+    (p.to_scan)(one_over_k0.clamp(p.im_min, p.im_max)).min(p.n_scans - 1) as f64
+}
+
+/// DIA render: MS1+MS2 frames on the reference's cycle, fragments gated by the diagonal transmission.
+fn run_dia(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f64, span: f64) -> Result<()> {
+    use timsim_cli::dia::DiaSchedule;
+    use timsim_cli::ms2::{dia_render, DiaIon};
+
+    let ref_d = a.reference_d.as_ref().ok_or_else(|| anyhow!("--dia requires --reference-d (a DIA .d for the window schedule)"))?;
+    let sched = DiaSchedule::from_reference(ref_d.to_str().unwrap(), a.n_frames, p.n_scans)?;
+    eprintln!("  DIA schedule: cycle_len {}, {} windows", sched.cycle_len, sched.windows.len());
+
+    // ion_spectra: precursor_id -> raw (m/z, intensity) peaks, per level.
+    let (mut ms1, mut ms2): (HashMap<u64, Vec<(f64, f32)>>, HashMap<u64, Vec<(f64, f32)>>) =
+        (HashMap::new(), HashMap::new());
+    for b in timsim_schema::read(&a.ion_spectra, SP::TABLE)? {
+        let pcid: &UInt64Array = b.column_by_name(SP::PRECURSOR_ID).unwrap().as_any().downcast_ref().unwrap();
+        let level: &UInt8Array = b.column_by_name(SP::MS_LEVEL).unwrap().as_any().downcast_ref().unwrap();
+        let mz: &ListArray = b.column_by_name(SP::MZ).unwrap().as_any().downcast_ref().unwrap();
+        let inten: &ListArray = b.column_by_name(SP::INTENSITY).unwrap().as_any().downcast_ref().unwrap();
+        for i in 0..b.num_rows() {
+            let mzv = mz.value(i);
+            let mzv: &Float64Array = mzv.as_any().downcast_ref().unwrap();
+            let iv = inten.value(i);
+            let iv: &Float32Array = iv.as_any().downcast_ref().unwrap();
+            let peaks: Vec<(f64, f32)> = (0..mzv.len()).map(|k| (mzv.value(k), iv.value(k))).collect();
+            match level.value(i) {
+                1 => { ms1.insert(pcid.value(i), peaks); }
+                2 => { ms2.insert(pcid.value(i), peaks); }
+                _ => {}
+            }
+        }
+    }
+
+    // Project each precursor's spectra to tof and build DIA ions.
+    let project = |peaks: &[(f64, f32)]| -> Vec<(u32, f32)> {
+        peaks
+            .iter()
+            .filter_map(|&(m, inten)| {
+                if m < p.mz_min || m > p.mz_max {
+                    None
+                } else {
+                    Some(((p.to_tof)(m).min(p.tof_max.saturating_sub(1)), inten))
+                }
+            })
+            .collect()
+    };
+    let ccs = load_ccs(&a.precursor_ccs)?;
+    let amounts = load_amounts(&a.peptide_quantities, &a.sample)?;
+    if amounts.is_empty() {
+        eprintln!("  WARNING: no peptide_quantities — abundance is charge/ionisation only (~1 order of dynamic range, no anchor precursors)");
+    }
+    // Incomplete fragmentation is on only when max > 0; clamp to [0,1] and keep min <= max.
+    let survival_span: Option<(f64, f64)> = if a.precursor_survival_max > 0.0 {
+        if a.precursor_survival_min > a.precursor_survival_max {
+            eprintln!(
+                "  WARNING: --precursor-survival-min ({}) > --precursor-survival-max ({}); clamping min to max",
+                a.precursor_survival_min, a.precursor_survival_max
+            );
+        }
+        let mx = a.precursor_survival_max.clamp(0.0, 1.0);
+        let mn = a.precursor_survival_min.clamp(0.0, mx);
+        eprintln!("  incomplete fragmentation: precursor survival drawn per-ion in [{mn:.3}, {mx:.3}]");
+        Some((mn, mx))
+    } else {
+        None
+    };
+    let mut ions: Vec<DiaIon> = Vec::new();
+    'outer: for b in timsim_schema::read(&a.precursors, PRE::TABLE)? {
+        let pcid: &UInt64Array = b.column_by_name(PRE::PRECURSOR_ID).unwrap().as_any().downcast_ref().unwrap();
+        let pid: &UInt64Array = b.column_by_name(PRE::PEPTIDE_ID).unwrap().as_any().downcast_ref().unwrap();
+        let mz: &Float64Array = b.column_by_name(PRE::MZ).unwrap().as_any().downcast_ref().unwrap();
+        let chg: &UInt8Array = b.column_by_name(PRE::CHARGE).unwrap().as_any().downcast_ref().unwrap();
+        let frac: &Float32Array = b.column_by_name(PRE::CHARGE_FRACTION).unwrap().as_any().downcast_ref().unwrap();
+        let ionz: &Float32Array = b.column_by_name(PRE::IONIZATION_PROPENSITY).unwrap().as_any().downcast_ref().unwrap();
+        let mff: &Float32Array = b.column_by_name(PRE::MODFORM_FRACTION).unwrap().as_any().downcast_ref().unwrap();
+        for i in 0..b.num_rows() {
+            let Some(spec1) = ms1.get(&pcid.value(i)) else { continue };
+            let Some(&rt_index) = rt.get(&pid.value(i)) else { continue };
+            // 1-based apex frame (the DIA schedule + Frames.Id are 1-based).
+            let apex_frame = 1.0 + (rt_index - lo) / span * (a.n_frames as f64 - 1.0);
+            let scan = place_scan(pcid.value(i), mz.value(i), chg.value(i).max(1) as u32, &ccs, p);
+            let ms1_peaks = project(spec1); // (DIA path — p is &Placement here)
+            let ms2_peaks = ms2.get(&pcid.value(i)).map(|s| project(s)).unwrap_or_default();
+            if ms1_peaks.is_empty() && ms2_peaks.is_empty() {
+                continue;
+            }
+            // v1's `events`: amount_amol (per sample) × ionisation propensity × modform fraction ×
+            // charge fraction. amount 1.0 when no quantities given (propensities-only fallback).
+            let amount = amounts.get(&pid.value(i)).copied().unwrap_or(1.0);
+            let abundance = amount * ionz.value(i) as f64 * mff.value(i) as f64 * frac.value(i) as f64;
+            // Incomplete-fragmentation survival, drawn per-ion in [min, max] — but IDENTITY-KEYED on the
+            // precursor id, not a bulk RNG, so adding an ion doesn't reshuffle everyone else's survival
+            // (same discipline as the flyability fallback). Zero span => constant `min`.
+            let survival = survival_span
+                .map(|(mn, mx)| mn + (mx - mn) * hash01(pcid.value(i)))
+                .unwrap_or(0.0);
+            ions.push(DiaIon {
+                apex_frame,
+                scan_center: scan as f64,
+                abundance,
+                precursor_mz: mz.value(i),
+                ms1_peaks,
+                ms2_peaks,
+                survival,
+            });
+            if a.limit > 0 && ions.len() >= a.limit {
+                break 'outer;
+            }
+        }
+    }
+    eprintln!("  projected {} DIA ions -> {}", ions.len(), a.out.display());
+
+    // Render + write, per-frame MsMsType.
+    let _ = std::fs::remove_dir_all(&a.out);
+    let cfg = TdfWriterConfig {
+        num_scans: p.n_scans,
+        digitizer_num_samples: p.tof_max.saturating_sub(1),
+        mz_range: (p.mz_min, p.mz_max),
+        one_over_k0_range: (p.im_min, p.im_max),
+        compression_level: 1,
+        scan_mode: 9,
+        reference_d: p.reference_d.clone(),
+    };
+    let mut writer = TdfWriter::create(&a.out, cfg).map_err(|e| anyhow!("{e}"))?;
+    // Persist OUR replayed frame -> window group (DiaFrameMsMsInfo) + the reference's windows.
+    let frame_to_group: Vec<(u32, u32)> = (1..=a.n_frames)
+        .filter_map(|f| sched.window_group(f).map(|g| (f, g)))
+        .collect();
+    writer.set_dia_schedule(frame_to_group);
+
+    let mut next_fid: u32 = 1;
+    let (mut ms1_peaks, mut ms2_peaks) = (0u64, 0u64);
+    let mut err: Result<()> = Ok(());
+    let gap_ms = |f: u32| if sched.ms_level(f) == 1 { 0u8 } else { 9u8 };
+    dia_render(&ions, &sched, g, |frame, ms_type, tri| {
+        if err.is_err() {
+            return;
+        }
+        while next_fid < frame {
+            if let Err(x) = write_frame(&mut writer, next_fid, gap_ms(next_fid), a.cycle_seconds, Vec::new(), Vec::new(), Vec::new()) {
+                err = Err(x);
+                return;
+            }
+            next_fid += 1;
+        }
+        let (scans, tofs, ints) = dedup_and_quantise(tri, a.intensity_scale, a.min_peak_intensity);
+        if ms_type == 0 { ms1_peaks += scans.len() as u64 } else { ms2_peaks += scans.len() as u64 }
+        if let Err(x) = write_frame(&mut writer, frame, ms_type, a.cycle_seconds, scans, tofs, ints) {
+            err = Err(x);
+            return;
+        }
+        next_fid = frame + 1;
+    });
+    err?;
+    while next_fid <= a.n_frames {
+        write_frame(&mut writer, next_fid, gap_ms(next_fid), a.cycle_seconds, Vec::new(), Vec::new(), Vec::new())?;
+        next_fid += 1;
+    }
+    writer.finalize().map_err(|e| anyhow!("{e}"))?;
+    println!("  wrote {} frames ({} MS1 + {} MS2 peaks) -> {}", a.n_frames, ms1_peaks, ms2_peaks, a.out.display());
+    if a.verify {
+        verify(&a.out, p)?;
+    }
+    Ok(())
+}
+
+fn write_frame(
+    writer: &mut TdfWriter,
+    frame_id: u32,
+    ms_ms_type: u8,
+    cycle_seconds: f64,
+    scans: Vec<u32>,
+    tofs: Vec<u32>,
+    intensities: Vec<u32>,
+) -> Result<()> {
+    writer
+        .write_frame(&RenderedFrame {
+            frame_id,
+            retention_time: frame_id as f64 * cycle_seconds,
+            ms_ms_type,
+            scans,
+            tofs,
+            intensities,
+        })
+        .map_err(|e| anyhow!("{e}"))
+}
+
+/// Reopen the `.d` through the rustims reader and report what round-trips.
+fn verify(dir: &std::path::Path, p: &Placement) -> Result<()> {
+    let layout = TimsRawDataLayout::new(dir.to_str().unwrap());
+    let n = layout.frame_meta_data.len();
+    // Any converter suffices for raw reads; m/z below is computed via the placement's own calibration.
+    let sic = SimpleIndexConverter::from_boundaries(p.mz_min, p.mz_max, p.tof_max, p.im_min, p.im_max, p.n_scans - 1);
+    let reader = TimsLazyLoder { raw_data_layout: layout, index_converter: TimsIndexConverter::Simple(sic) };
+
+    let mut total = 0u64;
+    let mut non_empty = 0u64;
+    let mut best: (u32, usize) = (0, 0);
+    for fid in 1..=n as u32 {
+        let raw = reader.get_raw_frame(fid);
+        let peaks = raw.tof.len();
+        total += peaks as u64;
+        if peaks > 0 {
+            non_empty += 1;
+            if peaks > best.1 {
+                best = (fid, peaks);
+            }
+        }
+    }
+    println!();
+    println!("  ── verify (reopened through the rustims reader) ────────────");
+    println!("  frames read           : {n}");
+    println!("  non-empty frames      : {non_empty}");
+    println!("  total MS1 peaks        : {total}");
+    if best.1 > 0 {
+        let raw = reader.get_raw_frame(best.0);
+        let scans = flatten_scan_values(&raw.scan, true);
+        let mut idx: Vec<usize> = (0..raw.intensity.len()).collect();
+        idx.sort_by(|&x, &y| raw.intensity[y].partial_cmp(&raw.intensity[x]).unwrap());
+        println!("  busiest frame          : id {} with {} peaks", best.0, best.1);
+        for &j in idx.iter().take(3) {
+            let mz = (p.to_mz)(raw.tof[j]);
+            println!(
+                "      scan {:>4}  tof {:>7}  m/z {:>9.4}  intensity {:.0}",
+                scans[j], raw.tof[j], mz, raw.intensity[j]
+            );
+        }
+    }
+    Ok(())
+}

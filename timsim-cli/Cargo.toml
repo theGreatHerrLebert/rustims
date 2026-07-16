@@ -36,6 +36,19 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 anyhow = "1"
 rayon = "1.10"
+# The real Bruker TDF machinery: the per-frame block encoder (for the throughput bench) and the
+# `.d` writer + index converters (for `timsim-render`). Optional so the other lightweight tools don't
+# pull rustdf (polars + bundled SQLite).
+rustdf = { path = "../rustdf", optional = true }
+# The peptide-ion spectrum machinery (precursor + fragment isotopic spectra) the render uses. Optional,
+# alongside rustdf, so the lightweight tools don't pull it.
+mscore = { path = "../mscore", optional = true }
+
+[features]
+# Enables everything that touches the real TDF format + spectrum generation — the encode path in the
+# throughput bench, the `timsim-render` .d writer, and the mscore peptide-ion spectra:
+#   cargo build --release -p timsim-cli --features tdf
+tdf = ["dep:rustdf", "dep:mscore"]
 
 [[bin]]
 name = "timsim-modify"
@@ -44,3 +57,19 @@ path = "src/bin/modify.rs"
 [[bin]]
 name = "timsim-localization"
 path = "src/bin/localization.rs"
+
+[[bin]]
+name = "timsim-render-bench"
+path = "src/bin/render_bench.rs"
+
+# The MS1 .d renderer: feature space -> streaming render -> real Bruker .d. Needs the tdf feature.
+[[bin]]
+name = "timsim-render"
+path = "src/bin/render.rs"
+required-features = ["tdf"]
+
+# Instrument-independent MS1+MS2 spectrum materialisation (mscore). Needs the tdf feature (mscore).
+[[bin]]
+name = "timsim-spectra"
+path = "src/bin/spectra.rs"
+required-features = ["tdf"]
