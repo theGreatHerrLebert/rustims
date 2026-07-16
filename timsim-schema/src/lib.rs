@@ -149,6 +149,22 @@ pub enum SchemaError {
     },
 }
 
+/// Type equality that ignores the *name* of a List's inner field. Arrow names list elements
+/// "item" (arrow-rs, our writer) or "element" (parquet spec, what pyarrow's writer emits); the two
+/// are semantically identical, so a Parquet file that round-tripped through pandas/pyarrow must not
+/// be rejected purely for saying "element". The value type and its nullability still matter and are
+/// compared recursively (so a genuine element-type mismatch is still caught).
+fn types_compatible(found: &DataType, want: &DataType) -> bool {
+    match (found, want) {
+        (DataType::List(a), DataType::List(b))
+        | (DataType::LargeList(a), DataType::LargeList(b)) => {
+            a.is_nullable() == b.is_nullable()
+                && types_compatible(a.data_type(), b.data_type())
+        }
+        _ => found == want,
+    }
+}
+
 /// A column-level diff, written to be read by a human at 2am.
 fn conformance_report(spec: &TableSpec, actual: &SchemaRef) -> Option<String> {
     let actual_types: HashMap<&str, &DataType> = actual
@@ -171,7 +187,7 @@ fn conformance_report(spec: &TableSpec, actual: &SchemaRef) -> Option<String> {
                 want.name(),
                 want.data_type()
             )),
-            Some(found) if *found != want.data_type() => problems.push(format!(
+            Some(found) if !types_compatible(found, want.data_type()) => problems.push(format!(
                 "  - column {:?} has type {} but the schema declares {}",
                 want.name(),
                 found,
