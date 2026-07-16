@@ -587,13 +587,16 @@ fn run_dia(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
         let ionz: &Float32Array = b.column_by_name(PRE::IONIZATION_PROPENSITY).unwrap().as_any().downcast_ref().unwrap();
         let mff: &Float32Array = b.column_by_name(PRE::MODFORM_FRACTION).unwrap().as_any().downcast_ref().unwrap();
         for i in 0..b.num_rows() {
-            let Some(spec1) = ms1.get(&pcid.value(i)) else { continue };
             let Some(&rt_index) = rt.get(&pid.value(i)) else { continue };
+            // Drain the raw-spectra maps as we project (remove, not get): the raw peaks are freed the
+            // moment they become the projected ion, so peak memory is the raw spectra alone, not raw +
+            // projected held at once. precursor_id is unique, so each is consumed exactly once.
+            let Some(spec1) = ms1.remove(&pcid.value(i)) else { continue };
             // 1-based apex frame (the DIA schedule + Frames.Id are 1-based).
             let apex_frame = 1.0 + (rt_index - lo) / span * (a.n_frames as f64 - 1.0);
             let scan = place_scan(pcid.value(i), mz.value(i), chg.value(i).max(1) as u32, &ccs, p);
-            let ms1_peaks = project(spec1); // (DIA path — p is &Placement here)
-            let ms2_peaks = ms2.get(&pcid.value(i)).map(|s| project(s)).unwrap_or_default();
+            let ms1_peaks = project(&spec1); // (DIA path — p is &Placement here)
+            let ms2_peaks = ms2.remove(&pcid.value(i)).map(|s| project(&s)).unwrap_or_default();
             if ms1_peaks.is_empty() && ms2_peaks.is_empty() {
                 continue;
             }

@@ -173,23 +173,44 @@ pub fn ms2_reference(ions: &[DiaIon], sched: &DiaSchedule, g: &Geometry) -> BTre
 /// `MsMsType` (0 / 9) the writer stamps. The MS2 half is exactly the emission the oracle pins; the MS1
 /// half is the same isotope placement the MS1 sweep uses, restricted to MS1 frames.
 ///
-/// This is frame-major and not yet active-set-optimised — correctness first; the streaming/chunked
-/// speed-up (as on the MS1 path) is a follow-up once parity is confirmed.
+/// Active-set sweep-line (the deferred "active-set-optimised" speed-up; the frame-major version rescanned
+/// every ion for every frame — O(frames × ions), which dominated render time at scale). Ions are entered
+/// in `frame_start` order against a moving frame cursor and dropped once past `frame_end`, so each frame
+/// touches only its active ions: ~O(frames + Σ active). The output is identical to the frame-major
+/// version — the same ions are active at each frame, and each frame's active set is visited in original
+/// ion-index order, so the per-frame deposit sequence (summed downstream, order-independent anyway) is
+/// unchanged.
 pub fn dia_render<F: FnMut(u32, u8, &[(u32, u32, f64)])>(
     ions: &[DiaIon],
     sched: &DiaSchedule,
     g: &Geometry,
     mut emit: F,
 ) {
+    let n = ions.len();
+    let windows: Vec<(u32, u32)> = ions.iter().map(|io| active_frames(io.apex_frame, g)).collect();
+    // Enter in frame_start order; sort indices, not the ions (peaks stay put).
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_unstable_by_key(|&i| windows[i].0);
+    let mut cursor = 0usize;
+    let mut active: Vec<usize> = Vec::new();
+
     for frame in 1..=g.n_frames {
+        // Enter ions whose window has opened.
+        while cursor < n && windows[order[cursor]].0 <= frame {
+            active.push(order[cursor]);
+            cursor += 1;
+        }
+        // Leave ions whose window has closed.
+        active.retain(|&i| windows[i].1 >= frame);
+        if active.is_empty() {
+            continue;
+        }
+        active.sort_unstable(); // visit in original-index order -> deterministic, frame-major-identical
         let ms_level = sched.ms_level(frame);
         let f = frame as f64;
         let mut buf: Vec<(u32, u32, f64)> = Vec::new();
-        for ion in ions {
-            let (fs, fe) = active_frames(ion.apex_frame, g);
-            if frame < fs || frame > fe {
-                continue;
-            }
+        for &idx in &active {
+            let ion = &ions[idx];
             let ew = gauss_frac(f - 0.5, f + 0.5, ion.apex_frame, g.sigma_frames);
             if ew <= 0.0 {
                 continue;
