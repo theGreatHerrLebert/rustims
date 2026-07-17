@@ -23,7 +23,7 @@
 
 use arrow::datatypes::{DataType, SchemaRef};
 use arrow::record_batch::RecordBatch;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::arrow_reader::{ParquetRecordBatchReader, ParquetRecordBatchReaderBuilder};
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
 use std::collections::HashMap;
@@ -313,6 +313,16 @@ pub fn write_with(
 /// missing, or retyped column fails *here* — at the boundary, with a column-level message —
 /// rather than three stages downstream inside a `row.get()` that has no idea what went wrong.
 pub fn read(path: impl AsRef<Path>, table: &str) -> Result<Vec<RecordBatch>, SchemaError> {
+    Ok(read_stream(path, table)?.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// Like [`read`], but returns the LAZY row-group iterator instead of materialising every batch. Same
+/// stamp/version/conformance checks up front; the data is then pulled a batch at a time, so a consumer
+/// can stream an arbitrarily large table in bounded memory (the chunked render depends on this).
+pub fn read_stream(
+    path: impl AsRef<Path>,
+    table: &str,
+) -> Result<ParquetRecordBatchReader, SchemaError> {
     let path_s = path.as_ref().display().to_string();
     let spec = tables::by_name(table).ok_or_else(|| {
         SchemaError::UnknownTable(
@@ -365,8 +375,7 @@ pub fn read(path: impl AsRef<Path>, table: &str) -> Result<Vec<RecordBatch>, Sch
         });
     }
 
-    let reader = builder.build()?;
-    Ok(reader.collect::<Result<Vec<_>, _>>()?)
+    Ok(builder.build()?)
 }
 
 /// The key-value metadata of an artifact, without reading its data.

@@ -42,8 +42,10 @@ pub struct DiaIon {
     pub survival: f64,
 }
 
-/// Elution frame window `[start, end]` (1-based, to match the DIA schedule / `Frames.Id`).
-fn active_frames(apex: f64, g: &Geometry) -> (u32, u32) {
+/// Elution frame window `[start, end]` (1-based, to match the DIA schedule / `Frames.Id`). Public so the
+/// chunked streaming render can decide which ions are active in a given frame range without duplicating
+/// the window maths.
+pub fn active_frames(apex: f64, g: &Geometry) -> (u32, u32) {
     let half = g.n_sigma * g.sigma_frames;
     let start = (apex - half).max(1.0) as u32;
     let end = ((apex + half) as u32).min(g.n_frames);
@@ -184,6 +186,22 @@ pub fn dia_render<F: FnMut(u32, u8, &[(u32, u32, f64)])>(
     ions: &[DiaIon],
     sched: &DiaSchedule,
     g: &Geometry,
+    emit: F,
+) {
+    dia_render_range(ions, sched, g, 1, g.n_frames, emit);
+}
+
+/// The sweep restricted to frames `[frame_lo, frame_hi]` — the primitive the chunked streaming render
+/// calls once per apex-bucket, so only that bucket's ions are ever resident. `ions` must already contain
+/// every ion active anywhere in the range (frame_start ≤ frame_hi and frame_end ≥ frame_lo); ions whose
+/// window opened before `frame_lo` are correctly entered at `frame_lo`. Emits only frames in the range,
+/// so a caller stitching ranges together writes each frame exactly once.
+pub fn dia_render_range<F: FnMut(u32, u8, &[(u32, u32, f64)])>(
+    ions: &[DiaIon],
+    sched: &DiaSchedule,
+    g: &Geometry,
+    frame_lo: u32,
+    frame_hi: u32,
     mut emit: F,
 ) {
     let n = ions.len();
@@ -194,7 +212,7 @@ pub fn dia_render<F: FnMut(u32, u8, &[(u32, u32, f64)])>(
     let mut cursor = 0usize;
     let mut active: Vec<usize> = Vec::new();
 
-    for frame in 1..=g.n_frames {
+    for frame in frame_lo..=frame_hi {
         // Enter ions whose window has opened.
         while cursor < n && windows[order[cursor]].0 <= frame {
             active.push(order[cursor]);

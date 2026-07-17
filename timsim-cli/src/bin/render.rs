@@ -111,6 +111,12 @@ struct Args {
     precursor_survival_max: f64,
     #[arg(long, default_value_t = 0)]
     limit: usize,
+    /// DIA render: number of apex-ordered frame chunks to stream the ion spectra in (0 = auto by a
+    /// memory budget). Peak memory is one chunk's active ions, not the whole dataset — the render stays
+    /// bounded by the elution set regardless of how many precursors there are. Force a value to test the
+    /// chunk-stitching (any N ≥ 1 must produce byte-identical output to N = 1).
+    #[arg(long, default_value_t = 0)]
+    render_chunks: u32,
     /// Render a DIA run: interleave MS1 + MS2 frames on the reference `.d`'s cycle, gate fragments by
     /// the diagonal quadrupole transmission. Requires `--reference-d` (a DIA `.d` for the schedule).
     #[arg(long, default_value_t = false)]
@@ -516,33 +522,14 @@ fn place_scan(pcid: u64, mz: f64, charge: u32, ccs: &HashMap<u64, f64>, p: &Plac
 /// DIA render: MS1+MS2 frames on the reference's cycle, fragments gated by the diagonal transmission.
 fn run_dia(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f64, span: f64) -> Result<()> {
     use timsim_cli::dia::DiaSchedule;
-    use timsim_cli::ms2::{dia_render, DiaIon};
+    use timsim_cli::ms2::{active_frames, dia_render_range, DiaIon};
 
     let ref_d = a.reference_d.as_ref().ok_or_else(|| anyhow!("--dia requires --reference-d (a DIA .d for the window schedule)"))?;
     let sched = DiaSchedule::from_reference(ref_d.to_str().unwrap(), a.n_frames, p.n_scans)?;
     eprintln!("  DIA schedule: cycle_len {}, {} windows", sched.cycle_len, sched.windows.len());
 
-    // ion_spectra: precursor_id -> raw (m/z, intensity) peaks, per level.
-    let (mut ms1, mut ms2): (HashMap<u64, Vec<(f64, f32)>>, HashMap<u64, Vec<(f64, f32)>>) =
-        (HashMap::new(), HashMap::new());
-    for b in timsim_schema::read(&a.ion_spectra, SP::TABLE)? {
-        let pcid: &UInt64Array = b.column_by_name(SP::PRECURSOR_ID).unwrap().as_any().downcast_ref().unwrap();
-        let level: &UInt8Array = b.column_by_name(SP::MS_LEVEL).unwrap().as_any().downcast_ref().unwrap();
-        let mz: &ListArray = b.column_by_name(SP::MZ).unwrap().as_any().downcast_ref().unwrap();
-        let inten: &ListArray = b.column_by_name(SP::INTENSITY).unwrap().as_any().downcast_ref().unwrap();
-        for i in 0..b.num_rows() {
-            let mzv = mz.value(i);
-            let mzv: &Float64Array = mzv.as_any().downcast_ref().unwrap();
-            let iv = inten.value(i);
-            let iv: &Float32Array = iv.as_any().downcast_ref().unwrap();
-            let peaks: Vec<(f64, f32)> = (0..mzv.len()).map(|k| (mzv.value(k), iv.value(k))).collect();
-            match level.value(i) {
-                1 => { ms1.insert(pcid.value(i), peaks); }
-                2 => { ms2.insert(pcid.value(i), peaks); }
-                _ => {}
-            }
-        }
-    }
+    // ion_spectra is NOT loaded up front — it is streamed once per apex-chunk below, so peak memory is
+    // one chunk's active ions rather than every precursor's spectra at once.
 
     // Project each precursor's spectra to tof and build DIA ions.
     let project = |peaks: &[(f64, f32)]| -> Vec<(u32, f32)> {
@@ -577,8 +564,23 @@ fn run_dia(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
     } else {
         None
     };
-    let mut ions: Vec<DiaIon> = Vec::new();
-    'outer: for b in timsim_schema::read(&a.precursors, PRE::TABLE)? {
+    // Metadata pass: one lightweight record per precursor — apex frame, scan, abundance, survival, and its
+    // file-order rank. NO peaks. This is the only O(n_precursors) structure that stays resident, and it is
+    // tiny (~tens of bytes/ion); the heavy spectra are streamed per chunk below. `order` preserves the
+    // precursor-file order so each chunk can visit its ions in the same order the single-pass render did —
+    // keeping the per-frame deposit sequence, and thus the output, byte-identical regardless of chunking.
+    struct IonMeta {
+        apex_frame: f64,
+        scan: f64,
+        abundance: f64,
+        precursor_mz: f64,
+        survival: f64,
+        order: u32,
+    }
+    let mut meta: HashMap<u64, IonMeta> = HashMap::new();
+    let mut order: u32 = 0;
+    'outer: for b in timsim_schema::read_stream(&a.precursors, PRE::TABLE)? {
+        let b = b?;
         let pcid: &UInt64Array = b.column_by_name(PRE::PRECURSOR_ID).unwrap().as_any().downcast_ref().unwrap();
         let pid: &UInt64Array = b.column_by_name(PRE::PEPTIDE_ID).unwrap().as_any().downcast_ref().unwrap();
         let mz: &Float64Array = b.column_by_name(PRE::MZ).unwrap().as_any().downcast_ref().unwrap();
@@ -588,43 +590,64 @@ fn run_dia(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
         let mff: &Float32Array = b.column_by_name(PRE::MODFORM_FRACTION).unwrap().as_any().downcast_ref().unwrap();
         for i in 0..b.num_rows() {
             let Some(&rt_index) = rt.get(&pid.value(i)) else { continue };
-            // Drain the raw-spectra maps as we project (remove, not get): the raw peaks are freed the
-            // moment they become the projected ion, so peak memory is the raw spectra alone, not raw +
-            // projected held at once. precursor_id is unique, so each is consumed exactly once.
-            let Some(spec1) = ms1.remove(&pcid.value(i)) else { continue };
             // 1-based apex frame (the DIA schedule + Frames.Id are 1-based).
             let apex_frame = 1.0 + (rt_index - lo) / span * (a.n_frames as f64 - 1.0);
             let scan = place_scan(pcid.value(i), mz.value(i), chg.value(i).max(1) as u32, &ccs, p);
-            let ms1_peaks = project(&spec1); // (DIA path — p is &Placement here)
-            let ms2_peaks = ms2.remove(&pcid.value(i)).map(|s| project(&s)).unwrap_or_default();
-            if ms1_peaks.is_empty() && ms2_peaks.is_empty() {
-                continue;
-            }
             // v1's `events`: amount_amol (per sample) × ionisation propensity × modform fraction ×
             // charge fraction. amount 1.0 when no quantities given (propensities-only fallback).
             let amount = amounts.get(&pid.value(i)).copied().unwrap_or(1.0);
             let abundance = amount * ionz.value(i) as f64 * mff.value(i) as f64 * frac.value(i) as f64;
-            // Incomplete-fragmentation survival, drawn per-ion in [min, max] — but IDENTITY-KEYED on the
-            // precursor id, not a bulk RNG, so adding an ion doesn't reshuffle everyone else's survival
-            // (same discipline as the flyability fallback). Zero span => constant `min`.
+            // Incomplete-fragmentation survival, drawn per-ion in [min, max] — IDENTITY-KEYED on the
+            // precursor id, not a bulk RNG, so adding an ion doesn't reshuffle everyone else's survival.
             let survival = survival_span
                 .map(|(mn, mx)| mn + (mx - mn) * hash01(pcid.value(i)))
                 .unwrap_or(0.0);
-            ions.push(DiaIon {
-                apex_frame,
-                scan_center: scan as f64,
-                abundance,
-                precursor_mz: mz.value(i),
-                ms1_peaks,
-                ms2_peaks,
-                survival,
-            });
-            if a.limit > 0 && ions.len() >= a.limit {
+            meta.insert(
+                pcid.value(i),
+                IonMeta { apex_frame, scan, abundance, precursor_mz: mz.value(i), survival, order },
+            );
+            order += 1;
+            if a.limit > 0 && meta.len() >= a.limit {
                 break 'outer;
             }
         }
     }
-    eprintln!("  projected {} DIA ions -> {}", ions.len(), a.out.display());
+
+    // Chunk the run into apex-ordered frame ranges; each chunk streams ion_spectra once and holds only the
+    // ions active in its range. Auto-size to a memory budget (a chunk ≈ budget worth of ions), capped so
+    // FD/scan counts stay sane; `--render-chunks` overrides. Peak memory is thus one chunk, not the dataset.
+    const BYTES_PER_ION_EST: usize = 3072;
+    const BUDGET_BYTES: usize = 512 * 1024 * 1024;
+    let n_chunks = if a.render_chunks > 0 {
+        a.render_chunks
+    } else {
+        (meta.len() * BYTES_PER_ION_EST / BUDGET_BYTES + 1).clamp(1, 128) as u32
+    }
+    .clamp(1, a.n_frames.max(1));
+    // Split the frame axis at equal-ION-COUNT quantiles of the elution windows (frame_start), NOT into
+    // equal-width slices: elution clusters in time, so equal-width slices would put most ions in the
+    // busy middle chunk. Quantile boundaries give every chunk ~n/n_chunks ions, so peak memory is stable.
+    // bounds[0]=1 .. bounds[n_chunks]=n_frames+1, strictly increasing; chunk c renders [bounds[c],
+    // bounds[c+1]-1].
+    let mut starts: Vec<u32> = meta.values().map(|m| active_frames(m.apex_frame, g).0).collect();
+    starts.sort_unstable();
+    let mut bounds: Vec<u32> = Vec::with_capacity(n_chunks as usize + 1);
+    bounds.push(1);
+    for c in 1..n_chunks {
+        let mut f = if starts.is_empty() {
+            1 + a.n_frames * c / n_chunks
+        } else {
+            starts[(starts.len() * c as usize / n_chunks as usize).min(starts.len() - 1)]
+        };
+        let prev = *bounds.last().unwrap();
+        f = f.max(prev + 1).min(a.n_frames); // strictly increasing, room for the final chunk
+        bounds.push(f);
+    }
+    bounds.push(a.n_frames + 1);
+    eprintln!(
+        "  streaming render: {} precursors in {} apex-chunk(s) (equal-ion) -> {}",
+        meta.len(), n_chunks, a.out.display()
+    );
 
     // Render + write, per-frame MsMsType.
     let _ = std::fs::remove_dir_all(&a.out);
@@ -646,28 +669,95 @@ fn run_dia(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
 
     let mut next_fid: u32 = 1;
     let (mut ms1_peaks, mut ms2_peaks) = (0u64, 0u64);
-    let mut err: Result<()> = Ok(());
     let gap_ms = |f: u32| if sched.ms_level(f) == 1 { 0u8 } else { 9u8 };
-    dia_render(&ions, &sched, g, |frame, ms_type, tri| {
-        if err.is_err() {
-            return;
+
+    for chunk in 0..n_chunks {
+        let fc0 = bounds[chunk as usize];
+        let fc1 = bounds[chunk as usize + 1] - 1;
+        if fc1 < fc0 {
+            continue; // empty range (more chunks than distinct apex starts)
         }
-        while next_fid < frame {
-            if let Err(x) = write_frame(&mut writer, next_fid, gap_ms(next_fid), a.cycle_seconds, Vec::new(), Vec::new(), Vec::new()) {
+
+        // Build this chunk's active ions by streaming ion_spectra once and keeping only the precursors
+        // whose elution window overlaps [fc0, fc1]. (had_ms1, ms1_peaks, ms2_peaks) per precursor.
+        let mut builders: HashMap<u64, (bool, Vec<(u32, f32)>, Vec<(u32, f32)>)> = HashMap::new();
+        for b in timsim_schema::read_stream(&a.ion_spectra, SP::TABLE)? {
+            let b = b?;
+            let pcid: &UInt64Array = b.column_by_name(SP::PRECURSOR_ID).unwrap().as_any().downcast_ref().unwrap();
+            let level: &UInt8Array = b.column_by_name(SP::MS_LEVEL).unwrap().as_any().downcast_ref().unwrap();
+            let mz: &ListArray = b.column_by_name(SP::MZ).unwrap().as_any().downcast_ref().unwrap();
+            let inten: &ListArray = b.column_by_name(SP::INTENSITY).unwrap().as_any().downcast_ref().unwrap();
+            for i in 0..b.num_rows() {
+                let pc = pcid.value(i);
+                let Some(m) = meta.get(&pc) else { continue };
+                let (fs, fe) = active_frames(m.apex_frame, g);
+                if fe < fc0 || fs > fc1 {
+                    continue; // not active anywhere in this chunk's frame range
+                }
+                let mzv = mz.value(i);
+                let mzv: &Float64Array = mzv.as_any().downcast_ref().unwrap();
+                let iv = inten.value(i);
+                let iv: &Float32Array = iv.as_any().downcast_ref().unwrap();
+                let raw: Vec<(f64, f32)> = (0..mzv.len()).map(|k| (mzv.value(k), iv.value(k))).collect();
+                let proj = project(&raw);
+                let e = builders.entry(pc).or_insert((false, Vec::new(), Vec::new()));
+                match level.value(i) {
+                    1 => { e.0 = true; e.1 = proj; }
+                    2 => { e.2 = proj; }
+                    _ => {}
+                }
+            }
+        }
+
+        // Assemble DiaIons — same keep rule as the single-pass render (an MS1 spectrum must exist and at
+        // least one projected spectrum is non-empty) — sorted back into precursor-file order so the sweep
+        // deposits in the same sequence as the unchunked render (byte-identical output).
+        let mut ions: Vec<(u32, DiaIon)> = builders
+            .into_iter()
+            .filter_map(|(pc, (had_ms1, ms1p, ms2p))| {
+                if !had_ms1 || (ms1p.is_empty() && ms2p.is_empty()) {
+                    return None;
+                }
+                let m = meta.get(&pc)?;
+                Some((
+                    m.order,
+                    DiaIon {
+                        apex_frame: m.apex_frame,
+                        scan_center: m.scan,
+                        abundance: m.abundance,
+                        precursor_mz: m.precursor_mz,
+                        ms1_peaks: ms1p,
+                        ms2_peaks: ms2p,
+                        survival: m.survival,
+                    },
+                ))
+            })
+            .collect();
+        ions.sort_unstable_by_key(|x| x.0);
+        let ions: Vec<DiaIon> = ions.into_iter().map(|x| x.1).collect();
+
+        let mut err: Result<()> = Ok(());
+        dia_render_range(&ions, &sched, g, fc0, fc1, |frame, ms_type, tri| {
+            if err.is_err() {
+                return;
+            }
+            while next_fid < frame {
+                if let Err(x) = write_frame(&mut writer, next_fid, gap_ms(next_fid), a.cycle_seconds, Vec::new(), Vec::new(), Vec::new()) {
+                    err = Err(x);
+                    return;
+                }
+                next_fid += 1;
+            }
+            let (scans, tofs, ints) = dedup_and_quantise(tri, a.intensity_scale, a.min_peak_intensity);
+            if ms_type == 0 { ms1_peaks += scans.len() as u64 } else { ms2_peaks += scans.len() as u64 }
+            if let Err(x) = write_frame(&mut writer, frame, ms_type, a.cycle_seconds, scans, tofs, ints) {
                 err = Err(x);
                 return;
             }
-            next_fid += 1;
-        }
-        let (scans, tofs, ints) = dedup_and_quantise(tri, a.intensity_scale, a.min_peak_intensity);
-        if ms_type == 0 { ms1_peaks += scans.len() as u64 } else { ms2_peaks += scans.len() as u64 }
-        if let Err(x) = write_frame(&mut writer, frame, ms_type, a.cycle_seconds, scans, tofs, ints) {
-            err = Err(x);
-            return;
-        }
-        next_fid = frame + 1;
-    });
-    err?;
+            next_fid = frame + 1;
+        });
+        err?;
+    }
     while next_fid <= a.n_frames {
         write_frame(&mut writer, next_fid, gap_ms(next_fid), a.cycle_seconds, Vec::new(), Vec::new(), Vec::new())?;
         next_fid += 1;
