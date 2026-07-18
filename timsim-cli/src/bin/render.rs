@@ -109,6 +109,10 @@ struct Args {
     precursor_survival_min: f64,
     #[arg(long, default_value_t = 0.0)]
     precursor_survival_max: f64,
+    /// Debug cap: render only the first N precursors in file order (0 = all). NOTE this caps INPUT
+    /// precursors, not surviving ions — a precursor later dropped for lacking spectra still consumes a
+    /// slot, so under `--limit` the ion set can differ from an unlimited run. Fine for quick smoke tests;
+    /// don't use it when byte-for-byte comparing against another render.
     #[arg(long, default_value_t = 0)]
     limit: usize,
     /// DIA render: number of apex-ordered frame chunks to stream the ion spectra in (0 = auto by a
@@ -625,25 +629,31 @@ fn run_dia(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
     }
     .clamp(1, a.n_frames.max(1));
     // Split the frame axis at equal-ION-COUNT quantiles of the elution windows (frame_start), NOT into
-    // equal-width slices: elution clusters in time, so equal-width slices would put most ions in the
-    // busy middle chunk. Quantile boundaries give every chunk ~n/n_chunks ions, so peak memory is stable.
-    // bounds[0]=1 .. bounds[n_chunks]=n_frames+1, strictly increasing; chunk c renders [bounds[c],
-    // bounds[c+1]-1].
-    let mut starts: Vec<u32> = meta.values().map(|m| active_frames(m.apex_frame, g).0).collect();
-    starts.sort_unstable();
-    let mut bounds: Vec<u32> = Vec::with_capacity(n_chunks as usize + 1);
-    bounds.push(1);
-    for c in 1..n_chunks {
-        let mut f = if starts.is_empty() {
-            1 + a.n_frames * c / n_chunks
-        } else {
-            starts[(starts.len() * c as usize / n_chunks as usize).min(starts.len() - 1)]
-        };
-        let prev = *bounds.last().unwrap();
-        f = f.max(prev + 1).min(a.n_frames); // strictly increasing, room for the final chunk
-        bounds.push(f);
-    }
-    bounds.push(a.n_frames + 1);
+    // equal-width slices: elution clusters in time, so equal-width slices would put most ions in the busy
+    // middle chunk. Quantile boundaries give every chunk ~n/n_chunks ions with a WELL-DISTRIBUTED elution;
+    // peak memory is then one chunk's active set. (It cannot go below the active set itself: a pathological
+    // elution window as wide as the whole run makes every ion active everywhere, i.e. O(total) — inherent,
+    // not a chunking failure.) `starts` is a transient O(n) u32 vector, dropped once `bounds` is built.
+    // bounds[0]=1 .. bounds[n_chunks]=n_frames+1, NON-decreasing (the clamp can repeat a value, which just
+    // yields an empty range, handled below); chunk c renders [bounds[c], bounds[c+1]-1].
+    let bounds: Vec<u32> = {
+        let mut starts: Vec<u32> = meta.values().map(|m| active_frames(m.apex_frame, g).0).collect();
+        starts.sort_unstable();
+        let mut bounds: Vec<u32> = Vec::with_capacity(n_chunks as usize + 1);
+        bounds.push(1);
+        for c in 1..n_chunks {
+            let mut f = if starts.is_empty() {
+                1 + a.n_frames * c / n_chunks
+            } else {
+                starts[(starts.len() * c as usize / n_chunks as usize).min(starts.len() - 1)]
+            };
+            let prev = *bounds.last().unwrap();
+            f = f.max(prev + 1).min(a.n_frames); // keep non-decreasing; leave room for the final chunk
+            bounds.push(f);
+        }
+        bounds.push(a.n_frames + 1);
+        bounds
+    };
     eprintln!(
         "  streaming render: {} precursors in {} apex-chunk(s) (equal-ion) -> {}",
         meta.len(), n_chunks, a.out.display()
