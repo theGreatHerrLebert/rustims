@@ -15,8 +15,10 @@ Two conversions must match the render bit-for-bit (``timsim-cli/src/bin/render.r
 
 Ground truth is restricted to precursors that were actually rendered AND fragmented (an MS2
 spectrum exists) — a DIA engine can only identify precursors it has fragments for, so that is the
-fair denominator for recall. Backbone (stripped-sequence) matching only; peptidoform/PTM matching
-is deferred to a later harness step.
+fair denominator for recall. This is an UPPER BOUND on truly-observable precursors: it tests for an
+MS2 *row*, not whether the projected peaks landed in the m/z range or survived a ``--limit`` render;
+any such overcount surfaces harmlessly as extra 0%-recall bins in the abundance-quantile breakdown.
+Backbone (stripped-sequence) matching only; peptidoform/PTM matching is deferred to a later step.
 """
 from __future__ import annotations
 
@@ -73,10 +75,20 @@ def build_truth_from_v2(
     ccs = pq.read_table(path("precursor_ccs"), columns=["precursor_id", "ccs"]).to_pandas()
     quant = pq.read_table(path("peptide_quantities")).to_pandas()
 
+    # rt_index is nullable; the render skips precursors whose peptide has no RT, so they must not sit in
+    # the denominator. Drop them here (the inner-join below then excludes their precursors).
+    rtt = rtt[rtt["rt_index"].notna()]
+    # Defensive: the render's per-key maps are last-wins, so dedup each join key the same way rather than
+    # letting a stray duplicate row multiply the truth via the merge.
+    pep = pep.drop_duplicates(subset=["peptide_id"], keep="last")
+    rtt = rtt.drop_duplicates(subset=["peptide_id"], keep="last")
+    ccs = ccs.drop_duplicates(subset=["precursor_id"], keep="last")
+
     # Pick the rendered sample (default: first sorted id — matches the render's default).
     if sample is None:
         sample = sorted(quant["sample_id"].unique())[0]
     quant = quant.loc[quant["sample_id"] == sample, ["peptide_id", "amount_amol"]]
+    quant = quant.drop_duplicates(subset=["peptide_id"], keep="last")
 
     lo, hi = _rt_index_bounds(path("peptide_rt"))
     span = max(hi - lo, 1e-9)

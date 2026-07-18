@@ -16,8 +16,10 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from .comparison import (
+    calculate_charge_state_metrics,
     calculate_correlation_metrics,
     calculate_identification_metrics,
     create_peptide_sets,
@@ -34,18 +36,72 @@ _CORR_FIELDS = (
 )
 
 
-def score(report_df, truth_df, thresholds=None):
+def aggregate_to_backbone(truth_df):
+    """Collapse truth to one row per ``(sequence_normalized, charge)`` so the row-based scorers
+    (match_results, correlations, charge breakdown) count precursors the same way the set-based
+    identification does. Intensity is summed; the most-abundant row's RT/IM is the representative.
+    A no-op for unmodified data (one modform per peptide); for modified data it makes backbone-level
+    metrics well-defined, and it also merges I/L-equivalent backbones DiaNN can't tell apart.
+    """
+    df = truth_df.sort_values("intensity", ascending=False, kind="mergesort")
+    agg = df.groupby(["sequence_normalized", "charge"], as_index=False).agg(
+        sequence=("sequence", "first"),
+        sequence_modified=("sequence_modified", "first"),
+        sequence_modified_normalized=("sequence_modified_normalized", "first"),
+        protein_id=("protein_id", "first"),
+        rt=("rt", "first"),
+        inverse_mobility=("inverse_mobility", "first"),
+        intensity=("intensity", "sum"),
+    )
+    return agg
+
+
+def recall_by_abundance(truth_df, identified_prec_set, n_bins=5):
+    """Recall stratified into equal-COUNT quantiles of true abundance.
+
+    Binning is rank-based (``qcut`` on the abundance rank), not on log-clipped intensity: v2's truth
+    abundance (amol × propensities) is heavily tied near/below 1, so a value/log bin collapses. One row
+    per identifiable precursor ``(sequence, charge)`` — duplicate backbones' abundances summed, matching
+    how identification treats a precursor.
+    """
+    g = (
+        truth_df[["sequence_normalized", "charge", "intensity"]]
+        .groupby(["sequence_normalized", "charge"], as_index=False)["intensity"]
+        .sum()
+    )
+    if len(g) == 0:
+        return {}
+    g["found"] = pd.Series(zip(g["sequence_normalized"], g["charge"])).isin(identified_prec_set).values
+    n_bins = max(1, min(int(n_bins), len(g)))
+    g["bin"] = pd.qcut(g["intensity"].rank(method="first"), n_bins, labels=False)
+    out = {}
+    for b in range(n_bins):
+        sub = g[g["bin"] == b]
+        lo, hi = float(sub["intensity"].min()), float(sub["intensity"].max())
+        out[int(b)] = {
+            "intensity_range": f"{lo:.1e}-{hi:.1e}",
+            "abundance_range": [lo, hi],
+            "ground_truth": int(len(sub)),
+            "identified": int(sub["found"].sum()),
+            "identification_rate": float(sub["found"].mean()) if len(sub) else 0.0,
+        }
+    return out
+
+
+def score(report_df, truth_df, thresholds=None, n_abundance_bins=5):
     """Score a parsed report frame against a v2 truth frame → a ``ValidationMetrics``.
 
     Backbone matching: identification on ``(sequence, charge)`` sets; correlations on the
-    ground-truth rows that DiaNN matched.
+    ground-truth rows that DiaNN matched; recall stratified into ``n_abundance_bins`` quantiles.
     """
     thresholds = thresholds or ValidationThresholds()
+    # Collapse to backbone precursors so every scorer counts precursors identically (see docstring).
+    truth_df = aggregate_to_backbone(truth_df)
     _, gt_prec = create_peptide_sets(truth_df, use_modifications=False, normalize=True)
     _, id_prec = create_peptide_sets(report_df, use_modifications=False, normalize=True)
     idm = calculate_identification_metrics(gt_prec, id_prec)
 
-    matched, _unident, _fp = match_results(truth_df, report_df, match_on="sequence", normalize=True)
+    matched, unidentified, _fp = match_results(truth_df, report_df, match_on="sequence", normalize=True)
     corr = calculate_correlation_metrics(matched)
 
     m = ValidationMetrics(
@@ -58,6 +114,11 @@ def score(report_df, truth_df, thresholds=None):
         fdr=idm["fdr"],
         **{k: corr.get(k, np.nan) for k in _CORR_FIELDS},
     )
+    # Recall stratified by true-abundance quantile — the interpretable form of recall when the truth
+    # spans orders of magnitude (a flat recall is just the dynamic-range ceiling). Plus a per-charge
+    # breakdown. Both reuse Stack B and populate fields ValidationMetrics already carries.
+    m.intensity_bin_metrics = recall_by_abundance(truth_df, id_prec, n_bins=n_abundance_bins)
+    m.charge_state_metrics = calculate_charge_state_metrics(truth_df, matched, unidentified)
     return check_thresholds(m, thresholds)
 
 
@@ -87,8 +148,18 @@ def summary_text(m: ValidationMetrics) -> str:
         f"  RT   Pearson r     : {_fmt(rt['pearson_r'])}   MAE {_fmt(rt['mae_minutes'])} min",
         f"  1/K0 Pearson r     : {_fmt(im['pearson_r'])}   MAE {_fmt(im['mae'], 4)}",
         f"  quant log Pearson  : {_fmt(q['pearson_r'])}   Spearman {_fmt(q['spearman_r'])}",
-        f"  overall pass       : {'PASS' if d['overall_pass'] else 'FAIL'}  {d['threshold_checks']}",
     ]
+    bins = d.get("intensity_bin_breakdown") or {}
+    if bins:
+        lines.append("  recall by true-abundance quantile (low → high):")
+        for b in sorted(bins, key=int):
+            r = bins[b]
+            lines.append(
+                f"    bin {int(b)+1}  {r['intensity_range']:>13} :"
+                f" {r['identification_rate']*100:5.1f}%   ({r['identified']:,}/{r['ground_truth']:,})"
+            )
+    checks = {k: bool(v) for k, v in d["threshold_checks"].items()}
+    lines.append(f"  overall pass       : {'PASS' if d['overall_pass'] else 'FAIL'}  {checks}")
     return "\n".join(lines)
 
 
@@ -119,6 +190,8 @@ def main(argv=None) -> int:
     ap.add_argument("--cycle-seconds", type=float, required=True, help="render --cycle-seconds (RT map)")
     ap.add_argument("--sample", default=None, help="which design sample was rendered (default: first)")
     ap.add_argument("--fdr", type=float, default=0.01, help="report q-value cutoff")
+    ap.add_argument("--abundance-bins", type=int, default=5,
+                    help="equal-count true-abundance quantiles for the recall breakdown")
     ap.add_argument("--diann-v1", action="store_true", help="report is DiaNN 1.9 (default: 2.x)")
     ap.add_argument("--out", type=Path, help="write metrics JSON here")
     a = ap.parse_args(argv)
@@ -134,7 +207,7 @@ def main(argv=None) -> int:
 
     report_df = parse_diann_report(report_path, diann_version_2=not a.diann_v1, fdr_threshold=a.fdr)
     truth_df = build_truth_from_v2(str(a.truth_dir), a.n_frames, a.cycle_seconds, sample=a.sample)
-    metrics = score(report_df, truth_df)
+    metrics = score(report_df, truth_df, n_abundance_bins=a.abundance_bins)
 
     print(summary_text(metrics))
     if a.out:
