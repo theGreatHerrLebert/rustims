@@ -174,9 +174,10 @@ pub struct RenderedFrame {
     pub intensities: Vec<u32>,
 }
 
-/// One selected DDA precursor — the `Precursors` table row (vendor schema). `id` is per-ion (a re-selected
-/// ion reuses its id); the writer dedups to one row per `id` (keep-first), matching v1 and the vendor
-/// format. Per-event data (that dedup drops) lives in the render's sidecar answer key, not here.
+/// One selected DDA precursor — the `Precursors` table row (vendor schema). `id` is per-ion; pass **one
+/// canonical row per `id`** (validated unique). A re-selected ion is represented by several PASEF bands,
+/// not several precursor rows; its per-event Parent/Intensity/ScanNumber live in the render's sidecar
+/// answer key, since the vendor `Precursors` table has room for only one row per ion.
 pub struct DdaPrecursor {
     pub id: i64,
     pub largest_peak_mz: f64,
@@ -294,10 +295,13 @@ impl TdfWriter {
         self.dia_frame_to_group = Some(frame_to_group);
     }
 
-    /// Mark this a DDA-PASEF run: `precursors` are the selected precursors (`Precursors` rows, deduped to
-    /// one per `id` at write time) and `pasef` the per-event selection bands (`PasefFrameMsMsInfo` rows,
-    /// all kept). Finalize writes both tables with the vendor schema. Set `config.scan_mode = 8`.
+    /// Mark this a DDA-PASEF run: `precursors` are the selected precursors — **one canonical row per `id`**
+    /// (per-event Parent/Intensity/ScanNumber belong in the render's sidecar answer key, not the vendor
+    /// `Precursors` table) — and `pasef` the per-event selection bands (`PasefFrameMsMsInfo` rows, all kept;
+    /// a re-selected ion has several). Finalize validates the schedule then writes both tables with the
+    /// vendor schema. Forces `scan_mode = 8` (DDA) so the frames can't be labelled DIA.
     pub fn set_dda_schedule(&mut self, precursors: Vec<DdaPrecursor>, pasef: Vec<DdaPasefWindow>) {
+        self.config.scan_mode = 8;
         self.dda_schedule = Some((precursors, pasef));
     }
 
@@ -352,6 +356,16 @@ impl TdfWriter {
     /// Write the `Frames`, `GlobalMetadata`, and (placeholder) calibration tables, mark the file closed
     /// properly, and flush. Consumes the writer.
     pub fn finalize(mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // A run is either DIA or DDA, not both — writing both table families is a corrupt mixed acquisition.
+        if self.dia_frame_to_group.is_some() && self.dda_schedule.is_some() {
+            return Err("acquisition is either DIA or DDA, not both (both schedules were set)".into());
+        }
+        // Validate the DDA schedule BEFORE any table is written, so an invalid schedule (orphan band, bad
+        // parent, non-MS2 PASEF frame, duplicate id or band) fails cleanly instead of leaving a partial
+        // `.d` — SQLite's FKs are declared but not enforced (pragma off), so we check them ourselves.
+        if self.dda_schedule.is_some() {
+            self.validate_dda_schedule()?;
+        }
         self.bin.flush()?;
         self.write_frames_table()?;
         if self.copied_from_reference {
@@ -359,9 +373,9 @@ impl TdfWriter {
             let last_frame = self.frames.iter().map(|f| f.id).max().unwrap_or(0) as i64;
             // Segments.LastFrame must point at the simulated run's end, not the reference's.
             let _ = self.conn.execute("UPDATE Segments SET LastFrame = ?1", params![last_frame]);
-            // Mark closed cleanly (the reference's value is copied, but assert it regardless).
+            // Not closed yet — finalize stamps ClosedProperly = 1 only after every table is written.
             self.conn.execute(
-                "UPDATE GlobalMetadata SET Value = '1' WHERE Key = 'ClosedProperly'",
+                "UPDATE GlobalMetadata SET Value = '0' WHERE Key = 'ClosedProperly'",
                 [],
             )?;
             // Our blocks are ALWAYS zstd (via reconstruct_compressed_data), regardless of what the
@@ -380,6 +394,63 @@ impl TdfWriter {
         }
         if self.dda_schedule.is_some() {
             self.write_dda_tables()?;
+        }
+        // Mark closed cleanly ONLY after every table is written — a crash/error before here leaves
+        // ClosedProperly = 0, so a truncated `.d` is detectable rather than falsely complete.
+        self.conn.execute(
+            "UPDATE GlobalMetadata SET Value = '1' WHERE Key = 'ClosedProperly'",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Validate a DDA schedule against the written frames — the checks SQLite's (unenforced) foreign keys
+    /// and primary keys would make, done explicitly so a bad schedule is rejected before anything is
+    /// written. Contract: one canonical `Precursors` row per id; every PASEF band references a known
+    /// precursor and an MS2 frame with a distinct start scan; every precursor parent is an MS1 frame.
+    fn validate_dda_schedule(&self) -> Result<(), Box<dyn std::error::Error>> {
+        use std::collections::{HashMap, HashSet};
+        let (precursors, pasef) = self.dda_schedule.as_ref().unwrap();
+        let frame_type: HashMap<u32, i64> = self.frames.iter().map(|f| (f.id, f.ms_ms_type)).collect();
+
+        let mut ids: HashSet<i64> = HashSet::new();
+        for p in precursors {
+            if !ids.insert(p.id) {
+                return Err(format!(
+                    "duplicate Precursors.Id {} — pass one canonical row per precursor (per-event \
+                     Parent/Intensity/ScanNumber belong in the sidecar answer key)",
+                    p.id
+                )
+                .into());
+            }
+            match frame_type.get(&(p.parent as u32)) {
+                Some(0) => {}
+                Some(t) => return Err(format!("Precursor {} Parent {} is a MsMsType={} frame, not MS1", p.id, p.parent, t).into()),
+                None => return Err(format!("Precursor {} Parent {} is not a written frame", p.id, p.parent).into()),
+            }
+        }
+
+        let mut bands: HashSet<(i64, i64)> = HashSet::new();
+        for w in pasef {
+            if !ids.contains(&w.precursor) {
+                return Err(format!("PASEF band (frame {}) references unknown Precursor {}", w.frame, w.precursor).into());
+            }
+            match frame_type.get(&(w.frame as u32)) {
+                Some(8) => {}
+                Some(t) => return Err(format!("PASEF Frame {} is MsMsType={}, expected 8 (MS2)", w.frame, t).into()),
+                None => return Err(format!("PASEF Frame {} is not a written frame", w.frame).into()),
+            }
+            if w.scan_num_begin < 0 || w.scan_num_end <= w.scan_num_begin
+                || w.scan_num_end as u32 > self.config.num_scans
+            {
+                return Err(format!(
+                    "PASEF band [{}, {}] invalid for {} scans", w.scan_num_begin, w.scan_num_end, self.config.num_scans
+                )
+                .into());
+            }
+            if !bands.insert((w.frame, w.scan_num_begin)) {
+                return Err(format!("duplicate PASEF (Frame {}, ScanNumBegin {}) — bands need distinct start scans", w.frame, w.scan_num_begin).into());
+            }
         }
         Ok(())
     }
@@ -417,9 +488,9 @@ impl TdfWriter {
         Ok(())
     }
 
-    /// Persist the DDA schedule: `Precursors` (vendor schema, deduped to one row per `Id` — keep-first,
-    /// matching v1 and the vendor format) and `PasefFrameMsMsInfo` (every selection band). The per-event
-    /// detail the Precursors dedup discards is the render's sidecar answer key's job, not the `.d`'s.
+    /// Persist the DDA schedule (already validated): `Precursors` (vendor schema, one canonical row per
+    /// `Id`) and `PasefFrameMsMsInfo` (every selection band). Per-event detail that the single-row-per-ion
+    /// `Precursors` table can't hold is the render's sidecar answer key's job, not the `.d`'s.
     fn write_dda_tables(&self) -> Result<(), Box<dyn std::error::Error>> {
         let (precursors, pasef) = self.dda_schedule.as_ref().unwrap();
 
@@ -433,16 +504,13 @@ impl TdfWriter {
         )?;
         let tx = self.conn.unchecked_transaction()?;
         {
-            let mut seen = std::collections::HashSet::new();
             let mut stmt = tx.prepare(
                 "INSERT INTO Precursors
                  (Id, LargestPeakMz, AverageMz, MonoisotopicMz, Charge, ScanNumber, Intensity, Parent)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )?;
+            // Ids are validated unique in validate_dda_schedule (called before any write).
             for p in precursors {
-                if !seen.insert(p.id) {
-                    continue; // dedup keep-first (the Precursors.Id PRIMARY KEY forbids duplicates)
-                }
                 stmt.execute(params![
                     p.id, p.largest_peak_mz, p.average_mz, p.monoisotopic_mz,
                     p.charge, p.scan_number, p.intensity, p.parent
@@ -545,8 +613,8 @@ impl TdfWriter {
             ("OneOverK0AcqRangeLower", format!("{}", self.config.one_over_k0_range.0)),
             ("OneOverK0AcqRangeUpper", format!("{}", self.config.one_over_k0_range.1)),
             ("DigitizerNumSamples", format!("{}", self.config.digitizer_num_samples)),
-            // Written last so a truncated run is detectable: "1" only after a clean finalize.
-            ("ClosedProperly", "1".into()),
+            // "0" here; finalize flips it to "1" only after every table is written (truncation-detectable).
+            ("ClosedProperly", "0".into()),
         ];
         let tx = self.conn.unchecked_transaction()?;
         {
@@ -695,12 +763,11 @@ mod tests {
             .unwrap();
         }
 
-        // Precursor 100 appears TWICE (two selection events, from MS1 frames 1 and 4); 200 once.
-        // The writer dedups Precursors keep-first (id 100 -> parent 1).
+        // One canonical Precursors row per ion (unique ids). The re-selection of ion 100 is carried by
+        // its TWO PASEF bands below, not by a second precursor row.
         let precursors = vec![
             DdaPrecursor { id: 100, largest_peak_mz: 596.9, average_mz: 596.7, monoisotopic_mz: 596.6, charge: 2, scan_number: 20.5, intensity: 4600.0, parent: 1 },
             DdaPrecursor { id: 200, largest_peak_mz: 712.4, average_mz: 712.2, monoisotopic_mz: 712.1, charge: 3, scan_number: 50.0, intensity: 2100.0, parent: 1 },
-            DdaPrecursor { id: 100, largest_peak_mz: 596.9, average_mz: 596.7, monoisotopic_mz: 596.6, charge: 2, scan_number: 21.0, intensity: 3900.0, parent: 4 },
         ];
         // Three PASEF bands: precursor 100 in frames 2 AND 5, precursor 200 in frame 2.
         let pasef = vec![
@@ -719,21 +786,49 @@ mod tests {
         let frames_100: std::collections::HashSet<i64> = for_100.iter().map(|b| b.frame_id).collect();
         assert_eq!(frames_100, [2i64, 5].into_iter().collect(), "precursor 100's two events are frames 2 and 5");
 
-        // (2)+(3) Precursors deduped; relational consistency.
+        // (2)+(3) relational + semantic invariants.
         let conn = Connection::open(dir.join("analysis.tdf")).unwrap();
         let n_prec: i64 = conn.query_row("SELECT COUNT(*) FROM Precursors", [], |r| r.get(0)).unwrap();
-        assert_eq!(n_prec, 2, "Precursors deduped to one row per id");
-        let parent_of_100: i64 = conn.query_row("SELECT Parent FROM Precursors WHERE Id=100", [], |r| r.get(0)).unwrap();
-        assert_eq!(parent_of_100, 1, "keep-first dedup retains the first selection's parent");
-        let orphans: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM PasefFrameMsMsInfo p LEFT JOIN Precursors pr ON p.Precursor = pr.Id WHERE pr.Id IS NULL",
+        assert_eq!(n_prec, 2, "one Precursors row per ion");
+        // Frames are DDA (ScanMode 8); every PASEF frame is an MS2 (MsMsType 8) frame.
+        let non8: i64 = conn.query_row("SELECT COUNT(*) FROM Frames WHERE ScanMode != 8", [], |r| r.get(0)).unwrap();
+        assert_eq!(non8, 0, "DDA frames must have ScanMode 8");
+        let pasef_not_ms2: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM PasefFrameMsMsInfo p LEFT JOIN Frames f ON p.Frame = f.Id WHERE f.MsMsType != 8 OR f.Id IS NULL",
             [], |r| r.get(0)).unwrap();
-        assert_eq!(orphans, 0, "every PASEF Precursor must exist in Precursors");
+        assert_eq!(pasef_not_ms2, 0, "every PASEF Frame must be an MS2 frame");
         let bad_parent: i64 = conn.query_row(
             "SELECT COUNT(*) FROM Precursors pr LEFT JOIN Frames f ON pr.Parent = f.Id WHERE f.MsMsType != 0 OR f.Id IS NULL",
             [], |r| r.get(0)).unwrap();
         assert_eq!(bad_parent, 0, "every Precursor.Parent must be an MS1 survey frame");
+        // SQLite's own FK checker must find no violations, and the file must be marked closed.
+        let fk_violations: i64 = conn.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0)).unwrap();
+        assert_eq!(fk_violations, 0, "foreign_key_check must be clean");
+        let closed: String = conn.query_row("SELECT Value FROM GlobalMetadata WHERE Key='ClosedProperly'", [], |r| r.get(0)).unwrap();
+        assert_eq!(closed, "1", "ClosedProperly stamped after all writes");
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The writer must REJECT an invalid DDA schedule up front (no partial `.d`), because SQLite's FKs
+    /// are declared but not enforced. Here a PASEF band references a precursor that doesn't exist.
+    #[test]
+    fn dda_rejects_orphan_pasef_band() {
+        let dir = std::env::temp_dir().join(format!("timsim_tdf_dda_reject_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let cfg = TdfWriterConfig { num_scans: 100, scan_mode: 8, ..Default::default() };
+        let mut w = TdfWriter::create(&dir, cfg).unwrap();
+        for (i, &t) in [0u8, 8].iter().enumerate() {
+            w.write_frame(&RenderedFrame {
+                frame_id: i as u32 + 1, retention_time: 0.0, ms_ms_type: t,
+                scans: vec![10], tofs: vec![100], intensities: vec![5],
+            }).unwrap();
+        }
+        let precursors = vec![DdaPrecursor { id: 1, largest_peak_mz: 500.0, average_mz: 500.0, monoisotopic_mz: 500.0, charge: 2, scan_number: 10.0, intensity: 100.0, parent: 1 }];
+        // Band references precursor 999 (not in `precursors`).
+        let pasef = vec![DdaPasefWindow { frame: 2, scan_num_begin: 5, scan_num_end: 20, isolation_mz: 500.0, isolation_width: 2.0, collision_energy: 30.0, precursor: 999 }];
+        w.set_dda_schedule(precursors, pasef);
+        assert!(w.finalize().is_err(), "an orphan PASEF band must be rejected before writing");
         let _ = fs::remove_dir_all(&dir);
     }
 }

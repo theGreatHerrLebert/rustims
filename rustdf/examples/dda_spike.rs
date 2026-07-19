@@ -33,10 +33,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })?;
     }
 
+    // One canonical row per ion; ion 1's re-selection is its two PASEF bands (frames 2 and 5) below.
     let precursors = vec![
         DdaPrecursor { id: 1, largest_peak_mz: 596.87, average_mz: 596.75, monoisotopic_mz: 596.63, charge: 2, scan_number: 105.0, intensity: 4600.0, parent: 1 },
         DdaPrecursor { id: 2, largest_peak_mz: 712.40, average_mz: 712.25, monoisotopic_mz: 712.10, charge: 3, scan_number: 400.0, intensity: 2100.0, parent: 1 },
-        DdaPrecursor { id: 1, largest_peak_mz: 596.87, average_mz: 596.75, monoisotopic_mz: 596.63, charge: 2, scan_number: 106.0, intensity: 3900.0, parent: 4 }, // re-selection
     ];
     let pasef = vec![
         DdaPasefWindow { frame: 2, scan_num_begin: 95,  scan_num_end: 117, isolation_mz: 596.87, isolation_width: 2.0, collision_energy: 31.5, precursor: 1 },
