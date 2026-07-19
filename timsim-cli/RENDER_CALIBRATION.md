@@ -1,85 +1,89 @@
-# Render intensity calibration target
+# Render intensity calibration — target, model, and what NOT to touch
 
-The v2 render must produce per-peak intensity distributions that look like real timsTOF data.
-This spec defines that target — measured from real data, **per frame type** — and is the acceptance
-criterion for two separate pieces of work: the **signal-level calibration** (intensity shape) and the
-**noise model** (peak density). Do not conflate them; the measurements below show they are orthogonal.
+The v2 render must produce data that *looks* like real timsTOF. The naive reading of that — "reshape
+the rendered intensities to match the real per-peak distribution" — is a **category error** that would
+damage the simulator. This document states the corrected framing, the observation model to build, and
+the acceptance criteria, after a domain review (Codex, 2026-07-19) caught the error below.
 
-## Provenance & method
+> **The error to avoid:** the real per-peak intensity distribution is *narrow* (~55× dynamic range),
+> but that is **not** because real peptide abundances are narrow. It is a property of *measurement* —
+> one peptide's ions spread across RT / mobility / isotope / fragment bins, and a hard count floor
+> censors the low end. Narrowing the render's **biological abundance** distribution to hit ~55× would
+> erase the ~6-order ground-truth abundance axis the whole eval harness exists to test
+> (recall-vs-abundance). **Never compress the abundance axis to match a per-peak statistic.**
 
-- **Source:** `K240723` DIA-PASEF reference runs — 24-window, 2640 s gradient, MS2 m/z 400–1000, ~HeLa
-  complexity. Three technical replicates (`_002`, `_012`, `_022`).
-- **Reading:** raw peaks decoded via `imspy` `get_tims_frame().intensity`, **validated exact** against
-  the acquisition's own stored `Frames.NumPeaks / MaxIntensity / SummedIntensities` (peak counts and
-  maxima matched to the integer; sums to rounding). So these are the true stored detector counts.
-- **Sampling:** ~100–120 frames per type, spread across the gradient; separated by `MsMsType`
-  (0 = MS1 precursor, 9 = MS2 fragment). Reproduce with
-  `python -m imspy_simulation.timsim.validate.peak_distribution <.d> <n_frames>`.
-- **Stability:** floor, median, and peaks/scan are within **±4 % across the 3 replicates** — not a
-  one-run quirk.
-- **Caveats:** (1) intensities are **signal + noise combined** — we have no method-matched blank, so we
-  cannot yet decompose the two. (2) These numbers are **specific to this instrument + acquisition
-  method**; other instruments/methods have different floors and densities. (3) The bright tail
-  (`p99.9`, `max`) is undersampled relative to the bulk — treat `max` as approximate.
+## Two axes — keep them separate
 
-## Target distribution — real timsTOF (per peak)
+| axis | what it is | for the render |
+|---|---|---|
+| **Biological abundance** | `amount × ionization × modform × charge` — the ground truth, ~6 orders | **Held FIXED. Wide. Never calibrated to a per-peak target.** |
+| **Measurement / observation** | how an ion's abundance becomes stored per-peak counts: spreading, floor/censoring, count noise, background | **This is what we calibrate.** The narrow per-peak shape is an *emergent output* of this layer, not an input target. |
 
-Raw integer counts. `dyn` = p99.9 / p1. `peaks/scan` = peaks per mobility scan (density).
+So "signal calibration" and "noise model" are **not two sequential features** — they are **one instrument
+observation model**, built together, because their effects are statistically coupled (adding the missing
+near-floor population lowers the pooled median and changes the apparent dynamic range — see below).
 
-| frame type | floor | p1 | p25 | p50 (median) | p75 | p90 | p99 | p99.9 | max | dyn | peaks/scan |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| **MS1 (precursor)** | **21** | 25 | 39 | **53** | 75 | 104 | 246 | 1,375 | ~60,000 | **55×** | **~335** |
-| **MS2 (fragment)**  | **21** | 25 | 50 | **70** | 96 | 128 | 266 | 1,161 | ~8,600  | **46×** | **~24**  |
+## What real data shows — as *combined observables* (not decompositions)
 
-Key shape facts: a **hard floor at 21** (detector/threshold count), a compact unimodal bump centred at
-~50–70 that has **lifted well off the floor** (the mode is above the floor, not at it), and a **narrow
-dynamic range** (~50×, not thousands). MS1 and MS2 share nearly the same intensity *shape*; they differ
-massively in *density* (MS1 is ~14× denser than MS2).
+Measured on real `K240723` DIA-PASEF (24-window, 2640 s, m/z 400–1000; 3 replicates, ±4% stable; raw
+peaks validated exact vs stored `NumPeaks/MaxIntensity/SummedIntensities`). Reproduce:
+`python -m imspy_simulation.timsim.validate.peak_distribution <.d> <n_frames>`.
 
-## Current v2 render (same measurement, `out/250k/v2_250k.d`)
-
-| frame type | floor | p50 | p99 | p99.9 | max | dyn | peaks/scan |
+| per-peak (real) | floor | p50 | p99 | p99.9 | max | dyn (p99.9/p1) | peaks/scan |
 |---|---|---|---|---|---|---|---|
-| MS1 | 3 | 10 | 1,394 | 11,559 | ~278,000 | 3,853× | ~11 |
-| MS2 | 3 | 6  | 211   | 690    | ~5,200   | 230×   | ~1.9 |
+| **MS1 precursor** | **21** | 53 | 246 | 1,375 | ~60,000 | ~55× | **~335** |
+| **MS2 fragment**  | **21** | 70 | 266 | 1,161 | ~8,600  | ~46× | **~24**  |
 
-## The gap = two orthogonal levers
+**These are combined signal + isotopes + co-elution + background + thresholded noise, pooled over all
+retained bins.** They are therefore **not** estimates of peptide abundance and **not** a detector
+transfer function. Read them only as: "the observation model, run on a HeLa-like load at this method,
+must produce roughly this combined distribution per frame type." Sample- and method-specific.
 
-**Lever A — intensity SHAPE (signal-level calibration; render-side).**
-The rendered per-peak bump sits ~5× too dim, floored ~7× too low, and is **far too wide** (MS1 dynamic
-range 3,853× vs 55×). Fixing it is a render + abundance change, not a single scale factor:
-- Raise the quantisation floor: `--min-peak-intensity 3 → ~21` (match the detector floor).
-- Lift the bulk so the median lands at ~53 (MS1) / ~70 (MS2) instead of ~10 (re-anchor the intensity
-  calibration on a robust central statistic, not the single brightest peak).
-- **Compress the dynamic range** so the bright tail lands near real's max (~60k MS1 / ~8.6k MS2) instead
-  of ~278k — i.e. narrow the upstream abundance spread (the `amol × flyability` log-normals) toward
-  real's ~50× per-peak range. A shift alone overshoots the top; it must shift **and** compress.
+Current render (same probe, `out/250k/v2_250k.d`): MS1 floor 3 / median 10 / ~11 peaks/scan;
+MS2 floor 3 / median 6 / ~1.9 peaks/scan — i.e. too dim in the bulk, floored too low, and **~30× (MS1)
+/ ~13× (MS2) too sparse**. The sparsity is the missing measurement layer, not missing abundance.
 
-**Lever B — peak DENSITY (noise model; separate feature).**
-Real is **~30× denser in MS1 (335 vs 11 peaks/scan)** and **~13× denser in MS2 (24 vs 1.9)**. That
-missing population is the dense low-level floor (real has ~31 % of MS1 peaks within 2× of the floor)
-— chemical/background noise plus spectral richness the deterministic render doesn't produce. This is
-the **noise model's** job, not a scale factor, and it is deferred to that feature.
+## The observation model to build (abundance held fixed)
 
-## Acceptance criteria
+Applied *after* ion generation, per frame type, ideally conditioned on m/z / mobility / gradient position:
 
-Render a run, probe it with `probe2.py`, and compare **per frame type** to the table above:
+1. **Signal spreading** — an ion's current over RT (frames) and mobility (scans) Gaussians, and its
+   isotope/fragment structure. Partly present already; it is a large part of why per-peak intensity is
+   far below total ion abundance.
+2. **Count floor / censoring** at the detector threshold (~21). Implement as a *real* floor/censor, not
+   only the current post-quantisation drop cutoff (`--min-peak-intensity`).
+3. **Ion-count noise** — shot/counting statistics on the (small) per-bin counts.
+4. **Background process** — the dense low-level population that fills the ~30× density gap, conditioned
+   on frame type / m/z / mobility / gradient region. **This needs a method-matched blank to measure**
+   (see the sample request); do not assume it is "just noise" — it may include real low-level analyte.
+5. **Signal→response transfer** (nonlinearity / saturation) — **only if a dilution series shows it.**
+   The current evidence does *not* demonstrate saturation (real maxima ~60k/8.6k are not obviously
+   clipped; the `u32` ceiling is irrelevant to instrument saturation). Default to linear response until
+   data says otherwise.
 
-**Lever A (calibration) — required now:**
-- Floor exactly **21** on both MS1 and MS2.
-- Median within **±20 %** of target (MS1 ~53, MS2 ~70).
-- `max` / `p99.9` within **~2×** of target (no runaway bright tail).
-- Dynamic range (p99.9/p1) within **~2×** of target (MS1 ~55×, MS2 ~46×).
+## Acceptance criteria (corrected)
 
-**Lever B (noise) — checked when that feature lands:**
-- peaks/scan within **~2×** of target (MS1 ~335, MS2 ~24).
+**Primary — truth preservation (must hold):**
+- Recall-vs-**unchanged** abundance still spans the full range (the abundance axis was not compressed).
+- Response curve for identified / spiked precursors is monotonic and linear where the real data is.
+- Feature-level isotope/envelope intensities keep their true ratios.
 
-Downstream, the eval harness should show recall-vs-abundance move toward a realistic, **noise-limited**
-floor once both levers are in — not the quantisation-limited floor it sees today.
+**Hard compatibility check:**
+- Per-peak floor is exactly **21** on MS1 and MS2 (an instrument/method threshold, verified in blanks).
 
-## Order of work
+**Secondary — emergent-shape diagnostics (regression checks, NOT primary objectives):**
+- After the full observation model, the pooled per-peak median / density / dynamic range land within
+  tolerance of real, **stratified by frame type and gradient region**, with **analyte and background
+  peaks compared separately** (using the blank).
+- These are explicitly *joint post-model* diagnostics. They can "pass for the wrong reasons" (a high
+  cutoff + injected floor noise matches floor/median/density while destroying abundance-response
+  fidelity), so they gate nothing on their own — truth preservation does.
 
-Lever A (shape) and Lever B (noise) interact — a noise floor under too-dim signal buries everything;
-under too-bright signal it does nothing. So they are calibrated **together**, but the render-side shape
-(floor + bulk + compression) is the concrete first move, with the eval harness and `probe2.py`
-distribution check measuring convergence at each step.
+## What we can and cannot do before the new calibration samples
+
+Without a **method-matched blank** we cannot separate background from signal — only match the *combined*
+distribution, which risks looking-right-for-wrong-reasons. Without a **dilution series** we cannot fit
+or verify the response curve. Until those exist, the honest scope is: keep abundance fixed; add
+spreading + a real floor/censor + count noise + a *provisional* background fit to the combined real
+distribution; label the response linear; and treat every shape diagnostic as provisional. The clean fit
+comes from the samples specified in `CALIBRATION_SAMPLE_REQUEST.md`.
