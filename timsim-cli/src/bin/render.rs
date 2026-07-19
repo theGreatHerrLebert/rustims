@@ -675,48 +675,95 @@ fn run_dda(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
     // Sort by (frame_start, precursor_id) — the precursor_id tiebreak makes the active-set insertion, and
     // therefore the per-frame MS1 deposit order, deterministic (win was built from a HashMap iteration).
     order_start.sort_unstable_by_key(|&i| (win[i].0, win[i].2));
-    let mut cursor = 0usize;
-    let mut active: Vec<usize> = Vec::new();
     let per = a.precursors_every.max(1);
-    let (mut ms1_n, mut ms2_n) = (0u64, 0u64);
 
-    for frame in 1..=a.n_frames {
-        while cursor < win.len() && win[order_start[cursor]].0 <= frame { active.push(order_start[cursor]); cursor += 1; }
-        active.retain(|&i| win[i].1 >= frame);
-        let is_ms1 = (frame - 1) % per == 0;
-        let f = frame as f64;
-        let mut tri: Vec<(u32, u32, f64)> = Vec::new();
-        if is_ms1 {
-            for &i in &active {
-                let io = &ions[&win[i].2];
-                let ew = gauss_frac(f - 0.5, f + 0.5, io.apex_frame, g.sigma_frames);
-                if ew <= 0.0 { continue; }
-                let (slo, shi) = scan_window_dda(io.scan, g, p.n_scans);
-                for scan in slo..=shi {
-                    let mw = gauss_frac(scan as f64 - 0.5, scan as f64 + 0.5, io.scan as f64, g.sigma_scans);
-                    if mw <= 0.0 { continue; }
-                    let base = io.abundance * ew * mw;
-                    for &(tof, iv) in &io.ms1 { tri.push((scan, tof, base * iv as f64)); }
+    // Parallel render-by-chunk. Split the frame axis into contiguous ranges, render+encode each on a rayon
+    // pool, then append the blocks in frame order. Byte-identical to a serial loop: each chunk reproduces
+    // the exact per-frame active set (same `order_start` sweep, pre-filled to its first frame) and both
+    // `dedup_and_quantise` and `encode_frame_block` are pure, so blocks are position-independent and are
+    // appended in the same order. Ions/events are shared read-only; only compressed blocks cross the
+    // boundary. `compression_level` MUST match the `TdfWriterConfig` above (1).
+    use rayon::prelude::*;
+    let n_frames = a.n_frames;
+    // Bind the only `Placement` field the parallel closure needs — `p` itself holds boxed `to_tof`/`from_tof`
+    // closures that are not `Sync`, so it must not be captured across the rayon boundary.
+    let n_scans = p.n_scans;
+    // More chunks than threads so rayon work-steals across the uneven elution density (mid-gradient frames
+    // carry far more active ions than the edges); the per-chunk pre-fill is cheap next to deposition.
+    let n_chunks = (rayon::current_num_threads() * 8).max(1).min(n_frames.max(1) as usize);
+    let bounds: Vec<(u32, u32)> = (0..n_chunks)
+        .map(|c| {
+            let f0 = 1 + (n_frames as u64 * c as u64 / n_chunks as u64) as u32;
+            let f1 = (n_frames as u64 * (c as u64 + 1) / n_chunks as u64) as u32;
+            (f0, f1)
+        })
+        .filter(|&(f0, f1)| f0 <= f1)
+        .collect();
+
+    type ChunkOut = (Vec<(u32, u8, rustdf::data::tdf_writer::EncodedBlock)>, u64, u64);
+    let chunks: Vec<Result<ChunkOut, String>> = bounds
+        .par_iter()
+        .map(|&(f0, f1)| {
+            // Pre-fill the active set to frame f0 (ions started by f0 and not yet ended), in order_start
+            // order — identical to what the serial sweep holds on entering frame f0.
+            let mut cursor = 0usize;
+            let mut active: Vec<usize> = Vec::new();
+            while cursor < win.len() && win[order_start[cursor]].0 <= f0 { active.push(order_start[cursor]); cursor += 1; }
+            active.retain(|&i| win[i].1 >= f0);
+            let (mut c_ms1, mut c_ms2) = (0u64, 0u64);
+            let mut out: Vec<(u32, u8, rustdf::data::tdf_writer::EncodedBlock)> = Vec::with_capacity((f1 - f0 + 1) as usize);
+            for frame in f0..=f1 {
+                while cursor < win.len() && win[order_start[cursor]].0 <= frame { active.push(order_start[cursor]); cursor += 1; }
+                active.retain(|&i| win[i].1 >= frame);
+                let is_ms1 = (frame - 1) % per == 0;
+                let f = frame as f64;
+                let mut tri: Vec<(u32, u32, f64)> = Vec::new();
+                if is_ms1 {
+                    for &i in &active {
+                        let io = &ions[&win[i].2];
+                        let ew = gauss_frac(f - 0.5, f + 0.5, io.apex_frame, g.sigma_frames);
+                        if ew <= 0.0 { continue; }
+                        let (slo, shi) = scan_window_dda(io.scan, g, n_scans);
+                        for scan in slo..=shi {
+                            let mw = gauss_frac(scan as f64 - 0.5, scan as f64 + 0.5, io.scan as f64, g.sigma_scans);
+                            if mw <= 0.0 { continue; }
+                            let base = io.abundance * ew * mw;
+                            for &(tof, iv) in &io.ms1 { tri.push((scan, tof, base * iv as f64)); }
+                        }
+                    }
+                } else if let Some(evs) = events_by_frame.get(&(frame as i64)) {
+                    for e in evs {
+                        let io = &ions[&e.precursor_id];
+                        let ew = gauss_frac(f - 0.5, f + 0.5, io.apex_frame, g.sigma_frames);
+                        if ew <= 0.0 { continue; }
+                        let s0 = e.scan_begin.max(0) as u32;
+                        let s1 = (e.scan_end.min(n_scans as i64 - 1)).max(0) as u32;
+                        for scan in s0..=s1 {
+                            let mw = gauss_frac(scan as f64 - 0.5, scan as f64 + 0.5, io.scan as f64, g.sigma_scans);
+                            if mw <= 0.0 { continue; }
+                            let base = io.abundance * ew * mw;
+                            for &(tof, iv) in &io.ms2 { tri.push((scan, tof, base * iv as f64)); }
+                        }
+                    }
                 }
+                let (scans, tofs, ints) = dedup_and_quantise(&tri, a.intensity_scale, a.min_peak_intensity);
+                if is_ms1 { c_ms1 += scans.len() as u64 } else { c_ms2 += scans.len() as u64 }
+                let blk = rustdf::data::tdf_writer::encode_frame_block(&scans, &tofs, &ints, n_scans, 1)
+                    .map_err(|e| e.to_string())?;
+                out.push((frame, if is_ms1 { 0u8 } else { 8u8 }, blk));
             }
-        } else if let Some(evs) = events_by_frame.get(&(frame as i64)) {
-            for e in evs {
-                let io = &ions[&e.precursor_id];
-                let ew = gauss_frac(f - 0.5, f + 0.5, io.apex_frame, g.sigma_frames);
-                if ew <= 0.0 { continue; }
-                let s0 = e.scan_begin.max(0) as u32;
-                let s1 = (e.scan_end.min(p.n_scans as i64 - 1)).max(0) as u32;
-                for scan in s0..=s1 {
-                    let mw = gauss_frac(scan as f64 - 0.5, scan as f64 + 0.5, io.scan as f64, g.sigma_scans);
-                    if mw <= 0.0 { continue; }
-                    let base = io.abundance * ew * mw;
-                    for &(tof, iv) in &io.ms2 { tri.push((scan, tof, base * iv as f64)); }
-                }
-            }
+            Ok((out, c_ms1, c_ms2))
+        })
+        .collect();
+
+    let (mut ms1_n, mut ms2_n) = (0u64, 0u64);
+    for chunk in chunks {
+        let (frames_blk, c1, c2) = chunk.map_err(|e| anyhow!("{e}"))?;
+        ms1_n += c1;
+        ms2_n += c2;
+        for (fid, mstype, blk) in frames_blk {
+            writer.append_encoded_frame(fid, fid as f64 * a.cycle_seconds, mstype, blk).map_err(|e| anyhow!("{e}"))?;
         }
-        let (scans, tofs, ints) = dedup_and_quantise(&tri, a.intensity_scale, a.min_peak_intensity);
-        if is_ms1 { ms1_n += scans.len() as u64 } else { ms2_n += scans.len() as u64 }
-        write_frame(&mut writer, frame, if is_ms1 { 0 } else { 8 }, a.cycle_seconds, scans, tofs, ints)?;
     }
 
     let precursors: Vec<DdaPrecursor> = sched.precursors.iter().map(|c| DdaPrecursor {

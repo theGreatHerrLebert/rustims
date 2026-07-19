@@ -174,6 +174,52 @@ pub struct RenderedFrame {
     pub intensities: Vec<u32>,
 }
 
+/// An encoded frame block plus the `Frames`-table summaries derived from it. Produced by the pure
+/// [`encode_frame_block`] (no `&self`, so it parallelises) and consumed by [`TdfWriter::append_encoded_frame`].
+pub struct EncodedBlock {
+    pub block: Vec<u8>,
+    pub num_peaks: i64,
+    pub max_intensity: f64,
+    pub summed_intensities: f64,
+}
+
+/// Encode one frame's raw triples into a Bruker `.d` block and compute its `Frames` summaries — the pure,
+/// `&self`-free core of [`TdfWriter::write_frame`], so a caller can run it across frames on a rayon pool
+/// and then append the blocks in order via [`TdfWriter::append_encoded_frame`].
+///
+/// The summaries describe the block AFTER the encoder's `(scan, tof)` dedup (the encoder SUMS duplicate
+/// keys the caller may pass): `num_peaks` = unique keys, `max_intensity` = max SUMMED bin (a bin fed
+/// 10 + 20 encodes as 30, not 20), `summed_intensities` = the grand total (unchanged by dedup). Otherwise
+/// the `Frames` metadata and the reader's cumulative peak pointer would disagree with the data.
+pub fn encode_frame_block(
+    scans: &[u32],
+    tofs: &[u32],
+    intensities: &[u32],
+    num_scans: u32,
+    compression_level: i32,
+) -> Result<EncodedBlock, Box<dyn std::error::Error>> {
+    let block = reconstruct_compressed_data(
+        scans.to_vec(),
+        tofs.to_vec(),
+        intensities.to_vec(),
+        num_scans,
+        compression_level,
+    )?;
+    let mut acc: std::collections::HashMap<(u32, u32), u64> =
+        std::collections::HashMap::with_capacity(scans.len());
+    for i in 0..scans.len() {
+        *acc.entry((scans[i], tofs[i])).or_insert(0) += intensities[i] as u64;
+    }
+    let summed: f64 = intensities.iter().map(|&x| x as f64).sum();
+    let max_i = acc.values().copied().max().unwrap_or(0) as f64;
+    Ok(EncodedBlock {
+        block,
+        num_peaks: acc.len() as i64,
+        max_intensity: max_i,
+        summed_intensities: summed,
+    })
+}
+
 /// One selected DDA precursor — the `Precursors` table row (vendor schema). `id` is per-ion; pass **one
 /// canonical row per `id`** (validated unique). A re-selected ion is represented by several PASEF bands,
 /// not several precursor rows; its per-event Parent/Intensity/ScanNumber live in the render's sidecar
@@ -308,47 +354,47 @@ impl TdfWriter {
     /// Encode one frame (MS1 or MS2), append its block, and record its `TimsId` offset. Frames must be
     /// pushed in ascending `frame_id` starting at 1 (the reader indexes by `frame_id - 1`).
     pub fn write_frame(&mut self, frame: &RenderedFrame) -> Result<(), Box<dyn std::error::Error>> {
-        let expected = self.frames.len() as u32 + 1;
-        if frame.frame_id != expected {
-            return Err(format!(
-                "frames must be written in order: expected id {expected}, got {}",
-                frame.frame_id
-            )
-            .into());
-        }
-
-        let block = reconstruct_compressed_data(
-            frame.scans.clone(),
-            frame.tofs.clone(),
-            frame.intensities.clone(),
+        let blk = encode_frame_block(
+            &frame.scans,
+            &frame.tofs,
+            &frame.intensities,
             self.config.num_scans,
             self.config.compression_level,
         )?;
+        self.append_encoded_frame(frame.frame_id, frame.retention_time, frame.ms_ms_type, blk)
+    }
 
-        let tims_id = self.position;
-        self.bin.write_all(&block)?;
-        self.position += block.len() as u64;
-
-        // Frame-level summaries must describe the block AFTER the encoder's `(scan, tof)` dedup — the
-        // writer's contract lets callers pass duplicates, which the encoder SUMS. So aggregate here
-        // too: `NumPeaks` = unique keys, `MaxIntensity` = max SUMMED bin (a bin fed 10 + 20 encodes as
-        // 30, not 20), `SummedIntensities` = the grand total (unchanged by dedup). Otherwise the Frames
-        // metadata and the reader's cumulative peak pointer disagree with the data.
-        let mut acc: std::collections::HashMap<(u32, u32), u64> =
-            std::collections::HashMap::with_capacity(frame.scans.len());
-        for i in 0..frame.scans.len() {
-            *acc.entry((frame.scans[i], frame.tofs[i])).or_insert(0) += frame.intensities[i] as u64;
+    /// Append an already-encoded frame block in order, recording its `TimsId` offset and `Frames`
+    /// metadata. Frames must be appended in ascending `frame_id` starting at 1. This is the sequential
+    /// tail of [`write_frame`]; splitting it out lets a caller encode frames in parallel (via the pure
+    /// [`encode_frame_block`]) and then append the blocks here in frame order — byte-identical to a
+    /// serial `write_frame` loop, since block bytes are position-independent and appended in the same
+    /// order.
+    pub fn append_encoded_frame(
+        &mut self,
+        frame_id: u32,
+        retention_time: f64,
+        ms_ms_type: u8,
+        blk: EncodedBlock,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let expected = self.frames.len() as u32 + 1;
+        if frame_id != expected {
+            return Err(format!(
+                "frames must be written in order: expected id {expected}, got {frame_id}"
+            )
+            .into());
         }
-        let summed: f64 = frame.intensities.iter().map(|&x| x as f64).sum();
-        let max_i = acc.values().copied().max().unwrap_or(0) as f64;
+        let tims_id = self.position;
+        self.bin.write_all(&blk.block)?;
+        self.position += blk.block.len() as u64;
         self.frames.push(FrameMetaRow {
-            id: frame.frame_id,
-            time: frame.retention_time,
-            ms_ms_type: frame.ms_ms_type as i64,
+            id: frame_id,
+            time: retention_time,
+            ms_ms_type: ms_ms_type as i64,
             tims_id,
-            max_intensity: max_i,
-            summed_intensities: summed,
-            num_peaks: acc.len() as i64,
+            max_intensity: blk.max_intensity,
+            summed_intensities: blk.summed_intensities,
+            num_peaks: blk.num_peaks,
         });
         Ok(())
     }
