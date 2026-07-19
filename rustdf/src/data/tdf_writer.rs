@@ -120,7 +120,15 @@ impl FramesTemplate {
     /// Copy the reference `.d`'s full `Frames` schema (into the already-attached `ref` db) and read
     /// one row as the template.
     fn from_reference(conn: &Connection) -> Result<Self, Box<dyn std::error::Error>> {
-        conn.execute_batch("CREATE TABLE Frames AS SELECT * FROM ref.Frames WHERE 0;")?;
+        // Copy the reference's Frames columns (not its DDL — that would drag in the reference's own foreign
+        // keys to PropertyGroups/etc. which we don't create). `AS SELECT` drops the PK, so add a UNIQUE
+        // index on Id: a valid target for the DDA `Precursors`/`PasefFrameMsMsInfo` foreign keys to
+        // `Frames(Id)` (SQLite accepts a UNIQUE index, not only a PRIMARY KEY), and it matches the reader's
+        // by-Id access.
+        conn.execute_batch(
+            "CREATE TABLE Frames AS SELECT * FROM ref.Frames WHERE 0;
+             CREATE UNIQUE INDEX IF NOT EXISTS FramesIdIndex ON Frames(Id);",
+        )?;
         let columns: Vec<String> = {
             let stmt = conn.prepare("SELECT * FROM ref.Frames LIMIT 0")?;
             stmt.column_names().into_iter().map(|s| s.to_string()).collect()
@@ -166,6 +174,34 @@ pub struct RenderedFrame {
     pub intensities: Vec<u32>,
 }
 
+/// One selected DDA precursor — the `Precursors` table row (vendor schema). `id` is per-ion (a re-selected
+/// ion reuses its id); the writer dedups to one row per `id` (keep-first), matching v1 and the vendor
+/// format. Per-event data (that dedup drops) lives in the render's sidecar answer key, not here.
+pub struct DdaPrecursor {
+    pub id: i64,
+    pub largest_peak_mz: f64,
+    pub average_mz: f64,
+    pub monoisotopic_mz: f64,
+    pub charge: i64,
+    pub scan_number: f64,
+    pub intensity: f64,
+    /// The survey MS1 `Frames.Id` this precursor was selected from.
+    pub parent: i64,
+}
+
+/// One PASEF MS2 selection band — a `PasefFrameMsMsInfo` row. A precursor may have MANY of these (one per
+/// fragmentation event across the run), each in its own mobility band of an MS2 `frame`.
+pub struct DdaPasefWindow {
+    pub frame: i64,
+    pub scan_num_begin: i64,
+    pub scan_num_end: i64,
+    pub isolation_mz: f64,
+    pub isolation_width: f64,
+    pub collision_energy: f64,
+    /// References `Precursors.Id`.
+    pub precursor: i64,
+}
+
 /// One accumulated `Frames` row, materialised into SQLite at [`TdfWriter::finalize`].
 struct FrameMetaRow {
     id: u32,
@@ -192,6 +228,9 @@ pub struct TdfWriter {
     /// For a DIA run: our replayed `(frame, window_group)` for each MS2 frame. When set, finalize
     /// writes `DiaFrameMsMsInfo` (this map) and copies `DiaFrameMsMsWindows` from the reference.
     dia_frame_to_group: Option<Vec<(u32, u32)>>,
+    /// For a DDA run: the selected precursors + their PASEF selection bands. When set, finalize writes
+    /// the `Precursors` and `PasefFrameMsMsInfo` tables. Mutually exclusive with `dia_frame_to_group`.
+    dda_schedule: Option<(Vec<DdaPrecursor>, Vec<DdaPasefWindow>)>,
 }
 
 impl TdfWriter {
@@ -244,6 +283,7 @@ impl TdfWriter {
             template,
             copied_from_reference,
             dia_frame_to_group: None,
+            dda_schedule: None,
         })
     }
 
@@ -252,6 +292,13 @@ impl TdfWriter {
     /// reference. Requires reference mode (the window definitions come from the reference `.d`).
     pub fn set_dia_schedule(&mut self, frame_to_group: Vec<(u32, u32)>) {
         self.dia_frame_to_group = Some(frame_to_group);
+    }
+
+    /// Mark this a DDA-PASEF run: `precursors` are the selected precursors (`Precursors` rows, deduped to
+    /// one per `id` at write time) and `pasef` the per-event selection bands (`PasefFrameMsMsInfo` rows,
+    /// all kept). Finalize writes both tables with the vendor schema. Set `config.scan_mode = 8`.
+    pub fn set_dda_schedule(&mut self, precursors: Vec<DdaPrecursor>, pasef: Vec<DdaPasefWindow>) {
+        self.dda_schedule = Some((precursors, pasef));
     }
 
     /// Encode one frame (MS1 or MS2), append its block, and record its `TimsId` offset. Frames must be
@@ -331,6 +378,9 @@ impl TdfWriter {
         if self.dia_frame_to_group.is_some() {
             self.write_dia_tables()?;
         }
+        if self.dda_schedule.is_some() {
+            self.write_dda_tables()?;
+        }
         Ok(())
     }
 
@@ -361,6 +411,66 @@ impl TdfWriter {
             let mut stmt = tx.prepare("INSERT INTO DiaFrameMsMsInfo (Frame, WindowGroup) VALUES (?1, ?2)")?;
             for &(frame, group) in frame_to_group {
                 stmt.execute(params![frame, group])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Persist the DDA schedule: `Precursors` (vendor schema, deduped to one row per `Id` — keep-first,
+    /// matching v1 and the vendor format) and `PasefFrameMsMsInfo` (every selection band). The per-event
+    /// detail the Precursors dedup discards is the render's sidecar answer key's job, not the `.d`'s.
+    fn write_dda_tables(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let (precursors, pasef) = self.dda_schedule.as_ref().unwrap();
+
+        self.conn.execute_batch(
+            "CREATE TABLE Precursors (
+                 Id INTEGER PRIMARY KEY,
+                 LargestPeakMz REAL NOT NULL, AverageMz REAL NOT NULL, MonoisotopicMz REAL,
+                 Charge INTEGER, ScanNumber REAL NOT NULL, Intensity REAL NOT NULL, Parent INTEGER,
+                 FOREIGN KEY(Parent) REFERENCES Frames(Id));
+             CREATE INDEX PrecursorsParentIndex ON Precursors (Parent);",
+        )?;
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut seen = std::collections::HashSet::new();
+            let mut stmt = tx.prepare(
+                "INSERT INTO Precursors
+                 (Id, LargestPeakMz, AverageMz, MonoisotopicMz, Charge, ScanNumber, Intensity, Parent)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            )?;
+            for p in precursors {
+                if !seen.insert(p.id) {
+                    continue; // dedup keep-first (the Precursors.Id PRIMARY KEY forbids duplicates)
+                }
+                stmt.execute(params![
+                    p.id, p.largest_peak_mz, p.average_mz, p.monoisotopic_mz,
+                    p.charge, p.scan_number, p.intensity, p.parent
+                ])?;
+            }
+        }
+        tx.commit()?;
+
+        self.conn.execute_batch(
+            "CREATE TABLE PasefFrameMsMsInfo (
+                 Frame INTEGER NOT NULL, ScanNumBegin INTEGER NOT NULL, ScanNumEnd INTEGER NOT NULL,
+                 IsolationMz REAL NOT NULL, IsolationWidth REAL NOT NULL, CollisionEnergy REAL NOT NULL,
+                 Precursor INTEGER, PRIMARY KEY(Frame, ScanNumBegin),
+                 FOREIGN KEY(Frame) REFERENCES Frames(Id),
+                 FOREIGN KEY(Precursor) REFERENCES Precursors(Id)) WITHOUT ROWID;",
+        )?;
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO PasefFrameMsMsInfo
+                 (Frame, ScanNumBegin, ScanNumEnd, IsolationMz, IsolationWidth, CollisionEnergy, Precursor)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )?;
+            for w in pasef {
+                stmt.execute(params![
+                    w.frame, w.scan_num_begin, w.scan_num_end,
+                    w.isolation_mz, w.isolation_width, w.collision_energy, w.precursor
+                ])?;
             }
         }
         tx.commit()?;
@@ -551,6 +661,78 @@ mod tests {
             want.sort_unstable();
             assert_eq!(got, want, "frame {} raw data did not round-trip", f.frame_id);
         }
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// M1 DDA gate: write a trivial DDA schedule where ONE ion (precursor 100) is selected in TWO
+    /// different MS2 frames (two events), plus a second precursor, and assert:
+    ///   1. every raw PASEF band round-trips through the reader (`read_pasef_frame_ms_ms_info`), so the
+    ///      re-selected ion keeps BOTH bands — the identity-safe API, not the lossy `get_selected_precursors`;
+    ///   2. `Precursors` is deduped to one row per id (the duplicate 100 collapses);
+    ///   3. the tables are relationally consistent (every PASEF `Precursor` exists in `Precursors`,
+    ///      every `Parent` is an MS1 frame).
+    #[test]
+    fn dda_d_round_trips_with_reselected_precursor() {
+        use crate::data::meta::read_pasef_frame_ms_ms_info;
+
+        let dir = std::env::temp_dir().join(format!("timsim_tdf_dda_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+
+        // Frames: 1=MS1, 2=MS2, 3=MS2, 4=MS1, 5=MS2.
+        let ms_types = [0u8, 8, 8, 0, 8];
+        let cfg = TdfWriterConfig { num_scans: 100, scan_mode: 8, ..Default::default() };
+        let mut w = TdfWriter::create(&dir, cfg).unwrap();
+        for (i, &t) in ms_types.iter().enumerate() {
+            w.write_frame(&RenderedFrame {
+                frame_id: i as u32 + 1,
+                retention_time: i as f64 * 0.1,
+                ms_ms_type: t,
+                scans: vec![10 + i as u32, 40],
+                tofs: vec![200, 500],
+                intensities: vec![50, 90],
+            })
+            .unwrap();
+        }
+
+        // Precursor 100 appears TWICE (two selection events, from MS1 frames 1 and 4); 200 once.
+        // The writer dedups Precursors keep-first (id 100 -> parent 1).
+        let precursors = vec![
+            DdaPrecursor { id: 100, largest_peak_mz: 596.9, average_mz: 596.7, monoisotopic_mz: 596.6, charge: 2, scan_number: 20.5, intensity: 4600.0, parent: 1 },
+            DdaPrecursor { id: 200, largest_peak_mz: 712.4, average_mz: 712.2, monoisotopic_mz: 712.1, charge: 3, scan_number: 50.0, intensity: 2100.0, parent: 1 },
+            DdaPrecursor { id: 100, largest_peak_mz: 596.9, average_mz: 596.7, monoisotopic_mz: 596.6, charge: 2, scan_number: 21.0, intensity: 3900.0, parent: 4 },
+        ];
+        // Three PASEF bands: precursor 100 in frames 2 AND 5, precursor 200 in frame 2.
+        let pasef = vec![
+            DdaPasefWindow { frame: 2, scan_num_begin: 10, scan_num_end: 32, isolation_mz: 596.9, isolation_width: 2.0, collision_energy: 31.5, precursor: 100 },
+            DdaPasefWindow { frame: 2, scan_num_begin: 40, scan_num_end: 62, isolation_mz: 712.4, isolation_width: 3.0, collision_energy: 34.0, precursor: 200 },
+            DdaPasefWindow { frame: 5, scan_num_begin: 10, scan_num_end: 32, isolation_mz: 596.9, isolation_width: 2.0, collision_energy: 31.6, precursor: 100 },
+        ];
+        w.set_dda_schedule(precursors, pasef);
+        w.finalize().unwrap();
+
+        // (1) every raw PASEF band survives — the re-selected ion 100 keeps BOTH.
+        let bands = read_pasef_frame_ms_ms_info(dir.to_str().unwrap()).unwrap();
+        assert_eq!(bands.len(), 3, "all PASEF bands must round-trip");
+        let for_100: Vec<&_> = bands.iter().filter(|b| b.precursor_id == 100).collect();
+        assert_eq!(for_100.len(), 2, "re-selected precursor 100 must keep both bands");
+        let frames_100: std::collections::HashSet<i64> = for_100.iter().map(|b| b.frame_id).collect();
+        assert_eq!(frames_100, [2i64, 5].into_iter().collect(), "precursor 100's two events are frames 2 and 5");
+
+        // (2)+(3) Precursors deduped; relational consistency.
+        let conn = Connection::open(dir.join("analysis.tdf")).unwrap();
+        let n_prec: i64 = conn.query_row("SELECT COUNT(*) FROM Precursors", [], |r| r.get(0)).unwrap();
+        assert_eq!(n_prec, 2, "Precursors deduped to one row per id");
+        let parent_of_100: i64 = conn.query_row("SELECT Parent FROM Precursors WHERE Id=100", [], |r| r.get(0)).unwrap();
+        assert_eq!(parent_of_100, 1, "keep-first dedup retains the first selection's parent");
+        let orphans: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM PasefFrameMsMsInfo p LEFT JOIN Precursors pr ON p.Precursor = pr.Id WHERE pr.Id IS NULL",
+            [], |r| r.get(0)).unwrap();
+        assert_eq!(orphans, 0, "every PASEF Precursor must exist in Precursors");
+        let bad_parent: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM Precursors pr LEFT JOIN Frames f ON pr.Parent = f.Id WHERE f.MsMsType != 0 OR f.Id IS NULL",
+            [], |r| r.get(0)).unwrap();
+        assert_eq!(bad_parent, 0, "every Precursor.Parent must be an MS1 survey frame");
 
         let _ = fs::remove_dir_all(&dir);
     }
