@@ -20,6 +20,7 @@ use std::sync::Arc;
 /// DIA schedule replay + diagonal transmission — only when the `tdf` feature pulls mscore/rustdf.
 #[cfg(feature = "tdf")]
 pub mod dia;
+pub mod dda;
 /// MS2 (DIA fragment) emission + its independent conservation oracle.
 #[cfg(feature = "tdf")]
 pub mod ms2;

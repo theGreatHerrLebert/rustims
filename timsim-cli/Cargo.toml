@@ -31,6 +31,7 @@ path = "src/bin/yield.rs"
 timsim-chem = { path = "../timsim-chem" }
 timsim-schema = { path = "../timsim-schema" }
 arrow = "56"
+parquet = "56"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

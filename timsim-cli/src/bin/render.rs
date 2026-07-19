@@ -125,6 +125,29 @@ struct Args {
     /// the diagonal quadrupole transmission. Requires `--reference-d` (a DIA `.d` for the schedule).
     #[arg(long, default_value_t = false)]
     dia: bool,
+    /// Render a DDA-PASEF run: MS1 surveys every `--precursors-every` frames, top-N precursor selection
+    /// with dynamic exclusion, band-limited MS2. Writes a sidecar answer key (`--dda-truth`) tying each
+    /// selection event to the true precursor. Requires `--reference-d`. (Oracle-isolation baseline: clean
+    /// single-precursor MS2; in-window co-isolation contaminants are a follow-up.)
+    #[arg(long, default_value_t = false)]
+    dda: bool,
+    /// DDA: MS1 survey cadence — every Nth frame is a precursor (MS1) frame; the N-1 between are MS2.
+    #[arg(long, default_value_t = 10)]
+    precursors_every: u32,
+    /// DDA: max precursors packed into one MS2 (PASEF) frame.
+    #[arg(long, default_value_t = 25)]
+    max_precursors: usize,
+    /// DDA: minimum MS1 intensity (abundance × elution) for a precursor to be selectable. Note this is
+    /// the currently-uncalibrated abundance scale (see RENDER_CALIBRATION.md); default 0 = top-N only.
+    #[arg(long, default_value_t = 0.0)]
+    intensity_threshold: f64,
+    /// DDA: dynamic-exclusion window in frames — an ion isn't re-selected until this many frames after
+    /// its last selection.
+    #[arg(long, default_value_t = 25)]
+    exclusion_width: u32,
+    /// DDA: path for the sidecar answer key (Parquet). Default: `<out>.dda_selected.parquet`.
+    #[arg(long)]
+    dda_truth: Option<PathBuf>,
     /// After writing, reopen the `.d` through the rustims reader and report what round-trips.
     #[arg(long, default_value_t = false)]
     verify: bool,
@@ -269,6 +292,9 @@ fn main() -> Result<()> {
     let hi = parse("timsim.rt.index_max")?;
     let span = (hi - lo).max(1e-9);
 
+    if a.dda {
+        return run_dda(&a, &p, &g, &rt, lo, span);
+    }
     if a.dia {
         return run_dia(&a, &p, &g, &rt, lo, span);
     }
@@ -521,6 +547,229 @@ fn place_scan(pcid: u64, mz: f64, charge: u32, ccs: &HashMap<u64, f64>, p: &Plac
         }
     };
     (p.to_scan)(one_over_k0.clamp(p.im_min, p.im_max)).min(p.n_scans - 1) as f64
+}
+
+/// v1's precursor isolation-m/z metadata from the raw MS1 isotope envelope: keep isotopes above 5% of the
+/// max, then mono = first, the envelope span's far end = last, `IsolationMz` = the most-intense isotope.
+fn iso_metadata(ms1: &[(f64, f32)], precursor_mz: f64) -> (f64, f64, f64) {
+    if ms1.is_empty() {
+        return (precursor_mz, precursor_mz, precursor_mz);
+    }
+    let max_i = ms1.iter().map(|&(_, i)| i).fold(0.0f32, f32::max);
+    let kept: Vec<(f64, f32)> = ms1.iter().copied().filter(|&(_, i)| i > 0.05 * max_i).collect();
+    let kept = if kept.is_empty() { ms1.to_vec() } else { kept };
+    let mono = kept.first().map(|&(m, _)| m).unwrap_or(precursor_mz);
+    let last = kept.last().map(|&(m, _)| m).unwrap_or(precursor_mz);
+    let largest = kept.iter().fold((mono, 0.0f32), |acc, &(m, i)| if i > acc.1 { (m, i) } else { acc }).0;
+    (mono, largest, (mono + last) / 2.0)
+}
+
+/// Mobility (scan) window `[lo, hi]` an ion deposits across (n_sigma × sigma_scans around its apex scan).
+fn scan_window_dda(scan: i64, g: &Geometry, n_scans: u32) -> (u32, u32) {
+    let h = g.n_sigma * g.sigma_scans;
+    let lo = (scan as f64 - h).max(0.0) as u32;
+    let hi = ((scan as f64 + h) as u32).min(n_scans.saturating_sub(1));
+    (lo, hi)
+}
+
+/// DDA-PASEF render — MS1 surveys + top-N selection (`timsim_cli::dda`) + band-limited MS2, plus a sidecar
+/// answer key tying each selection event to the true precursor. Oracle-isolation baseline: clean single
+/// target per band; in-window co-isolation contaminants (and DDA memory streaming) are follow-ups.
+fn run_dda(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f64, span: f64) -> Result<()> {
+    use rustdf::data::tdf_writer::{DdaPasefWindow, DdaPrecursor, TdfWriter, TdfWriterConfig};
+    use timsim_cli::dda::{schedule, Candidate, SelectionParams};
+    use timsim_cli::render::gauss_frac;
+
+    let ref_d = a.reference_d.as_ref().ok_or_else(|| anyhow!("--dda requires --reference-d"))?;
+    let _ = ref_d;
+    let project = |peaks: &[(f64, f32)]| -> Vec<(u32, f32)> {
+        peaks.iter().filter_map(|&(m, iv)| {
+            if m < p.mz_min || m > p.mz_max { None } else { Some(((p.to_tof)(m).min(p.tof_max.saturating_sub(1)), iv)) }
+        }).collect()
+    };
+    let ccs = load_ccs(&a.precursor_ccs)?;
+    let amounts = load_amounts(&a.peptide_quantities, &a.sample)?;
+
+    // Load ALL ion_spectra (raw m/z peaks). DDA memory streaming is a follow-up (the DIA path is chunked).
+    let (mut ms1_raw, mut ms2_raw): (HashMap<u64, Vec<(f64, f32)>>, HashMap<u64, Vec<(f64, f32)>>) = (HashMap::new(), HashMap::new());
+    for b in timsim_schema::read_stream(&a.ion_spectra, SP::TABLE)? {
+        let b = b?;
+        let pcid: &UInt64Array = b.column_by_name(SP::PRECURSOR_ID).unwrap().as_any().downcast_ref().unwrap();
+        let level: &UInt8Array = b.column_by_name(SP::MS_LEVEL).unwrap().as_any().downcast_ref().unwrap();
+        let mz: &ListArray = b.column_by_name(SP::MZ).unwrap().as_any().downcast_ref().unwrap();
+        let inten: &ListArray = b.column_by_name(SP::INTENSITY).unwrap().as_any().downcast_ref().unwrap();
+        for i in 0..b.num_rows() {
+            let mzv = mz.value(i); let mzv: &Float64Array = mzv.as_any().downcast_ref().unwrap();
+            let iv = inten.value(i); let iv: &Float32Array = iv.as_any().downcast_ref().unwrap();
+            let peaks: Vec<(f64, f32)> = (0..mzv.len()).map(|k| (mzv.value(k), iv.value(k))).collect();
+            match level.value(i) { 1 => { ms1_raw.insert(pcid.value(i), peaks); } 2 => { ms2_raw.insert(pcid.value(i), peaks); } _ => {} }
+        }
+    }
+
+    struct DdaIon { peptide_id: u64, apex_frame: f64, scan: i64, abundance: f64, ms1: Vec<(u32, f32)>, ms2: Vec<(u32, f32)> }
+    let mut ions: HashMap<u64, DdaIon> = HashMap::new();
+    let mut cands: Vec<Candidate> = Vec::new();
+    let mut order: u32 = 0;
+    'outer: for b in timsim_schema::read_stream(&a.precursors, PRE::TABLE)? {
+        let b = b?;
+        let pcid: &UInt64Array = b.column_by_name(PRE::PRECURSOR_ID).unwrap().as_any().downcast_ref().unwrap();
+        let pid: &UInt64Array = b.column_by_name(PRE::PEPTIDE_ID).unwrap().as_any().downcast_ref().unwrap();
+        let mz: &Float64Array = b.column_by_name(PRE::MZ).unwrap().as_any().downcast_ref().unwrap();
+        let chg: &UInt8Array = b.column_by_name(PRE::CHARGE).unwrap().as_any().downcast_ref().unwrap();
+        let frac: &Float32Array = b.column_by_name(PRE::CHARGE_FRACTION).unwrap().as_any().downcast_ref().unwrap();
+        let ionz: &Float32Array = b.column_by_name(PRE::IONIZATION_PROPENSITY).unwrap().as_any().downcast_ref().unwrap();
+        let mff: &Float32Array = b.column_by_name(PRE::MODFORM_FRACTION).unwrap().as_any().downcast_ref().unwrap();
+        for i in 0..b.num_rows() {
+            let Some(&rt_index) = rt.get(&pid.value(i)) else { continue };
+            let Some(ms1raw) = ms1_raw.remove(&pcid.value(i)) else { continue };
+            let apex_frame = 1.0 + (rt_index - lo) / span * (a.n_frames as f64 - 1.0);
+            let scan = place_scan(pcid.value(i), mz.value(i), chg.value(i).max(1) as u32, &ccs, p) as i64;
+            let amount = amounts.get(&pid.value(i)).copied().unwrap_or(1.0);
+            let abundance = amount * ionz.value(i) as f64 * mff.value(i) as f64 * frac.value(i) as f64;
+            let (mono_mz, largest_mz, average_mz) = iso_metadata(&ms1raw, mz.value(i));
+            let ms1 = project(&ms1raw);
+            let ms2 = ms2_raw.remove(&pcid.value(i)).map(|s| project(&s)).unwrap_or_default();
+            if ms1.is_empty() && ms2.is_empty() { continue; }
+            cands.push(Candidate {
+                precursor_id: pcid.value(i), order, apex_frame, scan_apex: scan,
+                mono_mz, largest_mz, average_mz, charge: chg.value(i).max(1) as i64, abundance,
+                sigma_frames: g.sigma_frames, n_sigma: g.n_sigma,
+            });
+            ions.insert(pcid.value(i), DdaIon { peptide_id: pid.value(i), apex_frame, scan, abundance, ms1, ms2 });
+            order += 1;
+            if a.limit > 0 && ions.len() >= a.limit { break 'outer; }
+        }
+    }
+
+    let params = SelectionParams {
+        precursors_every: a.precursors_every.max(1), max_precursors: a.max_precursors,
+        intensity_threshold: a.intensity_threshold, exclusion_frames: a.exclusion_width,
+        band_half_width: 11, n_scans: p.n_scans, ce_bias: 54.1984, ce_slope: -0.0345,
+    };
+    let sched = schedule(&cands, &params, a.n_frames);
+    eprintln!("  DDA: {} of {} precursors selected, {} MS2 events", sched.precursors.len(), cands.len(), sched.events.len());
+
+    // Sequential TDF precursor ids (vendor requires 1..N; our u64 hash overflows i64). our_id -> tdf_id.
+    let tdf_id: HashMap<u64, i64> = sched.precursors.iter().enumerate().map(|(i, c)| (c.precursor_id, i as i64 + 1)).collect();
+    let mut events_by_frame: HashMap<i64, Vec<&timsim_cli::dda::SelectionEvent>> = HashMap::new();
+    for e in &sched.events { events_by_frame.entry(e.ms2_frame).or_default().push(e); }
+
+    let _ = std::fs::remove_dir_all(&a.out);
+    let cfg = TdfWriterConfig {
+        num_scans: p.n_scans, digitizer_num_samples: p.tof_max.saturating_sub(1),
+        mz_range: (p.mz_min, p.mz_max), one_over_k0_range: (p.im_min, p.im_max),
+        compression_level: 1, scan_mode: 8, reference_d: p.reference_d.clone(),
+    };
+    let mut writer = TdfWriter::create(&a.out, cfg).map_err(|e| anyhow!("{e}"))?;
+
+    // Active-set sweep over ions by apex frame, for the MS1 survey deposition.
+    let win: Vec<(u32, u32, u64)> = ions.iter().map(|(&id, io)| {
+        let h = g.n_sigma * g.sigma_frames;
+        ((io.apex_frame - h).max(1.0) as u32, ((io.apex_frame + h) as u32).min(a.n_frames), id)
+    }).collect();
+    let mut order_start: Vec<usize> = (0..win.len()).collect();
+    order_start.sort_unstable_by_key(|&i| win[i].0);
+    let mut cursor = 0usize;
+    let mut active: Vec<usize> = Vec::new();
+    let per = a.precursors_every.max(1);
+    let (mut ms1_n, mut ms2_n) = (0u64, 0u64);
+
+    for frame in 1..=a.n_frames {
+        while cursor < win.len() && win[order_start[cursor]].0 <= frame { active.push(order_start[cursor]); cursor += 1; }
+        active.retain(|&i| win[i].1 >= frame);
+        let is_ms1 = (frame - 1) % per == 0;
+        let f = frame as f64;
+        let mut tri: Vec<(u32, u32, f64)> = Vec::new();
+        if is_ms1 {
+            for &i in &active {
+                let io = &ions[&win[i].2];
+                let ew = gauss_frac(f - 0.5, f + 0.5, io.apex_frame, g.sigma_frames);
+                if ew <= 0.0 { continue; }
+                let (slo, shi) = scan_window_dda(io.scan, g, p.n_scans);
+                for scan in slo..=shi {
+                    let mw = gauss_frac(scan as f64 - 0.5, scan as f64 + 0.5, io.scan as f64, g.sigma_scans);
+                    if mw <= 0.0 { continue; }
+                    let base = io.abundance * ew * mw;
+                    for &(tof, iv) in &io.ms1 { tri.push((scan, tof, base * iv as f64)); }
+                }
+            }
+        } else if let Some(evs) = events_by_frame.get(&(frame as i64)) {
+            for e in evs {
+                let io = &ions[&e.precursor_id];
+                let ew = gauss_frac(f - 0.5, f + 0.5, io.apex_frame, g.sigma_frames);
+                if ew <= 0.0 { continue; }
+                let s0 = e.scan_begin.max(0) as u32;
+                let s1 = (e.scan_end.min(p.n_scans as i64 - 1)).max(0) as u32;
+                for scan in s0..=s1 {
+                    let mw = gauss_frac(scan as f64 - 0.5, scan as f64 + 0.5, io.scan as f64, g.sigma_scans);
+                    if mw <= 0.0 { continue; }
+                    let base = io.abundance * ew * mw;
+                    for &(tof, iv) in &io.ms2 { tri.push((scan, tof, base * iv as f64)); }
+                }
+            }
+        }
+        let (scans, tofs, ints) = dedup_and_quantise(&tri, a.intensity_scale, a.min_peak_intensity);
+        if is_ms1 { ms1_n += scans.len() as u64 } else { ms2_n += scans.len() as u64 }
+        write_frame(&mut writer, frame, if is_ms1 { 0 } else { 8 }, a.cycle_seconds, scans, tofs, ints)?;
+    }
+
+    let precursors: Vec<DdaPrecursor> = sched.precursors.iter().map(|c| DdaPrecursor {
+        id: tdf_id[&c.precursor_id], largest_peak_mz: c.largest_mz, average_mz: c.average_mz,
+        monoisotopic_mz: c.mono_mz, charge: c.charge, scan_number: c.scan_apex as f64,
+        intensity: c.abundance, parent: c.parent_ms1_frame,
+    }).collect();
+    let pasef: Vec<DdaPasefWindow> = sched.events.iter().map(|e| DdaPasefWindow {
+        frame: e.ms2_frame, scan_num_begin: e.scan_begin, scan_num_end: e.scan_end,
+        isolation_mz: e.isolation_mz, isolation_width: e.isolation_width, collision_energy: e.collision_energy,
+        precursor: tdf_id[&e.precursor_id],
+    }).collect();
+    writer.set_dda_schedule(precursors, pasef);
+    writer.finalize().map_err(|e| anyhow!("{e}"))?;
+
+    // Sidecar answer key: one row per selection EVENT, keyed on (ms2_frame, scan_begin).
+    {
+        use arrow::array::{Float64Array, Int64Array, UInt64Array};
+        use arrow::datatypes::{DataType, Field, Schema};
+        use arrow::record_batch::RecordBatch;
+        use parquet::arrow::ArrowWriter;
+        use std::sync::Arc;
+        let (mut fr, mut sb, mut se, mut td, mut pc, mut pe, mut ch, mut iso, mut mo, mut pa, mut it, mut rtc):
+            (Vec<i64>, Vec<i64>, Vec<i64>, Vec<i64>, Vec<u64>, Vec<u64>, Vec<i64>, Vec<f64>, Vec<f64>, Vec<i64>, Vec<f64>, Vec<f64>) = Default::default();
+        for e in &sched.events {
+            let io = &ions[&e.precursor_id];
+            fr.push(e.ms2_frame); sb.push(e.scan_begin); se.push(e.scan_end);
+            td.push(tdf_id[&e.precursor_id]); pc.push(e.precursor_id); pe.push(io.peptide_id);
+            ch.push(e.charge); iso.push(e.isolation_mz); mo.push(e.mono_mz);
+            pa.push(e.parent_ms1_frame); it.push(e.event_intensity); rtc.push(io.apex_frame * a.cycle_seconds);
+        }
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("ms2_frame", DataType::Int64, false),
+            Field::new("scan_begin", DataType::Int64, false),
+            Field::new("scan_end", DataType::Int64, false),
+            Field::new("tdf_precursor_id", DataType::Int64, false),
+            Field::new("precursor_id", DataType::UInt64, false),
+            Field::new("peptide_id", DataType::UInt64, false),
+            Field::new("charge", DataType::Int64, false),
+            Field::new("isolation_mz", DataType::Float64, false),
+            Field::new("mono_mz", DataType::Float64, false),
+            Field::new("parent_ms1_frame", DataType::Int64, false),
+            Field::new("event_intensity", DataType::Float64, false),
+            Field::new("rt_seconds", DataType::Float64, false),
+        ]));
+        let batch = RecordBatch::try_new(schema.clone(), vec![
+            Arc::new(Int64Array::from(fr)), Arc::new(Int64Array::from(sb)), Arc::new(Int64Array::from(se)),
+            Arc::new(Int64Array::from(td)), Arc::new(UInt64Array::from(pc)), Arc::new(UInt64Array::from(pe)),
+            Arc::new(Int64Array::from(ch)), Arc::new(Float64Array::from(iso)), Arc::new(Float64Array::from(mo)),
+            Arc::new(Int64Array::from(pa)), Arc::new(Float64Array::from(it)), Arc::new(Float64Array::from(rtc)),
+        ])?;
+        let truth_path = a.dda_truth.clone().unwrap_or_else(|| a.out.with_extension("dda_selected.parquet"));
+        let file = std::fs::File::create(&truth_path)?;
+        let mut w = ArrowWriter::try_new(file, schema, None)?;
+        w.write(&batch)?;
+        w.close()?;
+        println!("  wrote DDA .d ({} MS1 + {} MS2 peaks) + {} answer-key events -> {}", ms1_n, ms2_n, sched.events.len(), truth_path.display());
+    }
+    Ok(())
 }
 
 /// DIA render: MS1+MS2 frames on the reference's cycle, fragments gated by the diagonal transmission.
