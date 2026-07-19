@@ -1,95 +1,103 @@
-# DDA-PASEF render — plan (revised after domain review)
+# DDA-PASEF render — plan (grounded in the working v1 code + two domain reviews)
 
-Goal: a first, minimal-but-real **DDA-PASEF** render path for timsim v2, producing a Bruker `.d` a DDA
-search engine (Sage/FragPipe native ddaPASEF) can search, scorable by the eval harness against v2 answer
-keys. Revised 2026-07-19 after a Codex review that hardened the **identity-preservation** design (the
-tricky part of DDA). Iron rule inherited from the calibration thread: **biological abundance untouched**.
+Goal: a first minimal-but-real **DDA-PASEF** render path for timsim v2 — a Bruker `.d` a native
+ddaPASEF search engine (Sage/FragPipe) can search, scorable by the eval harness against v2 answer keys.
+This revision folds in the **actual v1 implementation** (`jobs/dda_selection_scheme.py`, `tdf.py`
+`write_precursor_table`/`write_pasef_meta_table`) so the plan reflects proven code, not guesses. Iron
+rule inherited: **biological abundance untouched.**
 
-## What a DDA-PASEF `.d` is (from a real ref, `dda/blanks/G230913…d`)
+## The v1 algorithm we are porting (read from source, not summarised)
 
-- **Frames**: `ScanMode=8`; MS1 survey `MsMsType=0`, PASEF MS2 `MsMsType=8`.
-- **Precursors**: `Id, LargestPeakMz, AverageMz, MonoisotopicMz, Charge, ScanNumber (mobility, REAL),
-  Intensity, Parent (survey MS1 frame it was picked from)`.
-- **PasefFrameMsMsInfo**: `Frame, ScanNumBegin, ScanNumEnd, IsolationMz, IsolationWidth, CollisionEnergy,
-  Precursor`. One MS2 frame packs SEVERAL precursors, each in a non-overlapping mobility band; a
-  precursor's fragments live only in its band.
+**Schedule** (`simulate_dda_pasef_selection_scheme` + `schedule_precursors`):
+- Frame layout: every `precursors_every`-th frame is an MS1 survey (`MsMsType=0`); the `k = precursors_every−1`
+  frames between are the cycle's PASEF MS2 frames (`MsMsType=8`).
+- Candidate intensity per MS1 frame = `relative_abundance × events × frame_abundance` (the ion's rendered
+  MS1 intensity), filtered to ≥ `intensity_threshold`. **Selection is driven by this (currently
+  uncalibrated) intensity** — the metric confound both reviews flagged.
+- Per MS1 frame: sort candidates by `(intensity ↓, ion_id ↑)` (deterministic tie-break); for each, skip if
+  **dynamically excluded** (`current_frame − last_scheduled < exclusion_width`); else compute its mobility
+  band `[apex−11, apex+11]` (clamped to `0..scan_max`) and **first-fit pack** it into the earliest of the
+  `k` MS2 frames that has `< max_precursors` and no conflict. **Fidelity note:** v1's conflict test compares
+  the *new clamped* interval against existing precursors' `apex ± w` (not their stored/clamped endpoints) —
+  port that predicate exactly; add a separate interval-overlap invariant/test rather than "fixing" selection
+  in M1. Also: the **final MS1 survey is deliberately not scheduled** (`frame < max_frame_id`) — preserve it.
+- Per selection: `IsolationMz = most-intense isotope` (kept distinct from mono in matching);
+  `IsolationWidth = 3` if the retained-isotope span > 2 Th else `2`; `CollisionEnergy = 54.1984 − 0.0345 ×
+  scan` (Bruker PASEF activation policy, IMS-scan-driven). `AverageMz` in v1 is just
+  `(first + last retained-isotope m/z)/2` (isotopes < 5% of max are dropped first) — a crude approximation,
+  NOT an intensity-weighted centroid; port faithfully but don't describe it as calibrated envelope metadata.
 
-## Pieces
+**Write** (`tdf.py`, to mirror in Rust `TdfWriter`):
+- `Precursors` (vendor schema: `Id PK, LargestPeakMz, AverageMz, MonoisotopicMz, Charge, ScanNumber REAL,
+  Intensity, Parent FK→Frames.Id`) — **deduped to one row per `ion_id`**.
+- `PasefFrameMsMsInfo` (`Frame, ScanNumBegin/End INT, IsolationMz, IsolationWidth, CollisionEnergy,
+  Precursor`, `PK(Frame, ScanNumBegin)`) — **many rows per precursor** (one per PASEF event); matches the
+  real `.d`'s ~4.4 PASEF rows/precursor.
+- Identity: `precursor_id_mapping` table maps `ion_id → sequential tdf_precursor_id` (vendor needs 1..N
+  ids; internal sim keeps `ion_id` for fragment lookup). This IS the answer-key linkage.
 
-1. **Writer (DDA path in `TdfWriter`)** — DIA-only today. Add `scan_mode=8` and a finalize that writes
-   `Precursors` + `PasefFrameMsMsInfo` from records the render supplies.
-2. **Selection scheme** — port v1's `simulate_dda_pasef_selection_scheme`: survey every `precursors_every`
-   frames; per cycle top-N by MS1 intensity above `intensity_threshold`, `max_precursors`, dynamic
-   exclusion (`exclusion_width`).
-3. **PASEF packing + band-limited MS2 render** — greedy-pack a cycle's selected precursors into MS2 frames
-   by non-overlapping mobility bands; deposit each precursor's fragments only in its band. MS1 = full survey.
-4. **CLI**: `--dda`, `--precursors-every`, `--max-precursors`, `--intensity-threshold`, `--exclusion-width`.
+So the M1 writer is a **port of proven Python** to `TdfWriter`, not a new design; the selection is a
+port of `schedule_precursors`.
 
-## Identity preservation (revised — the load-bearing design)
+## Identity preservation (v1 model × codex rigor — synthesis)
 
-Identity lives ONLY in a sidecar answer key (do **not** put peptide IDs in `.d` tables; the point is that
-normal tools can search it). But it must survive the search engine, which does **not** carry our
-`Precursors.Id` — it re-detects the precursor from the spectrum. So:
+- **Adopt v1's ID model:** `Precursors.Id` is per-**ion** (one MS1 feature), with **multiple PASEF
+  bands** per precursor — what real Bruker `.d` looks like, so a search engine sees a realistic file.
+  `precursor_id_mapping` (`ion_id → tdf_precursor_id`) is the vendor-side id remap.
+- **`Precursors` is LOSSY — do not treat it as event truth.** v1 dedups `Precursors` to the *first*
+  selection per ion, so a re-fragmented ion's later `Intensity/Parent/ScanNumber` are dropped. Therefore
+  the **per-event Parent/Intensity/ScanNumber must live in the sidecar answer key**, not be read back from
+  `Precursors`. (Corrects the earlier invariant "every PASEF `Parent` is its actual prior MS1" — that holds
+  per event only via the sidecar.)
+- **Answer key `dda_selected_precursors`, one row per PASEF EVENT, keyed on `(ms2_frame, scan_begin)`**
+  (the vendor PK — our internal `selection_id` is NOT in the `.d`): `ms2_frame, scan_begin, scan_end,
+  ion_id, our_precursor_id, tdf_precursor_id, sequence, charge, isolation_mz, mono_mz, parent_ms1_frame,
+  event_intensity, rt`. Same ion in several cycles → several rows, all sharing ion/sequence truth.
+- **Match a PSM by spectrum locator first** — every exported spectrum must map to a `(ms2_frame,
+  scan_begin)`; **M2 must demonstrate that export→key mapping empirically** — then require `sequence +
+  charge + precursor-mass` under tolerances (`(sequence,charge)` alone is insufficient; keep mono distinct
+  from `IsolationMz`). If an exporter *merges* re-fragmented bands, per-event conditional-ID recall is
+  undefined for that output → score an explicit "aggregated-precursor-spectrum" view instead. Peptide-level
+  "identified ≥ once" is the secondary view.
 
-- **One acquisition EVENT = one unique `Precursors.Id`.** Never reuse an Id for a biological precursor
-  selected twice; two selections of one peptide are two events, two Ids, two spectra. (The reader keys a
-  `BTreeMap` on this Id — a duplicate silently drops bands.) Invariant: exactly one PASEF row per Id.
-- **Sidecar `dda_selected_precursors` (Parquet), one row per written event:** `selection_id` (stable),
-  `our_precursor_id`, `sequence`, `charge`, plus the **engine-visible spectrum locator** —
-  `ms2_frame`, `scan_begin/end`, native spectrum/title id (after any export), `rt`, `isolation_mz/width`,
-  declared `mono_mz`, `intensity`, `parent_ms1_frame`.
-- **Scoring match order:** (1) map a PSM to a selection by **spectrum locator**; (2) then require
-  `sequence` + `charge` + precursor-mass agreement under explicit tolerances. `(sequence,charge)` alone is
-  NOT the key. Keep a separate peptide-level "identified ≥ once" metric as a secondary view.
-- **Golden test:** two selections of one precursor at different RT round-trip as two distinct events.
+## `.d` self-consistency invariants (must hold or unreadable / mis-searched)
+- `Frames.Id` contiguous, 1-based, **write order == Id**; `TimsId` = each compressed block after the
+  64-byte prefix. `ScanMode=8`; MS1 `MsMsType=0`, MS2 `MsMsType=8`. Every PASEF `Parent` is the actual
+  prior survey MS1; every PASEF `Frame` is an MS2 frame.
+- Each `Precursors.Id` present once; each PASEF `Precursor` references an existing `Id`; `ScanNumber`
+  within its band; bands `0..NumScans-1`, non-empty, non-overlapping (reader adds a 5% margin → edge
+  leakage contaminates neighbours).
+- Precursor MS1 isotope envelope actually present in the parent survey frame at declared RT/mobility; MS2
+  ions land in the band. `MonoisotopicMz`/`LargestPeakMz` from the deposited, calibrated envelope (reader
+  prefers `MonoisotopicMz`); `AverageMz` is v1's crude `(first+last retained isotope)/2` (kept for
+  fidelity, not treated as a real centroid). `Charge` agrees with isotope spacing; `ScanNumber` real-valued.
+- Per-event `Parent/Intensity/ScanNumber` are authoritative in the **sidecar answer key**, not in
+  `Precursors` (which keeps only the first selection per ion).
+- `NumPeaks/MaxIntensity/SummedIntensities` from the deduplicated encoded bins (writer already computes).
 
-## `.d` self-consistency invariants (must hold or the file is unreadable / mis-searched)
-
-- `Frames.Id` contiguous, 1-based, **write order == Id** (writer/reader assume `frame_id-1` indexing);
-  `TimsId` points to each compressed block after the 64-byte prefix.
-- `ScanMode=8`; MS1 `MsMsType=0`, MS2 `MsMsType=8`. Every PASEF `Frame` exists and is an MS2 frame; every
-  `Parent` exists and is the actual prior survey MS1 used for selection.
-- Each PASEF `Precursor` appears **exactly once** in `Precursors`; its `ScanNumber` lies within its band;
-  bands are within `0..NumScans-1`, non-empty, and **non-overlapping** (reader extracts by band ± a 5%
-  margin, so edge leakage contaminates neighbours).
-- The precursor's **MS1 isotope envelope is actually present** in the parent survey frame at its declared
-  RT/mobility; its MS2 ions lie in its band.
-- `MonoisotopicMz / LargestPeakMz / AverageMz` are computed from the **deposited, calibrated** envelope
-  (not theoretical) — the reader prefers `MonoisotopicMz`; declared `Charge` must agree with isotope
-  spacing (easy to break after TOF quantisation). `ScanNumber` is a **real-valued** apex estimate.
-- `NumPeaks / MaxIntensity / SummedIntensities` describe the deduplicated encoded bins (the writer already
-  computes these — do not hand-write inconsistent summaries).
-
-## Metrics (revised — engine-independent denominator)
-
-- **eligible truth** = truth events detectable by an **explicit, versioned criterion** (e.g. rendered MS1
-  intensity ≥ threshold, mobility in range) — defined WITHOUT reference to the search engine (else circular).
-- **selection recall** = selected ÷ eligible truth — reported as a function of the **versioned intensity
-  model + threshold** (selection depends on the currently-uncalibrated intensity → a sim-property confound,
-  flag it).
-- **conditional ID recall** = correctly identified ÷ selected.
-- **end-to-end recall** = correctly identified ÷ eligible truth.
-- FDP = engine calls not matching any truth selection under the locator+mass criteria.
+## Metrics (engine-independent denominator)
+- **eligible truth** = truth events detectable by an explicit, **versioned** criterion (rendered MS1
+  intensity ≥ threshold, mobility in range) — defined WITHOUT the engine.
+- **selection recall** = selected ÷ eligible (report vs the versioned intensity model — a sim confound).
+- **conditional ID recall** = identified ÷ selected. **end-to-end** = identified ÷ eligible.
+- FDP = engine calls not matching any truth selection under locator + mass.
 
 ## Milestones & scope
-
-- **M1 (de-risk writer):** DDA `.d` writer + trivial hand-built schedule. Gates: SQLite relational
-  validation (all FKs/uniqueness above), raw-band validation, MS1-envelope + Precursor-metadata
-  validation, and **round-trip through `TimsDatasetDDA`**.
-- **M2 (render):** selection + packing + band-limited render → a searchable `.d`; a native ddaPASEF
-  engine (Sage/FragPipe) finds our peptides, and a **`.d` → engine/export → spectrum-locator** mapping
-  test proves the identity chain end-to-end (without this the identity claim is unproven).
-- **M3 (harness):** Sage report parser (reuse v1 `parse_sage_results`) + `dda_selected_precursors` truth
-  → selection / conditional / end-to-end recall + FDP.
-- **Scope for the stab — "oracle-isolation" baseline (labelled as such):** clean single target per band,
-  BUT still render the **full MS1 isotope envelope** and allow **unrelated precursor/isotope peaks within
-  the quadrupole isolation window** (so isolation isn't magically clean). True chimeric co-fragmentation,
-  charge mis-assignment, and MS1 feature-detection realism are explicit next milestones — flagged so the
-  inflated ID recall of the oracle baseline is never read as real performance.
-
-## Open questions resolved by review
-Identity in sidecar (yes); match by spectrum-locator+mass not `(seq,charge)`; unique Id per event;
-denominator engine-independent; co-isolation deferral only as a labelled oracle baseline that still shows
-in-window contaminants. Remaining unknown to verify in M2: exactly how the chosen engine exposes the
-native-`.d` spectrum locator we join on (frame/scan vs an exported title) — settle it empirically before
-trusting the identity metric.
+- **M1 (port + de-risk writer):** `TdfWriter` DDA path (Precursors + PasefFrameMsMsInfo, `scan_mode=8`) +
+  trivial hand-built schedule. Fixture: a **real DDA `.d`** from `/media/hd02/data/raw/dda/…` for schema +
+  row-count comparison (the bundled `NATIVE.d` has no DDA tables — unusable). Gates: SQLite relational
+  validation (FKs/uniqueness/invariants above), band validation, MS1-envelope + Precursor-metadata
+  validation. **Round-trip caveat (verified in `dda.rs`):** `get_pasef_frame_ms_ms_info` preserves every
+  raw band, but `get_selected_precursors` (a `BTreeMap<precursor_id,…>`) keeps only the LAST band and
+  `get_preprocessed_pasef_fragments` MERGES bands per precursor. So the M1 identity gate uses the **raw-row
+  API + a two-selections-of-one-ion fixture** asserting both PASEF rows survive; the lossy/aggregate APIs
+  are documented, not relied on for identity.
+- **M2 (render):** port `schedule_precursors` + band-limited MS2 render → searchable `.d`; native engine
+  finds our peptides; **`.d` → engine/export → spectrum-locator** mapping test proves the identity chain.
+- **M3 (harness):** Sage parser (reuse v1 `parse_sage_results`) + `dda_selected_precursors` truth →
+  selection / conditional / end-to-end recall + FDP.
+- **Scope — labelled "oracle-isolation" baseline:** one clean target per band, BUT still render the full
+  MS1 isotope envelope and allow unrelated precursor/isotope peaks within the quadrupole window (isolation
+  not magically clean). True chimeric co-fragmentation, charge mis-assignment, MS1 feature-detection
+  realism, and noise (sampled-from-blank, per the calibration thread) are explicit next milestones — so
+  the oracle baseline's inflated ID recall is never read as real performance.
