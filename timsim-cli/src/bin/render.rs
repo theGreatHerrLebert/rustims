@@ -630,11 +630,15 @@ fn run_dda(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
             let ms1 = project(&ms1raw);
             let ms2 = ms2_raw.remove(&pcid.value(i)).map(|s| project(&s)).unwrap_or_default();
             if ms1.is_empty() && ms2.is_empty() { continue; }
-            cands.push(Candidate {
-                precursor_id: pcid.value(i), order, apex_frame, scan_apex: scan,
-                mono_mz, largest_mz, average_mz, charge: chg.value(i).max(1) as i64, abundance,
-                sigma_frames: g.sigma_frames, n_sigma: g.n_sigma,
-            });
+            // Only a precursor that HAS fragments is selectable — a DDA MS2 with no fragments can't be
+            // identified and would be a phantom "eligible" event. It still appears in the MS1 survey.
+            if !ms2.is_empty() {
+                cands.push(Candidate {
+                    precursor_id: pcid.value(i), order, apex_frame, scan_apex: scan,
+                    mono_mz, largest_mz, average_mz, charge: chg.value(i).max(1) as i64, abundance,
+                    sigma_frames: g.sigma_frames, n_sigma: g.n_sigma,
+                });
+            }
             ions.insert(pcid.value(i), DdaIon { peptide_id: pid.value(i), apex_frame, scan, abundance, ms1, ms2 });
             order += 1;
             if a.limit > 0 && ions.len() >= a.limit { break 'outer; }
@@ -668,7 +672,9 @@ fn run_dda(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
         ((io.apex_frame - h).max(1.0) as u32, ((io.apex_frame + h) as u32).min(a.n_frames), id)
     }).collect();
     let mut order_start: Vec<usize> = (0..win.len()).collect();
-    order_start.sort_unstable_by_key(|&i| win[i].0);
+    // Sort by (frame_start, precursor_id) — the precursor_id tiebreak makes the active-set insertion, and
+    // therefore the per-frame MS1 deposit order, deterministic (win was built from a HashMap iteration).
+    order_start.sort_unstable_by_key(|&i| (win[i].0, win[i].2));
     let mut cursor = 0usize;
     let mut active: Vec<usize> = Vec::new();
     let per = a.precursors_every.max(1);
