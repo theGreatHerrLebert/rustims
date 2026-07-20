@@ -77,6 +77,21 @@ applied where it shouldn't be? And the answer-key denominator should become hier
 in-coverage + adequately-sampled + ≥3–4 fragments above SNR), reported as a recall-vs-signal curve, per
 codex.
 
+## CONFIRMED (decisive experiment)
+
+Re-rendered the identical pipeline with the DENSE `peptide_quantities_5k.parquet` (all present),
+everything else fixed:
+- DiaNN IDs 251 → **6,653** (26×); correct 251 → **6,513**; FDP 1.57% → **2.10%** (still well-calibrated);
+  **5,137 protein groups** at 1% FDR.
+- Recall of the present+detectable set (abundance>1e-3 & has_ms2 & in_window, ~9,444): **56.4%** — a
+  realistic DIA recall.
+- DiaNN now **mass-calibrated successfully** — confirming the earlier "too few to calibrate" warnings
+  were a SYMPTOM of sparsity, not a rendering m/z bug (codex's ranking #4 was right).
+
+Verdict: the low absolute count was entirely the sparse quantity file. The pipeline produces a realistic,
+well-calibrated Astral DIA dataset. Residual recall (~56% of detectable) is the parked intensity-scale
++ single-cell-template refinement, per codex's ranked residual factors — a normal tuning axis, not a bug.
+
 ## What is NOT in doubt
 
 The pipeline is correct end-to-end: DiaNN reads the synthetic Astral file, finds the DIA windows, and
