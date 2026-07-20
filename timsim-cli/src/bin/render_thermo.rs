@@ -20,6 +20,7 @@ use clap::Parser;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use mscore::timstof::quadrupole::WindowTransmission;
 use rustdf::sim::acquisition::{AcquisitionWriter, ScanDescriptor, ThermoRawWriter};
 use timsim_schema::tables::ion_spectra as SP;
 use timsim_schema::tables::{peptide_rt as RT, precursors as PRE};
@@ -42,6 +43,9 @@ struct Args {
     /// Chromatographic peak width (Gaussian sigma) in SECONDS of the template gradient.
     #[arg(long, default_value_t = 3.0)] sigma_seconds: f64,
     #[arg(long, default_value_t = 3.0)] n_sigma: f64,
+    /// Quadrupole edge steepness `k` (sigmoid) for the isolation-window transmission — same as the
+    /// timsTOF TimsTransmissionDIA default.
+    #[arg(long, default_value_t = 15.0)] transmission_k: f64,
     /// Fraction of the template RT span trimmed at each end (avoid loading/wash regions).
     #[arg(long, default_value_t = 0.05)] gradient_trim: f64,
     #[arg(long, default_value_t = 1.0e5)] intensity_scale: f64,
@@ -235,13 +239,18 @@ fn main() -> Result<()> {
             }
             ms1_n += peaks.len() as u64;
         } else if let Some(w) = iso {
-            let (wlo, whi) = (w.center_mz - w.width_mz / 2.0, w.center_mz + w.width_mz / 2.0);
+            // Quadrupole isolation is a flat-top passband with sigmoid soft edges (mscore's
+            // WindowTransmission — the no-IMS sibling of the TimsTransmissionDIA curve the timsTOF path
+            // uses), NOT a hard rectangle: an edge precursor is only partially transmitted, so its
+            // fragments contribute proportionally.
+            let wt = WindowTransmission::new(w.center_mz, w.width_mz, a.transmission_k);
             for &i in &active {
                 let p = &precs[i];
-                if p.mz < wlo || p.mz > whi { continue; }
+                let tprob = wt.probabilities(&[p.mz])[0];
+                if tprob <= 1e-3 { continue; }
                 let ew = (-((t - p.apex_rt).powi(2)) / two_sig2).exp();
                 if ew <= 1e-6 { continue; }
-                let base = p.abundance * ew * a.intensity_scale;
+                let base = p.abundance * ew * tprob * a.intensity_scale;
                 for &(m, iv) in &p.ms2 {
                     let v = (base * iv as f64) as f32;
                     if v >= floor { peaks.push((m, v)); }
@@ -267,12 +276,15 @@ fn main() -> Result<()> {
         use arrow::record_batch::RecordBatch;
         use parquet::arrow::ArrowWriter;
         use std::sync::Arc;
-        // Distinct MS2 isolation windows (the DIA scheme repeats), for the in-window eligibility flag.
-        let mut windows: Vec<(f64, f64)> = schedule.iter()
-            .filter_map(|(_, iso)| iso.map(|w| (w.center_mz - w.width_mz / 2.0, w.center_mz + w.width_mz / 2.0)))
+        // Distinct MS2 isolation windows (the DIA scheme repeats), as quad-transmission profiles for the
+        // in-window eligibility flag (transmitted > 0.5 by any window — consistent with the render).
+        let mut wpairs: Vec<(f64, f64)> = schedule.iter()
+            .filter_map(|(_, iso)| iso.map(|w| (w.center_mz, w.width_mz)))
             .collect();
-        windows.sort_by(|x, y| x.0.total_cmp(&y.0));
-        windows.dedup();
+        wpairs.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.total_cmp(&y.1)));
+        wpairs.dedup_by(|x, y| (x.0 - y.0).abs() < 1e-6 && (x.1 - y.1).abs() < 1e-6);
+        let windows: Vec<WindowTransmission> = wpairs.iter()
+            .map(|&(c, w)| WindowTransmission::new(c, w, a.transmission_k)).collect();
         let (mut pc, mut pe, mut ch, mut mo, mut rtc, mut ab, mut hm, mut iw):
             (Vec<u64>, Vec<u64>, Vec<i64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<bool>, Vec<bool>) = Default::default();
         for p in &precs {
@@ -281,7 +293,7 @@ fn main() -> Result<()> {
             // Eligibility for DIA: a precursor can only be identified if it has fragments AND its m/z
             // falls in some inherited isolation window. The harness uses these to define the denominator.
             hm.push(!p.ms2.is_empty());
-            iw.push(windows.iter().any(|&(lo, hi)| p.mz >= lo && p.mz <= hi));
+            iw.push(windows.iter().any(|wt| wt.probabilities(&[p.mz])[0] > 0.5));
         }
         let schema = Arc::new(Schema::new(vec![
             Field::new("precursor_id", DataType::UInt64, false),

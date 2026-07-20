@@ -53,7 +53,7 @@ tdf = ["dep:rustdf", "dep:mscore"]
 # The Thermo Astral `.raw` render driver (timsim-render-thermo): pulls rustdf's thermo feature (the
 # thermorawfile-backed writer seam). Off by default so default builds don't pull the thermo dep.
 #   cargo build --release -p timsim-cli --features thermo
-thermo = ["dep:rustdf", "rustdf/thermo"]
+thermo = ["dep:rustdf", "rustdf/thermo", "dep:mscore"]
 
 [[bin]]
 name = "timsim-modify"
