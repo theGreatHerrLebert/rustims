@@ -28,6 +28,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Iterator, Optional
 
+import re
+
 import numpy as np
 import pandas as pd
 import pyarrow as pa
@@ -51,6 +53,51 @@ def decode_tensor(pred_3d, floor: float):
                     yield _AXIS2_ION[t], k + 1, c + 1, v
 
 
+_KOINA_ANN = re.compile(rb"([yb])(\d+)\+(\d+)")
+
+
+def _predict_tensors_koina(sequences, charges, collision_energies, name: str):
+    """Predict ``(n,29,2,3)`` fragment intensity tensors via a Koina model (e.g. Prosit_2020_intensity_HCD
+    for Orbitrap-HCD Astral).
+
+    Koina returns intensities in **long format** — one row per fragment with an ``annotation`` (e.g.
+    ``b'y1+1'``, ``b'b2+1'``), an ``mz``, and a scalar ``intensities`` — NOT a flat 174-vector, so we
+    parse each annotation into its ``(position, ion-type, charge)`` slot rather than assuming an order
+    (axis-2: y→0, b→1; charge k→index k-1; position p→index p-1). The output DataFrame's index maps back
+    to the input row. Absent fragments stay 0 (dropped downstream by the intensity floor).
+    """
+    import pandas as pd
+    from imspy_predictors.koina_models.access_models import ModelFromKoina
+
+    n = len(sequences)
+    df = pd.DataFrame(
+        {
+            "peptide_sequences": [str(s) for s in sequences],
+            "precursor_charges": [int(c) for c in charges],
+            "collision_energies": [float(e) for e in collision_energies],
+        }
+    )
+    out = ModelFromKoina(model_name=name).predict(df)
+    for col in ("annotation", "intensities"):
+        if col not in out.columns:
+            raise ValueError(f"Koina model {name!r} returned no {col!r} column (got {list(out.columns)})")
+
+    pred = np.zeros((n, 29, 2, 3), dtype=np.float32)
+    for idx, grp in out.groupby(level=0):
+        ii = int(idx)
+        if not (0 <= ii < n):
+            raise ValueError(f"Koina output index {ii} outside input range 0..{n - 1}")
+        for ann, inten in zip(grp["annotation"].to_numpy(), grp["intensities"].to_numpy()):
+            a = ann if isinstance(ann, (bytes, bytearray)) else str(ann).encode()
+            mo = _KOINA_ANN.match(a)
+            if not mo:
+                continue
+            it, pos, ch = mo.group(1), int(mo.group(2)), int(mo.group(3))
+            if 1 <= pos <= 29 and 1 <= ch <= 3:
+                pred[ii, pos - 1, 0 if it == b"y" else 1, ch - 1] = max(0.0, float(inten))
+    return pred
+
+
 def predict_tensors(sequences, charges, collision_energies, model: Optional[str] = None):
     """Predict per-precursor ``(29,2,3)`` intensity tensors with the resolved intensity model.
     Returns ``(array[n,29,2,3], provenance)``."""
@@ -58,9 +105,7 @@ def predict_tensors(sequences, charges, collision_energies, model: Optional[str]
 
     kind, name = resolve("fragments", model)
     if kind == "koina":
-        raise NotImplementedError(
-            f"fragment intensities via Koina ({name!r}) are not wired yet; use the default model."
-        )
+        return _predict_tensors_koina(sequences, charges, collision_energies, name), f"koina:{name}"
 
     from imspy_predictors.intensity.predictors import DeepPeptideIntensityPredictor
 
