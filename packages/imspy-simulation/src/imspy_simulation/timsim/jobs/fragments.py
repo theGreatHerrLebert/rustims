@@ -83,18 +83,40 @@ def _predict_tensors_koina(sequences, charges, collision_energies, name: str):
             raise ValueError(f"Koina model {name!r} returned no {col!r} column (got {list(out.columns)})")
 
     pred = np.zeros((n, 29, 2, 3), dtype=np.float32)
+    have_seq = "peptide_sequences" in out.columns
+    have_chg = "precursor_charges" in out.columns
+    matched = skipped = 0
     for idx, grp in out.groupby(level=0):
         ii = int(idx)
         if not (0 <= ii < n):
-            raise ValueError(f"Koina output index {ii} outside input range 0..{n - 1}")
+            raise ValueError(f"Koina output row index {ii} outside input range 0..{n - 1}")
+        # Guard against Koina renumbering/reordering the index (which would silently misassign fragments
+        # to the wrong peptide): verify this group's echoed sequence/charge match the input at row ii.
+        if have_seq and str(grp["peptide_sequences"].iloc[0]) != str(sequences[ii]):
+            raise ValueError(
+                f"Koina row {ii} sequence {grp['peptide_sequences'].iloc[0]!r} != input "
+                f"{sequences[ii]!r} — the output index does not map to the input row"
+            )
+        if have_chg and int(grp["precursor_charges"].iloc[0]) != int(charges[ii]):
+            raise ValueError(f"Koina row {ii} charge does not match input — index does not map to input row")
         for ann, inten in zip(grp["annotation"].to_numpy(), grp["intensities"].to_numpy()):
             a = ann if isinstance(ann, (bytes, bytearray)) else str(ann).encode()
-            mo = _KOINA_ANN.match(a)
-            if not mo:
+            # fullmatch: a neutral-loss annotation like b"y1+1-NH3" must NOT be placed in the plain y1,+1
+            # slot. Prosit HCD emits only bare b/y here; anything else is skipped and counted.
+            mo = _KOINA_ANN.fullmatch(a)
+            if mo is None:
+                skipped += 1
                 continue
             it, pos, ch = mo.group(1), int(mo.group(2)), int(mo.group(3))
             if 1 <= pos <= 29 and 1 <= ch <= 3:
                 pred[ii, pos - 1, 0 if it == b"y" else 1, ch - 1] = max(0.0, float(inten))
+                matched += 1
+            else:
+                skipped += 1
+    if matched == 0 and skipped > 0:
+        raise ValueError(
+            f"Koina model {name!r}: all {skipped} fragment annotations unparsed — output schema changed?"
+        )
     return pred
 
 

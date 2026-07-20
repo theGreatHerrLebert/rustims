@@ -109,6 +109,18 @@ struct Prec {
 
 fn main() -> Result<()> {
     let a = Args::parse();
+    if !(a.sigma_seconds.is_finite() && a.sigma_seconds > 0.0) {
+        return Err(anyhow!("--sigma-seconds must be finite and > 0"));
+    }
+    if !(a.n_sigma.is_finite() && a.n_sigma >= 0.0) {
+        return Err(anyhow!("--n-sigma must be finite and >= 0"));
+    }
+    if !(a.gradient_trim.is_finite() && (0.0..0.5).contains(&a.gradient_trim)) {
+        return Err(anyhow!("--gradient-trim must be in [0, 0.5)"));
+    }
+    if !(a.intensity_scale.is_finite() && a.intensity_scale > 0.0) {
+        return Err(anyhow!("--intensity-scale must be finite and > 0"));
+    }
 
     // peptide_id -> rt_index, and the artifact's fixed reference range (stamped over the whole space).
     let mut rt: HashMap<u64, f64> = HashMap::new();
@@ -139,10 +151,26 @@ fn main() -> Result<()> {
     let schedule: Vec<(f64, Option<rustdf::sim::acquisition::IsolationWindow>)> =
         writer.schedule().into_iter().map(|(t, iso)| (t * 60.0, iso)).collect();
     let (ms1_cap, ms2_cap) = writer.capacity();
-    // Analytical gradient window from the MS1 slot RTs (trim the loading/wash edges).
-    let mut rts: Vec<f64> = schedule.iter().map(|(t, _)| *t).collect();
-    rts.sort_by(|x, y| x.partial_cmp(y).unwrap());
-    let (t0, t1) = (*rts.first().unwrap(), *rts.last().unwrap());
+    // The active-set sweep requires slot RTs finite and nondecreasing in manifest (acquisition) order.
+    let mut prev = f64::NEG_INFINITY;
+    for (i, (t, iso)) in schedule.iter().enumerate() {
+        if !t.is_finite() {
+            return Err(anyhow!("template slot {i} has non-finite retention time"));
+        }
+        if *t + 1e-6 < prev {
+            return Err(anyhow!(
+                "template slot RTs not monotonic at slot {i} ({t}s < {prev}s) — the sweep needs acquisition order"
+            ));
+        }
+        prev = *t;
+        if let Some(w) = iso {
+            if !(w.center_mz.is_finite() && w.width_mz.is_finite() && w.width_mz > 0.0) {
+                return Err(anyhow!("template slot {i} has a degenerate isolation window"));
+            }
+        }
+    }
+    // Gradient window from the (validated monotonic) schedule ends; trim the loading/wash edges.
+    let (t0, t1) = (schedule.first().unwrap().0, schedule.last().unwrap().0);
     let trim = (t1 - t0) * a.gradient_trim;
     let (g0, g1) = (t0 + trim, t1 - trim);
     let gspan = (g1 - g0).max(1e-9);
@@ -165,6 +193,9 @@ fn main() -> Result<()> {
             let apex_rt = g0 + (rt_index - lo) / span * gspan;
             let amount = amounts.get(&pid.value(i)).copied().unwrap_or(1.0);
             let abundance = amount * ionz.value(i) as f64 * mff.value(i) as f64 * frac.value(i) as f64;
+            // Skip non-finite apex/abundance (a NaN rt_index or quantity would poison the sweep sort and
+            // the deposition); m/z must be finite for the window test.
+            if !(apex_rt.is_finite() && abundance.is_finite() && mz.value(i).is_finite()) { continue; }
             let ms1 = ms1_raw.remove(&pcid.value(i)).unwrap_or_default();
             let ms2 = ms2_raw.remove(&pcid.value(i)).unwrap_or_default();
             if ms1.is_empty() && ms2.is_empty() { continue; }
@@ -179,7 +210,7 @@ fn main() -> Result<()> {
     // Active-set sweep over slots (schedule RT is monotonic). A precursor is active in [apex ± nσ·σ].
     let half = a.n_sigma * a.sigma_seconds;
     let mut order: Vec<usize> = (0..precs.len()).collect();
-    order.sort_by(|&x, &y| precs[x].apex_rt.partial_cmp(&precs[y].apex_rt).unwrap());
+    order.sort_by(|&x, &y| precs[x].apex_rt.total_cmp(&precs[y].apex_rt)); // total_cmp: NaN-safe (guarded finite above)
     let two_sig2 = 2.0 * a.sigma_seconds * a.sigma_seconds;
     let floor = a.min_peak_intensity as f32;
 
@@ -231,15 +262,26 @@ fn main() -> Result<()> {
 
     // Answer key: per-precursor DIA truth (join in the harness by peptide_id -> sequence + charge + mz).
     if let Some(truth) = &a.thermo_truth {
-        use arrow::array::{Float64Array as F64, Int64Array, UInt64Array as U64};
+        use arrow::array::{BooleanArray, Float64Array as F64, Int64Array, UInt64Array as U64};
         use arrow::datatypes::{DataType, Field, Schema};
         use arrow::record_batch::RecordBatch;
         use parquet::arrow::ArrowWriter;
         use std::sync::Arc;
-        let (mut pc, mut pe, mut ch, mut mo, mut rtc, mut ab): (Vec<u64>, Vec<u64>, Vec<i64>, Vec<f64>, Vec<f64>, Vec<f64>) = Default::default();
+        // Distinct MS2 isolation windows (the DIA scheme repeats), for the in-window eligibility flag.
+        let mut windows: Vec<(f64, f64)> = schedule.iter()
+            .filter_map(|(_, iso)| iso.map(|w| (w.center_mz - w.width_mz / 2.0, w.center_mz + w.width_mz / 2.0)))
+            .collect();
+        windows.sort_by(|x, y| x.0.total_cmp(&y.0));
+        windows.dedup();
+        let (mut pc, mut pe, mut ch, mut mo, mut rtc, mut ab, mut hm, mut iw):
+            (Vec<u64>, Vec<u64>, Vec<i64>, Vec<f64>, Vec<f64>, Vec<f64>, Vec<bool>, Vec<bool>) = Default::default();
         for p in &precs {
             pc.push(p.precursor_id); pe.push(p.peptide_id); ch.push(p.charge);
             mo.push(p.mz); rtc.push(p.apex_rt); ab.push(p.abundance);
+            // Eligibility for DIA: a precursor can only be identified if it has fragments AND its m/z
+            // falls in some inherited isolation window. The harness uses these to define the denominator.
+            hm.push(!p.ms2.is_empty());
+            iw.push(windows.iter().any(|&(lo, hi)| p.mz >= lo && p.mz <= hi));
         }
         let schema = Arc::new(Schema::new(vec![
             Field::new("precursor_id", DataType::UInt64, false),
@@ -248,10 +290,13 @@ fn main() -> Result<()> {
             Field::new("mz", DataType::Float64, false),
             Field::new("rt_seconds", DataType::Float64, false),
             Field::new("abundance", DataType::Float64, false),
+            Field::new("has_ms2", DataType::Boolean, false),
+            Field::new("in_any_window", DataType::Boolean, false),
         ]));
         let batch = RecordBatch::try_new(schema.clone(), vec![
             Arc::new(U64::from(pc)), Arc::new(U64::from(pe)), Arc::new(Int64Array::from(ch)),
             Arc::new(F64::from(mo)), Arc::new(F64::from(rtc)), Arc::new(F64::from(ab)),
+            Arc::new(BooleanArray::from(hm)), Arc::new(BooleanArray::from(iw)),
         ])?;
         let file = std::fs::File::create(truth)?;
         let mut w = ArrowWriter::try_new(file, schema, None)?;
