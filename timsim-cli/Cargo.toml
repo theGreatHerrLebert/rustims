@@ -50,6 +50,10 @@ mscore = { path = "../mscore", optional = true }
 # throughput bench, the `timsim-render` .d writer, and the mscore peptide-ion spectra:
 #   cargo build --release -p timsim-cli --features tdf
 tdf = ["dep:rustdf", "dep:mscore"]
+# The Thermo Astral `.raw` render driver (timsim-render-thermo): pulls rustdf's thermo feature (the
+# thermorawfile-backed writer seam). Off by default so default builds don't pull the thermo dep.
+#   cargo build --release -p timsim-cli --features thermo
+thermo = ["dep:rustdf", "rustdf/thermo"]
 
 [[bin]]
 name = "timsim-modify"
@@ -68,6 +72,11 @@ path = "src/bin/render_bench.rs"
 name = "timsim-render"
 path = "src/bin/render.rs"
 required-features = ["tdf"]
+
+[[bin]]
+name = "timsim-render-thermo"
+path = "src/bin/render_thermo.rs"
+required-features = ["thermo"]
 
 # Instrument-independent MS1+MS2 spectrum materialisation (mscore). Needs the tdf feature (mscore).
 [[bin]]

@@ -326,6 +326,29 @@ mod thermo {
         pub fn profile_summary(&self) -> ProfileWriteResult {
             self.profile_summary
         }
+
+        /// Per-slot acquisition schedule in manifest order: `(retention_time_s, isolation)`. The
+        /// template IS the schedule — a render driver walks this to place elution over the run's real
+        /// retention times and to know each MS2 slot's isolation window (the DIA scheme is inherited).
+        /// `isolation` is `Some` only for MS2+ slots.
+        pub fn schedule(&self) -> Vec<(f64, Option<IsolationWindow>)> {
+            self.slots
+                .iter()
+                .map(|&(scan, ms_level, _)| {
+                    let rt = self.raw.index[(scan - self.raw.first_scan) as usize].time;
+                    let iso = if ms_level >= 2 {
+                        self.raw.scan_event(scan).map(|e| IsolationWindow {
+                            center_mz: e.isolation_center,
+                            width_mz: e.isolation_width,
+                            collision_energy: e.collision_energy,
+                        })
+                    } else {
+                        None
+                    };
+                    (rt, iso)
+                })
+                .collect()
+        }
     }
 
     impl AcquisitionWriter for ThermoRawWriter {
