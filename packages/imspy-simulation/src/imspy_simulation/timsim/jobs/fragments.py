@@ -277,14 +277,27 @@ def main(argv=None) -> int:
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args(argv)
 
-    prec = pd.read_parquet(a.precursors)
     if a.peptides is not None:
-        # Build the (precursor_id, sequence, charge) fragment-prediction input by joining the
-        # precursors table to peptide sequences. Freezes exactly the columns the predictor consumes,
-        # so it is a clean DAG artifact rather than a hidden transformation.
+        # Build the (precursor_id, sequence, charge) fragment-prediction input by joining the precursors
+        # table to peptide sequences. MEMORY: a PTM-heavy proteome can have 100M+ precursors, so we never
+        # materialise one Python string per row — map peptide_id -> a categorical CODE (int32), then wrap
+        # as a Categorical (codes + a small unique-sequence dictionary). 185M rows then cost ~0.7 GB of
+        # codes, not ~9 GB of string objects. The predictor dedups (sequence, charge) internally.
+        prec = pd.read_parquet(a.precursors, columns=["precursor_id", "peptide_id", "charge"])
         pep = pd.read_parquet(a.peptides, columns=["peptide_id", "sequence"])
-        prec = prec[["precursor_id", "peptide_id", "charge"]].merge(pep, on="peptide_id", how="left")
-        prec = prec[["precursor_id", "sequence", "charge"]].dropna(subset=["sequence"])
+        cat = pd.Categorical(pep["sequence"])
+        code_of = dict(zip(pep["peptide_id"].to_numpy(), cat.codes.astype("int32")))
+        codes = prec["peptide_id"].map(code_of)
+        keep = codes.notna()
+        prec = pd.DataFrame({
+            "precursor_id": prec.loc[keep, "precursor_id"].to_numpy(),
+            "sequence": pd.Categorical.from_codes(
+                codes[keep].astype("int32").to_numpy(), categories=cat.categories
+            ),
+            "charge": prec.loc[keep, "charge"].to_numpy(),
+        })
+    else:
+        prec = pd.read_parquet(a.precursors)
     a.out.parent.mkdir(parents=True, exist_ok=True)
 
     # Stream row-groups straight to the file: the full fragment frame is never resident.

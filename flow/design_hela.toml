@@ -1,0 +1,15 @@
+[design]
+reference  = "A"
+load_ng    = 200
+seed       = 42
+n_proteins = 2400          # ~all subset proteins expressed (2493 have computable mass) — dense basic HeLa run
+[abundance]
+HUMAN = { source = "hockeystick" }
+[[condition]]
+name = "A"
+mix  = { HUMAN = 1.0 }
+replicates = 1
+technical_replicates = 1
+[variance]
+biological = 0.15
+biological_heterogeneity = 0.5

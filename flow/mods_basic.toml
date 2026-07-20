@@ -1,0 +1,17 @@
+[[modification]]
+name = "Carbamidomethyl"
+unimod_id = 4
+targets = "C"
+occupancy = 0.98
+mass_delta = 57.021464
+composition = "C2H3NO"
+stage = "protein"
+
+[[modification]]
+name = "Oxidation"
+unimod_id = 35
+targets = "M"
+occupancy = 0.05
+mass_delta = 15.994915
+composition = "O"
+stage = "peptide"

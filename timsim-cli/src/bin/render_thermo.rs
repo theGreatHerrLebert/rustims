@@ -218,7 +218,10 @@ fn main() -> Result<()> {
     let two_sig2 = 2.0 * a.sigma_seconds * a.sigma_seconds;
     let floor = a.min_peak_intensity as f32;
 
+    // A .raw spectrum stores its peak count in a u16, so at most 65_535 peaks per authored scan.
+    const MAX_PEAKS: usize = 65_535;
     let (mut cursor, mut ms1_n, mut ms2_n) = (0usize, 0u64, 0u64);
+    let (mut capped_slots, mut capped_peaks) = (0u64, 0u64);
     let mut active: Vec<usize> = Vec::new();
     for (slot, (&(_scan, ms_level, _is_profile), &(t, iso))) in manifest.iter().zip(schedule.iter()).enumerate() {
         // Advance/retract the active set to slot time t.
@@ -237,7 +240,6 @@ fn main() -> Result<()> {
                     if v >= floor { peaks.push((m, v)); }
                 }
             }
-            ms1_n += peaks.len() as u64;
         } else if let Some(w) = iso {
             // Quadrupole isolation is a flat-top passband with sigmoid soft edges (mscore's
             // WindowTransmission — the no-IMS sibling of the TimsTransmissionDIA curve the timsTOF path
@@ -256,8 +258,18 @@ fn main() -> Result<()> {
                     if v >= floor { peaks.push((m, v)); }
                 }
             }
-            ms2_n += peaks.len() as u64;
         }
+        // Respect the format's per-spectrum peak ceiling: at very high co-elution density a slot can
+        // exceed 65_535 peaks. Keep the most intense (what a real instrument's centroiding does) rather
+        // than aborting the whole render, and account for what was dropped so the cap is never silent.
+        if peaks.len() > MAX_PEAKS {
+            peaks.sort_unstable_by(|x, y| y.1.total_cmp(&x.1)); // intensity desc
+            capped_peaks += (peaks.len() - MAX_PEAKS) as u64;
+            capped_slots += 1;
+            peaks.truncate(MAX_PEAKS);
+            peaks.sort_unstable_by(|x, y| x.0.total_cmp(&y.0)); // restore m/z order for the writer
+        }
+        if ms_level == 1 { ms1_n += peaks.len() as u64; } else { ms2_n += peaks.len() as u64; }
         // isolation:None preserves the template's inherited DIA window (we don't re-window).
         let desc = ScanDescriptor { ms_level, retention_time: t, isolation: None, peaks };
         writer.write_scan(&desc).map_err(|e| anyhow!("slot {slot}: {e}"))?;
@@ -265,8 +277,9 @@ fn main() -> Result<()> {
     writer.finalize().map_err(|e| anyhow!("{e}"))?;
     let ps = writer.profile_summary();
     eprintln!(
-        "wrote Astral DIA .raw ({ms1_n} MS1 + {ms2_n} MS2 authored peaks) -> {}\n  MS1 drop tally: {} bins written, {} peaks dropped (ion current {:.3e})",
-        a.out.display(), ps.written_bins, ps.dropped_total(), ps.dropped_intensity
+        "wrote Astral DIA .raw ({ms1_n} MS1 + {ms2_n} MS2 authored peaks) -> {}\n  MS1 drop tally: {} bins written, {} peaks dropped (ion current {:.3e})\n  per-slot peak cap: {} slots capped at {} peaks, {} peaks dropped",
+        a.out.display(), ps.written_bins, ps.dropped_total(), ps.dropped_intensity,
+        capped_slots, MAX_PEAKS, capped_peaks
     );
 
     // Answer key: per-precursor DIA truth (join in the harness by peptide_id -> sequence + charge + mz).

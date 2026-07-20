@@ -511,6 +511,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--outdir", default="/tmp/necro-timsim")
     ap.add_argument("--proteome-spec", default="hye.toml", help="multi-FASTA proteome spec")
+    ap.add_argument("--mods", default="mods.toml", help="modification spec (e.g. mods_basic.toml for a light HeLa run)")
+    ap.add_argument("--design-spec", default="design.toml", help="experiment design spec (e.g. design_hela.toml for a single-organism run)")
     ap.add_argument("--samples", nargs="+", default=["A_R1", "B_R1"])
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--graph", help="write the DAG to this file")
@@ -525,10 +527,10 @@ def main() -> None:
         max_missed_cleavages=2,
         min_length=7,
         max_length=30,
-        mods="mods.toml",
+        mods=a.mods,
         floor=1e-3,
         charge_model="site-specific",
-        design_spec="design.toml",
+        design_spec=a.design_spec,
         digestion_efficiency=0.9,
         timsim_config="v1.toml",
         seed=41,

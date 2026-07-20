@@ -1,0 +1,3 @@
+[[source]]
+path = "/scratch/timsim-demo/timsim-necro/flow/hela_subset.fasta"
+organism = "HUMAN"
