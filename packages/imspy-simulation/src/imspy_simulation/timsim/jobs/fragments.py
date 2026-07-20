@@ -259,7 +259,13 @@ def main(argv=None) -> int:
         description="precursors -> predicted fragment intensities (measurement; spectral library)",
     )
     ap.add_argument("--precursors", required=True, type=Path,
-                    help="a table with precursor_id, sequence (annotated), charge")
+                    help="either a pre-joined (precursor_id, sequence, charge) table, OR the "
+                         "timsim-precursors output (precursor_id, peptide_id, charge) when --peptides "
+                         "is also given")
+    ap.add_argument("--peptides", type=Path, default=None,
+                    help="peptides.parquet (peptide_id -> sequence). When given, the fragment-prediction "
+                         "input is built by joining --precursors to it. NB: uses the BARE peptide "
+                         "sequence — annotated modform sequences (for modified samples) are a follow-up.")
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--collision-energy", type=float, required=True,
                     help="RAW normalized collision energy (~20-45 NCE), NOT the /100-encoded value "
@@ -272,6 +278,13 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     prec = pd.read_parquet(a.precursors)
+    if a.peptides is not None:
+        # Build the (precursor_id, sequence, charge) fragment-prediction input by joining the
+        # precursors table to peptide sequences. Freezes exactly the columns the predictor consumes,
+        # so it is a clean DAG artifact rather than a hidden transformation.
+        pep = pd.read_parquet(a.peptides, columns=["peptide_id", "sequence"])
+        prec = prec[["precursor_id", "peptide_id", "charge"]].merge(pep, on="peptide_id", how="left")
+        prec = prec[["precursor_id", "sequence", "charge"]].dropna(subset=["sequence"])
     a.out.parent.mkdir(parents=True, exist_ok=True)
 
     # Stream row-groups straight to the file: the full fragment frame is never resident.
