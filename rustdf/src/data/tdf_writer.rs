@@ -210,7 +210,11 @@ pub fn encode_frame_block(
     for i in 0..scans.len() {
         *acc.entry((scans[i], tofs[i])).or_insert(0) += intensities[i] as u64;
     }
-    let summed: f64 = intensities.iter().map(|&x| x as f64).sum();
+    // Sum as an exact integer, then convert once. f64 addition is order-dependent above 2^53, and the
+    // caller's `(scan, tof)` vector order is not canonical (it typically drains a randomly-seeded HashMap),
+    // so an f64 running sum would make `SummedIntensities` depend on that iteration order — differing
+    // run-to-run and serial-vs-parallel even when the block bytes (which the encoder re-sorts) are identical.
+    let summed: f64 = intensities.iter().map(|&x| x as u128).sum::<u128>() as f64;
     let max_i = acc.values().copied().max().unwrap_or(0) as f64;
     Ok(EncodedBlock {
         block,

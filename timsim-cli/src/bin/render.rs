@@ -659,10 +659,13 @@ fn run_dda(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
     for e in &sched.events { events_by_frame.entry(e.ms2_frame).or_default().push(e); }
 
     let _ = std::fs::remove_dir_all(&a.out);
+    // One source of truth for the zstd level: the writer config and the parallel encoder MUST agree, else
+    // the parallel-encoded blocks would differ from what a serial write_frame would emit.
+    let compression_level = 1i32;
     let cfg = TdfWriterConfig {
         num_scans: p.n_scans, digitizer_num_samples: p.tof_max.saturating_sub(1),
         mz_range: (p.mz_min, p.mz_max), one_over_k0_range: (p.im_min, p.im_max),
-        compression_level: 1, scan_mode: 8, reference_d: p.reference_d.clone(),
+        compression_level, scan_mode: 8, reference_d: p.reference_d.clone(),
     };
     let mut writer = TdfWriter::create(&a.out, cfg).map_err(|e| anyhow!("{e}"))?;
 
@@ -682,7 +685,7 @@ fn run_dda(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
     // the exact per-frame active set (same `order_start` sweep, pre-filled to its first frame) and both
     // `dedup_and_quantise` and `encode_frame_block` are pure, so blocks are position-independent and are
     // appended in the same order. Ions/events are shared read-only; only compressed blocks cross the
-    // boundary. `compression_level` MUST match the `TdfWriterConfig` above (1).
+    // boundary. `compression_level` is the single local bound with the `TdfWriterConfig` above.
     use rayon::prelude::*;
     let n_frames = a.n_frames;
     // Bind the only `Placement` field the parallel closure needs — `p` itself holds boxed `to_tof`/`from_tof`
@@ -748,7 +751,7 @@ fn run_dda(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
                 }
                 let (scans, tofs, ints) = dedup_and_quantise(&tri, a.intensity_scale, a.min_peak_intensity);
                 if is_ms1 { c_ms1 += scans.len() as u64 } else { c_ms2 += scans.len() as u64 }
-                let blk = rustdf::data::tdf_writer::encode_frame_block(&scans, &tofs, &ints, n_scans, 1)
+                let blk = rustdf::data::tdf_writer::encode_frame_block(&scans, &tofs, &ints, n_scans, compression_level)
                     .map_err(|e| e.to_string())?;
                 out.push((frame, if is_ms1 { 0u8 } else { 8u8 }, blk));
             }
