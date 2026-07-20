@@ -200,11 +200,14 @@ non-IMS path as trustworthy as the timsTOF path.
 1. **RT mapping** (biggest biological risk — approach now specified above: quantile map onto the
    effective analytical gradient, widths in seconds, clip non-fitting). VERIFY in M2 that peptide apex
    density is realistic across the gradient, not piled at edges. Template slot count also bounds run size.
-2. **MS1 profile SHAPE, not just binning.** m/z accuracy from grid-binning is fine (and Astral ID is
-   MS2-driven); the risk is authoring delta sticks into a profile array (unnatural centroiding/S:N). M0
-   determines whether `author_profile` spreads to an instrument peak shape or we must pre-convolve to the
-   template resolution + sample the isotope envelope. Test via re-centroid ppm/FWHM/isotope-ratio.
-   `repack_profile` addresses capacity only, not shape — use only if the measured budget overflows.
+2. **MS1 profile SHAPE — RESOLVED (de-risk done).** The worry was single-bin spikes centroiding oddly.
+   Settled empirically with the real native Thermo centroider (ThermoRawFileParser `query`, the library
+   DiaNN uses): `author_profile` STORES the input peaks as the scan's centroid peaklist and TRFP/Thermo
+   returns THAT list (it does NOT re-centroid the profile — a 50-sample Gaussian came back as 50 samples;
+   4 isotope spikes came back as exactly 4 peaks at the true m/z within ~1 ppm). So the driver authors
+   **precursor isotope CENTROIDS directly** — no shape model, no convolution (a Gaussian is worse). m/z is
+   grid-limited to ~1 ppm (bin snap), inside DiaNN's Orbitrap tolerance; MS2 authors exact-m/z ASTMS
+   centroids (no grid), tighter still.
 3. **Intensity calibration.** Same open thread as timsTOF — the `.raw`'s real per-peak intensity scale
    is unknown until we characterize a real Astral run. First pass: an `--intensity-scale` knob; defer
    true calibration (parked `CALIBRATION_PLAN.md`).
