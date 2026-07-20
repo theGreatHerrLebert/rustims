@@ -1,0 +1,22 @@
+[design]
+reference  = "A"
+load_ng    = 200
+seed       = 42
+n_proteins = 1200          # a simpler sample — a QUANTITY operation; the rest get amount 0
+[abundance]
+HUMAN = { source = "hockeystick" }
+YEAST = { source = "hockeystick" }
+ECOLI = { source = "hockeystick" }
+[[condition]]
+name = "A"
+mix  = { HUMAN = 0.65, YEAST = 0.30, ECOLI = 0.05 }
+replicates = 1
+technical_replicates = 1
+[[condition]]
+name = "B"
+mix  = { HUMAN = 0.65, YEAST = 0.20, ECOLI = "rest" }
+replicates = 1
+technical_replicates = 1
+[variance]
+biological = 0.15
+biological_heterogeneity = 0.5

@@ -1,0 +1,15 @@
+[paths]
+reference_path = "/scratch/timsim-demo/_p3_e2e/TIMSIM-P3-E2E/TIMSIM-P3-E2E.d"
+fasta_path     = "/scratch/timsim-demo/SUBMISSION/zenodo/plain/hye/fasta-hye/all/HUMAN.fasta"
+
+[experiment]
+name             = "V2E2E"
+acquisition_type = "DIA"
+gradient_length  = 600
+silent_mode = false
+
+[simulation]
+v2_total_events = 2.5e9
+apply_fragmentation = false
+v2_max_peptides = 2000
+use_reference_layout = false

@@ -1,0 +1,9 @@
+[[source]]
+path = "/scratch/timsim-demo/SUBMISSION/zenodo/plain/hye/fasta-hye/all/HUMAN.fasta"
+organism = "HUMAN"
+[[source]]
+path = "/scratch/timsim-demo/SUBMISSION/zenodo/plain/hye/fasta-hye/all/YEAST.fasta"
+organism = "YEAST"
+[[source]]
+path = "/scratch/timsim-demo/SUBMISSION/zenodo/plain/hye/fasta-hye/all/ECOLI.fasta"
+organism = "ECOLI"

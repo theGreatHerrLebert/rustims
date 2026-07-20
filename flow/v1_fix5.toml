@@ -1,0 +1,19 @@
+[paths]
+save_path      = "/tmp/claude-1000/-scratch-timsim-demo-timsim-necro/a26b14c9-6a01-413d-b8bd-268327b8074c/scratchpad/e2e/out5"
+reference_path = "/scratch/timsim-demo/_p3_e2e/TIMSIM-P3-E2E/TIMSIM-P3-E2E.d"
+fasta_path     = "/scratch/timsim-demo/SUBMISSION/zenodo/plain/hye/fasta-hye/all/HUMAN.fasta"
+
+[experiment]
+name             = "V2E2E"
+acquisition_type = "DIA"
+gradient_length  = 600
+silent_mode = false
+
+[simulation]
+from_v2         = true
+v2_path         = "/tmp/claude-1000/-scratch-timsim-demo-timsim-necro/a26b14c9-6a01-413d-b8bd-268327b8074c/scratchpad/e2e"
+v2_sample       = "A_R1"
+v2_total_events = 2.5e9
+apply_fragmentation = false
+v2_max_peptides = 2000
+use_reference_layout = false
