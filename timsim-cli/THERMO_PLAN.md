@@ -79,9 +79,9 @@ m/z *coordinates* are portable, NOT that the intensity/fragmentation model is Th
   quantile transform (see RT mapping below), not a naive endpoint stretch.
 - `ion_spectra` (**both** ms_levels — MS1 precursor isotopes AND MS2 fragments; the timsTOF MS1 bin
   currently loads only level 1) as pure `(m/z, intensity)`. m/z values are native/portable. **BUT the
-  MS2 fragment INTENSITIES must be re-predicted (see "Astral fragment predictor" below) — Astral is
-  Orbitrap-HCD, not timsTOF-CE; reusing the timsTOF fragment model is physically wrong and would
-  mismatch DiaNN's internally-predicted Orbitrap-HCD library in M3.** m/z coordinates port; the
+  MS2 fragment INTENSITIES must be re-predicted (see "Astral fragment predictor" below) — our default
+  predictor is fine-tuned for timsTOF, so reusing it for Orbitrap-HCD Astral is physically wrong and
+  would mismatch DiaNN's internally-predicted Orbitrap-HCD library in M3.** m/z coordinates port; the
   intensity *model* does not.
 - `precursors` (native `mz`, charge, `charge_fraction`, `ionization_propensity`, `modform_fraction`),
   `peptide_quantities` → `abundance = amount · ionz · mff · frac` (identical to timsTOF). Note
@@ -123,15 +123,19 @@ REPLACE / DROP (IMS-/Bruker-specific):
 
 ### Astral fragment predictor (REQUIRED feature-space swap for M2/M3 — user-flagged, load-bearing)
 
-The MS2 fragment intensities in `ion_spectra` come from the timsTOF Prosit model (`Prosit2023TimsTof`).
-Astral is an **Orbitrap-HCD analyzer** — different collision-energy regime and fragmentation, so the
-fragment intensity *pattern* differs. The Astral track must **regenerate `ion_spectra` (level 2) with an
-Orbitrap/HCD fragment intensity predictor** (candidate: Prosit 2020 HCD via Koina, or an AlphaPeptDeep
-Orbitrap model) at the template's CE, *before* M2's realism render. Precursor m/z, RT, charge, abundance
-are unaffected — only the fragment intensity model swaps. This does NOT block M0/M1 (writer de-risk is
-instrument-agnostic); an M2 render on timsTOF intensities is a **mechanics** test only — the **realism**
-render (and M3 scoring) requires the swapped predictor. Open: confirm the Koina/Prosit-HCD path in
-`imspy-predictors` and the CE mapping (template CE 14.9–32.3 → the predictor's NCE input).
+The v2 default fragment predictor is **OUR** `DeepPeptideIntensityPredictor` (`imspy-predictors`,
+`jobs/fragments.py`) — a PROSPECT-fine-tuned transformer **specialised for timsTOF MS2**, CE-conditioned.
+(NOT Prosit — `Prosit_2023_intensity_timsTOF` is only an optional Koina alternative and is HLA-trained,
+so it is poor for timsTOF; that is why we use our own.) Because our model is fine-tuned *for timsTOF*, it
+is likewise not right for Astral. The Astral track must **regenerate `ion_spectra` (level 2) with our
+predictor family on an Orbitrap-HCD checkpoint** — PROSPECT/ProteomeTools is itself largely Orbitrap-HCD,
+so the natural source is the pre-timsTOF-fine-tune base model (or a separately-trained Orbitrap
+checkpoint), NOT Prosit. Precursor m/z, RT, charge, abundance are unaffected — only the fragment intensity
+model swaps, at the template's CE. This does NOT block M0/M1 (writer de-risk is instrument-agnostic); an
+M2 render on timsTOF intensities is a **mechanics** test only — the **realism** render (and M3 scoring)
+requires the swapped predictor. Open (user's call): does an Orbitrap-HCD checkpoint of our predictor
+already exist / is the PROSPECT base usable, or do we train one? Plus the CE mapping (template CE
+14.9–32.3 → the model's NCE input).
 
 ### RT mapping (biggest biological risk — claudex)
 
