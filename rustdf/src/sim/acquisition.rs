@@ -100,7 +100,7 @@ pub use thermo::{rewindow_thermo_template, ThermoRawWriter, WriteMode};
 mod thermo {
     use super::*;
     use std::path::{Path, PathBuf};
-    use thermorawfile::{Calibration, RawFile};
+    use thermorawfile::{Calibration, ProfileWriteResult, RawFile};
 
     /// Re-window a Thermo DIA template (Tier-2 3a): copy `src` to `dst` with every MS2
     /// isolation window set to `isolation_width` (centers + CE kept — same cardinality).
@@ -187,6 +187,10 @@ mod thermo {
         /// `repack_many` rebuild at `finalize` — so growing many scans past the
         /// template budget costs one data-section rebuild, not one splice per scan.
         deferred: Vec<DeferredEdit>,
+        /// Run-level tally of MS1 profile authoring drops (peaks outside a scan's mass range), so the
+        /// driver can monitor lost ion current — a peak count can look harmless while a dominant
+        /// precursor envelope was silently dropped.
+        profile_summary: ProfileWriteResult,
     }
 
     /// A scan whose authored payload overflowed its template packet, deferred for the
@@ -263,6 +267,7 @@ mod thermo {
                 calib,
                 slots,
                 cursor: 0,
+                profile_summary: ProfileWriteResult::default(),
                 mode: WriteMode::Replace,
                 allow_partial: false,
                 deferred: Vec::new(),
@@ -313,6 +318,13 @@ mod thermo {
         /// (matching the run's MS-level sequence to the template before writing).
         pub fn manifest(&self) -> &[(u32, u8, bool)] {
             &self.slots
+        }
+
+        /// Run-level tally of MS1 profile authoring: bins written and peaks dropped (with their ion
+        /// current) because they fell outside a scan's mass range. The driver should surface
+        /// `dropped_intensity` as a lost-signal warning.
+        pub fn profile_summary(&self) -> ProfileWriteResult {
+            self.profile_summary
         }
     }
 
@@ -369,7 +381,9 @@ mod thermo {
                         // instead of a splice per scan. The common in-budget write stays
                         // in place; nothing is cleared (the old lossy behaviour).
                         match self.raw.author_profile(t, &scan.peaks, &self.calib) {
-                            Ok(()) => {}
+                            // Out-of-range peaks are dropped-and-accounted (not an error); tally them
+                            // run-wide so the driver can watch lost ion current.
+                            Ok(res) => self.profile_summary.accumulate(&res),
                             Err(e) if is_over_budget(&e) => self.deferred.push(DeferredEdit {
                                 scan: t,
                                 peaks: scan.peaks.clone(),
