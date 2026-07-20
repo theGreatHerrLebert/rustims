@@ -92,6 +92,22 @@ Verdict: the low absolute count was entirely the sparse quantity file. The pipel
 well-calibrated Astral DIA dataset. Residual recall (~56% of detectable) is the parked intensity-scale
 + single-cell-template refinement, per codex's ranked residual factors — a normal tuning axis, not a bug.
 
+## Parked changes — added
+
+- **Hierarchical recall denominator + harness** — `validate/v2_thermo_eval.py` scores DiaNN vs the answer
+  key with a nested denominator (all → present(abundance>0) → +in-window → +has-fragments → +above floor)
+  and a recall-vs-abundance-decile curve. On the dense `.raw`-direct run it reports FDP 2.11% and, tellingly,
+  **recall is FLAT ~53–60% across all abundance deciles** — so intensity is NOT the current limiter. The
+  levers are **template m/z coverage** (only 42% of present precursors fall in a DIA window on the
+  single-cell PXD061065 template) and **in-window recall ~52%** (RT/sampling/window factors), not signal
+  scale. The recall-vs-abundance curve was built precisely to reveal this, and it did.
+- **482-subset origin — RESOLVED as a sample-design artifact.** The 482 present peptides come from 411
+  proteins of 9,046 (**4.5% expressed**) — a sparse sample by protein expression, not a bug. The dense
+  sample is `peptide_quantities_5k` (all expressed). Use the dense one for a bulk benchmark.
+- **Intensity calibration — deferred (lab samples), confirmed by the user.** And the flat recall-vs-
+  abundance curve independently shows it is not the bottleneck right now, so deferring it costs nothing
+  for the current template; a bulk template with wider m/z coverage is the higher-value next lever.
+
 ## What is NOT in doubt
 
 The pipeline is correct end-to-end: DiaNN reads the synthetic Astral file, finds the DIA windows, and
