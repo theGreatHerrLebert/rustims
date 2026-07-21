@@ -47,8 +47,8 @@ use std::path::{Path, PathBuf};
 
 use mscore::data::spectrum::MzSpectrum;
 use sciexwiff::wiffscan::{
-    block_payload, encode_stream, mz_to_n, rebuild_grow, retranslate_idx, scan_blocks, GrowEdit,
-    Peak, ScanBlock, MAX_INTENSITY,
+    block_payload, encode_stream, mz_to_n, n_to_mz, rebuild_grow, retranslate_idx, scan_blocks,
+    GrowEdit, Peak, ScanBlock, MAX_INTENSITY,
 };
 use sciexwiff::{patch_idx_stream, read_idx_stream, read_method};
 
@@ -365,7 +365,13 @@ fn author_tokens(real: &[(i64, u32)], cut_n: i64) -> Result<Vec<u8>, String> {
     let mut payload: Vec<Peak> = Vec::with_capacity(real.len() + 1);
     payload.push((cut_n, 1)); // cutoff seed (n forced by the reader; tiny intensity)
     payload.extend_from_slice(real);
-    encode_stream(&payload).map_err(|e| format!("encode: {e:?}"))
+    let mut tokens = encode_stream(&payload).map_err(|e| format!("encode: {e:?}"))?;
+    // Terminator: real vendor blocks end their peak-list with a short 0xff run (observed 2-4 bytes)
+    // right before the next block's metadata. Without it the ABI reader over-reads past our tokens
+    // into the following metadata and accumulates a bogus delta -> absurd m/z (~594e6) on ~1.7% of
+    // peaks -> 0 IDs. block_payload strips any trailing-0xff span, so this round-trips cleanly.
+    tokens.extend_from_slice(&[0xff, 0xff, 0xff, 0xff]);
+    Ok(tokens)
 }
 
 /// A block is "clean" if its token region holds no embedded `ffffffff` — the ~0.14% of blocks
@@ -608,7 +614,9 @@ pub fn write_sciex_wiff(
         let body = b.end - (b.ff + 9);
         let mut t = author_tokens(&[], cut_n)?;
         if t.len() < body {
-            t.resize(body, 0);
+            // Pad with 0xff (a terminator continuation), NOT 0x00 — the reader decodes trailing 0x00
+            // bytes as spurious peaks, whereas a 0xff run is the block's natural end-of-peaklist.
+            t.resize(body, 0xff);
         }
         Ok(t)
     };
@@ -767,7 +775,8 @@ mod tests {
         let real = finalize_peaks(sim_to_n(&peaks, a, cal_b, cut_n, 0.0, INTENSITY_FULL_SCALE), 10);
         assert_eq!(real.len(), 2, "1000.0 merged, 1200.0 kept");
         let payload = author_tokens(&real, cut_n).expect("author");
-        let dec = sciexwiff::wiffscan::decode_stream(&payload, 0, cut_n, 64, false).expect("decode");
+        assert_eq!(&payload[payload.len() - 4..], &[0xff, 0xff, 0xff, 0xff], "ends with 0xff terminator");
+        let dec = sciexwiff::wiffscan::decode_stream(&payload[..payload.len() - 4], 0, cut_n, 64, false).expect("decode");
         assert_eq!(dec[0].0, cut_n, "first peak is the cutoff seed");
         assert!(dec[1].0 > dec[0].0 && dec[2].0 > dec[1].0, "strictly increasing n");
         assert_eq!(dec.len(), 3, "seed + 2 real peaks, no padding");
@@ -778,7 +787,8 @@ mod tests {
         // An empty real list is a valid seed-only (cleared) spectrum: just the sentinel.
         let cut_n = 300_000;
         let cleared = author_tokens(&[], cut_n).expect("clear");
-        let dec = sciexwiff::wiffscan::decode_stream(&cleared, 0, cut_n, 8, false).expect("decode");
+        assert_eq!(&cleared[cleared.len() - 4..], &[0xff, 0xff, 0xff, 0xff], "ends with 0xff terminator");
+        let dec = sciexwiff::wiffscan::decode_stream(&cleared[..cleared.len() - 4], 0, cut_n, 8, false).expect("decode");
         assert_eq!(dec.len(), 1, "seed only");
         assert_eq!(dec[0].0, cut_n);
     }
@@ -848,5 +858,158 @@ mod tests {
             layout.cycles.len(),
             layout.partial.len()
         );
+    }
+
+    /// Re-author a `.wiff` from a DB + template (to validate the terminator fix via pwiz readback).
+    /// Gated on TIMSIM_SCIEX_DB + TIMSIM_SCIEX_TEMPLATE + TIMSIM_SCIEX_OUT.
+    #[test]
+    fn probe_reauthor() {
+        let (db, tpl, out) = match (
+            std::env::var("TIMSIM_SCIEX_DB"),
+            std::env::var("TIMSIM_SCIEX_TEMPLATE"),
+            std::env::var("TIMSIM_SCIEX_OUT"),
+        ) {
+            (Ok(d), Ok(t), Ok(o)) => (d, t, o),
+            _ => return,
+        };
+        std::fs::create_dir_all(&out).unwrap();
+        let opts = SciexWriteOptions::default();
+        let summary = write_sciex_wiff(
+            std::path::Path::new(&db),
+            std::path::Path::new(&tpl),
+            std::path::Path::new(&out),
+            opts,
+            None,
+        )
+        .expect("write_sciex_wiff");
+        eprintln!("REAUTHOR OK: {summary:?}");
+    }
+
+    /// Debug probe: dump the trailing bytes of a few clean blocks + the byte AFTER b.end, to see the
+    /// real token terminator our authored blocks must reproduce. Gated on `TIMSIM_SCIEX_WIFF_SCAN`.
+    #[test]
+    fn probe_terminator() {
+        let scan_path = match std::env::var("TIMSIM_SCIEX_WIFF_SCAN") {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let scan = std::fs::read(&scan_path).expect("read");
+        let blocks = scan_blocks(&scan);
+        let mut shown = 0;
+        for b in blocks.iter() {
+            if !is_clean_tail(&scan, b) || b.end - (b.ff + 9) < 20 {
+                continue;
+            }
+            // decode to find the real peaks + terminator length
+            let cut_n = match read_hdr(&scan, b.ff) {
+                Ok(h) => seed_cut_n(h, b.cal_a, b.cal_b),
+                Err(_) => continue,
+            };
+            let (peaks, term) = match block_payload(&scan, b) {
+                Ok(x) => x,
+                Err(_) => continue,
+            };
+            let tail: Vec<String> = scan[(b.end - 12)..(b.end + 6).min(scan.len())]
+                .iter().map(|x| format!("{x:02x}")).collect();
+            eprintln!(
+                "block ff={} body_len={} decoded_peaks={} term_len={} cut_n={} | [b.end-12 .. b.end+6]=[{}]",
+                b.ff, b.end - (b.ff + 9), peaks.len(), term, cut_n, tail.join(" ")
+            );
+            shown += 1;
+            if shown >= 6 {
+                break;
+            }
+        }
+    }
+
+    /// Debug probe: does `is_clean_tail` catch EVERY block whose body contains an embedded ffffffff
+    /// (a mini block)? A block with a mini block that `is_clean_tail` reports clean is authored + its
+    /// mini block overwritten -> the pwiz mis-seek. Gated on `TIMSIM_SCIEX_WIFF_SCAN`.
+    #[test]
+    fn probe_clean_tail_coverage() {
+        let scan_path = match std::env::var("TIMSIM_SCIEX_WIFF_SCAN") {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let scan = std::fs::read(&scan_path).expect("read .wiff.scan");
+        let blocks = scan_blocks(&scan);
+        let (mut with_ffff, mut clean_true, mut missed) = (0usize, 0usize, 0usize);
+        let mut missed_samples: Vec<(usize, usize)> = Vec::new();
+        for (bi, b) in blocks.iter().enumerate() {
+            let body = &scan[b.ff + 9..b.end];
+            // full-body ffffffff search (what is_clean_tail SHOULD catch)
+            let has = body.windows(4).any(|w| w == [0xff, 0xff, 0xff, 0xff]);
+            let clean = is_clean_tail(&scan, b);
+            if has {
+                with_ffff += 1;
+            }
+            if clean {
+                clean_true += 1;
+            }
+            if has && clean {
+                // a mini block present but is_clean_tail says clean -> it WILL be authored/overwritten
+                missed += 1;
+                if missed_samples.len() < 6 {
+                    // where is the ffffffff relative to the body end?
+                    let pos = body.windows(4).position(|w| w == [0xff, 0xff, 0xff, 0xff]).unwrap();
+                    missed_samples.push((bi, body.len() - pos));
+                }
+            }
+        }
+        eprintln!(
+            "CLEAN_TAIL: {} blocks | {} have an embedded ffffffff | is_clean_tail=true for {} | MISSED (has ffffffff but reported clean) = {}",
+            blocks.len(), with_ffff, clean_true, missed
+        );
+        for (bi, from_end) in &missed_samples {
+            eprintln!("  block {} : ffffffff sits {} bytes from body end", bi, from_end);
+        }
+    }
+
+    /// Debug probe: decode a real `.wiff.scan` with OUR codec + each block's OWN calibration and
+    /// report peaks whose recovered m/z is out of range (>2000). If WE see garbage, the block
+    /// genuinely encodes a bad `n` (writer or per-block cal fault); if we see none but pwiz reads
+    /// ~594M, pwiz decodes with a different calibration than the block carries (a mismatch).
+    /// Gated on `TIMSIM_SCIEX_WIFF_SCAN`.
+    #[test]
+    fn probe_garbage_mz() {
+        let scan_path = match std::env::var("TIMSIM_SCIEX_WIFF_SCAN") {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let scan = std::fs::read(&scan_path).expect("read .wiff.scan");
+        let blocks = scan_blocks(&scan);
+        let mut cal_hist: std::collections::BTreeMap<i64, usize> = Default::default();
+        for b in &blocks {
+            *cal_hist.entry((b.cal_a * 1e8).round() as i64).or_default() += 1;
+        }
+        let (mut total, mut garbage) = (0usize, 0usize);
+        let mut samples: Vec<(f64, i64, f64, i64)> = Vec::new();
+        for b in &blocks {
+            let cut_n = match read_hdr(&scan, b.ff) {
+                Ok(h) => seed_cut_n(h, b.cal_a, b.cal_b),
+                Err(_) => continue,
+            };
+            for (n, _) in decode_template_peaks(&scan, b, cut_n) {
+                let mz = n_to_mz(n, b.cal_a, b.cal_b);
+                total += 1;
+                if mz > 2000.0 {
+                    garbage += 1;
+                    if samples.len() < 8 {
+                        samples.push((mz, n, b.cal_a, cut_n));
+                    }
+                }
+            }
+        }
+        eprintln!(
+            "PROBE: {} blocks, {} peaks, {} garbage(>2000 m/z) = {:.3}%",
+            blocks.len(),
+            total,
+            garbage,
+            100.0 * garbage as f64 / total.max(1) as f64
+        );
+        eprintln!("cal_a clusters ((cal_a*1e8).round -> count): {:?}", cal_hist);
+        for (mz, n, a, cut) in &samples {
+            eprintln!("  garbage: mz={:.1} n={} cal_a={:.5e} cut_n={}", mz, n, a, cut);
+        }
     }
 }
