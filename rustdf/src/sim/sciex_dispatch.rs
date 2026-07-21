@@ -860,6 +860,44 @@ mod tests {
         );
     }
 
+    /// Debug probe: decoded-intensity VALUE distribution of a `.wiff.scan` (not encoded byte-widths).
+    /// Compares real vendor intensity magnitudes (template) vs our authored ones — used to spot that our
+    /// full_scale=50000 scaling makes intensities far larger than the vendor's. Gated on
+    /// `TIMSIM_SCIEX_WIFF_SCAN`.
+    #[test]
+    fn probe_intensity() {
+        let scan_path = match std::env::var("TIMSIM_SCIEX_WIFF_SCAN") {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let scan = std::fs::read(&scan_path).expect("read");
+        let blocks = scan_blocks(&scan);
+        let mut all: Vec<u32> = Vec::new();
+        for b in blocks.iter().take(3000) {
+            if let Ok(h) = read_hdr(&scan, b.ff) {
+                let cut_n = seed_cut_n(h, b.cal_a, b.cal_b);
+                for (_, i) in decode_template_peaks(&scan, b, cut_n) {
+                    all.push(i);
+                }
+            }
+        }
+        all.sort_unstable();
+        let n = all.len();
+        if n == 0 {
+            eprintln!("INTENSITY: no peaks");
+            return;
+        }
+        let (s, m, big) = (
+            all.iter().filter(|&&x| x < 124).count(),
+            all.iter().filter(|&&x| (124..256).contains(&x)).count(),
+            all.iter().filter(|&&x| x >= 256).count(),
+        );
+        eprintln!(
+            "INTENSITY: {} peaks | min {} median {} p95 {} max {} | value ranges: <124={} 124-255={} >=256={}",
+            n, all[0], all[n / 2], all[n * 95 / 100], all[n - 1], s, m, big
+        );
+    }
+
     /// Re-author a `.wiff` from a DB + template (to validate the terminator fix via pwiz readback).
     /// Gated on TIMSIM_SCIEX_DB + TIMSIM_SCIEX_TEMPLATE + TIMSIM_SCIEX_OUT.
     #[test]
