@@ -168,7 +168,10 @@ milestone first); GUI/CLI changes beyond the flow.
 - ~~**#8** validate CE against template-extracted NCE~~ — DONE: render extracts the template's median MS2
   NCE and warns if --expected-ce differs >15%; manifest records template_nce + fragment_ce. (Orbi DIA
   template = NCE 25.)
-- **Phase 2**: `search` (DiaNN/Sage) + `score` (v2_thermo_eval) as DAG nodes — closes simulate→search→score.
+- ~~**Phase 2**: `search` + `score` as DAG nodes~~ — DONE: opt-in `--search-fasta` appends a DiaNN
+  library-free `search` node + a `score` node (v2_thermo_eval) so simulate→search→score is one
+  content-addressed run. Verified on HeLa-basic: FDP 0.26%, recall 53.5% of the detectable set,
+  monotonic abundance-decile curve (D1 31% → D10 89%).
 - Bruker `.d`: decompose `simulate` into `fragments → spectra → render_bruker` (gated on a validated render_bruker).
   **LANDMINE**: the `fragments` node feeds a SINGLE CE (correct for no-IMS Koina/Thermo). The timsTOF
   DeepPeptide model needs per-scan (mobility-driven) CE (handle.get_transmitted_ions / activation_policy.

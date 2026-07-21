@@ -221,11 +221,32 @@ class ThermoRunManifest(NodeType):
     filename = "manifest.json"
 
 
+class DiannReport(NodeType):
+    """A DiaNN library-free search of the rendered `.raw` — the SEARCH half of phase 2. A directory node
+    (DiaNN emits report.parquet + stats + the predicted lib alongside). Restages when the search FASTA
+    changes; the `.raw` it searches is an input node, so a different render is a different search."""
+
+    filename = "diann"
+    invalidator = hashes_file("search_fasta")
+
+
+class ScoreMetrics(NodeType):
+    """The SCORE half of phase 2: the DiaNN report scored against the render's answer key — hierarchical
+    recall (all → present → in-window → has-frags → detectable), FDP, and a recall-vs-abundance-decile
+    curve. This is the number the whole simulate→search→score run exists to produce, content-addressed
+    to the exact `.raw` + truth + search DB that produced it."""
+
+    filename = "metrics.json"
+
+
 # ── rules ────────────────────────────────────────────────────────────────────
 
 r = Rules()
 
 BIN = os.environ.get("TIMSIM_BIN", "target/release")
+# Phase-2 search: DiaNN reads Thermo .raw natively only with the .NET 8 runtime (DOTNET_ROOT + on PATH).
+DIANN = os.environ.get("TIMSIM_DIANN", "/home/administrator/dia-nn/diann-2.5.0/diann-linux")
+DOTNET = os.environ.get("DOTNET_ROOT", os.path.expanduser("~/.dotnet"))
 
 
 @r.command(f"{BIN}/timsim-proteome --spec {{spec}} --out {{proteome}}")
@@ -439,6 +460,46 @@ def render_thermo(
     return ThermoRawData[data_raw], ThermoTruth[truth], ThermoRunManifest[manifest]
 
 
+# ── phase 2: search + score (close simulate -> search -> score) ──────────────
+
+
+@r.command(
+    f"mkdir -p {{diann}} && DOTNET_ROOT={DOTNET} PATH={DOTNET}:$PATH {DIANN} "
+    "--f {data_raw} --fasta {search_fasta} --out {diann}/report.parquet "
+    "--fasta-search --predictor --gen-spec-lib --qvalue {qvalue} --threads {search_threads} "
+    "--met-excision --cut 'K*,R*' --missed-cleavages {max_missed_cleavages} "
+    "--min-pep-len {min_length} --max-pep-len {max_length} --var-mods 1 --unimod35 "
+    "--reanalyse --relaxed-prot-inf",
+    threads=16,
+    ram="32Gi",
+)
+def search(
+    data_raw: ThermoRawData,
+    search_fasta: str,
+    qvalue: float,
+    search_threads: int,
+    max_missed_cleavages: int,
+    min_length: int,
+    max_length: int,
+):
+    """SEARCH: DiaNN library-free over the rendered `.raw` (predict a spectral library from the FASTA,
+    then search). Reads `.raw` natively via the .NET 8 runtime. The FASTA is a content-hashed dependency;
+    a different render (`.raw` input) or a different DB is a different search."""
+    return DiannReport[diann]
+
+
+@r.command(
+    "python -m imspy_simulation.timsim.validate.v2_thermo_eval "
+    "--report {diann}/report.parquet --truth {truth} --peptides {peptides} "
+    "--fdr {qvalue} --out {metrics}"
+)
+def score(diann: DiannReport, truth: ThermoTruth, peptides: Peptides, qvalue: float):
+    """SCORE: the DiaNN report against the render's answer key. Hierarchical recall + FDP + recall-by-
+    abundance-decile, content-addressed to the exact `.raw`/truth/DB that produced it — so the number
+    can never be attributed to the wrong run."""
+    return ScoreMetrics[metrics]
+
+
 # ── the pipeline ─────────────────────────────────────────────────────────────
 
 
@@ -553,6 +614,18 @@ def timsim_thermo_pipeline(cfg, sample_id: str) -> Pipeline:
         method=getattr(cfg, "method", "DIA"),
         collision_energy=cfg.collision_energy,
     )
+    # ── phase 2 (opt-in): search the .raw + score against the answer key ──
+    if getattr(cfg, "search_fasta", None):
+        P.diann = r.search(
+            P.raw,
+            search_fasta=cfg.search_fasta,
+            qvalue=cfg.qvalue,
+            search_threads=cfg.search_threads,
+            max_missed_cleavages=cfg.max_missed_cleavages,
+            min_length=cfg.min_length,
+            max_length=cfg.max_length,
+        )
+        P.score = r.score(P.diann, P.truth, P.peptides, qvalue=cfg.qvalue)
     return P
 
 
@@ -569,6 +642,11 @@ def main() -> None:
     ap.add_argument("--frag-model", default="", help="fragment model: '' (local timsTOF) or 'koina:Prosit_2020_intensity_HCD'")
     ap.add_argument("--collision-energy", type=float, default=25.0)
     ap.add_argument("--intensity-scale", type=float, default=5.0e5)
+    ap.add_argument("--search-fasta", default=None,
+                    help="opt into phase 2: DiaNN-search the rendered .raw against this FASTA, then score "
+                         "against the answer key. Omit to stop at the .raw.")
+    ap.add_argument("--qvalue", type=float, default=0.01, help="DiaNN + scoring q-value / FDR threshold")
+    ap.add_argument("--search-threads", type=int, default=16)
     a = ap.parse_args()
 
     cfg = SimpleNamespace(
@@ -587,6 +665,9 @@ def main() -> None:
         frag_model=a.frag_model,
         collision_energy=a.collision_energy,
         intensity_scale=a.intensity_scale,
+        search_fasta=a.search_fasta,
+        qvalue=a.qvalue,
+        search_threads=a.search_threads,
     )
 
     build = timsim_thermo_pipeline if a.thermo_template else timsim_pipeline
@@ -598,6 +679,9 @@ def main() -> None:
         req = [P.raw]
         if getattr(P, "truth", None) is not None:
             req += [P.truth, P.manifest]
+        # Phase 2 (opt-in): the score is the terminal deliverable — requesting it pulls search + the .raw.
+        if getattr(P, "score", None) is not None:
+            req.append(P.score)
         dag.add(P, request=req)
 
     print(dag)
