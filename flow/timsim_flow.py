@@ -56,6 +56,40 @@ def hashes_file(config_key: str):
     return token
 
 
+def hashes_sciex_config(config_key: str):
+    """Like `hashes_file`, but ALSO hashes the `.wiff` template the SCIEX config references.
+
+    The legacy `timsim` CLI takes the template only *inside* the config TOML (there is no `--template`
+    flag), so the template's CONTENT is a hidden dependency that hashing the TOML alone would miss —
+    swapping the `.wiff` (or editing it in place) would silently reuse a stale render with the old SWATH
+    windows / TOF calibration. `render_thermo` avoids this by hashing its template directly; do the same
+    here by parsing the config for `template_path` and folding the file's bytes in. Fail graph
+    construction if the referenced template is absent (a missing template is not a cache hit)."""
+    import tomllib
+
+    def token(node) -> str:
+        cfg_path = Path(node.config[config_key])
+        h = hashlib.sha256()
+        h.update(cfg_path.read_bytes())
+        data = tomllib.loads(cfg_path.read_text())
+        tmpl = None
+        for section in list(data.values()) + [data]:
+            if isinstance(section, dict):
+                tmpl = section.get("template_path") or section.get("astral_template_path")
+                if tmpl:
+                    break
+        if not tmpl:
+            raise ValueError(f"SCIEX config {cfg_path} declares no template_path to hash")
+        tp = Path(tmpl)
+        if not tp.exists():
+            raise FileNotFoundError(f"SCIEX template {tp} (from {cfg_path}) does not exist")
+        h.update(b"\x00wiff\x00")
+        h.update(tp.read_bytes())
+        return h.hexdigest()
+
+    return token
+
+
 # ── artifacts ────────────────────────────────────────────────────────────────
 #
 # Each NodeType is a *typed artifact*, not a filename. The type is what lets necroflow check that a
@@ -228,7 +262,9 @@ class SciexMzmlData(NodeType):
     consumer is a type error. Restages when the SCIEX config (template + params) changes."""
 
     filename = "mzml"
-    invalidator = hashes_file("sciex_config")
+    # Hash the config TOML AND the .wiff template it points at — the template is a hidden dependency the
+    # config-only hash would miss (the legacy CLI has no --template flag).
+    invalidator = hashes_sciex_config("sciex_config")
 
 
 class DiannReport(NodeType):

@@ -1,6 +1,10 @@
 # SCIEX ZenoTOF SWATH → open mzML render config (the CLEAN path; NOT the native .wiff writer, which
 # corrupts m/z — see SCIEX_CONSOLIDATION.md). Driven from the v2 feature space via `timsim --v2-*`.
 # Section names are irrelevant (translate_legacy_config flattens them).
+#
+# LOCAL EXAMPLE: `template_path` below is a host-specific absolute path (like reference_path/fasta_path
+# in v1.toml). Point it at your own SCIEX `.wiff` SWATH method; the flow hashes the file's CONTENT
+# (hashes_sciex_config), so editing/swapping the .wiff correctly restages the render.
 [experiment]
 experiment_name  = "sciex"          # fixed → deterministic output filename (sciex.mzML) per node dir
 acquisition_type = "DIA"            # SWATH is DIA-only
@@ -21,3 +25,8 @@ sciex_native          = false       # false = open mzML (clean). true = native .
 # ZenoTOF is HCD/NCE, so the fragment intensities need an HCD model, not the local timsTOF (eV) one.
 intensity_model       = "Prosit_2020_intensity_HCD"
 v2_total_events       = 2.5e9
+# Byte-reproducible output: the sim otherwise embeds an mzPROV signature using an auto-generated key
+# under ~/.config (an unkeyed, ambient dependency that makes the mzML bytes vary by host/key). The
+# necroflow DAG already provides provenance via content-addressing, so turn the sim's off.
+emit_provenance       = false
+provenance_embed      = false
