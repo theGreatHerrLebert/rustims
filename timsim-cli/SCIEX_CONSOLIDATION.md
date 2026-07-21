@@ -290,3 +290,18 @@ same breakpoints. Requires: (a) a mini-block-aware boundary (from Idx or by dete
 RECOMMENDATION given the SCIEX-demo goal: fix A (length-preserving path) STILL sidesteps all of this
 ("no risk to the ~4%") and our ~4 peaks/window fit the ~55 budget with room — it is the low-risk path
 to a correct demo `.wiff`. Fix B is the right general solution but is genuine vendor-format work.
+
+## Stage-3 claudex on fix B (codex, after a transient codex outage)
+Verdict: **A is the demo path; B is premature** — B's edit-boundary rule relies on the same block-scanner
+knowledge that already proved incomplete (preserving one mini-block variant doesn't prove it's the only
+opaque interstitial structure). Do B later behind a regression corpus containing the mini blocks.
+
+A is NOT "generic zero-pad" — it is CAPACITY-CONSTRAINED AUTHORING. Refinements to fold in:
+- Do NOT naively zero-pad freed token bytes (a 0x00 can be a bad protobuf tag). PRESERVE the original
+  tail bytes, or emit only reader-verified no-op padding. (Audit the current clear_tokens `resize(…,0)`.)
+- Overwrite ONLY the proven payload region; keep placement + opaque bytes byte-for-byte. Handle
+  equal-length vs underfill separately; underfill retains a known-valid tail, not invented padding.
+- HARD-REJECT an over-capacity scan (no automatic grow fallback for the demo). Update in-block metadata
+  (payload length, peak counts, any TIC/base-peak summaries); watch per-block CRC / raw+summary dupes.
+- Validate on the REAL path: pwiz -> mzML -> DiaNN; assert scan count, isolation metadata, m/z sanity,
+  and NONZERO IDs — not just structural round-trip.
