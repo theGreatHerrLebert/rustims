@@ -215,3 +215,24 @@ mismatch, then inspect its Idx record (+32/+86 land on real ffffffff sentinels? 
 block2 meta?). Discriminate with no-growth (byte-identical) vs one controlled growth. Also test
 whether failures sit at a FIXED within-cycle slot / segment parity / partial-final cycle.
 Regression gate: pwiz-readback test asserting per-spectrum m/z + structural Idx-record validity.
+
+## Stage-3 attack log (probes built; localization still needs the canary)
+
+Two diagnostic probes added (uncommitted, in the sciexwiff spike + SUBMISSION rustdf, gated on
+`TIMSIM_SCIEX_WIFF_SCAN`):
+- `probe_garbage_mz` (sciex_dispatch.rs): our-codec decode of the corrupt `.wiff.scan` → sane m/z only
+  (max 2567). Confirms the peak encoding is sound; 594M is pwiz-side.
+- `probe_idx_validity` (wiffscan.rs): checks each Idx record's +32/+86 offsets resolve to a block
+  `ffffffff`. Result on mild_r1: 51,819 records / 103,581 nonzero offsets, ~8,209 (7.9%) unresolved —
+  BUT they cluster at o32==o86 (single-block/special records `map_segments` legitimately skips), so
+  this OVER-counts and can't isolate the ~1.7% pwiz actually mis-reads. NOT a clean localization.
+
+CONCLUSION so far: peak codec sound; bug is a structural parse failure in the grow/Idx/terminator
+interop for a minority of blocks; the missing token terminator (author_tokens) is a real contributing
+factor. The Idx-offset shortcut is too noisy to pinpoint.
+
+DEFINITIVE NEXT STEP (codex): the CANARY experiment — author ONE unique canary peak per physical block
+(intensity encodes block index), msconvert via pwiz, map each spectrum→expected block, find the first
+mismatch, inspect its exact Idx record + byte interval; discriminate no-growth vs one controlled
+growth. Then fix + gate with a pwiz-readback round-trip test. This is the clean focused push to open
+next.
