@@ -165,6 +165,11 @@ milestone first); GUI/CLI changes beyond the flow.
 - **#3** explicit `FragmentPredictionInput` node (freeze precursor_id/sequence/charge + **mod encoding** —
   today fragments predicts on the BARE peptide sequence, wrong for modified precursors). Correctness + structure.
 - **#2** `AcquisitionMethod` as typed config (drives windows/timing/selection/CE) — matters most for DDA.
-- **#8** validate CE against template-extracted NCE (CE is already explicit config).
+- ~~**#8** validate CE against template-extracted NCE~~ — DONE: render extracts the template's median MS2
+  NCE and warns if --expected-ce differs >15%; manifest records template_nce + fragment_ce. (Orbi DIA
+  template = NCE 25.)
 - **Phase 2**: `search` (DiaNN/Sage) + `score` (v2_thermo_eval) as DAG nodes — closes simulate→search→score.
 - Bruker `.d`: decompose `simulate` into `fragments → spectra → render_bruker` (gated on a validated render_bruker).
+  **LANDMINE**: the `fragments` node feeds a SINGLE CE (correct for no-IMS Koina/Thermo). The timsTOF
+  DeepPeptide model needs per-scan (mobility-driven) CE (handle.get_transmitted_ions / activation_policy.
+  collision_energy_for_scan). A timsTOF decomposition must supply per-precursor mobility CE, not the constant.

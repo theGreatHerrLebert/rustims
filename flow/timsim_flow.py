@@ -415,7 +415,7 @@ def spectra(
     f"{BIN}/timsim-render-thermo --precursors {{precursors}} "
     "--peptide-rt {peptide_rt} --ion-spectra {ion_spectra} --peptide-quantities {peptide_quantities} "
     "--sample {sample_id} --template {template} --intensity-scale {intensity_scale} "
-    "--frag-model {frag_model} --method {method} "
+    "--frag-model {frag_model} --method {method} --expected-ce {collision_energy} "
     "--out {data_raw} --thermo-truth {truth} --manifest {manifest}",
     threads=2,
     ram="8Gi",
@@ -430,6 +430,7 @@ def render_thermo(
     sample_id: str,
     frag_model: str,
     method: str,
+    collision_energy: float,
 ):
     """MEASUREMENT: author the feature space into a real Thermo `.raw` template (no-IMS). One node per
     sample (via `peptide_quantities` + `sample_id`); restages when the template changes. Three co-outputs
@@ -550,6 +551,7 @@ def timsim_thermo_pipeline(cfg, sample_id: str) -> Pipeline:
         sample_id=sample_id,
         frag_model=cfg.frag_model,
         method=getattr(cfg, "method", "DIA"),
+        collision_energy=cfg.collision_energy,
     )
     return P
 

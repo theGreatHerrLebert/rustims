@@ -194,6 +194,13 @@ def predict_fragment_batches(
         print(f"    distinct (seq,z)  : {len(keys):,}")
         print(f"    collision energy  : {collision_energy}")
 
+    # A SINGLE collision energy for every precursor. This is correct for a no-IMS instrument (Astral/
+    # Orbitrap DIA sets one NCE for the whole run), which is what the Koina HCD path serves. It is NOT
+    # correct for the timsTOF path: DDA-PASEF collision energy is SCAN-DRIVEN (a function of the ion's
+    # mobility — see handle.get_transmitted_ions' per-ion collision_energies and
+    # dda_selection_scheme's activation_policy.collision_energy_for_scan). If this node is ever wired to
+    # feed the timsTOF DeepPeptide model, the input must carry a per-precursor mobility-derived CE here,
+    # not this constant. predict_tensors already takes a per-key list, so the plumbing is ready.
     tensors, prov = predict_tensors(
         keys["sequence"], keys["charge"], [collision_energy] * len(keys), model=model
     )

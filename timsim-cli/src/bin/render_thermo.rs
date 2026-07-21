@@ -58,6 +58,9 @@ struct Args {
     #[arg(long, default_value = "")] frag_model: String,
     /// Acquisition method label recorded in the manifest (the windows come from the template).
     #[arg(long, default_value = "DIA")] method: String,
+    /// The collision energy (NCE) the fragments were predicted at — validated against the template's
+    /// actual NCE (a mismatch means the library was built for a different CE than the template was run at).
+    #[arg(long)] expected_ce: Option<f64>,
 }
 
 fn load_list_spectra(path: &PathBuf, want_level: u8) -> Result<HashMap<u64, Vec<(f64, f32)>>> {
@@ -262,6 +265,30 @@ fn main() -> Result<()> {
         "template check OK: {} MS1 + {} MS2 slots ({} with windows), method={}",
         n_ms1_slots, n_ms2_slots, n_window_slots, a.method);
 
+    // CE validation (#8): the template's own MS2 scans carry the NCE it was acquired at. Compare it to the
+    // CE the fragment library was predicted at (--expected-ce); a mismatch means the library and the
+    // template disagree on collision energy, so the fragment intensities are for the wrong regime.
+    let mut ces: Vec<f64> = schedule.iter()
+        .filter_map(|(_, iso)| iso.map(|w| w.collision_energy))
+        .filter(|c| c.is_finite() && *c > 0.0)
+        .collect();
+    let template_nce = if ces.is_empty() { None } else {
+        ces.sort_by(f64::total_cmp);
+        Some(ces[ces.len() / 2]) // median across MS2 windows
+    };
+    if let (Some(tce), Some(ece)) = (template_nce, a.expected_ce) {
+        let rel = (tce - ece).abs() / tce.max(1.0);
+        if rel > 0.15 {
+            eprintln!(
+                "  WARNING: fragment CE {:.1} differs from template NCE {:.1} by {:.0}% — the library was \
+                 predicted at a collision energy the template was not acquired at", ece, tce, rel * 100.0);
+        } else {
+            eprintln!("  CE check OK: fragment CE {:.1} ≈ template NCE {:.1}", ece, tce);
+        }
+    } else if template_nce.is_none() {
+        eprintln!("  note: template exposes no per-scan NCE — cannot validate collision energy");
+    }
+
     // Active-set sweep over slots (schedule RT is monotonic). A precursor is active in [apex ± nσ·σ].
     let half = a.n_sigma * a.sigma_seconds;
     let mut order: Vec<usize> = (0..precs.len()).collect();
@@ -393,7 +420,12 @@ fn main() -> Result<()> {
             .map(|d| d.as_secs());
         let manifest_json = serde_json::json!({
             "renderer": { "name": "timsim-render-thermo", "version": env!("CARGO_PKG_VERSION") },
-            "acquisition": { "method": a.method, "windows_from_template": true },
+            "acquisition": {
+                "method": a.method,
+                "windows_from_template": true,
+                "template_nce": template_nce,
+                "fragment_ce": a.expected_ce,
+            },
             "template": { "path": a.template.display().to_string(), "bytes": tbytes, "mtime_unix": tmtime },
             "fragment_model": a.frag_model,
             "sample": a.sample,
