@@ -264,3 +264,29 @@ including empty/mini-block and partial-cycle cases.
 
 CONTEXT: native `.wiff` is wanted as leverage for a SCIEX meeting (show we can author their format ->
 open a door on mzProv cooperation). So correctness of the demo `.wiff` matters; (A) is the low-risk path.
+
+## Stage-3 fix-B attempt: mini blocks are a NON-STANDARD format (deeper than expected)
+
+Confirmed the exact bug via the refined Idx probe: 180 Idx records point at `ffffffff` sentinels that
+sit INSIDE an enumerated block's `[ff+9..end]` region — real blocks the grow edit overwrites. But the
+first fix attempt (enumerate out-of-cal `0a1209` blocks so `end` is the next STRUCTURAL start) was a
+NO-OP, because these mini blocks have NO `0a1209` metadata. Their bytes:
+```
+... 12 08 08 <v> 10 <v>  12 08 08 <v> 10 <v>  ...  ff ff ff ff  <u32 hdr>  <peak tokens>
+```
+i.e. a run of protobuf `12 08` submessages (not the standard `0a1209 + cal-doubles` metadata) ending
+in the block `ffffffff`. `scan_blocks` fundamentally can't see them by its signature, so they stay
+unenumerated and get swallowed — the documented "~4% of Idx records that point at blocks scan_blocks
+does NOT enumerate."
+
+### The correct fix B (bounded, but real work)
+Bound each enumerated block's edit region by the TEMPLATE Idx (authoritative for ALL block `ff`
+positions, enumerated + mini), not by the next enumerated block. Concretely: in the grow rebuild,
+replace only `[ff+9 .. this_block_token_end]` and PRESERVE `[this_block_token_end .. next_block_meta]`
+verbatim (the mini block), shifting it by the token-length delta; retranslate its Idx offset with the
+same breakpoints. Requires: (a) a mini-block-aware boundary (from Idx or by detecting the `12 08`-run
++ `ffffffff`), (b) rebuild_grow preserving the trailing mini block, (c) a pwiz-readback gate.
+
+RECOMMENDATION given the SCIEX-demo goal: fix A (length-preserving path) STILL sidesteps all of this
+("no risk to the ~4%") and our ~4 peaks/window fit the ~55 budget with room — it is the low-risk path
+to a correct demo `.wiff`. Fix B is the right general solution but is genuine vendor-format work.
