@@ -352,3 +352,18 @@ terminator can't create an ambiguous token boundary. Non-blocking follow-ups rec
   tokens (mild conflict with rebuild_grow's "tokens are a complete body" contract).
 - Add tests: a peak ending in escaped `7c ff`, seed-only cleared blocks with long 0xff padding, and a
   pwiz-readback round-trip gate. Document the terminator as a pwiz/ABI-specific workaround.
+
+## Stage-3 DONE: native .wiff is fully searchable (B CLOSED)
+The terminator fix ALONE closed B — there was no second bug. The earlier "0 IDs" was a FASTA mismatch
+(searched the covid .wiff against a random 2500-protein subset instead of the covid seed's own proteins).
+Re-searched against the correct DB (covid seed's 2909 proteins, filtered from HeLa):
+- FIXED native .wiff -> pwiz mzML -> DiaNN: **449 protein groups, 540 precursors** (was 0).
+- direct mzML render (same data): 444 protein groups.
+So native `.wiff` performs IDENTICALLY to the open-format path. The intensities were fine all along
+(the "flat 1.0" was a measurement artifact — reading per-spectrum maxima on a bad subsample).
+
+BOTH SCIEX paths now work: (A) direct mzML render_sciex node in the v2 flow (444-534 PGs); (B) native
+`.wiff` writer (449 PGs), pushed to origin (feature/sciex-native-writer + feature/wiffscan-codec).
+For DIA this is complete — we control the CONTENT (arbitrary peaks/scan) and borrow the vendor's
+acquisition CONTAINER (windows/calibration/schedule), which is exactly right for a fixed-window method.
+The .wiff artifact for the SCIEX meeting is real and searchable.
