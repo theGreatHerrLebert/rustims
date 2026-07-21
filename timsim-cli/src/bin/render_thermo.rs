@@ -217,6 +217,51 @@ fn main() -> Result<()> {
     }
     eprintln!("precursors: {} eligible", precs.len());
 
+    // Fail fast: validate the template is compatible with the requested acquisition BEFORE the expensive
+    // authoring sweep — a mismatched template should be rejected in milliseconds, not after a multi-minute
+    // render that produces a subtly-wrong .raw.
+    let n_ms1_slots = manifest.iter().filter(|(_, l, _)| *l == 1).count();
+    let n_ms2_slots = manifest.len() - n_ms1_slots;
+    let n_window_slots = schedule.iter().filter(|(_, iso)| iso.is_some()).count();
+    if precs.is_empty() {
+        return Err(anyhow!(
+            "no eligible precursors to render — the feature space is empty after MS1/MS2 spectrum \
+             filtering; check --ion-spectra / --peptide-quantities for sample {:?}", a.sample));
+    }
+    if n_ms1_slots == 0 {
+        return Err(anyhow!("template {} has no MS1 scans — cannot author precursor signal", a.template.display()));
+    }
+    if a.method.eq_ignore_ascii_case("DIA") {
+        if n_ms2_slots == 0 {
+            return Err(anyhow!(
+                "template {} has no MS2 scans — it is not a DIA acquisition (method=DIA)", a.template.display()));
+        }
+        if n_window_slots == 0 {
+            return Err(anyhow!(
+                "template {} has {} MS2 scans but no parseable isolation windows — cannot author DIA fragments",
+                a.template.display(), n_ms2_slots));
+        }
+    }
+    // Soft m/z-coverage check: a template whose isolation windows don't span the sample's precursor m/z
+    // range will leave most precursors unfragmented. Warn (don't fail) — it is usually a template mismatch.
+    let (mut wlo, mut whi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for (_, iso) in schedule.iter() {
+        if let Some(w) = iso { wlo = wlo.min(w.center_mz - w.width_mz / 2.0); whi = whi.max(w.center_mz + w.width_mz / 2.0); }
+    }
+    if a.method.eq_ignore_ascii_case("DIA") && wlo.is_finite() {
+        let outside = precs.iter().filter(|p| p.mz < wlo || p.mz > whi).count();
+        let frac = outside as f64 / precs.len() as f64;
+        if frac > 0.5 {
+            eprintln!(
+                "  WARNING: {:.0}% of precursors ({}/{}) fall outside the template isolation range \
+                 [{:.1}, {:.1}] Th — most will not be fragmented; is this the right template for the sample?",
+                frac * 100.0, outside, precs.len(), wlo, whi);
+        }
+    }
+    eprintln!(
+        "template check OK: {} MS1 + {} MS2 slots ({} with windows), method={}",
+        n_ms1_slots, n_ms2_slots, n_window_slots, a.method);
+
     // Active-set sweep over slots (schedule RT is monotonic). A precursor is active in [apex ± nσ·σ].
     let half = a.n_sigma * a.sigma_seconds;
     let mut order: Vec<usize> = (0..precs.len()).collect();
@@ -346,7 +391,6 @@ fn main() -> Result<()> {
             .and_then(|m| m.modified().ok())
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs());
-        let n_ms1_slots = manifest.iter().filter(|(_, l, _)| *l == 1).count();
         let manifest_json = serde_json::json!({
             "renderer": { "name": "timsim-render-thermo", "version": env!("CARGO_PKG_VERSION") },
             "acquisition": { "method": a.method, "windows_from_template": true },
@@ -364,7 +408,7 @@ fn main() -> Result<()> {
                 "precursors_eligible": precs.len(),
                 "template_slots": manifest.len(),
                 "ms1_slots": n_ms1_slots,
-                "ms2_slots": manifest.len() - n_ms1_slots,
+                "ms2_slots": n_ms2_slots,
                 "ms1_peaks_authored": ms1_n,
                 "ms2_peaks_authored": ms2_n,
             },
