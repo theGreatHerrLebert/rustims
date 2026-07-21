@@ -100,6 +100,9 @@ The core sim is *already* PyO3-free at the crate level. To make it a hard, shipp
 - Property generation then has **two interchangeable providers, both speaking the `timsim-schema`
   Parquet contract**:
   - **(a) Rust analytical** — a `timsim-properties` crate (fast, approximate, zero Python).
+    **DEFER (claudex):** this is speculative product scope, not a prerequisite for federation or the
+    torch decoupling. Keep `timsim-schema` *capable* of supporting it, but defer the implementation +
+    repo-home decision until there's a validated zero-Python use case demanding it.
   - **(b) Python ML** — `imspy-predictors` (Prosit/torch; high fidelity).
 - Because the engine only ever reads Parquet, it imports neither. A user can run a *fully
   Python-free* simulation with provider (a); reach for (b) when fidelity matters. This is just
@@ -169,11 +172,13 @@ P can run fully in parallel with R.
 ### Workstream R — Rust federation (gated on R0 first)
 
 - **R0. Release/CI infrastructure (PREREQUISITE — claudex).** Before splitting *anything*: crate
-  ownership + semver policy, coordinated-release process + changelogs, crates.io/private-registry
-  credentials, MSRV policy, automated API/semver checks, and a **dev meta-workspace** using root
-  `[patch.crates-io]` overrides for local cross-crate work (path deps in *published* manifests are
-  not viable; patches only apply from the top-level invocation). CI matrix: locked integration
-  build, minimal-supported-versions, latest-compatible-versions, vendor feature combinations.
+  ownership + semver policy, crates.io/private-registry credentials, MSRV policy, automated
+  API/semver checks, and a **dev meta-workspace** using root `[patch.crates-io]` overrides for local
+  cross-crate work (path deps in *published* manifests are not viable; patches only apply from the
+  top-level invocation). CI matrix: locked integration build, minimal-supported-versions,
+  latest-compatible-versions, vendor feature combinations. **Start lightweight (claudex):** ownership,
+  version policy, lockfile, patch meta-workspace, CI matrix are the hard prerequisites; elaborate
+  coordinated-release ceremony + changelog machinery can mature *after* the first two releases.
 - **R1. `ms-chem` — parity project, THEN extract (NOT mechanical — claudex).** Three impls
   (`mscore/chemistry`, `rustms/chemistry`, `timsim-chem`) may differ *silently* (mono vs average
   mass, isotope/element tables + rounding, residue/terminal conventions, UniMod snapshot + id
@@ -181,20 +186,29 @@ P can run fully in parallel with R.
   sim output while all unit tests pass. **Gate parity first:** inventory public APIs + embedded
   tables; differential-test all three against a corpus (formulas, modified peptides, isotope
   envelopes, known spectra); preserve golden outputs + tolerances; choose + *document* canonical
-  semantics; add connector/Python regression fixtures. Only then migrate consumers.
-- **R2. Publish `mscore` early as the frozen anchor (REVERSED from draft — claudex).** Once R1 fixes
-  its chem dependency, cut a deliberately boring baseline `mscore` release. Its stability (17%
-  co-change, 0 of last 150 commits) makes it the *compatibility anchor* everything downstream pins —
-  publishing it *first* avoids the "everyone re-pins together at the end" intermediate state.
-  Keep temporary re-export shims if the chem move changed public paths.
+  semantics; add connector/Python regression fixtures; **plus a deterministic property-based
+  differential test** (generate formulas + modified peptides, run all three legacy impls + `ms-chem`,
+  assert identical canonical results OR an explicitly-approved semantic-difference record — this
+  catches parser/ordering/terminal-mod/isotope/rounding edges the corpus won't). **Then publish a
+  versioned `ms-chem` release** — that release point is what R2 pins.
+- **R2. Migrate `mscore` onto versioned `ms-chem`, then publish it early as the frozen anchor
+  (REVERSED from draft — claudex).** Cut a deliberately boring baseline `mscore` release. Its
+  stability (17% co-change, 0 of last 150 commits) makes it the *compatibility anchor* everything
+  downstream pins — publishing it *first* avoids the "everyone re-pins together at the end"
+  intermediate state. Keep temporary re-export shims if the chem move changed public paths.
 - **R3. Vendor-io + `rustdf` onto versioned `mscore`.** Publish `sciex-io` + `thermo-io`, drop the
   local-path/pinned-rev deps (`thermorawfile` = a *local patched dir*, not even git; `sciexwiff`
   pinned to a rev predating this session's writer push — live checkout-drift). Split `rustdf`/`ms-io`
   to pin versioned `mscore`. Zero binding risk (vendor crates carry no PyO3; glue stays in the
-  connector). *(If a vendor crate has no `mscore` dep, its publish can jump ahead to kill the
-  local-path fragility immediately.)*
-- **R4. Extract `timsim-core`** out of `rustdf/sim` + `timsim-render*`; enforce Python-free; decide
-  repo home via the property-provider question.
+  connector).
+- **Parallel exception (not an R3 action):** a vendor crate whose *released manifest has no `mscore`
+  dependency* may publish immediately after R0 (before R2) to kill the local-path fragility now.
+  Any vendor crate that *does* depend on `mscore` waits for R2.
+- **R3.5. Version + fixture `timsim-schema` (R7) — prerequisite to R4.** The Parquet contract becomes
+  a cross-repo boundary the moment producer and consumer split; version it and add producer/consumer
+  conformance fixtures *before* extracting `timsim-core`.
+- **R4. Extract `timsim-core`** out of `rustdf/sim` + `timsim-render*`; enforce Python-free; pins the
+  versioned `timsim-schema` (R3.5) + `mscore` (R2).
 
 Each R step's gate: crate builds standalone + `cargo test`; `imspy_connector` rebuilds to one wheel
 (with a **committed lockfile**); the render/DiaNN parity check (SCIEX 449 PG, Thermo, timsTOF) stays
