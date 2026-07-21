@@ -342,3 +342,13 @@ INTENSITY_FULL_SCALE scaling). The m/z terminator fix stands regardless.
 For the SCIEX meeting NOW: the DIRECT-mzML SCIEX path (render_sciex node, 444-534 PGs) is the searchable
 artifact; the native .wiff already reads clean m/z through pwiz (demonstrates format authoring). Native
 `.wiff` is fully searchable once the intensity layer lands.
+
+## Stage-3 codex review of the terminator fix (retain, with follow-ups)
+Codex: retain the fix — it is correct and explains the pwiz recovery; safe for OUR encoder because
+encode_stream emits intensity-255 as the escaped `7c ff` (never a bare 0xff), so appending a 0xff
+terminator can't create an ambiguous token boundary. Non-blocking follow-ups recorded:
+- Prefer each source block's OBSERVED terminator length (2 vs 4) over a fixed 4 (empirical ABI convention).
+- Move the terminator/padding to the block-emission/rebuild layer so author_tokens returns pure codec
+  tokens (mild conflict with rebuild_grow's "tokens are a complete body" contract).
+- Add tests: a peak ending in escaped `7c ff`, seed-only cleared blocks with long 0xff padding, and a
+  pwiz-readback round-trip gate. Document the terminator as a pwiz/ABI-specific workaround.
