@@ -134,3 +134,24 @@ necro has substantial newer render/flow work):
 ## Non-goals
 Fixing the PhantomBENCH covid seed itself; the Waters SONAR path; pushing the sciexwiff codec branch
 (prerequisite for Stage 2, but a separate action); DDA.
+
+## Stage-1 RESULT (audit executed — root cause found, diagnosis corrected AGAIN)
+
+The audit (not a re-render) found it, exactly as the claudex revision ordered:
+
+1. **The covid SCIEX mzML that got 0 IDs has corrupted fragment m/z up to 594,000,000** (real fragments
+   are 140–1829). The working control (`plain_render.mzML`, 766 IDs) has ZERO peaks > 2000 (max 1201). The
+   0-ID failure tracks the garbage m/z, NOT peak count (the 0-ID render is *denser* than the 766-ID one) —
+   killing the "sparse render" thread. This is the renderer↔search incompatibility, not `rt_cycle_length`.
+2. **The 594M is NOT in the render — it is in the `.wiff` writer.** `_mzml/mild_r1.mzML` was produced by
+   `pwiz_Reader_ABI` from our `.wiff` (`sourceFile id="WIFF"/"WIFFSCAN"`), i.e. pwiz reads 594M m/z back
+   out of OUR `.wiff`. Necro's DIRECT `render_db_to_mzml` on the SAME DB reproduces the exact scan
+   structure (83570 scans, 17458 non-empty MS2) but tops out at a clean **m/z 3358** — its > 2000 peaks
+   are faint (median int 0.033 vs 0.192), spread, plausibly real large-fragment isotopes, NOT garbage.
+
+**Corrected conclusion:** the prior "writer exonerated" holds only for the sparsity/emptiness (a render
+fact in shared code) — it MISSED that the writer **corrupts fragment m/z on round-trip** (its `.wiff.scan`
+peak m/z↔TOF/calibration encoding). So:
+- **necro + mzML sidesteps the broken writer** (mzML render is clean) — the consolidation plan is validated.
+- **native `.wiff` (Stage 3) is gated on fixing the writer's m/z↔TOF encoding**, with the codec round-trip
+  test (author known m/z → pwiz readback → assert equality) as the gate — which would have caught this.
