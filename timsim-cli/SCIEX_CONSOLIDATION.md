@@ -167,6 +167,8 @@ Render path SOUND (searchable); `.wiff` writer BROKEN (m/z corruption). necro's 
 render QUALITY gap (faint/lossy — tune with dense HeLa), separate from the writer CORRECTNESS bug.
 
 ## Decision point
-- (a) wire the clean SCIEX **mzML** path into the necro flow as a `render_sciex` node (dense-HeLa
-  validated) — ships working SCIEX-in-the-flow now; OR
+- ~~(a) wire the clean SCIEX **mzML** path into the necro flow as a `render_sciex` node~~ — DONE
+  (commit 28c1fd89): `render_sciex` node reuses the shared v2 feature space, Koina HCD, mzML.
+  Validated: HeLa v2 feature space -> clean mzML (max m/z 3341) -> DiaNN 14,471 precursors / 534 PGs.
+  Needs imspy_connector built --features mzml,sciex. NEXT: OR
 - (b) fix the `.wiff` writer m/z↔TOF encoding (codec round-trip gate) for native `.wiff` output.
