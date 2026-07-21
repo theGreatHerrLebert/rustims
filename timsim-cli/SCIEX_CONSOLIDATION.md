@@ -328,3 +328,17 @@ whole SCIEX thread was chasing. (docker note: snap docker only mounts under ~/, 
 REMAINING: DiaNN the fixed mzML for the nonzero-ID confirmation; then the pwiz-readback round-trip test
 as a permanent gate; commit to the sciex-native-writer branch. This unlocks native `.wiff` as a first-
 class output — the artifact for the SCIEX meeting.
+
+## Stage-3 status: m/z FIXED (validated), but a SECOND layer remains (intensity flattening)
+The terminator fix is validated end-to-end: fixed .wiff -> pwiz -> m/z 140..2847, 0% > 1e6 (594M GONE).
+BUT DiaNN still 0 IDs. Audit of the fixed mzML vs the WORKING direct-render mzML (444 PGs, same DB):
+- fixed .wiff->pwiz: 100% MS2 non-empty but ~1.7 peaks/spectrum, ALL intensity = 1.0 (flat).
+- direct render:     1% non-empty but 45.9 peaks/spectrum, intensity range to ~128 (real dynamic range).
+So pwiz reads our blocks' SEED peaks (intensity 1) but the real authored peak intensities flatten to 1 --
+a distinct INTENSITY-ENCODING layer (the m/z is now correct; the intensity token encoding / scaling is not
+reaching pwiz). Next focused pass: the intensity codec (encode_stream intensity fields vs what ABI decodes;
+INTENSITY_FULL_SCALE scaling). The m/z terminator fix stands regardless.
+
+For the SCIEX meeting NOW: the DIRECT-mzML SCIEX path (render_sciex node, 444-534 PGs) is the searchable
+artifact; the native .wiff already reads clean m/z through pwiz (demonstrates format authoring). Native
+`.wiff` is fully searchable once the intensity layer lands.
