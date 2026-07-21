@@ -155,3 +155,18 @@ peak m/z↔TOF/calibration encoding). So:
 - **necro + mzML sidesteps the broken writer** (mzML render is clean) — the consolidation plan is validated.
 - **native `.wiff` (Stage 3) is gated on fixing the writer's m/z↔TOF encoding**, with the codec round-trip
   test (author known m/z → pwiz readback → assert equality) as the gate — which would have caught this.
+
+### Stage-1 CONFIRMATION (DiaNN, same covid mild_r1 DB)
+| path | precursors | protein groups |
+|---|---|---|
+| our `.wiff` → pwiz readback (594M m/z) | 0 | 0 |
+| necro direct mzML render (clean, max m/z 3358) | **524** | **444** |
+| Astral reference (same seed) | 975 | 862 |
+
+Render path SOUND (searchable); `.wiff` writer BROKEN (m/z corruption). necro's 444 vs Astral's 862 is a
+render QUALITY gap (faint/lossy — tune with dense HeLa), separate from the writer CORRECTNESS bug.
+
+## Decision point
+- (a) wire the clean SCIEX **mzML** path into the necro flow as a `render_sciex` node (dense-HeLa
+  validated) — ships working SCIEX-in-the-flow now; OR
+- (b) fix the `.wiff` writer m/z↔TOF encoding (codec round-trip gate) for native `.wiff` output.
