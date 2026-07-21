@@ -236,3 +236,31 @@ DEFINITIVE NEXT STEP (codex): the CANARY experiment — author ONE unique canary
 mismatch, inspect its exact Idx record + byte interval; discriminate no-growth vs one controlled
 growth. Then fix + gate with a pwiz-readback round-trip test. This is the clean focused push to open
 next.
+
+## Stage-3 ROOT CAUSE (definitive; the code documents it against itself)
+
+The `.wiff` writer's grow path is the bug, confirmed by sciex_dispatch.rs's OWN module docs (lines
+24-31): the length-preserving path rewrites each block in place, zero-padded to original length, so
+"the Idx directory stays valid untouched — NO RISK to the ~4% of Idx records that point at blocks
+scan_blocks does NOT enumerate (empty/mini blocks)". But `write_sciex_wiff` uses the GROW rebuild
+(`rebuild_grow` + `retranslate_idx`), which only tracks ENUMERATED blocks. When positions shift, the
+Idx records pointing at the unenumerated empty/mini blocks are mis-translated -> pwiz seeks to the
+wrong byte -> reads garbage as the seed n -> 594M m/z. pwiz mis-reads ~1.7% (the subset of that ~4%
+carrying visible signal). Codex's #1 hypothesis (Idx segment translation), exact mechanism named.
+
+Peak codec, calibration, m/z<->n, terminator: all secondary/sound. This is purely the grow-path Idx
+retranslation vs unenumerated blocks.
+
+### Fix options
+- **(A) Use the length-preserving path** — "no risk to the ~4%" by construction. Cost: a per-slot peak
+  budget (MS2 median ~55). Our clean render is ~4 peaks/window, so it FITS with huge headroom. Likely
+  the fastest CORRECT `.wiff` for the SCIEX-meeting demo. Need to confirm the length-preserving writer
+  still exists / re-wire `write_sciex_wiff` to prefer it when peaks fit the budget.
+- **(B) Fix the grow retranslation** to correctly shift Idx records that point at unenumerated blocks
+  (enumerate empty/mini blocks too, or translate their offsets + the +36 block2-relative field). The
+  general fix for arbitrary peaks/scan, but more work + risk.
+Gate either with a pwiz-readback round-trip test (author known m/z -> msconvert -> assert equal),
+including empty/mini-block and partial-cycle cases.
+
+CONTEXT: native `.wiff` is wanted as leverage for a SCIEX meeting (show we can author their format ->
+open a door on mzProv cooperation). So correctness of the demo `.wiff` matters; (A) is the low-risk path.
