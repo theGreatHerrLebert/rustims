@@ -52,6 +52,12 @@ struct Args {
     #[arg(long, default_value_t = 1.0)] min_peak_intensity: f64,
     /// Sidecar answer key (per-precursor DIA truth).
     #[arg(long)] thermo_truth: Option<PathBuf>,
+    /// Durable run manifest (JSON): renderer identity, template digest, method, counts, truth schema.
+    #[arg(long)] manifest: Option<PathBuf>,
+    /// Fragment model that produced --ion-spectra (recorded in the manifest for reproducibility).
+    #[arg(long, default_value = "")] frag_model: String,
+    /// Acquisition method label recorded in the manifest (the windows come from the template).
+    #[arg(long, default_value = "DIA")] method: String,
 }
 
 fn load_list_spectra(path: &PathBuf, want_level: u8) -> Result<HashMap<u64, Vec<(f64, f32)>>> {
@@ -327,6 +333,51 @@ fn main() -> Result<()> {
         let mut w = ArrowWriter::try_new(file, schema, None)?;
         w.write(&batch)?; w.close()?;
         eprintln!("  answer key ({} precursors) -> {}", precs.len(), truth.display());
+    }
+
+    // Durable run manifest: the auditable boundary for a render. Records renderer identity, template
+    // identity (path + size + mtime — the robust file identity the flow also hashes for invalidation),
+    // the fragment model / method, the content-addressed input paths (their hashes ARE the artifact ids),
+    // and the render's own counts. This is what makes a `.raw` reproducible after the fact.
+    if let Some(mpath) = &a.manifest {
+        let tmeta = std::fs::metadata(&a.template).ok();
+        let tbytes = tmeta.as_ref().map(|m| m.len());
+        let tmtime = tmeta.as_ref()
+            .and_then(|m| m.modified().ok())
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        let n_ms1_slots = manifest.iter().filter(|(_, l, _)| *l == 1).count();
+        let manifest_json = serde_json::json!({
+            "renderer": { "name": "timsim-render-thermo", "version": env!("CARGO_PKG_VERSION") },
+            "acquisition": { "method": a.method, "windows_from_template": true },
+            "template": { "path": a.template.display().to_string(), "bytes": tbytes, "mtime_unix": tmtime },
+            "fragment_model": a.frag_model,
+            "sample": a.sample,
+            "intensity_scale": a.intensity_scale,
+            "inputs": {
+                "precursors": a.precursors.display().to_string(),
+                "ion_spectra": a.ion_spectra.display().to_string(),
+                "peptide_rt": a.peptide_rt.display().to_string(),
+                "peptide_quantities": a.peptide_quantities.as_ref().map(|p| p.display().to_string()),
+            },
+            "counts": {
+                "precursors_eligible": precs.len(),
+                "template_slots": manifest.len(),
+                "ms1_slots": n_ms1_slots,
+                "ms2_slots": manifest.len() - n_ms1_slots,
+                "ms1_peaks_authored": ms1_n,
+                "ms2_peaks_authored": ms2_n,
+            },
+            "peak_cap": { "max_peaks_per_slot": MAX_PEAKS, "slots_capped": capped_slots, "peaks_dropped": capped_peaks },
+            "ms1_profile_drop": { "bins_written": ps.written_bins, "peaks_dropped": ps.dropped_total(), "ion_current_dropped": ps.dropped_intensity },
+            "truth": {
+                "path": a.thermo_truth.as_ref().map(|p| p.display().to_string()),
+                "rows": precs.len(),
+                "columns": ["precursor_id","peptide_id","charge","mz","rt_seconds","abundance","has_ms2","in_any_window"],
+            },
+        });
+        std::fs::write(mpath, serde_json::to_string_pretty(&manifest_json)?)?;
+        eprintln!("  run manifest -> {}", mpath.display());
     }
     Ok(())
 }

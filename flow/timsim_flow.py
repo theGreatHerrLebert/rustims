@@ -188,12 +188,27 @@ class IonSpectra(NodeType):
 
 
 class ThermoRawData(NodeType):
-    """A Thermo `.raw` + its per-precursor answer key — the MEASUREMENT for a NO-IMS instrument
-    (Orbitrap / Astral), authored into a real template. A DISTINCT type from Bruker [`RawData`] (`.d`)
-    so a wrong-consumer is a type error. Restages when the template file changes."""
+    """A Thermo `.raw` — the MEASUREMENT for a NO-IMS instrument (Orbitrap / Astral), authored into a
+    real template. A DISTINCT type from Bruker [`RawData`] (`.d`) so a wrong-consumer is a type error.
+    Restages when the template file changes."""
 
-    filename = "raw"
+    filename = "data.raw"
     invalidator = hashes_file("template")
+
+
+class ThermoTruth(NodeType):
+    """The per-precursor answer key — a co-output of the render, so it is cached and invalidated EXACTLY
+    with its `.raw` (never a drifting sidecar). A future search/score node consumes this by type."""
+
+    filename = "truth.parquet"
+
+
+class ThermoRunManifest(NodeType):
+    """The auditable boundary for a render: renderer identity + version, template identity, fragment
+    model, acquisition method, content-addressed input paths, and the render's own counts. Co-emitted
+    with the `.raw` so a run is reproducible after the fact."""
+
+    filename = "manifest.json"
 
 
 # ── rules ────────────────────────────────────────────────────────────────────
@@ -375,10 +390,11 @@ def spectra(
 
 
 @r.command(
-    f"mkdir -p {{raw}} && {BIN}/timsim-render-thermo --precursors {{precursors}} "
+    f"{BIN}/timsim-render-thermo --precursors {{precursors}} "
     "--peptide-rt {peptide_rt} --ion-spectra {ion_spectra} --peptide-quantities {peptide_quantities} "
     "--sample {sample_id} --template {template} --intensity-scale {intensity_scale} "
-    "--out {raw}/data.raw --thermo-truth {raw}/truth.parquet",
+    "--frag-model {frag_model} --method {method} "
+    "--out {data_raw} --thermo-truth {truth} --manifest {manifest}",
     threads=2,
     ram="8Gi",
 )
@@ -390,10 +406,14 @@ def render_thermo(
     template: str,
     intensity_scale: float,
     sample_id: str,
+    frag_model: str,
+    method: str,
 ):
     """MEASUREMENT: author the feature space into a real Thermo `.raw` template (no-IMS). One node per
-    sample (via `peptide_quantities` + `sample_id`); restages when the template changes."""
-    return ThermoRawData[raw]
+    sample (via `peptide_quantities` + `sample_id`); restages when the template changes. Three co-outputs
+    of one command: the `.raw`, its answer key, and a durable run manifest — one computation, so the
+    answer key and audit trail can never drift from the data."""
+    return ThermoRawData[data_raw], ThermoTruth[truth], ThermoRunManifest[manifest]
 
 
 # ── the pipeline ─────────────────────────────────────────────────────────────
@@ -495,7 +515,7 @@ def timsim_thermo_pipeline(cfg, sample_id: str) -> Pipeline:
     P.ion_spectra = r.spectra(
         P.precursors, P.peptides, P.modforms, P.modifications, P.fragment_intensities
     )
-    P.raw = r.render_thermo(
+    P.raw, P.truth, P.manifest = r.render_thermo(
         P.precursors,
         P.rt,
         P.ion_spectra,
@@ -503,6 +523,8 @@ def timsim_thermo_pipeline(cfg, sample_id: str) -> Pipeline:
         template=cfg.template,
         intensity_scale=cfg.intensity_scale,
         sample_id=sample_id,
+        frag_model=cfg.frag_model,
+        method=getattr(cfg, "method", "DIA"),
     )
     return P
 
@@ -544,7 +566,12 @@ def main() -> None:
     dag = DAG(a.outdir)
     for sid in a.samples:
         P = build(cfg, sid)
-        dag.add(P, request=[P.raw])
+        # For the Thermo branch the answer key + run manifest are first-class deliverables (co-outputs of
+        # the render), so request them explicitly alongside the .raw.
+        req = [P.raw]
+        if getattr(P, "truth", None) is not None:
+            req += [P.truth, P.manifest]
+        dag.add(P, request=req)
 
     print(dag)
     dag.resolve_paths(a.outdir)
