@@ -172,3 +172,22 @@ render QUALITY gap (faint/lossy — tune with dense HeLa), separate from the wri
   Validated: HeLa v2 feature space -> clean mzML (max m/z 3341) -> DiaNN 14,471 precursors / 534 PGs.
   Needs imspy_connector built --features mzml,sciex. NEXT: OR
 - (b) fix the `.wiff` writer m/z↔TOF encoding (codec round-trip gate) for native `.wiff` output.
+
+## Stage-3 progress: .wiff writer bug LOCALIZED (peak encoding sound; Idx/interop suspect)
+
+Added a decode probe (`probe_garbage_mz` in SUBMISSION rustdf `sciex_dispatch.rs`, gated on
+`TIMSIM_SCIEX_WIFF_SCAN`) that decodes our own `.wiff.scan` with our own codec + each block's cal.
+
+Result on the corrupt mild_r1 `.wiff.scan`: 95,372 blocks / 3.11M peaks, and our decode recovers ONLY
+sane m/z (max **2567** — real large fragments, not corruption); `cal_a` is stable (two clusters 1e-8
+apart). **The 594M m/z exists ONLY in pwiz's readback, not our decode.** So:
+- The peak m/z→n encoding (`mz_to_n`, per-block cal) is CORRECT — it round-trips to sane m/z.
+- The 594M is pwiz mis-decoding a minority (~1.7%) of peaks. A 594M m/z ⇒ absolute n ≈ 243M ≈ 740×
+  a normal cut_n (~328K) ⇒ a WRONG SEEK OFFSET, not a wrong calibration.
+- **Suspect: the Idx/segment-offset retranslation** (`retranslate_idx`/`rebuild_grow`, commit 03bc4c9):
+  a bad recomputed Idx offset for a minority of blocks makes pwiz seek to the wrong byte and read
+  garbage as the block seed.
+
+NEXT: localize which blocks pwiz mis-seeks (per-scan diff our decode vs pwiz's mzML by scan index),
+then fix the Idx offset for those; gate with a pwiz-readback round-trip test (author known m/z → pwiz
+→ assert equal). The peak codec itself is exonerated.
