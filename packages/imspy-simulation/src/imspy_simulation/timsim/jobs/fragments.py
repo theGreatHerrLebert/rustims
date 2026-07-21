@@ -263,9 +263,10 @@ def main(argv=None) -> int:
                          "timsim-precursors output (precursor_id, peptide_id, charge) when --peptides "
                          "is also given")
     ap.add_argument("--peptides", type=Path, default=None,
-                    help="peptides.parquet (peptide_id -> sequence). When given, the fragment-prediction "
-                         "input is built by joining --precursors to it. NB: uses the BARE peptide "
-                         "sequence — annotated modform sequences (for modified samples) are a follow-up.")
+                    help="peptides.parquet (peptide_id -> sequence). Legacy convenience: builds the input "
+                         "by joining --precursors to the BARE peptide sequence (a modified precursor then "
+                         "fragments as unmodified). Prefer `timsim-frag-input`, which freezes the "
+                         "[UNIMOD]-annotated modform sequence; then pass its output as --precursors.")
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--collision-energy", type=float, required=True,
                     help="RAW normalized collision energy (~20-45 NCE), NOT the /100-encoded value "

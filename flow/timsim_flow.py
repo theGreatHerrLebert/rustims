@@ -172,6 +172,16 @@ class RawData(NodeType):
     invalidator = hashes_file("config")
 
 
+class FragmentPredictionInput(NodeType):
+    """`(precursor_id, [UNIMOD]-annotated sequence, charge)` — the FROZEN input to the fragment model.
+    Explicit (not hidden in the prediction rule) so the sequence + charge + MOD ENCODING are cached and
+    inspectable: a modified precursor carries its modform's annotated sequence, so it fragments as
+    modified. Built by the same `annotate()` the spectrum builder uses for m/z, so intensity and m/z
+    agree on what the molecule is."""
+
+    filename = "fragment_prediction_input.parquet"
+
+
 class FragmentIntensities(NodeType):
     """Predicted fragment intensities — MEASUREMENT, and the instrument-DEPENDENT artifact. The
     fragment model (local timsTOF vs koina Orbitrap-HCD) is a node config value, so a different model
@@ -363,12 +373,24 @@ def simulate(
 
 
 @r.command(
-    "timsim-fragments --precursors {precursors} --peptides {peptides} "
+    f"{BIN}/timsim-frag-input --precursors {{precursors}} --peptides {{peptides}} "
+    "--modforms {modforms} --modifications {modifications} --out {fragment_prediction_input}"
+)
+def frag_input(precursors: Precursors, peptides: Peptides, modforms: Modforms, modifications: Modifications):
+    """Precursors + modforms -> the frozen fragment-prediction input: `(precursor_id, [UNIMOD]-annotated
+    sequence, charge)`. STRUCTURE (no CE/model), so it is shared by every fragment model. Annotates each
+    precursor's modform, so a MODIFIED precursor fragments as modified — this is the correctness fix over
+    the old bare-sequence join, which predicted every modform identically."""
+    return FragmentPredictionInput[fragment_prediction_input]
+
+
+@r.command(
+    "timsim-fragments --precursors {fragment_prediction_input} "
     "--collision-energy {collision_energy} --model {frag_model} --out {fragment_intensities}"
 )
-def fragments(precursors: Precursors, peptides: Peptides, collision_energy: float, frag_model: str):
-    """Precursors -> predicted fragment intensities. MEASUREMENT, instrument-DEPENDENT: `frag_model` is
-    "" (local timsTOF) or "koina:Prosit_2020_intensity_HCD" (Orbitrap-HCD), a config value — so the
+def fragments(fragment_prediction_input: FragmentPredictionInput, collision_energy: float, frag_model: str):
+    """Annotated input -> predicted fragment intensities. MEASUREMENT, instrument-DEPENDENT: `frag_model`
+    is "" (local timsTOF) or "koina:Prosit_2020_intensity_HCD" (Orbitrap-HCD), a config value — so the
     timsTOF-vs-HCD split is exactly two nodes and N renders sharing a model predict fragments once."""
     return FragmentIntensities[fragment_intensities]
 
@@ -509,8 +531,11 @@ def timsim_thermo_pipeline(cfg, sample_id: str) -> Pipeline:
         digestion_efficiency=cfg.digestion_efficiency,
     )
     # ── measurement branch (was hand-fired) ──
+    P.fragment_prediction_input = r.frag_input(
+        P.precursors, P.peptides, P.modforms, P.modifications
+    )
     P.fragment_intensities = r.fragments(
-        P.precursors, P.peptides, collision_energy=cfg.collision_energy, frag_model=cfg.frag_model
+        P.fragment_prediction_input, collision_energy=cfg.collision_energy, frag_model=cfg.frag_model
     )
     P.ion_spectra = r.spectra(
         P.precursors, P.peptides, P.modforms, P.modifications, P.fragment_intensities

@@ -60,6 +60,12 @@ thermo = ["dep:rustdf", "rustdf/thermo", "dep:mscore"]
 name = "timsim-modify"
 path = "src/bin/modify.rs"
 
+# Freeze the fragment-prediction input (precursor_id, [UNIMOD]-annotated sequence, charge) as an explicit
+# artifact — reuses the same annotate() the spectrum builder uses, so intensities and m/z agree.
+[[bin]]
+name = "timsim-frag-input"
+path = "src/bin/frag_input.rs"
+
 [[bin]]
 name = "timsim-localization"
 path = "src/bin/localization.rs"
