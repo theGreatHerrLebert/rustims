@@ -191,3 +191,27 @@ apart). **The 594M m/z exists ONLY in pwiz's readback, not our decode.** So:
 NEXT: localize which blocks pwiz mis-seeks (per-scan diff our decode vs pwiz's mzML by scan index),
 then fix the Idx offset for those; gate with a pwiz-readback round-trip test (author known m/z → pwiz
 → assert equal). The peak codec itself is exonerated.
+
+## Stage-3 claudex: diagnosis REFINED (codex), + a concrete terminator lead
+
+Codex review (skeptical) — accepted corrections:
+- OVERREACH: "n≈243M = wrong seek offset" is unsound — a TOF bin and a byte offset have unrelated
+  units, so 243M only proves a STRUCTURAL PARSE FAILURE, not specifically a seek. The peak codec is
+  NOT fully exonerated until pwiz-localized bytes agree.
+- Ranked causes: (1 ~45%) Idx segment/two-block-pairing translation (esp. the +36 block2-relative
+  offset); (2 ~30%) wrong segment BOUNDARY vs simple mis-seek; (3 ~20%) token terminator/padding —
+  `rebuild_grow` replaces `[ff+9..end]` relying on Idx bounds, may violate ABI's boundary rules;
+  (4 ~5%) calibration/experiment assignment.
+
+CONCRETE LEAD found chasing #3: `author_tokens` -> `encode_stream` does NOT append the trailing
+`0xff` terminator that `block_payload` STRIPS from real vendor blocks. So authored blocks have no
+terminator and rely entirely on the Idx bound for their end. If the Idx is also wrong for ~1.7% of
+blocks, ABI has neither terminator nor correct bound -> over-reads into the next block's metadata ->
+huge accumulated n. (Uniform terminator loss alone can't explain 1.7%, so it's terminator ⊕ Idx.)
+
+NEXT (sharpest, per codex): CANARY LOCALIZATION — author one unique canary peak per physical block
+(intensity encodes block index), msconvert, map each pwiz spectrum -> expected block, find the first
+mismatch, then inspect its Idx record (+32/+86 land on real ffffffff sentinels? +36 on intended
+block2 meta?). Discriminate with no-growth (byte-identical) vs one controlled growth. Also test
+whether failures sit at a FIXED within-cycle slot / segment parity / partial-final cycle.
+Regression gate: pwiz-readback test asserting per-spectrum m/z + structural Idx-record validity.
