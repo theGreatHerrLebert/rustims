@@ -144,3 +144,27 @@ later once a `render_bruker` is scientifically validated) and sharpened the cont
 Search/score nodes (phase 2, but emit the manifest/truth schema now); decomposing/removing legacy
 `simulate` (later, gated on a validated `render_bruker`); the DDA render rules (need the Thermo DDA
 milestone first); GUI/CLI changes beyond the flow.
+
+## Progress log (build)
+
+**Landed** (branch `feat/timsim-v2-structure-axis`):
+- Thermo branch as real DAG nodes: `fragments → spectra → render_thermo` reusing the feature space
+  (`timsim_thermo_pipeline`); pipeline factory moved into the repo at `rustims/flow/timsim_flow.py`
+  (commit c0a6a301). Flow parameterised: `--proteome-spec / --mods / --design-spec`.
+- End-to-end verified on a HeLa-basic config (2500-protein human subset, light mods): DAG produces a
+  4.5 GB Orbitrap DIA `.raw` + 1.57M-row answer key; DiaNN reads it natively → 197,124 precursors,
+  2,405 protein groups (~96% of the 2,499-protein DB). Resumes cache-clean after each fix.
+- Scale fixes (9a7cb1d8): fragments `--peptides` join uses categorical codes (no 185M live strings);
+  render caps peaks/slot at 65_535 (u16 format limit), keeping the most intense and accounting the drop.
+- **#1** distinct `ThermoRawData` type (vs Bruker) — done. **#4** truth a declared co-output
+  (`ThermoTruth`) — done. **#5/#6/#10** durable `manifest.json` co-output (renderer version, template
+  identity, frag model, input artifact ids, counts, drop tallies) — done (b2ba78ef). **#7** fail-fast
+  template validation before the sweep — done (595768e8). **#9** one `IonSpectra` node — done.
+
+**Remaining:**
+- **#3** explicit `FragmentPredictionInput` node (freeze precursor_id/sequence/charge + **mod encoding** —
+  today fragments predicts on the BARE peptide sequence, wrong for modified precursors). Correctness + structure.
+- **#2** `AcquisitionMethod` as typed config (drives windows/timing/selection/CE) — matters most for DDA.
+- **#8** validate CE against template-extracted NCE (CE is already explicit config).
+- **Phase 2**: `search` (DiaNN/Sage) + `score` (v2_thermo_eval) as DAG nodes — closes simulate→search→score.
+- Bruker `.d`: decompose `simulate` into `fragments → spectra → render_bruker` (gated on a validated render_bruker).
