@@ -305,3 +305,26 @@ A is NOT "generic zero-pad" — it is CAPACITY-CONSTRAINED AUTHORING. Refinement
   (payload length, peak counts, any TIC/base-peak summaries); watch per-block CRC / raw+summary dupes.
 - Validate on the REAL path: pwiz -> mzML -> DiaNN; assert scan count, isolation metadata, m/z sanity,
   and NONZERO IDs — not just structural round-trip.
+
+## Stage-3 FIXED (native .wiff writer): missing 0xff terminator + wrong 0x00 padding
+
+The real root cause (NOT mini blocks — `is_clean_tail` already catches all 133 of those; the Idx is
+sound). Byte-dump of real vendor template blocks: each peak-list ends with a SHORT 0xff run (2-4 bytes,
+e.g. `…5b ff ff` / `…66 ff ff ff ff`) right before the next block's metadata. Our authored blocks ended
+with `0x00` PADDING and NO terminator (`term_len=0`), so:
+- ABI decoded the trailing 0x00 bytes as spurious peaks (our output had decoded_peaks == body_len);
+- with no terminator, ABI over-read past our tokens into the next block's metadata and accumulated a
+  bogus delta -> ~594e6 m/z on ~1.7% of peaks -> DiaNN 0 IDs.
+
+FIX (SUBMISSION rustdf `sciex_dispatch.rs`, uncommitted): `author_tokens` appends a 4-byte 0xff
+terminator; `clear_tokens` pads with 0xff (not 0x00). ~6 lines. All 10 sciex_dispatch tests pass;
+2 author_tokens unit tests updated to strip the terminator.
+
+VALIDATED via pwiz: re-authored the covid mild_r1 `.wiff` (write_sciex_wiff on the same DB+template),
+msconvert (docker chambm/pwiz, SCIEX ABI reader) -> mzML. Result: m/z range 140..2847 (was 140..594e6);
+**m/z > 1e6 = 0.000%** (was 1.7%). The 594M corruption is ELIMINATED. This is the native-writer bug the
+whole SCIEX thread was chasing. (docker note: snap docker only mounts under ~/, not /tmp or /scratch.)
+
+REMAINING: DiaNN the fixed mzML for the nonzero-ID confirmation; then the pwiz-readback round-trip test
+as a permanent gate; commit to the sciex-native-writer branch. This unlocks native `.wiff` as a first-
+class output — the artifact for the SCIEX meeting.
