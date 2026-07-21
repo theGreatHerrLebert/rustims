@@ -176,3 +176,19 @@ milestone first); GUI/CLI changes beyond the flow.
   **LANDMINE**: the `fragments` node feeds a SINGLE CE (correct for no-IMS Koina/Thermo). The timsTOF
   DeepPeptide model needs per-scan (mobility-driven) CE (handle.get_transmitted_ions / activation_policy.
   collision_energy_for_scan). A timsTOF decomposition must supply per-precursor mobility CE, not the constant.
+
+## Codex review round (post-phase-2)
+
+Reviewed the session's diff; findings actioned:
+- **[fixed] frag_input dropped rows silently** — now FAILS if any precursor lacks an annotated modform
+  (inconsistent artifacts), with example ids, instead of emitting a short fragment input.
+- **[fixed] categorical join kept null sequences** — `pd.Categorical` encodes a null as code -1, which
+  `notna()` kept; now `codes.notna() & (codes >= 0)` drops it (legacy `--peptides` path).
+- **[fixed] peak-cap comment overclaimed** — the 65_535 limit is the writer's u16 author-guard + the
+  template packet budget, NOT a hard format limit (on-disk count is u32). Cap kept (necessary vs the
+  current writer); comment corrected; FOLLOW-UP: relax the writer guard to u32 + repack for dense scans.
+- **[fixed] CE validation used only a median** — now checks the NCE SPREAD across windows and warns on a
+  stepped/mixed-NCE template (a single fragment CE can't match all windows); manifest records min/max.
+- **[deferred] manifest template identity is path+size+mtime, not a content digest** — content-addressing
+  is already correct via the flow's `hashes_file("template")` invalidator; adding a SHA-256 to the manifest
+  for portable audit is a follow-up (avoids hashing a ~0.7 GB template on every render for now).

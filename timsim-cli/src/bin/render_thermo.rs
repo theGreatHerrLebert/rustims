@@ -272,21 +272,32 @@ fn main() -> Result<()> {
         .filter_map(|(_, iso)| iso.map(|w| w.collision_energy))
         .filter(|c| c.is_finite() && *c > 0.0)
         .collect();
-    let template_nce = if ces.is_empty() { None } else {
-        ces.sort_by(f64::total_cmp);
-        Some(ces[ces.len() / 2]) // median across MS2 windows
-    };
-    if let (Some(tce), Some(ece)) = (template_nce, a.expected_ce) {
-        let rel = (tce - ece).abs() / tce.max(1.0);
-        if rel > 0.15 {
-            eprintln!(
-                "  WARNING: fragment CE {:.1} differs from template NCE {:.1} by {:.0}% — the library was \
-                 predicted at a collision energy the template was not acquired at", ece, tce, rel * 100.0);
-        } else {
-            eprintln!("  CE check OK: fragment CE {:.1} ≈ template NCE {:.1}", ece, tce);
-        }
-    } else if template_nce.is_none() {
+    let (mut template_nce, mut template_nce_min, mut template_nce_max) = (None, None, None);
+    if ces.is_empty() {
         eprintln!("  note: template exposes no per-scan NCE — cannot validate collision energy");
+    } else {
+        ces.sort_by(f64::total_cmp);
+        let (cmin, cmax, median) = (ces[0], ces[ces.len() - 1], ces[ces.len() / 2]);
+        template_nce = Some(median);
+        template_nce_min = Some(cmin);
+        template_nce_max = Some(cmax);
+        // A single fragment CE cannot represent a stepped/mixed-NCE acquisition — check the SPREAD across
+        // windows, not just the median (which can pass while half the windows are off).
+        let stepped = (cmax - cmin) / median.max(1.0) > 0.15;
+        if let Some(ece) = a.expected_ce {
+            if stepped {
+                eprintln!(
+                    "  WARNING: template uses stepped/mixed NCE [{:.1}..{:.1}] (median {:.1}) — a single \
+                     fragment CE {:.1} cannot match every window", cmin, cmax, median, ece);
+            } else if (median - ece).abs() / median.max(1.0) > 0.15 {
+                eprintln!(
+                    "  WARNING: fragment CE {:.1} differs from template NCE {:.1} by {:.0}% — the library \
+                     was predicted at a collision energy the template was not acquired at",
+                    ece, median, (median - ece).abs() / median.max(1.0) * 100.0);
+            } else {
+                eprintln!("  CE check OK: fragment CE {:.1} ≈ template NCE {:.1} [{:.1}..{:.1}]", ece, median, cmin, cmax);
+            }
+        }
     }
 
     // Active-set sweep over slots (schedule RT is monotonic). A precursor is active in [apex ± nσ·σ].
@@ -296,7 +307,12 @@ fn main() -> Result<()> {
     let two_sig2 = 2.0 * a.sigma_seconds * a.sigma_seconds;
     let floor = a.min_peak_intensity as f32;
 
-    // A .raw spectrum stores its peak count in a u16, so at most 65_535 peaks per authored scan.
+    // The .raw peak count is a u32 on disk, but the thermorawfile author_centroids/author_profile
+    // functions currently guard at u16::MAX (65_535) and also must fit the template scan's existing
+    // packet budget — so authoring more than this errors. We respect that here. (FOLLOW-UP: relaxing the
+    // writer's u16 guard to u32 + a repack path would let very dense scans keep all peaks; the format
+    // supports it. Until then this keeps the most intense peaks — realistic centroiding — and accounts
+    // for the rest.)
     const MAX_PEAKS: usize = 65_535;
     let (mut cursor, mut ms1_n, mut ms2_n) = (0usize, 0u64, 0u64);
     let (mut capped_slots, mut capped_peaks) = (0u64, 0u64);
@@ -424,6 +440,8 @@ fn main() -> Result<()> {
                 "method": a.method,
                 "windows_from_template": true,
                 "template_nce": template_nce,
+                "template_nce_min": template_nce_min,
+                "template_nce_max": template_nce_max,
                 "fragment_ce": a.expected_ce,
             },
             "template": { "path": a.template.display().to_string(), "bytes": tbytes, "mtime_unix": tmtime },

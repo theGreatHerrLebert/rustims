@@ -64,6 +64,7 @@ fn main() -> Result<()> {
     // plus the annotation maps (per-modform, not per-precursor).
     let (mut pc, mut sq, mut ch): (Vec<u64>, Vec<String>, Vec<u8>) = Default::default();
     let (mut written, mut missing) = (0u64, 0u64);
+    let mut missing_examples: Vec<(u64, u64)> = Vec::new(); // (precursor_id, modform_id), first few
     let mut flush = |pc: &mut Vec<u64>, sq: &mut Vec<String>, ch: &mut Vec<u8>, w: &mut ArrowWriter<std::fs::File>| -> Result<()> {
         if pc.is_empty() { return Ok(()); }
         let batch = RecordBatch::try_new(schema.clone(), vec![
@@ -86,15 +87,24 @@ fn main() -> Result<()> {
                     ch.push(chg.value(i).max(1));
                     written += 1;
                 }
-                None => { missing += 1; }
+                None => {
+                    missing += 1;
+                    if missing_examples.len() < 5 { missing_examples.push((pcid.value(i), mfid.value(i))); }
+                }
             }
             if pc.len() >= a.chunk { flush(&mut pc, &mut sq, &mut ch, &mut writer)?; }
         }
     }
     flush(&mut pc, &mut sq, &mut ch, &mut writer)?;
     writer.close()?;
+    // In a consistent artifact set every precursor's modform is in the modforms table, so `missing`
+    // must be 0. A non-zero count means the precursors/modforms/peptides are out of sync — fail loudly
+    // rather than silently emit a fragment input with fewer rows than precursors (which would drop MS2
+    // for those precursors downstream while still producing an apparently-valid .raw + truth).
     if missing > 0 {
-        eprintln!("  WARNING: {missing} precursors had no annotated modform (skipped)");
+        return Err(anyhow!(
+            "{missing} precursors had no annotated modform — precursors/modforms/peptides are out of \
+             sync (e.g. {:?}). Refusing to emit a fragment input missing rows.", missing_examples));
     }
     eprintln!("wrote {written} fragment-prediction input rows -> {}", a.out.display());
     if written == 0 {

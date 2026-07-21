@@ -296,7 +296,9 @@ def main(argv=None) -> int:
         cat = pd.Categorical(pep["sequence"])
         code_of = dict(zip(pep["peptide_id"].to_numpy(), cat.codes.astype("int32")))
         codes = prec["peptide_id"].map(code_of)
-        keep = codes.notna()
+        # Drop BOTH unmapped peptide_ids (map -> NaN) AND null sequences (Categorical encodes them as
+        # code -1): notna() alone keeps the -1, which from_codes would turn back into a null sequence.
+        keep = codes.notna() & (codes >= 0)
         prec = pd.DataFrame({
             "precursor_id": prec.loc[keep, "precursor_id"].to_numpy(),
             "sequence": pd.Categorical.from_codes(
