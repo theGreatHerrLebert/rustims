@@ -221,6 +221,16 @@ class ThermoRunManifest(NodeType):
     filename = "manifest.json"
 
 
+class SciexMzmlData(NodeType):
+    """A SCIEX ZenoTOF SWATH run authored into open **mzML** (the CLEAN path — the native `.wiff` writer
+    corrupts fragment m/z, see SCIEX_CONSOLIDATION.md). A directory node: the legacy `timsim` writes
+    `sciex.mzML` (+ its synthetic DB + provenance) into it. Distinct from Thermo/Bruker so a wrong
+    consumer is a type error. Restages when the SCIEX config (template + params) changes."""
+
+    filename = "mzml"
+    invalidator = hashes_file("sciex_config")
+
+
 class DiannReport(NodeType):
     """A DiaNN library-free search of the rendered `.raw` — the SEARCH half of phase 2. A directory node
     (DiaNN emits report.parquet + stats + the predicted lib alongside). Restages when the search FASTA
@@ -460,6 +470,35 @@ def render_thermo(
     return ThermoRawData[data_raw], ThermoTruth[truth], ThermoRunManifest[manifest]
 
 
+# ── SCIEX ZenoTOF SWATH → mzML (no-IMS, template-based, the clean non-native path) ──
+
+
+@r.command(
+    "mkdir -p {mzml} && timsim {sciex_config} --save-path {mzml} "
+    "--v2-proteome {proteome} --v2-peptides {peptides} --v2-occurrences {occurrences} "
+    "--v2-peptide-quantities {peptide_quantities} --v2-precursors {precursors} --v2-rt {peptide_rt} "
+    "--v2-sample {sample_id} --seed {seed}",
+    threads=4,
+    ram="16Gi",
+)
+def render_sciex(
+    proteome: Proteome,
+    peptides: Peptides,
+    occurrences: Occurrences,
+    peptide_quantities: PeptideQuantities,
+    precursors: Precursors,
+    peptide_rt: PeptideRT,
+    sciex_config: str,
+    sample_id: str,
+    seed: int,
+):
+    """MEASUREMENT (no-IMS): the legacy `timsim` SCIEX ZenoTOF SWATH build-from-`.wiff`, driven from the v2
+    feature space, authored to open mzML (`sciex.mzML`). Self-contained like the Bruker `simulate` node —
+    it predicts fragments internally (Koina HCD, set in the config), so it does NOT use the v2
+    fragments/spectra nodes. No `--v2-ccs` (SCIEX has no ion mobility)."""
+    return SciexMzmlData[mzml]
+
+
 # ── phase 2: search + score (close simulate -> search -> score) ──────────────
 
 
@@ -629,6 +668,36 @@ def timsim_thermo_pipeline(cfg, sample_id: str) -> Pipeline:
     return P
 
 
+def timsim_sciex_pipeline(cfg, sample_id: str) -> Pipeline:
+    """One sample to a SCIEX ZenoTOF SWATH **mzML**, reusing the SAME feature-space nodes as the Bruker and
+    Thermo pipelines (so requesting all three collapses the structure to one computation). The measurement
+    is the legacy `timsim` SCIEX build-from-`.wiff` render (self-contained, no fragments/spectra nodes),
+    authored to open mzML — the clean path that sidesteps the broken native `.wiff` writer. No CCS."""
+    P = Pipeline()
+    P.proteome = r.proteome(spec=cfg.proteome_spec)
+    P.peptides, P.occurrences, P.cleavage_sites = r.digest(
+        P.proteome,
+        max_missed_cleavages=cfg.max_missed_cleavages,
+        min_length=cfg.min_length,
+        max_length=cfg.max_length,
+    )
+    P.modforms, P.modifications = r.modify(P.peptides, mods=cfg.mods, floor=cfg.floor)
+    P.precursors = r.precursors(P.peptides, P.modforms, charge_model=cfg.charge_model, seed=cfg.seed)
+    P.rt = r.rt(P.peptides)
+    P.samples, P.runs, P.sample_run_map, P.protein_quantities = r.design(
+        P.proteome, spec=cfg.design_spec
+    )
+    P.peptide_quantities = r.peptide_yield(
+        P.proteome, P.occurrences, P.cleavage_sites, P.protein_quantities, P.modifications,
+        digestion_efficiency=cfg.digestion_efficiency,
+    )
+    P.mzml = r.render_sciex(
+        P.proteome, P.peptides, P.occurrences, P.peptide_quantities, P.precursors, P.rt,
+        sciex_config=cfg.sciex_config, sample_id=sample_id, seed=cfg.seed,
+    )
+    return P
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--outdir", default="/tmp/necro-timsim")
@@ -639,6 +708,8 @@ def main() -> None:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--graph", help="write the DAG to this file")
     ap.add_argument("--thermo-template", help="build the Thermo .raw pipeline against this template")
+    ap.add_argument("--sciex-config", help="build the SCIEX ZenoTOF SWATH -> mzML pipeline with this config "
+                                           "TOML (instrument/template/CE/model; e.g. sciex.toml)")
     ap.add_argument("--frag-model", default="", help="fragment model: '' (local timsTOF) or 'koina:Prosit_2020_intensity_HCD'")
     ap.add_argument("--collision-energy", type=float, default=25.0)
     ap.add_argument("--intensity-scale", type=float, default=5.0e5)
@@ -668,15 +739,21 @@ def main() -> None:
         search_fasta=a.search_fasta,
         qvalue=a.qvalue,
         search_threads=a.search_threads,
+        sciex_config=a.sciex_config,
     )
 
-    build = timsim_thermo_pipeline if a.thermo_template else timsim_pipeline
+    if a.sciex_config:
+        build = timsim_sciex_pipeline
+    elif a.thermo_template:
+        build = timsim_thermo_pipeline
+    else:
+        build = timsim_pipeline
     dag = DAG(a.outdir)
     for sid in a.samples:
         P = build(cfg, sid)
         # For the Thermo branch the answer key + run manifest are first-class deliverables (co-outputs of
         # the render), so request them explicitly alongside the .raw.
-        req = [P.raw]
+        req = [P.mzml] if getattr(P, "mzml", None) is not None else [P.raw]
         if getattr(P, "truth", None) is not None:
             req += [P.truth, P.manifest]
         # Phase 2 (opt-in): the score is the terminal deliverable — requesting it pulls search + the .raw.

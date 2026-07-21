@@ -1,0 +1,23 @@
+# SCIEX ZenoTOF SWATH → open mzML render config (the CLEAN path; NOT the native .wiff writer, which
+# corrupts m/z — see SCIEX_CONSOLIDATION.md). Driven from the v2 feature space via `timsim --v2-*`.
+# Section names are irrelevant (translate_legacy_config flattens them).
+[experiment]
+experiment_name  = "sciex"          # fixed → deterministic output filename (sciex.mzML) per node dir
+acquisition_type = "DIA"            # SWATH is DIA-only
+gradient_length  = 600
+silent_mode      = true
+instrument       = "sciex_zenotof"
+# The .wiff SWATH method template (windows + TOF cal). Read via the sciexwiff reader; the schedule is
+# synthesized (the .wiff has no per-scan timing).
+template_path    = "/home/administrator/thermo-raw-spike/data/sciex/K562_0.98ng_1/20211020_Z1_ZW_001_30-0043_K562_1ul_K562_0.98ng_1.wiff"
+
+[simulation]
+apply_fragmentation   = true
+use_reference_layout  = true
+sciex_cycle_time_s    = 3.5
+sciex_ce_intercept    = 5.0
+sciex_ce_slope_per_mz = 0.045
+sciex_native          = false       # false = open mzML (clean). true = native .wiff writer (broken m/z).
+# ZenoTOF is HCD/NCE, so the fragment intensities need an HCD model, not the local timsTOF (eV) one.
+intensity_model       = "Prosit_2020_intensity_HCD"
+v2_total_events       = 2.5e9
