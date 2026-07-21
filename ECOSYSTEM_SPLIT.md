@@ -25,6 +25,48 @@ every time.** The worst symptom: a user who wants to read a `.d` or run a Koina-
 still installs PyTorch. The goal of this document is the modularity that lets each consumer take
 *only what it needs*.
 
+## Capabilities → homes (the organizing spine)
+
+The hard decision is never "how many repos" — it's **along which seams**. Split by *capability*, and
+let three forces decide where each seam actually falls:
+
+- **Dependency weight** — does it drag a heavy/awkward dep (torch/CUDA, a vendor SDK, a native
+  runtime)? Heavy deps want to live behind a boundary so they're opt-in.
+- **Release cadence** — does it churn on its own schedule, independent of the core? Independent
+  churn wants an independent version.
+- **Audience** — who needs it *alone*? A capability that a consumer wants without the rest earns
+  its own installable.
+
+### Precedent: sagepy already does this, in your own codebase
+
+`sagepy` is the worked example. Its core Python package depends on only `sagepy-connector` + numpy +
+pandas + tqdm — **no torch**. All the deep-learning weight (torch, xgboost, scikit-learn, mokapot)
+lives in the **separate `sagepy-rescore` satellite**. On the Rust side: `unimod` is a zero-dep leaf
+crate (modifications), `qfdrust` is a pure-Rust algorithm crate (FDR/rescore, no pyo3), `sage-core`
+is *reused* as the engine, and `sagepy-connector` is the single PyO3 wheel binding all three. Every
+principle below is already live there — this plan is, in one line, *"make rustims look like sagepy."*
+
+### The map
+
+| Capability | sagepy does it as | rustims target | Seam driver |
+|---|---|---|---|
+| **Chemistry / modifications** | `unimod` (leaf) | `ms-chem` (leaf) | reuse; today *triplicated* → R1 |
+| **Data structures** (spectra, peptides, m/z, mobility) | `sage-core` types | `mscore` (frozen anchor) | stable → publish early (R2) |
+| **Raw data access** (.d / .raw / .wiff / mzML) | `mzdata` (reused) | `ms-io`/`rustdf` + `thermo-io`/`sciex-io` | vendor = weight + license → satellites |
+| **Algorithms** (FDR, rescore, simulation) | `qfdrust` (pure Rust) | `qfdrust`(!) + `timsim-core` | independent cadence |
+| **Database search** | `sage-core` (reused) | reuse `sage` + `imspy-search` (Py) | don't reinvent |
+| **Deep learning / prediction** | `sagepy-rescore` (owns torch) | `imspy-predictors` (torch = *extra*) | weight → the P0 template |
+| **Visualization** | *(none)* | `imspy-vis` / `tims-viewer` | audience → satellite |
+| **Bindings** | `sagepy-connector` | `imspy_connector` | one wheel (pyclass ownership) |
+| **Orchestration** | *(CLI scripts)* | `flow/` (necroflow) | ecosystem repo |
+
+### Convergence (forward-looking, not for now)
+
+`qfdrust` **already depends on `rustims`**, and both ecosystems carry their own chemistry/unimod. So
+sagepy and imspy aren't separate worlds — they're two consumers that could eventually share a common
+foundation (`ms-chem`, `mscore`), so a fix to isotope tables or a spectrum type benefits both. Not a
+decision for this plan, but the federation makes it *possible* in a way the monorepo never did.
+
 ## The good news: we're ~70% there already
 
 Reconnaissance on the current workspace (2026-07):
