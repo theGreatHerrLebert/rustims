@@ -23,12 +23,14 @@
 
 pub mod elements;
 pub mod formula;
+pub mod fragment;
 pub mod isotope;
 pub mod mass;
 pub mod modification;
 pub mod residue;
 
 pub use formula::FormulaError;
+pub use fragment::{fragment_ions, Fragment, IonType};
 pub use isotope::{envelope, EnvelopeError};
 pub use mass::{monoisotopic, mz, UnknownResidue, PROTON, WATER};
 pub use modification::{by_id as modification_by_id, Modification, BUILTIN as BUILTIN_MODIFICATIONS};

@@ -125,6 +125,48 @@ fn isotope_envelope_matches_timsim_and_mscore() {
 }
 
 #[test]
+fn fragment_ions_match_mscore_and_timsim() {
+    use mscore::data::peptide::{FragmentType, PeptideSequence};
+
+    // focused corpus (mscore's product-ion builder is heavy); exhaustive di/tri + a sample
+    let full = corpus();
+    let mut fc: Vec<&String> = full.iter().filter(|s| (2..=3).contains(&s.len())).collect();
+    fc.extend(full.iter().filter(|s| s.len() >= 10).take(300));
+
+    let mut max_vs_mscore = 0.0f64;
+    let mut max_vs_timsim = 0.0f64;
+
+    for seq in &fc {
+        // ms-chem: full b+y set at charge 1
+        let mut x: Vec<f64> = ms_chem::fragment_ions(seq, 1).unwrap().iter().map(|f| f.mz).collect();
+        // timsim: full b+y set
+        let mut t: Vec<f64> = timsim_chem::fragment::fragment_ions(seq, 1).unwrap().iter().map(|f| f.mz).collect();
+        // mscore: full spectrum (returns b+y for any FragmentType; merges isobaric peaks)
+        let mut m: Vec<f64> = PeptideSequence::new((*seq).clone(), None)
+            .calculate_mono_isotopic_product_ion_spectrum(1, FragmentType::B)
+            .mz
+            .iter()
+            .copied()
+            .collect();
+        for v in [&mut x, &mut t, &mut m] {
+            v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            v.dedup_by(|a, b| (*a - *b).abs() < 1e-6); // account for mscore's isobaric merge
+        }
+        assert_eq!(x.len(), t.len(), "ms-chem vs timsim ladder length on {seq}");
+        assert_eq!(x.len(), m.len(), "ms-chem vs mscore ladder length on {seq}");
+        max_vs_timsim = max_vs_timsim.max(x.iter().zip(&t).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max));
+        max_vs_mscore = max_vs_mscore.max(x.iter().zip(&m).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max));
+    }
+
+    eprintln!(
+        "[ms-chem/fragment] peptides={}  max|Δ m/z| vs mscore={max_vs_mscore:.3e}  vs timsim={max_vs_timsim:.3e}",
+        fc.len()
+    );
+    assert!(max_vs_mscore < 1e-5, "ms-chem vs mscore fragments {max_vs_mscore:.3e}");
+    assert!(max_vs_timsim < 1e-5, "ms-chem vs timsim fragments {max_vs_timsim:.3e}");
+}
+
+#[test]
 fn modification_catalog_matches_mscore_and_is_coverage_consistent() {
     use mscore::chemistry::unimod::unimod_modifications_mass_numerical;
 
