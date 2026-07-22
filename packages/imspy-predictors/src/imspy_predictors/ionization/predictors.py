@@ -9,6 +9,9 @@ Classes:
     - PyTorchChargePredictor: PyTorch transformer/GRU-based model
     - BinomialChargeStateDistributionModel: Simple binomial-based model
 """
+# PEP 563: keep torch-typed annotations (e.g. `-> torch.Tensor`) as lazy strings so
+# they are NOT evaluated at class-def time when torch is guarded to None. Must stay first.
+from __future__ import annotations
 
 from typing import List, Optional, Tuple
 from abc import ABC, abstractmethod

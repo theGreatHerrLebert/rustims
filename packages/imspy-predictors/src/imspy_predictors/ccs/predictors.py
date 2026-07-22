@@ -8,6 +8,10 @@ Classes:
     - DeepPeptideIonMobilityApex: High-level wrapper for CCS/ion mobility prediction
     - PyTorchCCSPredictor: PyTorch transformer-based model
 """
+# PEP 563: keep torch-typed annotations (e.g. `-> torch.Tensor`) as lazy strings so
+# they are NOT evaluated at class-def time. Without this, importing this module with
+# torch guarded to None crashes with AttributeError on the annotation. Must stay first.
+from __future__ import annotations
 
 import warnings
 from typing import List, Tuple, Optional, Union

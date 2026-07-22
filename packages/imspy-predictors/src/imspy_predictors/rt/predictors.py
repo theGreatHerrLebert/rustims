@@ -8,6 +8,9 @@ Classes:
     - DeepChromatographyApex: High-level wrapper for RT prediction
     - PyTorchRTPredictor: PyTorch transformer/GRU-based model
 """
+# PEP 563: keep torch-typed annotations (e.g. `-> torch.Tensor`) as lazy strings so
+# they are NOT evaluated at class-def time when torch is guarded to None. Must stay first.
+from __future__ import annotations
 
 from typing import List, Optional
 from abc import ABC, abstractmethod
