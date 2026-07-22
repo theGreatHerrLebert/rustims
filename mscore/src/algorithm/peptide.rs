@@ -30,8 +30,7 @@ use std::collections::HashMap;
 ///
 /// let peptide_sequence = PeptideSequence::new("PEPTIDEH".to_string(), Some(1));
 /// let mass = calculate_peptide_mono_isotopic_mass(&peptide_sequence);
-/// let mass_quantized = (mass * 1e6).round() as i32;
-/// assert_eq!(mass_quantized, 936418877);
+/// assert!((mass - 936.418877).abs() < 1e-4); // residue masses now full-precision from ms-chem
 /// ```
 pub fn calculate_peptide_mono_isotopic_mass(peptide_sequence: &PeptideSequence) -> f64 {
     let amino_acid_masses = amino_acid_masses();
@@ -87,7 +86,7 @@ pub fn calculate_peptide_mono_isotopic_mass(peptide_sequence: &PeptideSequence) 
 /// use mscore::data::peptide::FragmentType;
 /// let sequence = "PEPTIDEH";
 /// let mass = calculate_peptide_product_ion_mono_isotopic_mass(sequence, FragmentType::Y);
-/// assert_eq!(mass, 936.4188766862999);
+/// assert!((mass - 936.418877).abs() < 1e-4);
 /// ```
 pub fn calculate_peptide_product_ion_mono_isotopic_mass(sequence: &str, kind: FragmentType) -> f64 {
     let (sequence, modifications) = find_unimod_patterns(sequence);
@@ -141,7 +140,7 @@ pub fn calculate_peptide_product_ion_mono_isotopic_mass(sequence: &str, kind: Fr
 /// use mscore::data::peptide::FragmentType;
 /// let sequence = "PEPTIDEH";
 /// let mz = calculate_product_ion_mz(sequence, FragmentType::Y, Some(1));
-/// assert_eq!(mz, 936.4188766862999 + MASS_PROTON);
+/// assert!((mz - (936.418877 + MASS_PROTON)).abs() < 1e-4);
 /// ```
 pub fn calculate_product_ion_mz(sequence: &str, kind: FragmentType, charge: Option<i32>) -> f64 {
     let mass = calculate_peptide_product_ion_mono_isotopic_mass(sequence, kind);

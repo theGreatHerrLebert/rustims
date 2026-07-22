@@ -61,36 +61,18 @@ pub fn amino_acids() -> HashMap<&'static str, &'static str> {
 /// use mscore::chemistry::amino_acid::amino_acid_masses;
 ///
 /// let amino_acid_masses = amino_acid_masses();
-/// assert_eq!(amino_acid_masses.get("K"), Some(&128.094963));
+/// assert!((amino_acid_masses.get("K").unwrap() - 128.094963).abs() < 1e-5);
 /// ```
 pub fn amino_acid_masses() -> HashMap<&'static str, f64> {
-    let mut map = HashMap::new();
-    map.insert("A", 71.037114);
-    map.insert("R", 156.101111);
-    map.insert("N", 114.042927);
-    map.insert("D", 115.026943);
-    map.insert("C", 103.009185);
-    map.insert("E", 129.042593);
-    map.insert("Q", 128.058578);
-    map.insert("G", 57.021464);
-    map.insert("H", 137.058912);
-    map.insert("I", 113.084064);
-    map.insert("L", 113.084064);
-    map.insert("K", 128.094963);
-    map.insert("M", 131.040485);
-    map.insert("F", 147.068414);
-    map.insert("P", 97.052764);
-    map.insert("S", 87.032028);
-    map.insert("T", 101.047679);
-    map.insert("W", 186.079313);
-    map.insert("Y", 163.063329);
-    map.insert("V", 99.068414);
-    // R1 fold: source selenocysteine from ms-chem (computed from elements). The legacy hard-coded
-    // U = 168.053 was wrong (not C3H5NOSe, off ~17 Da) — see CHEM_PARITY.md. ms-chem computes the
-    // correct 150.95364. The 20 standard residues above still match ms-chem to <1e-5 (locked by the
-    // ms_chem_residue_sync parity test); folding them fully is a staged follow-up.
-    map.insert("U", ms_chem::residue::residue_monoisotopic_mass(b'U').expect("U in ms-chem"));
-    map
+    // R1 fold: residue masses come from ms-chem (computed from elements, single source of truth).
+    // The 20 standard match the old hard-codes to <1e-5; U is now correct (was the buggy 168.053).
+    const AAS: &[&str] = &[
+        "A", "R", "N", "D", "C", "E", "Q", "G", "H", "I", "L", "K", "M", "F", "P", "S", "T", "W", "Y",
+        "V", "U",
+    ];
+    AAS.iter()
+        .map(|&a| (a, ms_chem::residue::residue_monoisotopic_mass(a.as_bytes()[0]).expect("residue")))
+        .collect()
 }
 
 /// Amino Acid Composition

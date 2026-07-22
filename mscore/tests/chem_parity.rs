@@ -113,15 +113,13 @@ fn ms_chem_residue_sync() {
         assert!((m - x).abs() < 1e-9, "element {sym}: mscore {m} vs ms-chem {x}");
     }
 
-    // residue masses: the 20 standard agree to <1e-5 (mscore's 6-decimal hard-codes vs ms-chem's
-    // element-computed); U is now delegated to ms-chem, so it matches exactly (the bug fix).
+    // residue masses: now FULLY delegated to ms-chem, so every residue matches exactly.
     let aa = amino_acid_masses();
     for (sym, &m) in aa.iter() {
         let b = sym.as_bytes()[0];
         let x = ms_chem::residue::residue_monoisotopic_mass(b)
             .unwrap_or_else(|| panic!("ms-chem missing residue {sym}"));
-        let tol = if sym == &"U" { 1e-9 } else { 1e-5 };
-        assert!((m - x).abs() < tol, "residue {sym}: mscore {m} vs ms-chem {x}");
+        assert!((m - x).abs() < 1e-9, "residue {sym}: mscore {m} vs ms-chem {x}");
     }
     // the fix landed: mscore's U is now the correct ~150.954, not the legacy 168.053
     assert!((aa["U"] - 150.95364).abs() < 1e-4, "mscore U should be fixed: {}", aa["U"]);
