@@ -65,6 +65,66 @@ fn monoisotopic_mass_matches_mscore_and_timsim() {
 }
 
 #[test]
+fn isotope_envelope_matches_timsim_and_mscore() {
+    use mscore::data::peptide::PeptideSequence;
+    use std::collections::HashMap;
+
+    const DEPTH: usize = 6;
+    let corpus = corpus();
+    // ms-chem adopts CIAAW abundances + timsim's algorithm, so it should match timsim ~exactly
+    // (to f32 rounding, since timsim returns f32), and match mscore within the N/S abundance-table
+    // budget documented in Gate 2 (mscore uses the older values).
+    let mut max_vs_timsim = 0.0f64;
+    let mut max_vs_mscore = 0.0f64;
+
+    for seq in &corpus {
+        let x = ms_chem::envelope(seq, DEPTH).expect("std residue");
+
+        let t: Vec<f64> = timsim_chem::isotope::envelope(seq, DEPTH)
+            .unwrap()
+            .into_iter()
+            .map(|v| v as f64)
+            .collect();
+        max_vs_timsim = max_vs_timsim.max(
+            x.iter().zip(&t).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max),
+        );
+
+        // mscore: fine-structure distribution binned to nominal, normalized over DEPTH
+        let comp: HashMap<String, i32> = PeptideSequence::new(seq.clone(), None)
+            .atomic_composition()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        let dist = mscore::algorithm::isotope::generate_isotope_distribution(&comp, 1e-3, 1e-9, 200);
+        let mono = dist.iter().map(|(m, _)| *m).fold(f64::INFINITY, f64::min);
+        let mut bins = vec![0.0f64; DEPTH];
+        for (m, a) in &dist {
+            let k = (m - mono).round() as usize;
+            if k < DEPTH {
+                bins[k] += *a;
+            }
+        }
+        let s: f64 = bins.iter().sum();
+        for b in &mut bins {
+            *b /= s;
+        }
+        max_vs_mscore = max_vs_mscore.max(
+            x.iter().zip(&bins).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max),
+        );
+    }
+
+    eprintln!(
+        "[ms-chem/isotope] corpus={}  max|Δ| vs timsim={max_vs_timsim:.3e}  vs mscore={max_vs_mscore:.3e}",
+        corpus.len()
+    );
+    // vs timsim: same tables+algo → f32 rounding only.
+    assert!(max_vs_timsim < 1e-6, "ms-chem vs timsim envelope {max_vs_timsim:.3e}");
+    // vs mscore: bounded by the N/S abundance-table difference (Gate 2 ~1.3e-3; corpus has no
+    // pathological homopolymers, so it stays small).
+    assert!(max_vs_mscore < 5e-3, "ms-chem vs mscore envelope {max_vs_mscore:.3e}");
+}
+
+#[test]
 fn selenocysteine_correct_and_surfaces_mscore_bug() {
     // ms-chem is a superset: it accepts U (selenocysteine), which timsim's residue table lacked.
     // Computed from elements as C3H5NOSe (⁸⁰Se), the residue mass is the standard 150.95364 Da.

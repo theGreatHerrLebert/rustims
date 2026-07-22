@@ -32,6 +32,27 @@ impl Composition {
             + self.p as f64 * elements::P
             + self.se as f64 * elements::SE
     }
+
+    /// Add `times` copies of `other` in place.
+    pub fn add(&mut self, other: Composition, times: u32) {
+        self.c += other.c * times;
+        self.h += other.h * times;
+        self.n += other.n * times;
+        self.o += other.o * times;
+        self.s += other.s * times;
+        self.p += other.p * times;
+        self.se += other.se * times;
+    }
+}
+
+/// Elemental composition of an intact peptide chain (one water + every residue), or `None` if any
+/// residue byte is unknown.
+pub fn peptide_composition(sequence: &str) -> Option<Composition> {
+    let mut total = Composition { c: 0, h: 2, n: 0, o: 1, s: 0, p: 0, se: 0 }; // H2O
+    for &b in sequence.as_bytes() {
+        total.add(residue_composition(b)?, 1);
+    }
+    Some(total)
 }
 
 const fn comp(c: u32, h: u32, n: u32, o: u32, s: u32, se: u32) -> Composition {
