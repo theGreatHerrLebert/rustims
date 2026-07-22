@@ -1,16 +1,14 @@
 [workspace]
 members = [
-    "timsim-chem",
     "sciex-io",
-    "timsim-schema",
-    "timsim-types",
-    "timsim-core",
     "timsim-cli",
     "imspy_connector",
     "imsjl_connector",
     "tims-viewer",
     "tims-viewer/web"
 ]
+# timsim-types / timsim-schema / timsim-chem / timsim-core moved to the sibling `timsim` family repo
+# (github.com/theGreatHerrLebert/timsim); consumers here dep them by path (../../../timsim/timsim-*).
 
 resolver = "2"
 

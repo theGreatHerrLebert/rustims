@@ -10,6 +10,6 @@ publish = false
 [dependencies]
 # ONLY the zero-dep acquisition-scheme leaf: sciex-io builds an AcquisitionScheme through its public API
 # and never touches ms-io/Arrow/Parquet — the smallest possible R9 seam. Path dep (timsim-types unpublished).
-timsim-types = { path = "../timsim-types" }
+timsim-types = { path = "../../../timsim/timsim-types" }
 # private, on legal hold — legal here because sciex-io is never published to crates.io.
 sciexwiff = { git = "https://github.com/theGreatHerrLebert/sciexwiff", rev = "ef7c0cd7e59d3b51160e446cbe3af240d230668d" }
