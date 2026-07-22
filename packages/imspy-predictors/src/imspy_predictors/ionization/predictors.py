@@ -240,11 +240,8 @@ def load_deep_charge_state_predictor(backend: Optional[str] = None):
     Returns:
         Loaded PyTorch model
     """
-    if not TORCH_AVAILABLE:
-        raise ImportError(
-            "PyTorch is required for charge state prediction. "
-            "Install with: pip install torch"
-        )
+    from imspy_predictors.utility import require_torch
+    require_torch("charge state prediction (local model)")
 
     # Try to load UnifiedPeptideModel first (new architecture)
     try:
@@ -304,11 +301,8 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
     ):
         super().__init__()
 
-        if not TORCH_AVAILABLE:
-            raise ImportError(
-                "PyTorch is required for DeepChargeStateDistribution. "
-                "Install with: pip install torch"
-            )
+        from imspy_predictors.utility import require_torch
+        require_torch("DeepChargeStateDistribution (local charge-state model)")
 
         self.backend = 'torch'  # Always torch
 

@@ -53,8 +53,8 @@ class GaussianMixtureModel:
         init_stds: Optional[np.ndarray] = None,
         backend: Optional[str] = None,  # Kept for backward compatibility, ignored
     ):
-        if not TORCH_AVAILABLE:
-            raise ImportError("PyTorch is required for GaussianMixtureModel. Install with: pip install torch")
+        from imspy_predictors.utility import require_torch
+        require_torch("GaussianMixtureModel")
 
         self.num_components = num_components
         self.data_dim = data_dim

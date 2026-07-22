@@ -667,10 +667,8 @@ def load_deep_intensity_predictor(map_location: Optional[str] = None):
     Returns:
         Loaded UnifiedPeptideModel with intensity head
     """
-    try:
-        import torch
-    except ImportError:
-        raise ImportError("PyTorch is required for local intensity prediction. Install with: pip install torch")
+    from imspy_predictors.utility import require_torch
+    torch = require_torch("local intensity prediction")
 
     from imspy_predictors.models import UnifiedPeptideModel
 
@@ -718,14 +716,8 @@ class DeepPeptideIntensityPredictor(IonIntensityPredictor):
         verbose: bool = True,
         device: Optional[str] = None,
     ):
-        try:
-            import torch
-            self._torch = torch
-        except ImportError:
-            raise ImportError(
-                "PyTorch is required for DeepPeptideIntensityPredictor. "
-                "Install with: pip install torch"
-            )
+        from imspy_predictors.utility import require_torch
+        self._torch = require_torch("DeepPeptideIntensityPredictor (local intensity model)")
 
         super().__init__()
 

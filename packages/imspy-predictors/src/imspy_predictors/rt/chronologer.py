@@ -530,10 +530,8 @@ else:
 
     class Chronologer:
         def __init__(self, *args, **kwargs):
-            raise ImportError(
-                "PyTorch not installed; Chronologer requires torch. "
-                "Install with: pip install torch"
-            )
+            from imspy_predictors.utility import require_torch
+            require_torch("Chronologer (local retention-time model)")
 
         @classmethod
         def from_checkpoint(cls, *args, **kwargs):

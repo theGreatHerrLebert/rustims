@@ -11,9 +11,7 @@ requires-python = ">=3.11,<3.14"
 
 dependencies = [
     "imspy-core>=0.4.0",
-    # PyTorch - deep learning framework
-    "torch>=2.0.0",
-    # Scientific computing
+    # Scientific computing (torch is NOT here — it is the `local` extra; see below)
     "scikit-learn>=1.0",
     "scipy>=1.7.1",
     "numpy>=1.21.0",
@@ -24,14 +22,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Koina server access for remote predictions (including intensity via Prosit)
+# Local (PyTorch) prediction: the on-device model runners. Importing the package
+# and using the Koina (remote) path never needs this; only instantiating a local
+# model does. `require_torch()` raises a hint pointing here when it's missing.
+local = ["torch>=2.0.0"]
+# Koina server access for remote predictions (including intensity via Prosit) — torch-free
 koina = ["koinapy>=0.0.10"]
-# Hugging Face datasets for training
-training = ["datasets>=2.0.0", "wandb>=0.12.1"]
-# GPU support
+# Hugging Face datasets for training (implies local model training → torch)
+training = ["torch>=2.0.0", "datasets>=2.0.0", "wandb>=0.12.1"]
+# GPU support: torch with CUDA (install the CUDA build of torch per its own instructions)
 cuda = ["torch>=2.0.0"]
 # All optional dependencies
 all = [
+    "torch>=2.0.0",
     "koinapy>=0.0.10",
     "datasets>=2.0.0",
     "wandb>=0.12.1",

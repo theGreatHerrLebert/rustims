@@ -25,6 +25,36 @@ except ImportError:
     TORCH_AVAILABLE = False
 
 
+def require_torch(feature: str = "local model prediction"):
+    """Return the imported ``torch`` module, or raise a precise install hint.
+
+    PyTorch is an *optional* extra (``imspy-predictors[local]``). Importing this
+    package and using the Koina (remote) prediction path never require it — only
+    instantiating or loading a *local* model does. Call this at the point of use
+    so a missing install surfaces as an actionable message instead of a bare
+    ``ModuleNotFoundError: No module named 'torch'``.
+
+    Args:
+        feature: Short name of what needs torch, woven into the error message.
+
+    Returns:
+        The ``torch`` module.
+
+    Raises:
+        ImportError: with the ``pip install 'imspy-predictors[local]'`` hint.
+    """
+    try:
+        import torch as _torch
+    except ImportError as exc:  # pragma: no cover - exercised only in torch-free envs
+        raise ImportError(
+            f"PyTorch is required for {feature}, but it is not installed.\n"
+            "Install the local-model extra:\n\n"
+            "    pip install 'imspy-predictors[local]'\n\n"
+            "The Koina (remote) prediction path does not require PyTorch."
+        ) from exc
+    return _torch
+
+
 def get_model_path(model_name: str):
     """
     Get the path to a pretrained model.

@@ -374,8 +374,8 @@ def load_deep_ccs_predictor(backend: Optional[str] = None):
     Returns:
         Loaded PyTorch model
     """
-    if not TORCH_AVAILABLE:
-        raise ImportError("PyTorch is required for CCS prediction. Install with: pip install torch")
+    from imspy_predictors.utility import require_torch
+    require_torch("CCS prediction (local ion-mobility model)")
 
     # Try to load UnifiedPeptideModel first (new architecture)
     try:
@@ -427,8 +427,8 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         name: str = 'gru_predictor',
         backend: Optional[str] = None,  # Kept for backward compatibility, ignored
     ):
-        if not TORCH_AVAILABLE:
-            raise ImportError("PyTorch is required for DeepPeptideIonMobilityApex. Install with: pip install torch")
+        from imspy_predictors.utility import require_torch
+        require_torch("DeepPeptideIonMobilityApex (local ion-mobility model)")
 
         super().__init__()
 

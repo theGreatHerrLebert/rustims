@@ -48,8 +48,8 @@ class CosimHasher:
         seed: int = 42,
         backend: Optional[str] = None,  # Kept for backward compatibility, ignored
     ):
-        if not TORCH_AVAILABLE:
-            raise ImportError("PyTorch is required for CosimHasher. Install with: pip install torch")
+        from imspy_predictors.utility import require_torch
+        require_torch("CosimHasher")
 
         assert trials > 0, f'trials must be > 0, got: {trials}'
         assert len_trial > 0, f'len_trial must be > 0, got: {len_trial}'

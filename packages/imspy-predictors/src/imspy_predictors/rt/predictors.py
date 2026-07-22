@@ -242,11 +242,8 @@ def load_deep_retention_time_predictor(backend: Optional[str] = None):
         Either a :class:`Chronologer` wrapper or the legacy transformer
         PyTorch model, depending on ``backend``.
     """
-    if not TORCH_AVAILABLE:
-        raise ImportError(
-            "PyTorch is required for retention time prediction. "
-            "Install with: pip install torch"
-        )
+    from imspy_predictors.utility import require_torch
+    require_torch("retention time prediction (local model)")
 
     backend = (backend or "chronologer").lower()
 
@@ -323,11 +320,8 @@ class DeepChromatographyApex(PeptideChromatographyApex):
     ):
         super().__init__()
 
-        if not TORCH_AVAILABLE:
-            raise ImportError(
-                "PyTorch is required for DeepChromatographyApex. "
-                "Install with: pip install torch"
-            )
+        from imspy_predictors.utility import require_torch
+        require_torch("DeepChromatographyApex (local retention-time model)")
 
         self.backend = 'torch'  # Always torch
 
