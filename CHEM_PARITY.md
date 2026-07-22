@@ -73,7 +73,14 @@ did not inherit mscore's choices).
       cross-check + GG(121) coverage-gap fixed. Surfaced + documented the mscore selenocysteine bug.
       **Follow-ups** (not blockers): full UNIMOD mass table for search/annotation (mass-only lookup,
       bulk port); composition-delta losses (negative counts, e.g. pyroglutamate); Se isotope envelope.
-- [ ] **Migrate + fold**: point mscore and rustms at `ms-chem`, delete the two copies, keep the
-      parity suite green (it becomes ms-chem's regression gate).
+- [~] **Migrate + fold** — STEP 1 DONE (mscore depends on ms-chem; U bug fixed; consistency-lock
+      test; connector wheel rebuilds; all green). **Staged remainder, each with a reason:**
+      - Full residue/element table delegation — the 20 standard residues shift ~1e-8 (hard-code →
+        compute); locked in sync now, full delegation is mechanical.
+      - **Adopt CIAAW abundances in mscore** — shifts mscore isotope output ~1e-3, so it needs the
+        render/DiaNN parity re-validation before landing (the one genuinely output-changing step).
+      - **Full 1028-entry UNIMOD mass table in ms-chem** (bulk port) before mscore can drop its copy.
+      - **`rustms` is an orphan** — nothing in the workspace or Python depends on it, so its chem copy
+        costs nothing downstream. Retire the crate (don't fold it). Decide at R3 cleanup.
 
 Only after this does R2 (publish `mscore` on `ms-chem`) proceed.
