@@ -195,3 +195,98 @@ fn isotope_envelope_parity() {
 fn fmt(v: &[f64]) -> Vec<String> {
     v.iter().map(|x| format!("{:.5}", x)).collect()
 }
+
+/// Gate 3 — modification masses. timsim-chem has NO UNIMOD mirror: its modifications are
+/// `Modification` structs carrying a `mass_delta` + elemental `composition`, self-validated
+/// (composition mono-mass must equal mass_delta). mscore owns the authoritative 2144-entry
+/// UNIMOD table (`unimod_modifications_mass_numerical()`), which is canonical for ms-chem.
+///
+/// This checks the two independent routes agree for the modifications the simulator actually
+/// uses: (1) timsim's hand-entered `mass_delta`, (2) mscore's UNIMOD table entry, and (3) the
+/// composition string re-parsed through mscore's element table. All three must land on one
+/// number, or a modified precursor's m/z would silently drift.
+#[test]
+fn modification_mass_parity() {
+    use mscore::chemistry::sum_formula::SumFormula;
+    use mscore::chemistry::unimod::unimod_modifications_mass_numerical;
+
+    // (unimod_id, name, timsim mass_delta, timsim composition) — the curated set timsim-chem
+    // uses, taken from its own fixtures. Compositions are additive (no losses) for this set.
+    let mods: &[(u32, &str, f64, &str)] = &[
+        (21, "Phospho", 79.96633, "HO3P"),
+        (35, "Oxidation", 15.99491, "O"),
+        (4, "Carbamidomethyl", 57.02146, "C2H3NO"),
+        (1, "Acetyl", 42.01057, "C2H2O"),
+        (37, "Trimethyl", 42.04695, "C3H6"),
+        (121, "GG", 114.04293, "C4H6N2O2"),
+    ];
+
+    use mscore::chemistry::elements::atomic_weights_mono_isotopic;
+    use mscore::chemistry::unimod::modification_atomic_composition;
+
+    let mass_table = unimod_modifications_mass_numerical(); // 1028 entries (mass only)
+    let comp_table = modification_atomic_composition(); // 17 entries (composition only)
+    let weights = atomic_weights_mono_isotopic();
+    let tol = 1e-3; // UNIMOD masses are tabulated to ~5 decimals
+    let mut worst = 0.0f64;
+    let mut mass_table_gaps = vec![];
+    let mut comp_table_gaps = vec![];
+
+    for &(id, name, timsim_delta, comp) in mods {
+        // Route A: mscore's numerical mass table (may be missing — a coverage gap, not a panic).
+        let route_a = mass_table.get(&id).copied();
+        // Route B: mscore's composition table -> mass via its element weights (different, smaller set).
+        let route_b = comp_table.get(&format!("[UNIMOD:{id}]")).map(|els| {
+            els.iter()
+                .fold(0.0, |acc, (el, n)| acc + weights[el] * *n as f64)
+        });
+        // Route C: timsim's declared composition string -> mass via mscore's parser (the oracle).
+        let route_c = SumFormula::new(comp).monoisotopic_weight();
+
+        if route_a.is_none() {
+            mass_table_gaps.push((id, name));
+        }
+        if route_b.is_none() {
+            comp_table_gaps.push((id, name));
+        }
+
+        // Every route that EXISTS must land on timsim's mass_delta.
+        for (label, val) in [("mass_table", route_a), ("comp_table", route_b)] {
+            if let Some(v) = val {
+                let d = (v - timsim_delta).abs();
+                worst = worst.max(d);
+                assert!(
+                    d < tol,
+                    "{name} (id {id}): mscore {label} {v:.5} vs timsim {timsim_delta:.5} \
+                     diverge by {d:.2e}"
+                );
+            }
+        }
+        let d_c = (route_c - timsim_delta).abs();
+        worst = worst.max(d_c);
+        assert!(d_c < tol, "{name}: composition {comp} -> {route_c:.5} vs {timsim_delta:.5}");
+
+        eprintln!(
+            "[parity/mod] {name:<16} id={id:<4} timsim={timsim_delta:.5}  \
+             mass_table={}  comp_table={}  from_comp({comp})={route_c:.5}",
+            route_a.map_or("MISSING".into(), |v| format!("{v:.5}")),
+            route_b.map_or("MISSING".into(), |v| format!("{v:.5}")),
+        );
+    }
+
+    eprintln!(
+        "[parity/mod] {} mods checked; worst present-route Δ={:.2e}",
+        mods.len(),
+        worst
+    );
+    // FINDINGS (documented, drive the ms-chem design; not failures — the masses that DO exist agree):
+    // mscore's mass table (1028) and composition table (17) are largely DISJOINT sets, so some
+    // sim-used mods are in one but not the other. ms-chem must unify them into one coverage-consistent
+    // table (timsim's Modification pattern: composition + mass together, cross-checked at load).
+    if !mass_table_gaps.is_empty() {
+        eprintln!("[parity/mod] FINDING — in mscore composition table but MISSING from its mass table: {:?}", mass_table_gaps);
+    }
+    if !comp_table_gaps.is_empty() {
+        eprintln!("[parity/mod] FINDING — in mscore mass table but MISSING from its composition table: {:?}", comp_table_gaps);
+    }
+}
