@@ -9,6 +9,6 @@ publish = false
 
 [dependencies]
 # ms-io lives in the foundation repo (published once sciex is sorted; local path for now).
-ms-io = { path = "../../../mscore/ms-io" }
+ms-io = "0.1.0"
 # private, on legal hold — legal here because sciex-io is never published to crates.io.
 sciexwiff = { git = "https://github.com/theGreatHerrLebert/sciexwiff", rev = "ef7c0cd7e59d3b51160e446cbe3af240d230668d" }

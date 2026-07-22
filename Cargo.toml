@@ -23,3 +23,4 @@ panic = "abort"
 [patch.crates-io]
 ms-chem = { path = "../../mscore/ms-chem" }
 mscore = { path = "../../mscore/mscore" }
+ms-io = { path = "../../mscore/ms-io" }
