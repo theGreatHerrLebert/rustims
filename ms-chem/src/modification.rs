@@ -59,6 +59,34 @@ pub fn by_id(id: u32) -> Option<Modification> {
     BUILTIN.iter().copied().find(|m| m.unimod_id == id)
 }
 
+
+/// Elemental compositions (signed — losses use negative counts) for a curated set of modifications,
+/// keyed by UNIMOD id. Ported from mscore's `modification_atomic_composition`. 10 also appear in
+/// [`crate::unimod::UNIMOD_MASS`] and cross-check against it; 5 (58/121/122/312/747) are
+/// composition-only — the R1 Gate 3 coverage gap, preserved faithfully rather than silently changed.
+pub const MODIFICATION_COMPOSITION: &[(u32, &'static [(&'static str, i32)])] = &[
+    (1, &[("C", 2), ("H", 2), ("O", 1)]), // Acetyl
+    (3, &[("N", 2), ("C", 10), ("H", 14), ("O", 2), ("S", 1)]), // Biotinylation
+    (4, &[("C", 2), ("H", 3), ("O", 1), ("N", 1)]),
+    (7, &[("H", -1), ("N", -1), ("O", 1)]), // Hydroxylation
+    (21, &[("H", 1), ("O", 3), ("P", 1)]), // Phosphorylation
+    (34, &[("H", 2), ("C", 1)]), // Methylation
+    (35, &[("O", 1)]), // Hydroxylation
+    (58, &[("C", 3), ("H", 4), ("O", 1)]), // Propionyl
+    (121, &[("C", 4), ("H", 6), ("O", 2), ("N", 2)]), // ubiquitinylation residue
+    (122, &[("C", 1), ("O", 1)]), // Formylation
+    (312, &[("C", 3), ("H", 5), ("O", 2), ("N", 1), ("S", 1)]), // Cysteinyl
+    (354, &[("H", -1), ("O", 2), ("N", 1)]), // Oxidation to nitro
+    (747, &[("C", 3), ("H", 2), ("O", 3)]), // Malonylation
+    (1289, &[("C", 4), ("H", 6), ("O", 1)]), // Butyryl
+    (1363, &[("C", 4), ("H", 4), ("O", 1)]), // Crotonylation
+];
+
+/// Signed elemental composition of a modification by UNIMOD id, or `None` if not tabulated.
+pub fn atomic_composition(id: u32) -> Option<&'static [(&'static str, i32)]> {
+    MODIFICATION_COMPOSITION.iter().find(|&&(i, _)| i == id).map(|&(_, c)| c)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,6 +97,25 @@ mod tests {
         for m in BUILTIN {
             m.validate().unwrap_or_else(|e| panic!("{e}"));
         }
+    }
+
+    #[test]
+    fn compositions_cross_check_mass_table() {
+        use crate::elements::monoisotopic_mass;
+        let mut overlap = 0;
+        for &(id, comp) in MODIFICATION_COMPOSITION {
+            let mass: f64 = comp
+                .iter()
+                .map(|&(e, c)| monoisotopic_mass(e).expect("element") * c as f64)
+                .sum();
+            if let Some(tab) = crate::unimod::mass_delta(id) {
+                assert!((mass - tab).abs() < 1e-3, "UNIMOD:{id} composition {mass} vs table {tab}");
+                overlap += 1;
+            }
+        }
+        // 10 overlap the mass table (agree); the other 5 are the documented composition-only gap
+        assert_eq!(overlap, 10, "expected 10 of 15 compositions to overlap the mass table");
+        assert!(atomic_composition(21).is_some() && atomic_composition(9_999_999).is_none());
     }
 
     #[test]
