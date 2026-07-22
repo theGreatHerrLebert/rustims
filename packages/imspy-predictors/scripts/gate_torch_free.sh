@@ -52,6 +52,9 @@ if [ -n "$SIM_DIR" ]; then
   echo "   ok: sim install is torch-free"
   python -c "import imspy_simulation.timsim.simulator as s; assert callable(s.main); print('   ok: timsim entry point loads torch-free')"
   python -c "import imspy_simulation.timsim.jobs.simulate_fragment_intensities; print('   ok: Koina intensity job imports torch-free')"
+  # RUNTIME (not just import) path: the default config has use_gpu=True, whose GPU
+  # probe must degrade to CPU when torch is absent instead of crashing at startup.
+  python -c "from imspy_simulation.timsim.simulator import configure_gpu_memory; configure_gpu_memory(use_gpu=True); print('   ok: default GPU probe degrades torch-free')"
 else
   echo ">> (imspy-simulation not found as sibling — skipping end-to-end sim gate)"
 fi

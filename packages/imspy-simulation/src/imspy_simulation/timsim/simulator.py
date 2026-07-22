@@ -172,7 +172,19 @@ def configure_gpu_memory(memory_limit_gb: int = 4, use_gpu: bool = True) -> None
         logger.info("  GPU disabled via config, using CPU only")
         return
 
-    import torch
+    try:
+        import torch
+    except ImportError:
+        # torch is an optional extra (imspy-predictors[local]); without it there is
+        # no GPU path anyway. Degrade to CPU-only instead of crashing at startup, so
+        # a torch-free (e.g. Koina-only) simulation still runs under the default
+        # use_gpu=True config.
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        logger.info(
+            "  PyTorch not installed; GPU unavailable, using CPU only "
+            "(install imspy-predictors[local] for local GPU models)"
+        )
+        return
 
     if torch.cuda.is_available():
         num_gpus = torch.cuda.device_count()
