@@ -32,7 +32,11 @@ did not inherit mscore's choices).
 1. **Element monoisotopic masses** — mscore and timsim are *identical*. Adopt as-is.
 2. **Residue masses** — agree to ~1e-8 (mscore *computes* from element masses; timsim *hardcodes*
    residue literals). **Canonical: compute from elements** (single source of truth — a residue mass
-   can never drift from the element table it's built on). This is the mscore representation.
+   can never drift from the element table it's built on). **This paid off immediately: building
+   ms-chem surfaced an mscore bug** — mscore hard-codes selenocysteine `U = 168.053`, which is *not*
+   C3H5NOSe (off by ~17 Da). ms-chem computes the correct standard `150.95364` from elements. A
+   hard-coded literal can be wrong; a computed one cannot. (mscore's U gets fixed when it folds onto
+   ms-chem; selenocysteine is rare, so downstream impact is minimal but real.)
 3. **Isotopic abundances** — N and S differ (older IUPAC vs newer CIAAW); C/H/O identical.
    **DECISION (locked): adopt timsim-chem's newer CIAAW values** — ¹⁵N=0.00364, ³⁴S=0.0425 (+³⁶S).
    Cost: shifts legacy mscore/v1 isotope envelopes by ~1e-3/peak — accepted, and deliberate.
@@ -60,8 +64,11 @@ did not inherit mscore's choices).
       disagreeing; it disappears once ms-chem adopts one (CIAAW, decided). Confirms the abundance-table
       choice matters most for S/N-rich species.
 - [x] **Fragment ions** (Gate 4): b/y m/z ladders identical to 2.5e-6 across 8,700 peptides.
-- [ ] **Build `ms-chem`**: element/residue tables (compute-from-elements) + CIAAW abundances +
-      unified modification table + the composition↔mass cross-check; port mscore's formula parser.
+- [~] **Build `ms-chem`** — foundation DONE: crate skeleton, `elements` (full mono-mass table +
+      CHNOPSSe consts), `residue` (compute-from-elements, + selenocysteine superset), `mass` (CODATA
+      proton, water-from-elements). Parity gate green (mono mass vs mscore+timsim to 6e-9); surfaced
+      the mscore U bug. TODO: `isotope` (CIAAW convolution), `modification` (unified cross-checked
+      table), `fragment` (typed b/y), sum-formula parser.
 - [ ] **Migrate + fold**: point mscore and rustms at `ms-chem`, delete the two copies, keep the
       parity suite green (it becomes ms-chem's regression gate).
 

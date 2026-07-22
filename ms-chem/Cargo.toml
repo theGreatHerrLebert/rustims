@@ -1,0 +1,24 @@
+[package]
+name = "ms-chem"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.84"
+authors = ["David Teschner <davidteschner@googlemail.com>"]
+description = "Mass-spectrometry chemistry primitives: elements, residues, sum formulas, isotopes, modifications, and backbone fragments. The L0 leaf of the rustims federation — pure Rust, no PyO3."
+license = "MIT"
+repository = "https://github.com/theGreatHerrLebert/rustims"
+documentation = "https://docs.rs/ms-chem"
+keywords = ["mass-spectrometry", "proteomics", "chemistry", "isotopes", "unimod"]
+categories = ["science"]
+
+[lib]
+name = "ms_chem"
+path = "src/lib.rs"
+
+[dependencies]
+
+# Dev-only: differential parity against the two implementations ms-chem unifies, per
+# CHEM_PARITY.md. Not published deps — Cargo strips path-only dev-deps when packaging.
+[dev-dependencies]
+mscore = { path = "../mscore" }
+timsim-chem = { path = "../timsim-chem" }
