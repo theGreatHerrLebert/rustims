@@ -64,11 +64,15 @@ did not inherit mscore's choices).
       disagreeing; it disappears once ms-chem adopts one (CIAAW, decided). Confirms the abundance-table
       choice matters most for S/N-rich species.
 - [x] **Fragment ions** (Gate 4): b/y m/z ladders identical to 2.5e-6 across 8,700 peptides.
-- [~] **Build `ms-chem`** — foundation DONE: crate skeleton, `elements` (full mono-mass table +
-      CHNOPSSe consts), `residue` (compute-from-elements, + selenocysteine superset), `mass` (CODATA
-      proton, water-from-elements). Parity gate green (mono mass vs mscore+timsim to 6e-9); surfaced
-      the mscore U bug. TODO: `isotope` (CIAAW convolution), `modification` (unified cross-checked
-      table), `fragment` (typed b/y), sum-formula parser.
+- [x] **Build `ms-chem`** — CORE COMPLETE. Modules: `elements` (full table + CHNOPSSe consts, ⁸⁰Se
+      convention pinned), `residue` (compute-from-elements, + selenocysteine superset), `mass` (CODATA
+      proton), `isotope` (CIAAW convolution; Se deferred with a typed error), `formula` (sum-formula
+      parser), `modification` (unified `{id→(mass,composition)}` cross-checked table), `fragment`
+      (typed b/y). Every module has a parity gate vs mscore + timsim — full suite green: mono ≤6.1e-9,
+      isotope vs-timsim 2.98e-8 / vs-mscore 1.25e-3 (CIAAW budget), fragment ≤2.5e-6, all 6 mods
+      cross-check + GG(121) coverage-gap fixed. Surfaced + documented the mscore selenocysteine bug.
+      **Follow-ups** (not blockers): full UNIMOD mass table for search/annotation (mass-only lookup,
+      bulk port); composition-delta losses (negative counts, e.g. pyroglutamate); Se isotope envelope.
 - [ ] **Migrate + fold**: point mscore and rustms at `ms-chem`, delete the two copies, keep the
       parity suite green (it becomes ms-chem's regression gate).
 
