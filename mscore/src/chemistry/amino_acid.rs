@@ -85,7 +85,11 @@ pub fn amino_acid_masses() -> HashMap<&'static str, f64> {
     map.insert("W", 186.079313);
     map.insert("Y", 163.063329);
     map.insert("V", 99.068414);
-    map.insert("U", 168.053);
+    // R1 fold: source selenocysteine from ms-chem (computed from elements). The legacy hard-coded
+    // U = 168.053 was wrong (not C3H5NOSe, off ~17 Da) — see CHEM_PARITY.md. ms-chem computes the
+    // correct 150.95364. The 20 standard residues above still match ms-chem to <1e-5 (locked by the
+    // ms_chem_residue_sync parity test); folding them fully is a staged follow-up.
+    map.insert("U", ms_chem::residue::residue_monoisotopic_mass(b'U').expect("U in ms-chem"));
     map
 }
 

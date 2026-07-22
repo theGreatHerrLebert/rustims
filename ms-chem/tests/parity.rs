@@ -205,21 +205,20 @@ fn modification_catalog_matches_mscore_and_is_coverage_consistent() {
 }
 
 #[test]
-fn selenocysteine_correct_and_surfaces_mscore_bug() {
+fn selenocysteine_correct_and_mscore_bug_fixed_by_fold() {
     // ms-chem is a superset: it accepts U (selenocysteine), which timsim's residue table lacked.
     // Computed from elements as C3H5NOSe (⁸⁰Se), the residue mass is the standard 150.95364 Da.
     let u_res = ms_chem::residue_monoisotopic_mass(b'U').unwrap();
     assert!((u_res - 150.95364).abs() < 1e-4, "ms-chem U residue={u_res}");
 
-    // FINDING (R1, surfaced by the build): mscore hard-codes U = 168.053, which is NOT C3H5NOSe —
-    // it disagrees with the element-derived value by ~17 Da and is simply wrong. This is exactly
-    // what "compute residue masses from elements" protects against: a hard-coded literal can be
-    // incorrect; a computed one cannot drift from the element table. ms-chem adopts the correct
-    // value; mscore's U is a bug to fix when it folds onto ms-chem.
-    use mscore::data::peptide::PeptideSequence;
-    let mscore_u = PeptideSequence::new("U".to_string(), None).mono_isotopic_mass() - ms_chem::WATER;
+    // The build surfaced that mscore hard-coded U = 168.053 (not C3H5NOSe, off ~17 Da). The R1 fold
+    // delegates mscore's U to ms-chem, so it is now CORRECT: mscore's residue mass for U agrees with
+    // ms-chem. (This is the compute-from-elements principle closing the loop — the bug the fold
+    // surfaced is the bug the fold fixes.)
+    use mscore::chemistry::amino_acid::amino_acid_masses;
+    let mscore_u = amino_acid_masses()["U"];
     assert!(
-        (mscore_u - 168.053).abs() < 1e-2 && (u_res - mscore_u).abs() > 15.0,
-        "expected the documented mscore U discrepancy: mscore={mscore_u}, ms-chem={u_res}"
+        (mscore_u - u_res).abs() < 1e-9,
+        "post-fold mscore U should match ms-chem: mscore={mscore_u}, ms-chem={u_res}"
     );
 }

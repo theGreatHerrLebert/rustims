@@ -17,6 +17,10 @@ name = "mscore"
 path = "src/lib.rs"
 
 [dependencies]
+# ms-chem — the L0 chemistry leaf. The R1 fold: mscore sources chemistry from ms-chem
+# (single source of truth) instead of its own copies. Path+version so R2 can publish
+# ms-chem first, then mscore against it.
+ms-chem = { path = "../ms-chem", version = "0.1.0" }
 # Statistical functions
 statrs = "0.18.0"
 # Iterator utilities

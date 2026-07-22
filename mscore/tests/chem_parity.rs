@@ -99,6 +99,34 @@ fn monoisotopic_mass_parity() {
     );
 }
 
+/// R1 fold — consistency lock. Once mscore sources chemistry from ms-chem, mscore's remaining tables
+/// must stay in sync with ms-chem (the single source of truth), or the fold has silently drifted.
+#[test]
+fn ms_chem_residue_sync() {
+    use mscore::chemistry::amino_acid::amino_acid_masses;
+    use mscore::chemistry::elements::atomic_weights_mono_isotopic;
+
+    // element masses: mscore and ms-chem must be identical (ms-chem was ported from mscore)
+    for (sym, &m) in atomic_weights_mono_isotopic().iter() {
+        let x = ms_chem::elements::monoisotopic_mass(sym)
+            .unwrap_or_else(|| panic!("ms-chem missing element {sym}"));
+        assert!((m - x).abs() < 1e-9, "element {sym}: mscore {m} vs ms-chem {x}");
+    }
+
+    // residue masses: the 20 standard agree to <1e-5 (mscore's 6-decimal hard-codes vs ms-chem's
+    // element-computed); U is now delegated to ms-chem, so it matches exactly (the bug fix).
+    let aa = amino_acid_masses();
+    for (sym, &m) in aa.iter() {
+        let b = sym.as_bytes()[0];
+        let x = ms_chem::residue::residue_monoisotopic_mass(b)
+            .unwrap_or_else(|| panic!("ms-chem missing residue {sym}"));
+        let tol = if sym == &"U" { 1e-9 } else { 1e-5 };
+        assert!((m - x).abs() < tol, "residue {sym}: mscore {m} vs ms-chem {x}");
+    }
+    // the fix landed: mscore's U is now the correct ~150.954, not the legacy 168.053
+    assert!((aa["U"] - 150.95364).abs() < 1e-4, "mscore U should be fixed: {}", aa["U"]);
+}
+
 /// Gate 5 — property-based differential. Instead of a fixed corpus, generate a wide, diverse input
 /// space (deterministic LCG: uniform / homopolymer / alternating / heteroatom-biased sequences,
 /// lengths 1..60) and assert INVARIANTS that must hold regardless of input:

@@ -2494,6 +2494,7 @@ version = "0.4.1"
 dependencies = [
  "bincode 2.0.1",
  "itertools 0.14.0",
+ "ms-chem",
  "nalgebra",
  "ordered-float 4.6.0",
  "rand",
