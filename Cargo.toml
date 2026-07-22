@@ -21,7 +21,12 @@ panic = "abort"
 # R2 cutover: ms-chem + mscore now live in github.com/theGreatHerrLebert/mscore and are
 # published on crates.io. For local dev, patch them back to the sibling foundation checkout.
 [patch.crates-io]
+# Foundation (github.com/theGreatHerrLebert/mscore) — published; patched to the sibling checkout for dev.
 ms-chem = { path = "../../mscore/ms-chem" }
 mscore = { path = "../../mscore/mscore" }
-# ms-io 0.2.0 is unpublished during the R4 bootstrap, so every consumer deps it by direct path
-# (not version+patch). Re-add here once ms-io 0.2.0 is published (stage 3) and flip consumers to `= "0.2"`.
+ms-io = { path = "../../mscore/ms-io" }
+# timsim family (github.com/theGreatHerrLebert/timsim) — published; patched to the sibling checkout for dev.
+timsim-types = { path = "../../timsim/timsim-types" }
+timsim-schema = { path = "../../timsim/timsim-schema" }
+timsim-chem = { path = "../../timsim/timsim-chem" }
+timsim-core = { path = "../../timsim/timsim-core" }

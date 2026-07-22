@@ -28,8 +28,8 @@ name = "timsim-yield"
 path = "src/bin/yield.rs"
 
 [dependencies]
-timsim-chem = { path = "../../../timsim/timsim-chem" }
-timsim-schema = { path = "../../../timsim/timsim-schema" }
+timsim-chem = "0.1.0"
+timsim-schema = "0.1.0"
 arrow = "56"
 parquet = "56"
 clap = { version = "4", features = ["derive"] }
@@ -41,9 +41,9 @@ rayon = "1.10"
 # The real Bruker TDF machinery: the per-frame block encoder (for the throughput bench) and the
 # `.d` writer + index converters (for `timsim-render`). Optional so the other lightweight tools don't
 # pull ms-io (polars + bundled SQLite). Direct path during R4 bootstrap (0.2.0 not yet published).
-ms-io = { path = "../../../mscore/ms-io", optional = true }
+ms-io = { version = "0.2.0", optional = true }
 # The v2 sim engine — only the Thermo `.raw` writer seam (render_thermo bin) uses it. Optional.
-timsim-core = { path = "../../../timsim/timsim-core", optional = true }
+timsim-core = { version = "0.1.0", optional = true }
 # The peptide-ion spectrum machinery (precursor + fragment isotopic spectra) the render uses. Optional,
 # alongside ms-io, so the lightweight tools don't pull it.
 mscore = { version = "0.5.0", optional = true }

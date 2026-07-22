@@ -14,8 +14,8 @@ numpy = "0.29.0"
 mscore = { version = "0.5.0" }
 # ms-io for the Bruker TDF data/cluster APIs; timsim-core for the v2 sim engine (projector, writers,
 # scheme adapters). ms-io is a direct path dep during the R4 bootstrap (0.2.0 not yet published).
-ms-io = { path = "../../../mscore/ms-io" }
-timsim-core = { path = "../../../timsim/timsim-core" }
+ms-io = "0.2.0"
+timsim-core = "0.1.0"
 sciex-io = { path = "../sciex-io", optional = true }
 serde = "1.0.219"
 serde_json = "1.0.140"
