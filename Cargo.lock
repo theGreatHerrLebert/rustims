@@ -2058,15 +2058,6 @@ checksum = "a6cb138bb79a146c1bd460005623e142ef0181e3d0219cb493e02f7d08a35695"
 
 [[package]]
 name = "itertools"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
-dependencies = [
- "either",
-]
-
-[[package]]
-name = "itertools"
 version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
@@ -2489,7 +2480,7 @@ name = "mscore"
 version = "0.5.0"
 dependencies = [
  "bincode 2.0.1",
- "itertools 0.14.0",
+ "itertools",
  "ms-chem",
  "nalgebra",
  "ordered-float 4.6.0",
@@ -4163,18 +4154,6 @@ dependencies = [
  "libc",
  "linux-raw-sys 0.12.1",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "rustms"
-version = "0.1.0"
-dependencies = [
- "bincode 2.0.1",
- "itertools 0.12.1",
- "rayon",
- "regex",
- "serde",
- "serde_json",
 ]
 
 [[package]]

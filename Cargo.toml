@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "rustdf",
-    "rustms",
     "timsim-chem",
     "timsim-schema",
     "timsim-cli",
