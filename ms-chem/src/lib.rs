@@ -28,10 +28,12 @@ pub mod isotope;
 pub mod mass;
 pub mod modification;
 pub mod residue;
+pub mod unimod;
 
 pub use formula::FormulaError;
 pub use fragment::{fragment_ions, Fragment, IonType};
 pub use isotope::{envelope, EnvelopeError};
 pub use mass::{monoisotopic, mz, UnknownResidue, PROTON, WATER};
 pub use modification::{by_id as modification_by_id, Modification, BUILTIN as BUILTIN_MODIFICATIONS};
+pub use unimod::mass_delta as unimod_mass_delta;
 pub use residue::{peptide_composition, residue_composition, residue_monoisotopic_mass, Composition};
