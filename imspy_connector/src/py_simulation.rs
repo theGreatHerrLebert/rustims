@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 use mscore::timstof::collision::TimsTofCollisionEnergy;
 use pyo3::prelude::*;
-use ms_io::sim::containers::{IsotopeTransmissionConfig, IsotopeTransmissionMode};
-use ms_io::sim::dda::TimsTofSyntheticsFrameBuilderDDA;
-use ms_io::sim::dia::TimsTofSyntheticsFrameBuilderDIA;
-use ms_io::sim::lazy_builder::{TimsTofLazyFrameBuilderDIA, TimsTofLazyFrameBuilderDDA};
-use ms_io::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
-use ms_io::sim::handle::TimsTofSyntheticsDataHandle;
-use ms_io::sim::projector::{DistributionSource, ProjectionMode, ProjectionParams};
+use timsim_core::containers::{IsotopeTransmissionConfig, IsotopeTransmissionMode};
+use timsim_core::dda::TimsTofSyntheticsFrameBuilderDDA;
+use timsim_core::dia::TimsTofSyntheticsFrameBuilderDIA;
+use timsim_core::lazy_builder::{TimsTofLazyFrameBuilderDIA, TimsTofLazyFrameBuilderDDA};
+use timsim_core::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
+use timsim_core::handle::TimsTofSyntheticsDataHandle;
+use timsim_core::projector::{DistributionSource, ProjectionMode, ProjectionParams};
 use crate::py_annotation::PyTimsFrameAnnotated;
 
 /// Build the P4 `DistributionSource` for a builder: `None`/`"columns"`/`"off"` →
@@ -634,7 +634,7 @@ pub fn write_spectral_library_tsv(
     use pyo3::exceptions::PyValueError;
     use std::path::Path;
     py.detach(|| {
-        ms_io::sim::library::build_spectral_library_tsv(
+        timsim_core::library::build_spectral_library_tsv(
             Path::new(out_path),
             &modified_sequences,
             &modpep_diann,

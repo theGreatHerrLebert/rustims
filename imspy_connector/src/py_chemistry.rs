@@ -51,18 +51,18 @@ pub fn find_unimod_annotations(sequence: &str) -> (String, Vec<f64>) {
 #[pyfunction]
 #[pyo3(signature = (sequence, charge, intensities, normalize, half_charge_one, peptide_id=None))]
 pub fn sequence_to_all_ions_ims(sequence: &str, charge: i32, intensities: Vec<f64>, normalize: bool, half_charge_one: bool, peptide_id: Option<i32>) -> String {
-    ms_io::sim::utility::sequence_to_all_ions(sequence, charge, &intensities, normalize, half_charge_one, peptide_id)
+    timsim_core::utility::sequence_to_all_ions(sequence, charge, &intensities, normalize, half_charge_one, peptide_id)
 }
 
 #[pyfunction]
 pub fn reshape_prosit_array(flat_array: Vec<f64>) -> Vec<Vec<Vec<f64>>> {
-    ms_io::sim::utility::reshape_prosit_array(flat_array)
+    timsim_core::utility::reshape_prosit_array(flat_array)
 }
 
 #[pyfunction]
 pub fn sequence_to_all_ions_par(sequences: Vec<String>, charges: Vec<i32>, intensities: Vec<Vec<f64>>, normalize: bool, half_charge_one: bool, num_threads: usize, peptide_ids: Vec<Option<i32>>) -> Vec<String> {
     let seq_refs: Vec<&str> = sequences.iter().map(|s| s.as_str()).collect();
-    ms_io::sim::utility::sequence_to_all_ions_par(seq_refs, charges, intensities, normalize, half_charge_one, num_threads, peptide_ids)
+    timsim_core::utility::sequence_to_all_ions_par(seq_refs, charges, intensities, normalize, half_charge_one, num_threads, peptide_ids)
 }
 
 #[pyfunction]

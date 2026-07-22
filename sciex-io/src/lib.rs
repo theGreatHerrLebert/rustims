@@ -2,7 +2,7 @@
 //!
 //! This is the satellite that keeps SCIEX support working locally + in tests while the published
 //! `ms-io` crate stays SCIEX-free. It reads a real ZenoTOF `.wiff` method (via `sciexwiff`) and
-//! builds an `ms_io::sim::scheme::AcquisitionScheme` from it — using only ms-io's *public* API, so
+//! builds an `timsim_types::AcquisitionScheme` from it — using only ms-io's *public* API, so
 //! ms-io never needs to know about SCIEX.
 //!
 //! It is deliberately NOT published to crates.io (`publish = false`): it carries a private git
@@ -13,7 +13,7 @@
 use std::io;
 use std::path::Path;
 
-use ms_io::sim::scheme::{
+use timsim_types::{
     AcquisitionEvent, AcquisitionScheme, Analyzer, CollisionEnergyPolicy, DataMode, DiaGeometry,
     DiaMs2Frame, DiaWindow, InstrumentKind, IsolationWindow, Ms1Event, Provenance, RepeatPolicy,
     SchemeSource, SCHEME_VERSION,

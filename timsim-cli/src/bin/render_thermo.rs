@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use mscore::timstof::quadrupole::WindowTransmission;
-use ms_io::sim::acquisition::{AcquisitionWriter, ScanDescriptor, ThermoRawWriter};
+use timsim_core::acquisition::{AcquisitionWriter, ScanDescriptor, ThermoRawWriter};
 use timsim_schema::tables::ion_spectra as SP;
 use timsim_schema::tables::{peptide_rt as RT, precursors as PRE};
 
@@ -161,7 +161,7 @@ fn main() -> Result<()> {
     let manifest = writer.manifest().to_vec();
     // Thermo stores scan retention time in MINUTES; convert to seconds so --sigma-seconds is literal and
     // the answer-key rt_seconds is in seconds.
-    let schedule: Vec<(f64, Option<ms_io::sim::acquisition::IsolationWindow>)> =
+    let schedule: Vec<(f64, Option<timsim_core::acquisition::IsolationWindow>)> =
         writer.schedule().into_iter().map(|(t, iso)| (t * 60.0, iso)).collect();
     let (ms1_cap, ms2_cap) = writer.capacity();
     // The active-set sweep requires slot RTs finite and nondecreasing in manifest (acquisition) order.

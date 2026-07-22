@@ -178,7 +178,18 @@ so `ms-io` only ever sheds code:
   modules (`crate::scheme::X` via re-export) stayed byte-identical; only `bruker_group_layout` became a
   private free fn. Consumer cost (stage 4): `use timsim_core::scheme::{SchemeIo, SchemeThermoIo};`. Leaf
   zero-dep ✓, 55/55 tests pass ✓. sciex-io/connector/cli/viewer still broken → stage 4.
-- **Next: Stage 3** (publish in dep order) then **Stage 4** (rewire consumers).
+- **Stage 4 ✅** (rewire consumers — done BEFORE publish, per David: validate the API before committing
+  it to crates.io). Blanket `ms_io::sim::` → `timsim_core::` (connector's py_acquisition/py_chemistry/
+  py_simulation, cli's render_thermo); `ms_io::sim::scheme::` → `timsim_types::` in sciex-io (now deps
+  **timsim-types + sciexwiff only — no ms-io, Arrow-free R9 seam** ✓). Added `use timsim_core::scheme::
+  {SchemeIo, SchemeThermoIo};` to py_acquisition for the coupled calls. Cargo: `ms-io` → direct path
+  (`../../../mscore/ms-io`, nested-crate level) everywhere + removed from `[patch.crates-io]` (0.2.0
+  unpublished); added `timsim-core` to connector + cli; connector `thermo`/`mzml` features forward to
+  `timsim-core`. **VERIFIED GREEN: full workspace build; connector wheel builds (CPython 3.11); parity
+  gate 120+6+5; timsim-core 55/55; cli default+thermo; sciex-io/imsjl/viewer.** imsjl/viewer were
+  data-only (Cargo bump only).
+- **Next: Stage 3** — publish in dep order (`timsim-types` → `timsim-core` → `ms-io 0.2.0`), needs D2
+  (repo home) + David's per-crate go. The API is now validated end-to-end, so publishing is low-risk.
 
 ## Staged execution plan
 

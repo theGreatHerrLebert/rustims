@@ -25,4 +25,5 @@ panic = "abort"
 [patch.crates-io]
 ms-chem = { path = "../../mscore/ms-chem" }
 mscore = { path = "../../mscore/mscore" }
-ms-io = { path = "../../mscore/ms-io" }
+# ms-io 0.2.0 is unpublished during the R4 bootstrap, so every consumer deps it by direct path
+# (not version+patch). Re-add here once ms-io 0.2.0 is published (stage 3) and flip consumers to `= "0.2"`.
