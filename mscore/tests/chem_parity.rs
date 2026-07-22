@@ -98,3 +98,100 @@ fn monoisotopic_mass_parity() {
         divergences, rel_tol, max_rel, worst
     );
 }
+
+/// Gate 2 — isotope envelope parity. mscore convolves *actual isotope masses* from its
+/// `isotopic_abundance()` table (fine structure, merged at 1e-3 Da); timsim-chem convolves
+/// nominal neutron-count abundances (`AB_*`) to `depth` peaks. We bin mscore's peaks to
+/// nominal isotope index, normalise both envelopes to sum=1, and compare peak-by-peak.
+///
+/// KNOWN divergence source (documented, not a bug): the two abundance tables differ for
+/// N ([0.99632,0.00368] vs [0.99636,0.00364]) and S ([0.9493,0.0076,0.0429] vs
+/// [0.9499,0.0075,0.0425,_,0.0001]) — different IUPAC/CIAAW revisions. C/H/O are identical.
+/// So envelopes are expected to agree to ~1e-3 (table difference), not to float precision.
+/// The canonical `ms-chem` must pick ONE abundance table; this test measures the stakes.
+#[test]
+fn isotope_envelope_parity() {
+    use mscore::data::peptide::PeptideSequence;
+    use std::collections::HashMap;
+
+    const DEPTH: usize = 6;
+    let corpus = corpus();
+    let mut max_peak_diff = 0.0f64;
+    let mut worst = String::new();
+    let mut worst_env_mscore = vec![];
+    let mut worst_env_timsim = vec![];
+    // histogram of the divergence to show it's a smooth table-difference, not outliers
+    let mut over_1e_3 = 0usize;
+
+    for seq in &corpus {
+        // mscore: composition -> fine-structure distribution -> nominal bins
+        let comp: HashMap<String, i32> = PeptideSequence::new(seq.clone(), None)
+            .atomic_composition()
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        let dist =
+            mscore::algorithm::isotope::generate_isotope_distribution(&comp, 1e-3, 1e-9, 200);
+        let mono = dist.iter().map(|(m, _)| *m).fold(f64::INFINITY, f64::min);
+        let mut bins = vec![0.0f64; DEPTH];
+        for (m, a) in &dist {
+            let k = (m - mono).round() as usize;
+            if k < DEPTH {
+                bins[k] += *a;
+            }
+        }
+        let s: f64 = bins.iter().sum();
+        if s > 0.0 {
+            for b in &mut bins {
+                *b /= s;
+            }
+        }
+
+        // timsim: nominal envelope, already sum=1 over DEPTH
+        let env: Vec<f64> = timsim_chem::isotope::envelope(seq, DEPTH)
+            .expect("valid residue")
+            .into_iter()
+            .map(|x| x as f64)
+            .collect();
+
+        let d = bins
+            .iter()
+            .zip(&env)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max);
+        if d > 1e-3 {
+            over_1e_3 += 1;
+        }
+        if d > max_peak_diff {
+            max_peak_diff = d;
+            worst = seq.clone();
+            worst_env_mscore = bins.clone();
+            worst_env_timsim = env.clone();
+        }
+    }
+
+    eprintln!(
+        "[parity/isotope] corpus={} depth={}  max|Δ peak abundance|={:.3e}  \
+         peptides(>1e-3)={}  worst={}",
+        corpus.len(),
+        DEPTH,
+        max_peak_diff,
+        over_1e_3,
+        worst
+    );
+    eprintln!("  worst mscore envelope: {:?}", fmt(&worst_env_mscore));
+    eprintln!("  worst timsim envelope: {:?}", fmt(&worst_env_timsim));
+
+    // Bound reflects the KNOWN N/S abundance-table difference (~1e-3), not float precision.
+    // If this ever blows past ~5e-3, something beyond the abundance tables has diverged.
+    assert!(
+        max_peak_diff < 5e-3,
+        "isotope envelope divergence {:.3e} exceeds the abundance-table budget on {:?}",
+        max_peak_diff,
+        worst
+    );
+}
+
+fn fmt(v: &[f64]) -> Vec<String> {
+    v.iter().map(|x| format!("{:.5}", x)).collect()
+}
