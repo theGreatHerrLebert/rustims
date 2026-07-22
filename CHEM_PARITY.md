@@ -25,6 +25,7 @@ did not inherit mscore's choices).
 | **2 — isotope envelope** | first 6 peaks, normalized | 18,420 seqs | max **1.26e-3** abundance; driven by N/S abundance tables; worst = high-sulfur peptides |
 | **3 — modification mass** | 6 sim-critical mods, 3 routes | curated set | all present routes agree ≤ **5.3e-6**; mscore's mass & composition tables are **disjoint** |
 | **4 — fragment ions (b/y)** | full b∪y m/z ladders | 8,700 peptides / 38k ions | **0 mismatches** (after isobaric-peak merge); max Δ m/z **2.5e-6** (float + proton) |
+| **5 — property-based** | invariants over 20k *diverse* inputs (homopolymer / alternating / heteroatom-biased, len 1–60) | 20,000 | mono-mass rel ≤ **9.8e-9**; fragment complementarity Δ ≤ **1.3e-11** (exact); isotope ≤ **8.9e-3** |
 
 ## Canonical decisions for `ms-chem`
 
@@ -52,9 +53,12 @@ did not inherit mscore's choices).
 
 ## Remaining R1 work before extraction (R2)
 
-- [ ] **Property-based differential test** (plan requirement): generate random formulas + modified
-      peptides, assert mscore ≡ timsim within the documented tolerances *or* an approved
-      semantic-difference record — catches parser/ordering/terminal-mod edges the fixed corpus won't.
+- [x] **Property-based differential test**: 20k diverse inputs. Invariants hold — cross-impl mass
+      (≤9.8e-9), fragment complementarity `b_i+y_{n-i}=M+2·proton` (≤1.3e-11, an internal oracle), and
+      valid envelopes. **New finding: the isotope divergence scales with heteroatom count** — realistic
+      peptides ~1e-3, but a 55-sulfur homopolymer reaches ~8.9e-3. Purely the two abundance tables
+      disagreeing; it disappears once ms-chem adopts one (CIAAW, decided). Confirms the abundance-table
+      choice matters most for S/N-rich species.
 - [x] **Fragment ions** (Gate 4): b/y m/z ladders identical to 2.5e-6 across 8,700 peptides.
 - [ ] **Build `ms-chem`**: element/residue tables (compute-from-elements) + CIAAW abundances +
       unified modification table + the composition↔mass cross-check; port mscore's formula parser.

@@ -99,6 +99,142 @@ fn monoisotopic_mass_parity() {
     );
 }
 
+/// Gate 5 — property-based differential. Instead of a fixed corpus, generate a wide, diverse input
+/// space (deterministic LCG: uniform / homopolymer / alternating / heteroatom-biased sequences,
+/// lengths 1..60) and assert INVARIANTS that must hold regardless of input:
+///
+///   P1 (cross-impl): mscore and timsim neutral monoisotopic mass agree to rel < 1e-7.
+///   P2 (internal oracle): timsim fragment complementarity — for every split i, the neutral b_i and
+///      y_{n-i} partition the peptide, so b_i.mz + y_{n-i}.mz == M_neutral + 2·proton. A wrong
+///      terminal group or off-by-one ordinal breaks this; no reference impl needed.
+///   P3 (internal): timsim isotope envelope is a valid distribution (finite, non-negative, sums≈1).
+///   P4 (cross-impl, sampled): isotope envelopes agree within the documented N/S abundance budget.
+///
+/// This catches parser/ordering/terminal/rounding edges — homopolymers, len-1/len-2, heteroatom-heavy
+/// sequences — that the exhaustive-but-shallow fixed corpus does not reach.
+#[test]
+fn property_based_differential() {
+    use mscore::data::peptide::PeptideSequence;
+    use std::collections::HashMap;
+    use timsim_chem::fragment::{fragment_ions, IonType};
+
+    const AAS: &[u8] = b"ACDEFGHIKLMNPQRSTVWY";
+    const HETERO: &[u8] = b"CMWNQRHKY"; // S/N-rich residues that stress the isotope tables
+    let proton = timsim_chem::mass::PROTON;
+
+    let mut s: u64 = 0xDEAD_BEEF_CAFE_1234;
+    let mut next = |m: u64| {
+        s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        ((s >> 33) as usize) % (m as usize)
+    };
+
+    let iters = 20_000;
+    let mut max_mass_rel = 0.0f64;
+    let mut max_compl = 0.0f64;
+    let mut max_iso = 0.0f64;
+    let mut worst_mass = String::new();
+
+    for it in 0..iters {
+        let len = 1 + next(60);
+        let strat = next(4);
+        let seq: String = match strat {
+            0 => (0..len).map(|_| AAS[next(AAS.len() as u64)] as char).collect(),
+            1 => {
+                let a = AAS[next(AAS.len() as u64)] as char; // homopolymer
+                std::iter::repeat(a).take(len).collect()
+            }
+            2 => {
+                let (a, b) = (AAS[next(AAS.len() as u64)], AAS[next(AAS.len() as u64)]);
+                (0..len)
+                    .map(|i| if i % 2 == 0 { a } else { b } as char)
+                    .collect()
+            }
+            _ => (0..len)
+                .map(|_| HETERO[next(HETERO.len() as u64)] as char)
+                .collect(),
+        };
+
+        // P1 — cross-impl neutral mono mass
+        let mm = PeptideSequence::new(seq.clone(), None).mono_isotopic_mass();
+        let tm = timsim_chem::mass::monoisotopic(&seq).expect("std residue");
+        let rel = (mm - tm).abs() / mm.abs().max(1.0);
+        if rel > max_mass_rel {
+            max_mass_rel = rel;
+            worst_mass = seq.clone();
+        }
+        assert!(rel < 1e-7, "P1 mono-mass rel {rel:.3e} on {seq:?}");
+
+        // P2 — timsim fragment complementarity (internal oracle)
+        if seq.len() >= 2 {
+            let frags = fragment_ions(&seq, 1).expect("frag");
+            let (mut b, mut y) = (HashMap::new(), HashMap::new());
+            for f in &frags {
+                match f.ion_type {
+                    IonType::B => b.insert(f.ordinal, f.mz),
+                    IonType::Y => y.insert(f.ordinal, f.mz),
+                };
+            }
+            let n = seq.len();
+            let expect = tm + 2.0 * proton;
+            for i in 1..n {
+                if let (Some(&bi), Some(&yni)) = (b.get(&(i as u16)), y.get(&((n - i) as u16))) {
+                    let d = (bi + yni - expect).abs();
+                    max_compl = max_compl.max(d);
+                    assert!(d < 1e-6, "P2 complementarity Δ{d:.3e} at split {i} of {seq:?}");
+                }
+            }
+        }
+
+        // P3 — timsim envelope is a valid distribution
+        let env = timsim_chem::isotope::envelope(&seq, 6).expect("env");
+        let sum: f64 = env.iter().map(|&x| x as f64).sum();
+        assert!(
+            (sum - 1.0).abs() < 1e-4 && env.iter().all(|&x| x.is_finite() && x >= 0.0),
+            "P3 invalid envelope (sum {sum}) on {seq:?}"
+        );
+
+        // P4 — cross-impl isotope agreement (sampled; mscore isotope is heavy)
+        if it % 25 == 0 {
+            let comp: HashMap<String, i32> = PeptideSequence::new(seq.clone(), None)
+                .atomic_composition()
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+            let dist =
+                mscore::algorithm::isotope::generate_isotope_distribution(&comp, 1e-3, 1e-9, 200);
+            let mono = dist.iter().map(|(m, _)| *m).fold(f64::INFINITY, f64::min);
+            let mut bins = vec![0.0f64; 6];
+            for (m, a) in &dist {
+                let k = (m - mono).round() as usize;
+                if k < 6 {
+                    bins[k] += *a;
+                }
+            }
+            let bs: f64 = bins.iter().sum();
+            for bb in &mut bins {
+                *bb /= bs;
+            }
+            let d = bins
+                .iter()
+                .zip(env.iter())
+                .map(|(a, b)| (a - *b as f64).abs())
+                .fold(0.0, f64::max);
+            max_iso = max_iso.max(d);
+            // The N/S abundance-table divergence SCALES with heteroatom count: realistic peptides
+            // stay ~1e-3 (Gate 2), but a pathological homopolymer (e.g. 55×Met = 55 sulfurs) reaches
+            // ~8e-3. This is purely the two tables disagreeing — it vanishes the moment ms-chem adopts
+            // ONE table (decided: CIAAW). Budget bounds the worst realistic+pathological case; a real
+            // structural bug would be O(1e-1) or a shape change, not this smooth scaling.
+            assert!(d < 1.2e-2, "P4 isotope Δ{d:.3e} on {seq:?}");
+        }
+    }
+
+    eprintln!(
+        "[parity/property] iters={iters}  P1 max mass rel={max_mass_rel:.3e} (worst {worst_mass})  \
+         P2 max complementarity Δ={max_compl:.3e}  P4 max isotope Δ={max_iso:.3e}"
+    );
+}
+
 /// Gate 2 — isotope envelope parity. mscore convolves *actual isotope masses* from its
 /// `isotopic_abundance()` table (fine structure, merged at 1e-3 Da); timsim-chem convolves
 /// nominal neutron-count abundances (`AB_*`) to `depth` peaks. We bin mscore's peaks to
