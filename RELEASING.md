@@ -79,20 +79,28 @@ boundary violations *before* a split can hide them:
   (`grep` its manifests). Enforces principle #2 as the crates split.
 - **semver-check** — `cargo-semver-checks` on published crates to catch accidental API breaks.
 
-## 8. Decisions still needed (blockers to finishing R0)
+## 8. Decisions — resolved
 
-- [ ] **Commit `Cargo.lock`?** Recommended yes (wheel-producing repo). Removes it from `.gitignore`.
-- [ ] **Default registry** — crates.io vs a private registry, decided per crate (§6). Gates the
-      publish workflow and credentials.
-- [ ] **`cargo-semver-checks` + minimal-versions** — adopt in CI (adds ~1 job each).
+- [x] **Commit `Cargo.lock`** — yes (wheel-producing repo). Done; removed from `.gitignore`.
+- [x] **Default registry = crates.io** for the MIT primitives (mscore/ms-chem/ms-io/timsim-*). The
+      vendor readers' final target + credentials are confirmed at publish time (R2/R3): both are
+      known-permissive pure-Rust, so neither is *blocked* from crates.io, but `sciexwiff` needs a
+      license added first and `thermorawfile` carries an Apache NOTICE (ECOSYSTEM_SPLIT R3/R8).
+      No registry credentials are needed until the first actual publish (R2).
+- [x] **`cargo-semver-checks` + `minimal-versions`** — adopted in CI as informational legs (§7),
+      graduating to hard gates once green.
 
 ## R0 status
 
 - [x] MSRV consistent at 1.84 across publishable crates.
 - [x] Internal deps carry `path` + `version` (publish-ready), verified.
 - [x] This policy documented.
-- [ ] Cargo.lock committed (pending §8 decision).
-- [ ] CI matrix (§7) implemented.
-- [ ] Registry + credentials decided.
+- [x] `Cargo.lock` committed (reproducibility anchor for the wheel + CI `locked` leg).
+- [x] CI matrix (§7) implemented — `locked` + `pyclass-guard` are hard gates (verified building
+      locally); MSRV / latest-compatible / minimal-versions / semver-checks are informational until
+      green; vendor feature combos deferred to R3.
+- [x] Registry default decided (crates.io); credentials deferred to first publish (R2).
 
-Once the boxes above are checked, R1 (`ms-chem` parity project) may begin.
+**R0 is complete** for the "lightweight start" the plan calls for. Remaining maturation (coordinated
+release ceremony, changelog automation, graduating the informational CI legs, vendor feature combos)
+happens *after* the first crates ship. **R1 (`ms-chem` parity project) may now begin.**

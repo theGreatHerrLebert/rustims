@@ -9,30 +9,76 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# R0 CI matrix (see RELEASING.md §7). Legs verified buildable today are hard gates;
+# legs that need tuning (MSRV toolchain, minimal-versions, semver-checks on published
+# crates, vendor feature combos) start informational and graduate to hard gates once green.
+
 jobs:
-  build:
-
+  # --- hard gate: the committed lockfile builds and all tests pass -------------
+  locked:
+    name: locked build + test (stable)
     runs-on: ubuntu-latest
-
     steps:
-    - uses: actions/checkout@v4
-    - name: Build mscore
-      working-directory: ./mscore
-      run: cargo build --verbose
-    - name: Run tests mscore
-      working-directory: ./mscore
-      run: cargo test --verbose
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --locked --verbose
+      - run: cargo test  --workspace --locked --verbose
 
-    - name: Build rustdf
-      working-directory: ./rustdf
-      run: cargo build --verbose
-    - name: Run tests rustdf
-      working-directory: ./rustdf
-      run: cargo test --verbose
+  # --- hard gate: only the binding crate may carry pyo3 (ECOSYSTEM_SPLIT principle #2) ---
+  pyclass-guard:
+    name: pyclass ownership guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: no pyo3 outside imspy_connector
+        run: |
+          offenders=$(grep -rl 'pyo3' --include=Cargo.toml . | grep -v '/imspy_connector/' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error::pyo3 found in a crate other than imspy_connector:"; echo "$offenders"
+            exit 1
+          fi
+          echo "ok: pyo3 confined to imspy_connector"
 
-    - name: Build rustms
-      working-directory: ./rustms
-      run: cargo build --verbose
-    - name: Run tests rustms
-      working-directory: ./rustms
-      run: cargo test --verbose
+  # --- informational (graduate to hard gate once green) -----------------------
+  msrv:
+    name: MSRV 1.84 (informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.84
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --locked --verbose
+
+  latest-compatible:
+    name: latest-compatible deps (informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo update
+      - run: cargo check --workspace --verbose
+
+  minimal-versions:
+    name: minimal-versions (informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo +nightly -Z minimal-versions generate-lockfile
+      - run: cargo check --workspace --locked --verbose
+
+  semver-checks:
+    name: cargo-semver-checks (informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: obi1kenobi/cargo-semver-checks-action@v2
+
+  # --- deferred to R3: vendor feature combos (--features thermo/sciex/mzml) need the
+  #     external thermorawfile / sciexwiff deps, which are local-path/pinned today.
+  #     Wire these once the vendor readers are published (ECOSYSTEM_SPLIT R3).
