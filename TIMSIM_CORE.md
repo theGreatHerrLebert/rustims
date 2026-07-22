@@ -164,6 +164,22 @@ as stated; no decision needed unless we want writers to stay I/O-side.
 It's a render tool → move to `timsim-core` as a bin, **or** drop it (timsim-cli already has richer render
 bins: `render.rs`, `render_bench.rs`, `render_thermo.rs`). Recommend **drop** unless it has unique use.
 
+## EXECUTION LOG (actual — reordered from the plan below)
+The plan below split the leaf *first* (stage 1), which would make the foundation `mscore`-repo `ms-io`
+depend on a `timsim` crate — a backwards dep breaking its standalone build. **Reordered to sim-out-first**
+so `ms-io` only ever sheds code:
+- **Stage 1 ✅** (foundation `2f50d97`, rustims `64d8d264`) — moved `ms-io/src/sim/*` → `rustims/timsim-core/`;
+  `ms-io 0.2.0` = pure Bruker I/O (dropped sim + thermo/mzml/thermorawfile/mzdata/clap + main.rs + thermo
+  examples, all sim-only). 55/55 tests pass. D4 resolved: `timsim-core/thermo` needs nothing from ms-io.
+- **Stage 2 ✅** — split the zero-dep **`timsim-types`** leaf out of `timsim-core/src/scheme.rs`. Pure
+  types + std-only methods (+ `TemplateScan`, ungated) → leaf; the 6 ms-io/thermo-coupled methods stay in
+  core. **Chose EXTENSION TRAITS over free fns** (codex-blessed alt): `SchemeIo` (Bruker, always) +
+  `SchemeThermoIo` (Thermo, cfg) — keeps method syntax so ALL ~15 test call-sites + the other 8 engine
+  modules (`crate::scheme::X` via re-export) stayed byte-identical; only `bruker_group_layout` became a
+  private free fn. Consumer cost (stage 4): `use timsim_core::scheme::{SchemeIo, SchemeThermoIo};`. Leaf
+  zero-dep ✓, 55/55 tests pass ✓. sciex-io/connector/cli/viewer still broken → stage 4.
+- **Next: Stage 3** (publish in dep order) then **Stage 4** (rewire consumers).
+
 ## Staged execution plan
 
 > **Bootstrap reality (codex catch — the buildability gap).** `ms-io` lives in the *separate* `mscore`
@@ -225,6 +241,20 @@ and a final `cargo build` with patches removed before any release tag.
   (`SUBMISSION/*`, benchmarks, `*.d` renders).
 - `sciexwiff` stays **legal-held + private**; `sciex-io`/`publish = false` keeps it off crates.io. R4
   only *narrows* sciex-io's dep (sim→schema); it does not publish it.
+
+## Known pre-existing issues (post-R4 backlog — NOT introduced by the move)
+Surfaced by the stage-1 codex review of the moved code; verified byte-identical to the pre-move
+`ms-io::sim` originals, so they predate R4. Fix as a **separate behavior-change commit after R4** to keep
+the refactor faithful:
+- **[P1] `timsim-core/src/scheme.rs` `from_thermo_raw` (`rt_of` closure ~L994)** — returns Thermo
+  `RawFile::index[*].time` (minutes) straight into `start_time_s`/`cycle_time_s`/`gradient_length_s`
+  (60× too small). `thermo_frame_schedule` in the same file *does* convert — inconsistent. Prioritize.
+- **[P2] `timsim-core/src/acquisition.rs` `schedule()` (~L337-349)** — public API documents
+  `retention_time_s` but returns Thermo minutes unchanged; the CLI compensates manually today (the
+  conversion belongs at this boundary).
+- **[P2] `timsim-core/src/astral_dispatch.rs` (~L257-269)** — treats *every* `write_scan` error as a
+  packet-budget overflow and retries with an empty scan; only the known over-budget error should trigger
+  the empty-payload fallback, else a real authoring failure silently yields an empty scan + "success".
 
 ## Definition of done
 `sim/` gone from `ms-io`; `ms-io 0.2.0` is pure I/O (`data/` + `cluster/`); `timsim-core` published and

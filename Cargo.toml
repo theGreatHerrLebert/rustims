@@ -3,6 +3,7 @@ members = [
     "timsim-chem",
     "sciex-io",
     "timsim-schema",
+    "timsim-types",
     "timsim-core",
     "timsim-cli",
     "imspy_connector",

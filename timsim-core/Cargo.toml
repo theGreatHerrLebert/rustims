@@ -11,6 +11,8 @@ repository = "https://github.com/theGreatHerrLebert/mscore"
 # The TDF I/O layer: reads a real .d's metadata (data::meta) + writes frames (data::tdf_writer). During
 # the R4 bootstrap this is a local path to the foundation checkout; flips to `= "0.2.0"` + [patch] on publish.
 ms-io = { path = "../../../mscore/ms-io" }
+# Zero-dep leaf holding the acquisition-scheme contract types (re-exported via crate::scheme).
+timsim-types = { path = "../timsim-types" }
 # Core MS data structures (peptides, spectra) the engine builds on.
 mscore = { version = "0.5.0" }
 # Synthetics DB read + analysis.tdf SQLite write.

@@ -1,668 +1,91 @@
-//! Vendor-neutral DIA acquisition **scheme** (input/design side).
+//! Bruker/Thermo I/O adapters for the acquisition scheme (output/extraction side).
 //!
-//! An [`AcquisitionScheme`] describes one DIA cycle as an *ordered sequence of
-//! physical events* ([`AcquisitionEvent`]) and how that cycle tiles the
-//! gradient ([`RepeatPolicy`]). It is the design counterpart to the
-//! [`crate::acquisition::AcquisitionWriter`] (output side): the simulator
-//! generates scans for the scheme, and a writer materializes them.
-//!
-//! The key modelling choice (per review) is that a *physical acquisition unit*
-//! is explicit: [`AcquisitionEvent::DiaMs2Frame`] carries a `Vec<DiaWindow>`, so
-//! a timsTOF MS2 frame holding several mobility-partitioned windows and a linear
-//! Astral/SCIEX MS2 scan (one window) are both represented without overloading a
-//! `window_group` id to imply simultaneity.
+//! The scheme *types* live in the dependency-free `timsim-types` leaf and are re-exported
+//! here. The adapters that read/write a real `.d`/`.raw` (via `ms-io` / `thermorawfile`)
+//! cannot be inherent methods on a foreign type, so they are extension traits — [`SchemeIo`]
+//! (Bruker, always) and [`SchemeThermoIo`] (Thermo, feature `thermo`). Bring them into scope.
 
 use std::io;
 
-/// Current scheme schema version.
-pub const SCHEME_VERSION: u16 = 1;
+pub use timsim_types::*;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InstrumentKind {
-    TimsTofDia,
-    OrbitrapAstral,
-    SciexZenoTof,
-    Other,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Analyzer {
-    Ftms,
-    Astms,
-    Tof,
-    Itms,
-    Unknown,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DataMode {
-    Profile,
-    Centroid,
-}
-
-/// An m/z isolation window (no ion mobility — see [`DiaGeometry`]).
-#[derive(Clone, Copy, Debug)]
-pub struct IsolationWindow {
-    pub center_mz: f64,
-    pub width_mz: f64,
-}
-
-impl IsolationWindow {
-    pub fn lower(&self) -> f64 {
-        self.center_mz - self.width_mz / 2.0
+// Private: the single source of truth for window-group ids, shared by to_bruker_windows +
+// to_bruker_info (was an inherent helper on AcquisitionScheme before the leaf split).
+/// Per-cycle-position window-group id: `None` for an MS1 event, `Some(group)`
+/// for an MS2 frame. The group id is the frame's preserved `vendor_group_id`
+/// (Bruker `WindowGroup`) when set, else a collision-safe positional id drawn
+/// from the unused set (so preserved and fallback ids never collide).
+/// Duplicate explicit ids are rejected. Validates first; requires a timsTOF
+/// scheme. This is the single source of truth shared by `to_bruker_windows`
+/// and `to_bruker_info`, so the two tables always agree.
+fn bruker_group_layout(scheme: &AcquisitionScheme) -> Result<Vec<Option<u32>>, String> {
+    scheme.validate()?;
+    if scheme.instrument != InstrumentKind::TimsTofDia {
+        return Err("Bruker tables require a timsTOF (TimsTofDia) scheme".into());
     }
-    pub fn upper(&self) -> f64 {
-        self.center_mz + self.width_mz / 2.0
-    }
-}
-
-/// How a window's collision energy is determined.
-///
-/// `Value` covers both a per-window CE and a scheme-wide fixed CE (every window
-/// carries the same value) — there is intentionally no separate `Fixed` variant
-/// (they were structurally identical). `Unknown` means extraction could not
-/// recover it (e.g. SCIEX rolling CE) and a model must be supplied downstream —
-/// it is never silently invented.
-#[derive(Clone, Copy, Debug)]
-pub enum CollisionEnergyPolicy {
-    Value(f64),
-    Linear { intercept: f64, slope_per_mz: f64 },
-    Unknown,
-}
-
-impl CollisionEnergyPolicy {
-    /// Resolve the CE for a window centered at `center_mz`, if determinable.
-    pub fn at(&self, center_mz: f64) -> Option<f64> {
-        match *self {
-            CollisionEnergyPolicy::Value(v) => Some(v),
-            CollisionEnergyPolicy::Linear {
-                intercept,
-                slope_per_mz,
-            } => Some(intercept + slope_per_mz * center_mz),
-            CollisionEnergyPolicy::Unknown => None,
-        }
-    }
-}
-
-/// Dissociation method used to activate precursors. Today the simulator only
-/// models collisional activation (CID/HCD are treated identically by the
-/// timsTOF-trained intensity models); the enum exists so activation type is
-/// **persisted and load-bearing** rather than implicit, and so future
-/// electron-based methods are representable. `Unknown` = not recorded.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ActivationMethod {
-    Cid,
-    Hcd,
-    Etd,
-    Ecd,
-    Unknown,
-}
-
-/// Unit a collision/activation energy is expressed in. A bare number is
-/// meaningless across vendors: Bruker/SCIEX report an absolute lab-frame energy
-/// (eV), Thermo reports a charge/m-z-normalized collision energy (NCE). Carrying
-/// the unit makes conversions explicit and lets a [`crate::sim`] fragment
-/// predictor reject inputs it was not calibrated for instead of silently
-/// mis-encoding them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EnergyUnit {
-    /// Absolute lab-frame collision energy in electron-volts.
-    ElectronVolt,
-    /// Thermo normalized collision energy (instrument-normalized; requires a
-    /// predictor-specific calibration to become a model input).
-    NormalizedCe,
-    /// Unit not recorded (legacy / unspecified).
-    Unknown,
-}
-
-/// A fully-typed activation condition: *what* dissociation, at *what* energy, in
-/// *what* unit. Produced by the acquisition's activation policy from an event +
-/// precursor context; consumed by a fragment predictor, which maps it into its
-/// own feature encoding. This is deliberately NOT a bare `f64` — see [`EnergyUnit`].
-#[derive(Clone, Copy, Debug)]
-pub struct ActivationCondition {
-    pub method: ActivationMethod,
-    pub value: f64,
-    pub unit: EnergyUnit,
-}
-
-impl ActivationCondition {
-    /// Collisional activation at an absolute eV energy (the Bruker/SCIEX case).
-    pub fn collisional_ev(value: f64) -> Self {
-        ActivationCondition {
-            method: ActivationMethod::Hcd,
-            value,
-            unit: EnergyUnit::ElectronVolt,
-        }
-    }
-
-    /// The legacy provenance: timsTOF collisional activation in eV, the implicit
-    /// assumption for every DB written before activation type was recorded.
-    pub fn legacy_bruker() -> Self {
-        Self::collisional_ev(0.0)
-    }
-}
-
-/// What an instrument is physically capable of, used to gate vendor-specific
-/// behaviour WITHOUT using sampling geometry as a proxy. An Astral, for example,
-/// has quadrupole isolation (so isolation-window transmission still applies) but
-/// no TIMS mobility separation and no mobility-dependent quad isotope
-/// transmission — so only the latter two are gated off for it. Defaults are the
-/// Bruker timsTOF case (everything present) so existing behaviour is unchanged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct InstrumentCapabilities {
-    /// TIMS ion-mobility separation (per-scan mobility filtering of fragments).
-    pub has_tims_mobility: bool,
-    /// Mobility-dependent quadrupole isotope transmission scaling of fragments.
-    pub has_quad_isotope_transmission: bool,
-}
-
-impl Default for InstrumentCapabilities {
-    fn default() -> Self {
-        // Bruker timsTOF: both present — preserves current behaviour.
-        Self::bruker_timstof()
-    }
-}
-
-impl InstrumentCapabilities {
-    /// Bruker timsTOF: TIMS mobility + mobility-dependent quad isotope
-    /// transmission both present (the default; preserves current behaviour).
-    pub fn bruker_timstof() -> Self {
-        InstrumentCapabilities {
-            has_tims_mobility: true,
-            has_quad_isotope_transmission: true,
-        }
-    }
-
-    /// Orbitrap Astral: quadrupole isolation IS present (so isolation-window
-    /// transmission still applies — that is not gated here), but there is NO TIMS
-    /// mobility axis and therefore NO mobility-dependent quad isotope transmission.
-    /// Both capability flags are false; the isotope-transmission config is forced
-    /// to `None` mode for an Astral render (see `IsotopeTransmissionConfig::gated_by`).
-    pub fn astral() -> Self {
-        InstrumentCapabilities {
-            has_tims_mobility: false,
-            has_quad_isotope_transmission: false,
-        }
-    }
-}
-
-/// How an acquisition's collision energy is produced, as a vendor-neutral model.
-/// Composes the existing per-window [`CollisionEnergyPolicy`] (DIA / fixed CE,
-/// already DATA on each window) and adds the Bruker DDA-PASEF mobility-dependent
-/// form, so the DDA CE formula is an *instrument* decision instead of being
-/// hardcoded in the selection job. A Thermo NCE model becomes another variant
-/// (P6) without touching the selection code.
-#[derive(Clone, Copy, Debug)]
-pub enum CollisionEnergyModel {
-    /// CE from a per-window policy (DIA / fixed); evaluated at a window m/z.
-    PerWindow(CollisionEnergyPolicy),
-    /// Bruker DDA-PASEF: `ce_bias + ce_slope * scan` (scan = Bruker mobility
-    /// coordinate). Reproduces the legacy `dda_selection_scheme` formula exactly.
-    BrukerPasef { ce_bias: f64, ce_slope: f64 },
-}
-
-/// Vendor-neutral activation policy: the typed [`ActivationCondition`] producer
-/// for an acquisition. Pairs a dissociation method + energy unit with a
-/// [`CollisionEnergyModel`]. The Bruker timsTOF default reproduces the legacy CE
-/// numbers byte-for-byte; P6 supplies a Thermo policy with the same interface.
-#[derive(Clone, Copy, Debug)]
-pub struct ActivationPolicy {
-    pub method: ActivationMethod,
-    pub unit: EnergyUnit,
-    pub model: CollisionEnergyModel,
-}
-
-impl ActivationPolicy {
-    /// Bruker timsTOF DDA-PASEF: collisional activation (HCD), eV, CE linear in
-    /// scan. `ce_bias`/`ce_slope` default (in `dda_selection_scheme`) to
-    /// 54.1984 / -0.0345 — pass those to reproduce the legacy output exactly.
-    pub fn bruker_pasef(ce_bias: f64, ce_slope: f64) -> Self {
-        ActivationPolicy {
-            method: ActivationMethod::Hcd,
-            unit: EnergyUnit::ElectronVolt,
-            model: CollisionEnergyModel::BrukerPasef { ce_bias, ce_slope },
-        }
-    }
-
-    /// Thermo Orbitrap Astral: collisional activation (HCD) reported as a
-    /// **normalized** collision energy (NCE), produced per isolation window. The
-    /// per-window NCE is carried in the window's own [`CollisionEnergyPolicy`]
-    /// (`ce`), and the unit is [`EnergyUnit::NormalizedCe`] — so a downstream
-    /// fragment predictor that was calibrated in eV will *reject* it rather than
-    /// silently mis-encode an NCE as an absolute energy. There is no scan
-    /// dependence (no IMS): `condition_for_scan` is `None`; use
-    /// [`Self::condition_for_window`].
-    pub fn thermo_nce(ce: CollisionEnergyPolicy) -> Self {
-        ActivationPolicy {
-            method: ActivationMethod::Hcd,
-            unit: EnergyUnit::NormalizedCe,
-            model: CollisionEnergyModel::PerWindow(ce),
-        }
-    }
-
-    /// Collision energy (eV) the instrument applies at a Bruker mobility scan.
-    /// Only meaningful for scan-parameterised models (Bruker DDA-PASEF). A
-    /// per-window model has NO scan dependence — it returns `None` (use
-    /// [`Self::condition_for_window`]) rather than silently misreading the scan
-    /// number as an m/z.
-    pub fn collision_energy_for_scan(&self, scan: u32) -> Option<f64> {
-        match self.model {
-            CollisionEnergyModel::BrukerPasef { ce_bias, ce_slope } => {
-                Some(ce_bias + ce_slope * scan as f64)
+    use std::collections::HashSet;
+    let mut reserved: HashSet<u32> = HashSet::new();
+    for ev in &scheme.cycle {
+        if let AcquisitionEvent::DiaMs2Frame(f) = ev {
+            if let Some(g) = f.vendor_group_id {
+                if !reserved.insert(g) {
+                    return Err(format!("duplicate vendor window-group id {g}"));
+                }
             }
-            CollisionEnergyModel::PerWindow(_) => None,
         }
     }
-
-    /// Typed activation condition at a Bruker mobility scan (scan-parameterised
-    /// models only; `None` for per-window models).
-    pub fn condition_for_scan(&self, scan: u32) -> Option<ActivationCondition> {
-        self.collision_energy_for_scan(scan).map(|value| ActivationCondition {
-            method: self.method,
-            value,
-            unit: self.unit,
-        })
-    }
-
-    /// Typed activation condition for a per-window model at `center_mz`.
-    pub fn condition_for_window(&self, center_mz: f64) -> Option<ActivationCondition> {
-        match self.model {
-            CollisionEnergyModel::PerWindow(p) => p.at(center_mz).map(|value| ActivationCondition {
-                method: self.method,
-                value,
-                unit: self.unit,
-            }),
-            CollisionEnergyModel::BrukerPasef { .. } => None,
-        }
-    }
-}
-
-/// Window geometry: m/z only, or (timsTOF) an additional ion-mobility partition.
-/// Mobility is kept off [`IsolationWindow`] so "mobility on a non-IMS instrument"
-/// is unrepresentable. Scan numbers are Bruker-grid coordinates (they require the
-/// reference dataset's calibration to map to physical mobility).
-#[derive(Clone, Copy, Debug)]
-pub enum DiaGeometry {
-    MzOnly,
-    TimsMobility { scan_start: u32, scan_end: u32 },
-}
-
-/// One DIA isolation window within a frame.
-#[derive(Clone, Copy, Debug)]
-pub struct DiaWindow {
-    pub isolation: IsolationWindow,
-    pub collision_energy: CollisionEnergyPolicy,
-    pub geometry: DiaGeometry,
-}
-
-/// An MS1 (precursor) acquisition.
-#[derive(Clone, Debug)]
-pub struct Ms1Event {
-    pub analyzer: Analyzer,
-    pub data_mode: DataMode,
-    /// The MS1 acquisition m/z range, if known. `None` when not recoverable
-    /// (e.g. Thermo `scan_event` does not carry it — it must not be confused
-    /// with the DIA window coverage in [`AcquisitionScheme::mz_range`]).
-    pub mz_range: Option<(f64, f64)>,
-    pub duration_s: Option<f64>,
-}
-
-/// One physical MS2 acquisition unit. Holds one window for Astral/SCIEX; several
-/// mobility-partitioned windows (sharing the frame) for timsTOF.
-#[derive(Clone, Debug)]
-pub struct DiaMs2Frame {
-    pub windows: Vec<DiaWindow>,
-    pub analyzer: Analyzer,
-    pub data_mode: DataMode,
-    pub duration_s: Option<f64>,
-    /// The vendor's native group id for this frame, preserved for round-trip
-    /// fidelity (Bruker `WindowGroup`). `None` for vendors without one. The cycle
-    /// order is authoritative for *simultaneity/ordering*; this is *identity* only
-    /// — needed so a Bruker adapter regenerates the original `WindowGroup` values
-    /// that companion tables (`DiaFrameMsMsInfo`) reference.
-    pub vendor_group_id: Option<u32>,
-}
-
-#[derive(Clone, Debug)]
-pub enum AcquisitionEvent {
-    Ms1(Ms1Event),
-    DiaMs2Frame(DiaMs2Frame),
-}
-
-/// How the cycle repeats over the gradient.
-#[derive(Clone, Copy, Debug)]
-pub enum RepeatPolicy {
-    /// The cycle repeats every `cycle_time_s`, starting at `start_time_s`, until
-    /// `gradient_length_s`. Per-event `duration_s` (when present) takes
-    /// precedence for fine RT placement; otherwise events are spread across the
-    /// cycle uniformly.
-    FixedCycleTime {
-        cycle_time_s: f64,
-        gradient_length_s: f64,
-        start_time_s: f64,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SchemeSource {
-    ExtractedBruker,
-    ExtractedThermo,
-    ExtractedSciex,
-    UserTable,
-    Programmatic,
-}
-
-/// Where the scheme came from (scheme-level attribution; not per-field).
-#[derive(Clone, Debug)]
-pub struct Provenance {
-    pub source: SchemeSource,
-    pub notes: String,
-}
-
-/// A vendor-neutral DIA acquisition design.
-#[derive(Clone, Debug)]
-pub struct AcquisitionScheme {
-    pub version: u16,
-    pub instrument: InstrumentKind,
-    pub cycle: Vec<AcquisitionEvent>,
-    pub repeat: RepeatPolicy,
-    pub mz_range: (f64, f64),
-    pub provenance: Provenance,
-}
-
-impl AcquisitionScheme {
-    /// Iterate every DIA window across all MS2 frames in the cycle.
-    pub fn windows(&self) -> impl Iterator<Item = &DiaWindow> {
-        self.cycle
-            .iter()
-            .flat_map(|e| match e {
-                AcquisitionEvent::DiaMs2Frame(f) => f.windows.as_slice(),
-                AcquisitionEvent::Ms1(_) => &[][..],
+    let mut layout = Vec::with_capacity(scheme.cycle.len());
+    let mut assigned: HashSet<u32> = HashSet::new();
+    let mut next_seq: u32 = 1;
+    for ev in &scheme.cycle {
+        match ev {
+            AcquisitionEvent::Ms1(_) => layout.push(None),
+            AcquisitionEvent::DiaMs2Frame(frame) => {
+                let group = match frame.vendor_group_id {
+                    Some(g) => g,
+                    None => {
+                        while reserved.contains(&next_seq) || assigned.contains(&next_seq) {
+                            next_seq += 1;
+                        }
+                        next_seq
+                    }
+                };
+                if !assigned.insert(group) {
+                    return Err(format!("window-group id {group} collides"));
+                }
+                layout.push(Some(group));
             }
-            .iter())
-    }
-
-    /// Number of MS1 events in one cycle.
-    pub fn ms1_count(&self) -> usize {
-        self.cycle
-            .iter()
-            .filter(|e| matches!(e, AcquisitionEvent::Ms1(_)))
-            .count()
-    }
-
-    /// Number of full cycles that fit the gradient (if derivable).
-    pub fn num_cycles(&self) -> Option<u64> {
-        match self.repeat {
-            RepeatPolicy::FixedCycleTime {
-                cycle_time_s,
-                gradient_length_s,
-                start_time_s,
-            } if cycle_time_s.is_finite()
-                && cycle_time_s > 0.0
-                && gradient_length_s.is_finite()
-                && start_time_s.is_finite() =>
-            {
-                Some(((gradient_length_s - start_time_s).max(0.0) / cycle_time_s) as u64)
-            }
-            _ => None,
         }
     }
+    Ok(layout)
+}
 
-    /// Expand a `FixedCycleTime` DIA scheme into a per-frame schedule over the whole
-    /// gradient — the synthesized analogue of `thermo_frame_schedule` for schemes that
-    /// carry no per-scan timing (e.g. a SCIEX `.wiff` SWATH method). Each cycle emits its
-    /// events (MS1 then one MS2 frame per window) at evenly-spaced times within the
-    /// cycle. Rows are `(scan, retention_time_s, ms_level, isolation_center_mz,
-    /// isolation_width_mz, collision_energy)`; the MS1 row's isolation/CE are `None`, and
-    /// a window's CE is resolved from its `CollisionEnergyPolicy` at the window center
-    /// (`None` if the policy is `Unknown`). Empty unless `repeat` is `FixedCycleTime`.
-    pub fn dia_frame_schedule(
+/// Bruker DIA-table adapters + `.d` extraction for [`AcquisitionScheme`]. Need `ms-io`, so they are
+/// an extension trait in `timsim-core` rather than inherent methods on the leaf type.
+pub trait SchemeIo: Sized {
+    /// Render the scheme's MS2 windows as Bruker `DiaFrameMsMsWindows` rows.
+    fn to_bruker_windows(&self) -> Result<Vec<ms_io::data::meta::DiaMsMsWindow>, String>;
+    /// Bruker `DiaFrameMsMsInfo` (frame -> window group) rows for a `num_frames`-frame run.
+    fn to_bruker_info(
         &self,
-    ) -> Vec<(u32, f64, u8, Option<f64>, Option<f64>, Option<f64>)> {
-        let RepeatPolicy::FixedCycleTime { cycle_time_s, start_time_s, .. } = self.repeat;
-        let n_cycles = self.num_cycles().unwrap_or(0);
-        let n_events = self.cycle.len();
-        if n_cycles == 0 || n_events == 0 {
-            return Vec::new();
-        }
-        let per_event_dt = cycle_time_s / n_events as f64;
-        let mut out = Vec::with_capacity(n_cycles as usize * n_events);
-        let mut scan: u32 = 1;
-        for c in 0..n_cycles {
-            let cycle_start = start_time_s + c as f64 * cycle_time_s;
-            for (j, ev) in self.cycle.iter().enumerate() {
-                let rt = cycle_start + j as f64 * per_event_dt;
-                match ev {
-                    AcquisitionEvent::Ms1(_) => out.push((scan, rt, 1u8, None, None, None)),
-                    AcquisitionEvent::DiaMs2Frame(f) => {
-                        // SCIEX from_sciex_wiff builds one window per MS2 frame.
-                        if let Some(w) = f.windows.first() {
-                            let center = w.isolation.center_mz;
-                            let ce = w.collision_energy.at(center);
-                            out.push((scan, rt, 2u8, Some(center), Some(w.isolation.width_mz), ce));
-                        }
-                    }
-                }
-                scan += 1;
-            }
-        }
-        out
-    }
-
-    /// Build a scheme from an explicit window list (injected / CSV). One MS1
-    /// followed by one single-window MS2 frame per window.
-    pub fn from_window_table(
-        instrument: InstrumentKind,
-        ms1: Ms1Event,
-        windows: Vec<DiaWindow>,
-        repeat: RepeatPolicy,
-        mz_range: (f64, f64),
-    ) -> Self {
-        let mut cycle = vec![AcquisitionEvent::Ms1(ms1.clone())];
-        for w in windows {
-            cycle.push(AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
-                windows: vec![w],
-                analyzer: ms1.analyzer,
-                data_mode: DataMode::Centroid,
-                duration_s: None,
-                vendor_group_id: None,
-            }));
-        }
-        AcquisitionScheme {
-            version: SCHEME_VERSION,
-            instrument,
-            cycle,
-            repeat,
-            mz_range,
-            provenance: Provenance {
-                source: SchemeSource::UserTable,
-                notes: "built from explicit window table".to_string(),
-            },
-        }
-    }
-
-    /// Validate internal consistency. Returns a human-readable error on the first
-    /// problem found.
-    pub fn validate(&self) -> Result<(), String> {
-        if self.version != SCHEME_VERSION {
-            return Err(format!(
-                "unsupported scheme version {} (this build supports {})",
-                self.version, SCHEME_VERSION
-            ));
-        }
-        if self.cycle.is_empty() {
-            return Err("empty cycle".into());
-        }
-        let (lo, hi) = self.mz_range;
-        if !(lo.is_finite() && hi.is_finite()) || lo >= hi {
-            return Err(format!("invalid mz_range ({lo}, {hi})"));
-        }
-        // Structure: exactly one MS1, as the first event, then >= 1 MS2 frame.
-        if !matches!(self.cycle.first(), Some(AcquisitionEvent::Ms1(_))) {
-            return Err("cycle must begin with an MS1 event".into());
-        }
-        if self.ms1_count() != 1 {
-            return Err(format!(
-                "cycle must contain exactly one MS1 event (has {})",
-                self.ms1_count()
-            ));
-        }
-        if !self
-            .cycle
-            .iter()
-            .any(|e| matches!(e, AcquisitionEvent::DiaMs2Frame(_)))
-        {
-            return Err("cycle has no MS2 frames".into());
-        }
-
-        let check_dur = |d: Option<f64>, what: &str| -> Result<(), String> {
-            match d {
-                Some(v) if !(v.is_finite() && v > 0.0) => {
-                    Err(format!("{what} duration must be finite and > 0"))
-                }
-                _ => Ok(()),
-            }
-        };
-
-        for ev in &self.cycle {
-            match ev {
-                AcquisitionEvent::Ms1(m) => {
-                    check_dur(m.duration_s, "MS1")?;
-                    if let Some((a, b)) = m.mz_range {
-                        if !(a.is_finite() && b.is_finite()) || a >= b {
-                            return Err(format!("invalid MS1 mz_range ({a}, {b})"));
-                        }
-                    }
-                }
-                AcquisitionEvent::DiaMs2Frame(frame) => {
-                    check_dur(frame.duration_s, "MS2 frame")?;
-                    if frame.windows.is_empty() {
-                        return Err("MS2 frame has no windows".into());
-                    }
-                    let multi = frame.windows.len() > 1;
-                    if multi && self.instrument != InstrumentKind::TimsTofDia {
-                        return Err(
-                            "multi-window MS2 frame is only valid for timsTOF (mobility-partitioned)"
-                                .into(),
-                        );
-                    }
-                    for (i, w) in frame.windows.iter().enumerate() {
-                        if !(w.isolation.width_mz.is_finite() && w.isolation.width_mz > 0.0) {
-                            return Err("window width must be finite and > 0".into());
-                        }
-                        if !w.isolation.center_mz.is_finite()
-                            || !w.isolation.lower().is_finite()
-                            || !w.isolation.upper().is_finite()
-                        {
-                            return Err("window m/z is not finite".into());
-                        }
-                        if w.isolation.lower() < lo - 1e-6 || w.isolation.upper() > hi + 1e-6 {
-                            return Err(format!(
-                                "window [{:.4}, {:.4}] outside mz_range [{lo:.4}, {hi:.4}]",
-                                w.isolation.lower(),
-                                w.isolation.upper()
-                            ));
-                        }
-                        match w.collision_energy {
-                            CollisionEnergyPolicy::Value(v) => {
-                                if !v.is_finite() || v < 0.0 {
-                                    return Err("collision energy must be finite and >= 0".into());
-                                }
-                            }
-                            CollisionEnergyPolicy::Linear {
-                                intercept,
-                                slope_per_mz,
-                            } => {
-                                if !intercept.is_finite() || !slope_per_mz.is_finite() {
-                                    return Err("non-finite linear CE coefficients".into());
-                                }
-                                match w.collision_energy.at(w.isolation.center_mz) {
-                                    Some(ce) if ce.is_finite() && ce >= 0.0 => {}
-                                    _ => {
-                                        return Err(
-                                            "linear CE resolves to non-finite or negative".into()
-                                        )
-                                    }
-                                }
-                            }
-                            CollisionEnergyPolicy::Unknown => {}
-                        }
-                        match w.geometry {
-                            DiaGeometry::TimsMobility {
-                                scan_start,
-                                scan_end,
-                            } => {
-                                if self.instrument != InstrumentKind::TimsTofDia {
-                                    return Err("mobility geometry is only valid for timsTOF".into());
-                                }
-                                if scan_start > scan_end {
-                                    return Err("mobility scan_start > scan_end".into());
-                                }
-                            }
-                            DiaGeometry::MzOnly => {
-                                if multi {
-                                    return Err(
-                                        "multi-window timsTOF frame requires mobility geometry on every window"
-                                            .into(),
-                                    );
-                                }
-                            }
-                        }
-                        // Within one frame, windows must not overlap in BOTH m/z
-                        // and mobility (overlap across sequential frames is fine).
-                        for w2 in &frame.windows[..i] {
-                            let mz_overlap = w.isolation.lower() < w2.isolation.upper()
-                                && w2.isolation.lower() < w.isolation.upper();
-                            let im_overlap = match (w.geometry, w2.geometry) {
-                                (
-                                    DiaGeometry::TimsMobility {
-                                        scan_start: a0,
-                                        scan_end: a1,
-                                    },
-                                    DiaGeometry::TimsMobility {
-                                        scan_start: b0,
-                                        scan_end: b1,
-                                    },
-                                ) => a0 <= b1 && b0 <= a1,
-                                _ => true, // m/z-only windows share all mobility
-                            };
-                            if mz_overlap && im_overlap {
-                                return Err(
-                                    "windows within one frame overlap in both m/z and mobility"
-                                        .into(),
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        match self.repeat {
-            RepeatPolicy::FixedCycleTime {
-                cycle_time_s,
-                gradient_length_s,
-                start_time_s,
-            } => {
-                if !(cycle_time_s.is_finite() && cycle_time_s > 0.0) {
-                    return Err("cycle_time_s must be finite and > 0".into());
-                }
-                if !(gradient_length_s.is_finite() && gradient_length_s > 0.0) {
-                    return Err("gradient_length_s must be finite and > 0".into());
-                }
-                if !start_time_s.is_finite() || start_time_s < 0.0 {
-                    return Err("start_time_s must be finite and >= 0".into());
-                }
-                if start_time_s > gradient_length_s {
-                    return Err("start_time_s must be <= gradient_length_s".into());
-                }
-            }
-        }
-        Ok(())
-    }
+        num_frames: u32,
+    ) -> Result<Vec<ms_io::data::meta::DiaMsMisInfo>, String>;
+    /// Both Bruker DIA tables for a `num_frames`-frame run, with consistent window-group ids.
+    fn to_bruker_tables(
+        &self,
+        num_frames: u32,
+    ) -> Result<
+        (
+            Vec<ms_io::data::meta::DiaMsMsWindow>,
+            Vec<ms_io::data::meta::DiaMsMisInfo>,
+        ),
+        String,
+    >;
+    /// Extract the acquisition scheme from a real Bruker timsTOF DIA `.d`.
+    fn from_bruker_d<P: AsRef<std::path::Path>>(path: P) -> io::Result<Self>;
 }
 
-impl AcquisitionScheme {
+impl SchemeIo for AcquisitionScheme {
     /// Render the scheme's MS2 windows as Bruker `DiaFrameMsMsWindows` rows — the
     /// backward-compatibility adapter for the existing timsTOF write path.
     ///
@@ -677,8 +100,8 @@ impl AcquisitionScheme {
     /// Row order is not meaningful (the SQLite table has none); the companion
     /// frame→group table `DiaFrameMsMsInfo` needs the run frame schedule and is a
     /// separate step.
-    pub fn to_bruker_windows(&self) -> Result<Vec<ms_io::data::meta::DiaMsMsWindow>, String> {
-        let layout = self.bruker_group_layout()?;
+    fn to_bruker_windows(&self) -> Result<Vec<ms_io::data::meta::DiaMsMsWindow>, String> {
+        let layout = bruker_group_layout(self)?;
         let mut rows = Vec::new();
         for (ev, slot) in self.cycle.iter().zip(&layout) {
             if let (AcquisitionEvent::DiaMs2Frame(frame), Some(group)) = (ev, slot) {
@@ -716,55 +139,6 @@ impl AcquisitionScheme {
         Ok(rows)
     }
 
-    /// Per-cycle-position window-group id: `None` for an MS1 event, `Some(group)`
-    /// for an MS2 frame. The group id is the frame's preserved `vendor_group_id`
-    /// (Bruker `WindowGroup`) when set, else a collision-safe positional id drawn
-    /// from the unused set (so preserved and fallback ids never collide).
-    /// Duplicate explicit ids are rejected. Validates first; requires a timsTOF
-    /// scheme. This is the single source of truth shared by `to_bruker_windows`
-    /// and `to_bruker_info`, so the two tables always agree.
-    fn bruker_group_layout(&self) -> Result<Vec<Option<u32>>, String> {
-        self.validate()?;
-        if self.instrument != InstrumentKind::TimsTofDia {
-            return Err("Bruker tables require a timsTOF (TimsTofDia) scheme".into());
-        }
-        use std::collections::HashSet;
-        let mut reserved: HashSet<u32> = HashSet::new();
-        for ev in &self.cycle {
-            if let AcquisitionEvent::DiaMs2Frame(f) = ev {
-                if let Some(g) = f.vendor_group_id {
-                    if !reserved.insert(g) {
-                        return Err(format!("duplicate vendor window-group id {g}"));
-                    }
-                }
-            }
-        }
-        let mut layout = Vec::with_capacity(self.cycle.len());
-        let mut assigned: HashSet<u32> = HashSet::new();
-        let mut next_seq: u32 = 1;
-        for ev in &self.cycle {
-            match ev {
-                AcquisitionEvent::Ms1(_) => layout.push(None),
-                AcquisitionEvent::DiaMs2Frame(frame) => {
-                    let group = match frame.vendor_group_id {
-                        Some(g) => g,
-                        None => {
-                            while reserved.contains(&next_seq) || assigned.contains(&next_seq) {
-                                next_seq += 1;
-                            }
-                            next_seq
-                        }
-                    };
-                    if !assigned.insert(group) {
-                        return Err(format!("window-group id {group} collides"));
-                    }
-                    layout.push(Some(group));
-                }
-            }
-        }
-        Ok(layout)
-    }
-
     /// Generate the Bruker `DiaFrameMsMsInfo` (frame → window group) rows for a run
     /// of `num_frames` total frames, tiling the scheme's cycle. Cycle position
     /// `(frame_id - 1) % cycle_len` selects the event (1-based frame ids), MS1
@@ -776,16 +150,18 @@ impl AcquisitionScheme {
     /// cycle's leading MS1 and frame ids are contiguous (as TimSim produces). It
     /// is not a reproducer for arbitrary real files with prefix/calibration
     /// frames, gaps, or acquisition starting mid-cycle.
-    pub fn to_bruker_info(
+    fn to_bruker_info(
         &self,
         num_frames: u32,
     ) -> Result<Vec<ms_io::data::meta::DiaMsMisInfo>, String> {
         // Bound the work so an absurd frame count errors cleanly instead of OOM.
         const MAX_FRAMES: u32 = 100_000_000;
         if num_frames > MAX_FRAMES {
-            return Err(format!("num_frames {num_frames} exceeds the {MAX_FRAMES} limit"));
+            return Err(format!(
+                "num_frames {num_frames} exceeds the {MAX_FRAMES} limit"
+            ));
         }
-        let layout = self.bruker_group_layout()?;
+        let layout = bruker_group_layout(self)?;
         let fpc = layout.len() as u32;
         if fpc == 0 {
             return Err("empty cycle".into());
@@ -806,7 +182,7 @@ impl AcquisitionScheme {
     /// Both Bruker DIA tables for a `num_frames`-frame run: the
     /// `DiaFrameMsMsWindows` rows and the `DiaFrameMsMsInfo` (frame→group) rows,
     /// with consistent window-group ids.
-    pub fn to_bruker_tables(
+    fn to_bruker_tables(
         &self,
         num_frames: u32,
     ) -> Result<
@@ -832,13 +208,14 @@ impl AcquisitionScheme {
     /// within a cycle — not merely ascending `WindowGroup` id — so the cycle
     /// faithfully represents permuted/reused group numbering. (If the info table
     /// is absent, falls back to ascending group id.)
-    pub fn from_bruker_d<P: AsRef<std::path::Path>>(path: P) -> io::Result<Self> {
+    fn from_bruker_d<P: AsRef<std::path::Path>>(path: P) -> io::Result<Self> {
         use ms_io::data::meta::{read_dia_ms_ms_info, read_dia_ms_ms_windows, read_meta_data_sql};
         use std::collections::BTreeMap;
 
         let folder = path.as_ref().to_string_lossy().into_owned();
-        let to_io =
-            |e: Box<dyn std::error::Error>| io::Error::new(io::ErrorKind::InvalidData, e.to_string());
+        let to_io = |e: Box<dyn std::error::Error>| {
+            io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+        };
         let windows = read_dia_ms_ms_windows(&folder).map_err(to_io)?;
         let frames = read_meta_data_sql(&folder).map_err(to_io)?;
         if windows.is_empty() {
@@ -930,7 +307,11 @@ impl AcquisitionScheme {
         gaps.sort_by(f64::total_cmp);
         let cycle_time_s = gaps[gaps.len() / 2];
 
-        let times: Vec<f64> = frames.iter().map(|f| f.time).filter(|t| t.is_finite()).collect();
+        let times: Vec<f64> = frames
+            .iter()
+            .map(|f| f.time)
+            .filter(|t| t.is_finite())
+            .collect();
         let start_time_s = times.iter().copied().fold(f64::INFINITY, f64::min);
         let gradient_length_s = times.iter().copied().fold(f64::NEG_INFINITY, f64::max);
 
@@ -960,14 +341,22 @@ impl AcquisitionScheme {
     }
 }
 
+/// Thermo `.raw` adapters for [`AcquisitionScheme`] (feature `thermo`).
+#[cfg(feature = "thermo")]
+pub trait SchemeThermoIo: Sized {
+    /// Extract the acquisition scheme from a real Thermo `.raw`.
+    fn from_thermo_raw<P: AsRef<std::path::Path>>(path: P) -> io::Result<Self>;
+    /// The build-from-template frame schedule (one entry per template scan).
+    fn thermo_frame_schedule<P: AsRef<std::path::Path>>(path: P) -> io::Result<Vec<TemplateScan>>;
+}
 
 #[cfg(feature = "thermo")]
-impl AcquisitionScheme {
+impl SchemeThermoIo for AcquisitionScheme {
     /// Extract the acquisition scheme from a real Thermo `.raw` by walking the
     /// first complete cycle (first MS1 up to the next MS1). Each MS2 scan becomes
     /// a single-window [`DiaMs2Frame`] (Thermo has no mobility), with the
     /// observed isolation center/width and CE.
-    pub fn from_thermo_raw<P: AsRef<std::path::Path>>(path: P) -> io::Result<Self> {
+    fn from_thermo_raw<P: AsRef<std::path::Path>>(path: P) -> io::Result<Self> {
         use thermorawfile::RawFile;
         let raw = RawFile::open(path)?;
 
@@ -1079,9 +468,9 @@ impl AcquisitionScheme {
             .count();
         // Instrument from the analyzers of events actually in the cycle (an ASTMS
         // MS2 frame ⇒ Orbitrap Astral), not from incidental scans elsewhere.
-        let any_astms = cycle.iter().any(|e| {
-            matches!(e, AcquisitionEvent::DiaMs2Frame(f) if f.analyzer == Analyzer::Astms)
-        });
+        let any_astms = cycle.iter().any(
+            |e| matches!(e, AcquisitionEvent::DiaMs2Frame(f) if f.analyzer == Analyzer::Astms),
+        );
 
         let scheme = AcquisitionScheme {
             version: SCHEME_VERSION,
@@ -1118,9 +507,7 @@ impl AcquisitionScheme {
     /// by construction (rather than relabelling a Bruker-timed frame with a template
     /// RT). The RT is the template's recorded time; ms-level comes from the scan
     /// event (falling back to the profile/centroid packet type when absent).
-    pub fn thermo_frame_schedule<P: AsRef<std::path::Path>>(
-        path: P,
-    ) -> io::Result<Vec<TemplateScan>> {
+    fn thermo_frame_schedule<P: AsRef<std::path::Path>>(path: P) -> io::Result<Vec<TemplateScan>> {
         use thermorawfile::RawFile;
         let raw = RawFile::open(path)?;
         // Reject a template whose per-scan scan events can't be decoded at all — without
@@ -1166,10 +553,19 @@ impl AcquisitionScheme {
                 ),
                 _ => (None, None),
             };
-            out.push(TemplateScan { scan, retention_time_s: rt, ms_level, isolation, collision_energy });
+            out.push(TemplateScan {
+                scan,
+                retention_time_s: rt,
+                ms_level,
+                isolation,
+                collision_energy,
+            });
         }
         if out.is_empty() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "template has no scans"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "template has no scans",
+            ));
         }
         // DIA-suitability: a DIA template tiles the m/z range with a SMALL set of windows
         // that REPEAT across cycles; a DDA acquisition has a (near-)unique precursor per
@@ -1207,21 +603,6 @@ impl AcquisitionScheme {
     }
 }
 
-/// One template scan in the build-from-template frame schedule (P6e). The Astral
-/// acquisition mirrors these 1:1 so the trunk's frames align with the template's
-/// real scan RTs and windows.
-#[cfg(feature = "thermo")]
-#[derive(Clone, Copy, Debug)]
-pub struct TemplateScan {
-    pub scan: u32,
-    pub retention_time_s: f64,
-    pub ms_level: u8,
-    /// Present for MS2 (the precursor isolation window; m/z only — no IMS).
-    pub isolation: Option<IsolationWindow>,
-    /// Present for MS2 (the template's recorded collision energy).
-    pub collision_energy: Option<f64>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1234,15 +615,25 @@ mod tests {
             duration_s: None,
         };
         let mk = |center: f64, width: f64| DiaWindow {
-            isolation: IsolationWindow { center_mz: center, width_mz: width },
-            collision_energy: CollisionEnergyPolicy::Linear { intercept: 5.0, slope_per_mz: 0.045 },
+            isolation: IsolationWindow {
+                center_mz: center,
+                width_mz: width,
+            },
+            collision_energy: CollisionEnergyPolicy::Linear {
+                intercept: 5.0,
+                slope_per_mz: 0.045,
+            },
             geometry: DiaGeometry::MzOnly,
         };
         AcquisitionScheme::from_window_table(
             InstrumentKind::SciexZenoTof,
             ms1,
             vec![mk(420.0, 40.0), mk(480.0, 20.0)],
-            RepeatPolicy::FixedCycleTime { cycle_time_s, gradient_length_s, start_time_s: 0.0 },
+            RepeatPolicy::FixedCycleTime {
+                cycle_time_s,
+                gradient_length_s,
+                start_time_s: 0.0,
+            },
             (400.0, 500.0),
         )
     }
@@ -1259,13 +650,21 @@ mod tests {
         );
         // RT strictly increasing.
         for w in sched.windows(2) {
-            assert!(w[1].1 > w[0].1, "RT must increase: {:?} !> {:?}", w[1].1, w[0].1);
+            assert!(
+                w[1].1 > w[0].1,
+                "RT must increase: {:?} !> {:?}",
+                w[1].1,
+                w[0].1
+            );
         }
         // Cycle starts: rows 0,3,6 at t = 0,3,6.
         for (k, &i) in [0usize, 3, 6].iter().enumerate() {
             assert!((sched[i].1 - (k as f64) * 3.0).abs() < 1e-9);
             assert_eq!(sched[i].2, 1, "cycle starts with MS1");
-            assert!(sched[i].3.is_none() && sched[i].5.is_none(), "MS1 has no iso/CE");
+            assert!(
+                sched[i].3.is_none() && sched[i].5.is_none(),
+                "MS1 has no iso/CE"
+            );
         }
         // First MS2: center 420, width 40, CE resolved by the linear model (>0).
         assert_eq!(sched[1].2, 2);
@@ -1288,7 +687,10 @@ mod tests {
         let sched = s.dia_frame_schedule();
         for r in &sched {
             if r.2 == 2 {
-                assert!(r.5.is_none(), "Unknown CE -> None (caller must supply a model)");
+                assert!(
+                    r.5.is_none(),
+                    "Unknown CE -> None (caller must supply a model)"
+                );
             }
         }
     }
@@ -1305,7 +707,11 @@ mod tests {
         assert_eq!(legacy.unit, EnergyUnit::ElectronVolt);
 
         // An NCE value is a distinct unit and must not compare equal to eV.
-        let nce = ActivationCondition { method: ActivationMethod::Hcd, value: 30.0, unit: EnergyUnit::NormalizedCe };
+        let nce = ActivationCondition {
+            method: ActivationMethod::Hcd,
+            value: 30.0,
+            unit: EnergyUnit::NormalizedCe,
+        };
         assert_ne!(nce.unit, c.unit);
     }
 
@@ -1322,7 +728,10 @@ mod tests {
                 Some(ce_bias + ce_slope * scan as f64),
                 "CE must match the legacy formula at scan {scan}"
             );
-            assert_eq!(p.condition_for_scan(scan).unwrap().value, ce_bias + ce_slope * scan as f64);
+            assert_eq!(
+                p.condition_for_scan(scan).unwrap().value,
+                ce_bias + ce_slope * scan as f64
+            );
         }
         // A per-window (DIA) model has no scan dependence: scan evaluation is
         // None (not a silently-wrong value), and CE comes from the window m/z.
@@ -1362,7 +771,9 @@ mod tests {
 
         // Resolves a window CE as an NCE-unit condition (NOT eV) — a downstream
         // eV-calibrated predictor must be able to reject it on the unit alone.
-        let cond = p.condition_for_window(650.0).expect("NCE condition for window");
+        let cond = p
+            .condition_for_window(650.0)
+            .expect("NCE condition for window");
         assert_eq!(cond.value, 27.0);
         assert_eq!(cond.unit, EnergyUnit::NormalizedCe);
         assert_ne!(cond.unit, EnergyUnit::ElectronVolt);
@@ -1376,8 +787,14 @@ mod tests {
             intercept: 20.0,
             slope_per_mz: 0.01,
         });
-        assert_eq!(rolling.condition_for_window(700.0).unwrap().value, 20.0 + 0.01 * 700.0);
-        assert_eq!(rolling.condition_for_window(700.0).unwrap().unit, EnergyUnit::NormalizedCe);
+        assert_eq!(
+            rolling.condition_for_window(700.0).unwrap().value,
+            20.0 + 0.01 * 700.0
+        );
+        assert_eq!(
+            rolling.condition_for_window(700.0).unwrap().unit,
+            EnergyUnit::NormalizedCe
+        );
     }
 
     fn linear_windows(n: usize) -> Vec<DiaWindow> {
@@ -1495,21 +912,35 @@ mod tests {
         };
 
         // valid baseline
-        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), frame(win())]).validate().is_ok());
+        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), frame(win())])
+            .validate()
+            .is_ok());
         // MS2 first (no leading MS1)
-        assert!(mk(vec![frame(win()), AcquisitionEvent::Ms1(ms1())]).validate().is_err());
+        assert!(mk(vec![frame(win()), AcquisitionEvent::Ms1(ms1())])
+            .validate()
+            .is_err());
         // two MS1 in a cycle
-        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), AcquisitionEvent::Ms1(ms1()), frame(win())]).validate().is_err());
+        assert!(mk(vec![
+            AcquisitionEvent::Ms1(ms1()),
+            AcquisitionEvent::Ms1(ms1()),
+            frame(win())
+        ])
+        .validate()
+        .is_err());
         // MS1 with no MS2 frame
         assert!(mk(vec![AcquisitionEvent::Ms1(ms1())]).validate().is_err());
         // window outside mz_range
         let mut oob = win();
         oob.isolation.center_mz = 2000.0;
-        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), frame(oob)]).validate().is_err());
+        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), frame(oob)])
+            .validate()
+            .is_err());
         // negative collision energy
         let mut neg = win();
         neg.collision_energy = CollisionEnergyPolicy::Value(-5.0);
-        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), frame(neg)]).validate().is_err());
+        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), frame(neg)])
+            .validate()
+            .is_err());
         // bad event duration
         let bad_dur = AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
             windows: vec![win()],
@@ -1518,7 +949,9 @@ mod tests {
             duration_s: Some(-1.0),
             vendor_group_id: None,
         });
-        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), bad_dur]).validate().is_err());
+        assert!(mk(vec![AcquisitionEvent::Ms1(ms1()), bad_dur])
+            .validate()
+            .is_err());
     }
 
     // Gated: set TIMSIM_BRUKER_DIA_D to a real Bruker DIA-PASEF .d folder.
@@ -1543,12 +976,26 @@ mod tests {
             assert!(w.collision_energy.at(w.isolation.center_mz).is_some());
         }
         // At least one frame should be mobility-partitioned (>1 window).
-        let multi = s.cycle.iter().any(|e| matches!(e, AcquisitionEvent::DiaMs2Frame(f) if f.windows.len() > 1));
-        let n_frames = s.cycle.iter().filter(|e| matches!(e, AcquisitionEvent::DiaMs2Frame(_))).count();
+        let multi = s
+            .cycle
+            .iter()
+            .any(|e| matches!(e, AcquisitionEvent::DiaMs2Frame(f) if f.windows.len() > 1));
+        let n_frames = s
+            .cycle
+            .iter()
+            .filter(|e| matches!(e, AcquisitionEvent::DiaMs2Frame(_)))
+            .count();
         eprintln!(
             "from_bruker_d OK: TimsTofDia, {} frames, {} windows ({}), mz {:.1}..{:.1}",
-            n_frames, n_win, if multi { "mobility-partitioned" } else { "single-window" },
-            s.mz_range.0, s.mz_range.1
+            n_frames,
+            n_win,
+            if multi {
+                "mobility-partitioned"
+            } else {
+                "single-window"
+            },
+            s.mz_range.0,
+            s.mz_range.1
         );
     }
 
@@ -1562,9 +1009,15 @@ mod tests {
         let frame = |gid: Option<u32>, center: f64| {
             AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
                 windows: vec![DiaWindow {
-                    isolation: IsolationWindow { center_mz: center, width_mz: 10.0 },
+                    isolation: IsolationWindow {
+                        center_mz: center,
+                        width_mz: 10.0,
+                    },
                     collision_energy: CollisionEnergyPolicy::Value(25.0),
-                    geometry: DiaGeometry::TimsMobility { scan_start: 0, scan_end: 100 },
+                    geometry: DiaGeometry::TimsMobility {
+                        scan_start: 0,
+                        scan_end: 100,
+                    },
                 }],
                 analyzer: Analyzer::Tof,
                 data_mode: DataMode::Centroid,
@@ -1590,19 +1043,32 @@ mod tests {
                     start_time_s: 0.0,
                 },
                 mz_range: (300.0, 900.0),
-                provenance: Provenance { source: SchemeSource::Programmatic, notes: String::new() },
+                provenance: Provenance {
+                    source: SchemeSource::Programmatic,
+                    notes: String::new(),
+                },
             }
         };
         let ids = |s: &AcquisitionScheme| {
-            s.to_bruker_windows().map(|r| r.iter().map(|w| w.window_group).collect::<Vec<_>>())
+            s.to_bruker_windows()
+                .map(|r| r.iter().map(|w| w.window_group).collect::<Vec<_>>())
         };
 
         // preserved non-canonical ids
-        assert_eq!(ids(&mk(vec![frame(Some(7), 500.0), frame(Some(42), 600.0)])).unwrap(), vec![7, 42]);
+        assert_eq!(
+            ids(&mk(vec![frame(Some(7), 500.0), frame(Some(42), 600.0)])).unwrap(),
+            vec![7, 42]
+        );
         // all-None -> sequential 1..N
-        assert_eq!(ids(&mk(vec![frame(None, 500.0), frame(None, 600.0)])).unwrap(), vec![1, 2]);
+        assert_eq!(
+            ids(&mk(vec![frame(None, 500.0), frame(None, 600.0)])).unwrap(),
+            vec![1, 2]
+        );
         // mixed: None allocates a free id (1), avoiding the reserved 7
-        assert_eq!(ids(&mk(vec![frame(Some(7), 500.0), frame(None, 600.0)])).unwrap(), vec![7, 1]);
+        assert_eq!(
+            ids(&mk(vec![frame(Some(7), 500.0), frame(None, 600.0)])).unwrap(),
+            vec![7, 1]
+        );
         // duplicate explicit ids rejected
         assert!(ids(&mk(vec![frame(Some(5), 500.0), frame(Some(5), 600.0)])).is_err());
     }
@@ -1667,9 +1133,15 @@ mod tests {
         let frame = |c: f64| {
             AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
                 windows: vec![DiaWindow {
-                    isolation: IsolationWindow { center_mz: c, width_mz: 10.0 },
+                    isolation: IsolationWindow {
+                        center_mz: c,
+                        width_mz: 10.0,
+                    },
                     collision_energy: CollisionEnergyPolicy::Value(25.0),
-                    geometry: DiaGeometry::TimsMobility { scan_start: 0, scan_end: 100 },
+                    geometry: DiaGeometry::TimsMobility {
+                        scan_start: 0,
+                        scan_end: 100,
+                    },
                 }],
                 analyzer: Analyzer::Tof,
                 data_mode: DataMode::Centroid,
@@ -1696,7 +1168,10 @@ mod tests {
                 start_time_s: 0.0,
             },
             mz_range: (300.0, 900.0),
-            provenance: Provenance { source: SchemeSource::Programmatic, notes: String::new() },
+            provenance: Provenance {
+                source: SchemeSource::Programmatic,
+                notes: String::new(),
+            },
         };
         // cycle = [MS1, g1, g2]; num_frames=6: 1->skip, 2->g1, 3->g2, 4->skip, 5->g1, 6->g2
         let info: Vec<(u32, u32)> = s
@@ -1715,9 +1190,15 @@ mod tests {
         // Non-ascending explicit ids + a multi-window (mobility-partitioned) frame:
         // info must follow CYCLE order (not sorted id) and emit ONE row per frame.
         let win = |center: f64, s0: u32, s1: u32| DiaWindow {
-            isolation: IsolationWindow { center_mz: center, width_mz: 10.0 },
+            isolation: IsolationWindow {
+                center_mz: center,
+                width_mz: 10.0,
+            },
             collision_energy: CollisionEnergyPolicy::Value(20.0),
-            geometry: DiaGeometry::TimsMobility { scan_start: s0, scan_end: s1 },
+            geometry: DiaGeometry::TimsMobility {
+                scan_start: s0,
+                scan_end: s1,
+            },
         };
         let dia = |gid: u32, ws: Vec<DiaWindow>| {
             AcquisitionEvent::DiaMs2Frame(DiaMs2Frame {
@@ -1747,7 +1228,10 @@ mod tests {
                 start_time_s: 0.0,
             },
             mz_range: (300.0, 900.0),
-            provenance: Provenance { source: SchemeSource::Programmatic, notes: String::new() },
+            provenance: Provenance {
+                source: SchemeSource::Programmatic,
+                notes: String::new(),
+            },
         };
         // cycle len 3; frame2->g7 (first), frame3->g2 — acquisition order, NOT sorted.
         let info3: Vec<(u32, u32)> = s2
@@ -1756,7 +1240,11 @@ mod tests {
             .iter()
             .map(|r| (r.frame_id, r.window_group))
             .collect();
-        assert_eq!(info3, vec![(2, 7), (3, 2)], "info must follow cycle order, one row/frame");
+        assert_eq!(
+            info3,
+            vec![(2, 7), (3, 2)],
+            "info must follow cycle order, one row/frame"
+        );
         // windows: the 2-window frame emits 2 rows (group 7), the other 1 (group 2).
         let w3 = s2.to_bruker_windows().unwrap();
         assert_eq!(w3.iter().filter(|w| w.window_group == 7).count(), 2);
@@ -1784,10 +1272,12 @@ mod tests {
         a.sort_unstable();
         b.sort_unstable();
         assert_eq!(a, b, "DiaFrameMsMsInfo round-trip differs from source");
-        eprintln!("bruker_info_round_trip OK: {} (frame, group) rows over {num_frames} frames", a.len());
+        eprintln!(
+            "bruker_info_round_trip OK: {} (frame, group) rows over {num_frames} frames",
+            a.len()
+        );
     }
 
-    
     #[cfg(feature = "thermo")]
     #[test]
     fn from_thermo_raw_extracts_cycle() {
@@ -1815,8 +1305,13 @@ mod tests {
         assert!(s.mz_range.0 > 100.0 && s.mz_range.1 < 3000.0 && s.mz_range.0 < s.mz_range.1);
         eprintln!(
             "from_thermo_raw OK: instrument={:?}, {} MS2 windows, mz {:.1}..{:.1}, cycle {:.4}s",
-            s.instrument, n_win, s.mz_range.0, s.mz_range.1,
-            match s.repeat { RepeatPolicy::FixedCycleTime { cycle_time_s, .. } => cycle_time_s }
+            s.instrument,
+            n_win,
+            s.mz_range.0,
+            s.mz_range.1,
+            match s.repeat {
+                RepeatPolicy::FixedCycleTime { cycle_time_s, .. } => cycle_time_s,
+            }
         );
     }
 
@@ -1826,19 +1321,28 @@ mod tests {
         let template = match std::env::var("TIMSIM_ASTRAL_TEMPLATE") {
             Ok(p) => p,
             Err(_) => {
-                eprintln!("SKIP thermo_frame_schedule_covers_every_scan: set TIMSIM_ASTRAL_TEMPLATE");
+                eprintln!(
+                    "SKIP thermo_frame_schedule_covers_every_scan: set TIMSIM_ASTRAL_TEMPLATE"
+                );
                 return;
             }
         };
         let sched = AcquisitionScheme::thermo_frame_schedule(&template).expect("schedule");
-        assert!(sched.len() > 100, "expected the full run, got {}", sched.len());
+        assert!(
+            sched.len() > 100,
+            "expected the full run, got {}",
+            sched.len()
+        );
         // Scans are contiguous and ascending; RT is finite and non-decreasing.
         let mut last_rt = f64::NEG_INFINITY;
         let (mut n_ms1, mut n_ms2) = (0usize, 0usize);
         for (k, f) in sched.iter().enumerate() {
             assert_eq!(f.scan, sched[0].scan + k as u32, "scans must be contiguous");
             assert!(f.retention_time_s.is_finite());
-            assert!(f.retention_time_s >= last_rt - 1e-6, "RT must be non-decreasing");
+            assert!(
+                f.retention_time_s >= last_rt - 1e-6,
+                "RT must be non-decreasing"
+            );
             last_rt = f.retention_time_s;
             if f.ms_level <= 1 {
                 n_ms1 += 1;
@@ -1847,13 +1351,20 @@ mod tests {
                 n_ms2 += 1;
                 let iso = f.isolation.expect("MS2 carries an isolation window");
                 assert!(iso.width_mz > 0.0 && iso.center_mz > 0.0);
-                assert!(f.collision_energy.is_some(), "MS2 carries a collision energy");
+                assert!(
+                    f.collision_energy.is_some(),
+                    "MS2 carries a collision energy"
+                );
             }
         }
         assert!(n_ms1 > 0 && n_ms2 > 0, "expected both MS1 and MS2 scans");
         eprintln!(
             "thermo_frame_schedule OK: {} scans ({} MS1, {} MS2), RT {:.2}..{:.2}s",
-            sched.len(), n_ms1, n_ms2, sched.first().unwrap().retention_time_s, last_rt
+            sched.len(),
+            n_ms1,
+            n_ms2,
+            sched.first().unwrap().retention_time_s,
+            last_rt
         );
     }
 
@@ -1872,8 +1383,13 @@ mod tests {
             }
         };
         let r = AcquisitionScheme::thermo_frame_schedule(&template);
-        let e = r.err().expect("a DDA template must be rejected (no DIA tiling)");
-        assert!(e.to_string().contains("looks like DDA"), "unexpected error: {e}");
+        let e = r
+            .err()
+            .expect("a DDA template must be rejected (no DIA tiling)");
+        assert!(
+            e.to_string().contains("looks like DDA"),
+            "unexpected error: {e}"
+        );
         eprintln!("thermo_frame_schedule correctly rejected DDA template: {e}");
     }
 
@@ -1894,10 +1410,17 @@ mod tests {
         let n_ms1 = sched.iter().filter(|s| s.ms_level <= 1).count();
         let n_ms2_iso = sched
             .iter()
-            .filter(|s| s.ms_level > 1 && s.isolation.is_some_and(|w| w.center_mz > 0.0 && w.width_mz > 0.0))
+            .filter(|s| {
+                s.ms_level > 1
+                    && s.isolation
+                        .is_some_and(|w| w.center_mz > 0.0 && w.width_mz > 0.0)
+            })
             .count();
         assert!(n_ms1 > 0, "expected decoded MS1 scans");
-        assert!(n_ms2_iso > 0, "expected MS2 scans with decoded isolation windows");
+        assert!(
+            n_ms2_iso > 0,
+            "expected MS2 scans with decoded isolation windows"
+        );
         eprintln!("variable-length DIA accepted: {n_ms1} MS1, {n_ms2_iso} MS2 with isolation");
     }
 }

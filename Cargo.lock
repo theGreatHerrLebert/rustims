@@ -4766,6 +4766,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thermorawfile",
+ "timsim-types",
 ]
 
 [[package]]
@@ -4777,6 +4778,10 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
 ]
+
+[[package]]
+name = "timsim-types"
+version = "0.1.0"
 
 [[package]]
 name = "tiny-keccak"
