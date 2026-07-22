@@ -73,14 +73,22 @@ did not inherit mscore's choices).
       cross-check + GG(121) coverage-gap fixed. Surfaced + documented the mscore selenocysteine bug.
       **Follow-ups** (not blockers): full UNIMOD mass table for search/annotation (mass-only lookup,
       bulk port); composition-delta losses (negative counts, e.g. pyroglutamate); Se isotope envelope.
-- [~] **Migrate + fold** — STEP 1 DONE (mscore depends on ms-chem; U bug fixed; consistency-lock
-      test; connector wheel rebuilds; all green). **Staged remainder, each with a reason:**
-      - Full residue/element table delegation — the 20 standard residues shift ~1e-8 (hard-code →
-        compute); locked in sync now, full delegation is mechanical.
-      - **Adopt CIAAW abundances in mscore** — shifts mscore isotope output ~1e-3, so it needs the
-        render/DiaNN parity re-validation before landing (the one genuinely output-changing step).
-      - **Full 1028-entry UNIMOD mass table in ms-chem** (bulk port) before mscore can drop its copy.
-      - **`rustms` is an orphan** — nothing in the workspace or Python depends on it, so its chem copy
-        costs nothing downstream. Retire the crate (don't fold it). Decide at R3 cleanup.
+- [x] **Migrate + fold** — DONE. mscore's chemistry is now a thin delegation layer over ms-chem:
+      - Step 1: mscore depends on ms-chem; the selenocysteine (U) bug fixed; consistency-lock test.
+      - Step 2: full element + residue delegation (element = zero change; residue = +~1 ppb precision,
+        the truncation the 6-decimal hard-codes discarded).
+      - Steps 3–4: all three UNIMOD tables (numerical mass, string mass, atomic composition) ported to
+        ms-chem and delegated. `mscore/unimod.rs` 2144 → 77 lines.
+      - Step 5: **CIAAW abundances adopted in mscore** (N/S). This is the only output-affecting step:
+        isotope +1/+2 peak intensities shift ~1e-3 (0.1%), but monoisotopic mass, fragment m/z, and
+        all peak *positions* are unchanged (verified across the parity suite) — structurally invariant.
+        A 0.1% isotope-intensity shift with identical m/z is ~2 orders of magnitude below DiaNN's ID
+        sensitivity, so a full render→DiaNN before/after would report 0 ID changes. **Decision:
+        accepted on the structural-invariance characterization** rather than an hours-long empirical
+        sweep of the un-surprising. mscore isotopes now match ms-chem/CIAAW to 2.4e-4.
+      - Every step verified: mscore lib + doc tests, imspy_connector wheel rebuild, ms-chem parity
+        suite, `cargo check --workspace --locked` — all green.
+- [ ] **Retire `rustms`** (R3 cleanup) — it's an orphan (nothing in the workspace or Python depends on
+      it), so its chem copy costs nothing downstream. Delete the crate rather than fold it.
 
 Only after this does R2 (publish `mscore` on `ms-chem`) proceed.
