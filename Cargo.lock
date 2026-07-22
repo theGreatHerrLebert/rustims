@@ -1405,7 +1405,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2013,7 +2013,7 @@ name = "imsjl_connector"
 version = "0.1.0"
 dependencies = [
  "libc",
- "ms-io",
+ "ms-io 0.1.0",
  "mscore",
 ]
 
@@ -2021,7 +2021,7 @@ dependencies = [
 name = "imspy-connector"
 version = "0.4.1"
 dependencies = [
- "ms-io",
+ "ms-io 0.1.0",
  "mscore",
  "numpy",
  "pyo3",
@@ -2479,6 +2479,8 @@ version = "0.1.0"
 [[package]]
 name = "ms-io"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91c7b2513b46a083a5c39c625c987b9b1b46b76d06f319e3796b0fcbc5aced8d"
 dependencies = [
  "bincode 1.3.3",
  "byteorder",
@@ -2495,6 +2497,25 @@ dependencies = [
  "serde",
  "serde_json",
  "thermorawfile",
+ "zstd",
+]
+
+[[package]]
+name = "ms-io"
+version = "0.2.0"
+dependencies = [
+ "bincode 1.3.3",
+ "byteorder",
+ "libloading",
+ "lzf",
+ "mscore",
+ "polars",
+ "rand",
+ "rayon",
+ "rusqlite",
+ "rustc-hash 2.1.3",
+ "serde",
+ "serde_json",
  "zstd",
 ]
 
@@ -4153,7 +4174,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4190,7 +4211,7 @@ dependencies = [
 name = "sciex-io"
 version = "0.1.0"
 dependencies = [
- "ms-io",
+ "ms-io 0.1.0",
  "sciexwiff",
 ]
 
@@ -4589,7 +4610,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4673,7 +4694,7 @@ dependencies = [
  "glam",
  "half",
  "log",
- "ms-io",
+ "ms-io 0.1.0",
  "mscore",
  "png",
  "pollster",
@@ -4721,7 +4742,7 @@ dependencies = [
  "anyhow",
  "arrow",
  "clap",
- "ms-io",
+ "ms-io 0.1.0",
  "mscore",
  "parquet",
  "rayon",
@@ -4730,6 +4751,21 @@ dependencies = [
  "timsim-chem",
  "timsim-schema",
  "toml",
+]
+
+[[package]]
+name = "timsim-core"
+version = "0.1.0"
+dependencies = [
+ "ms-io 0.2.0",
+ "mscore",
+ "mzdata",
+ "rand",
+ "rayon",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thermorawfile",
 ]
 
 [[package]]
@@ -5412,7 +5448,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

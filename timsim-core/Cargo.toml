@@ -1,0 +1,42 @@
+[package]
+name = "timsim-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.84"
+license = "MIT"
+description = "The timsim v2 simulation engine: feature-space assembly, projection, and streaming frame render for timsTOF/Thermo/mzML. Extracted from ms-io::sim (R4)."
+repository = "https://github.com/theGreatHerrLebert/mscore"
+
+[dependencies]
+# The TDF I/O layer: reads a real .d's metadata (data::meta) + writes frames (data::tdf_writer). During
+# the R4 bootstrap this is a local path to the foundation checkout; flips to `= "0.2.0"` + [patch] on publish.
+ms-io = { path = "../../../mscore/ms-io" }
+# Core MS data structures (peptides, spectra) the engine builds on.
+mscore = { version = "0.5.0" }
+# Synthetics DB read + analysis.tdf SQLite write.
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+rayon = "1.10.0"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.140"
+rand = "0.8.5"
+# Thermo .raw writer (public repo); only built with the `thermo` feature.
+thermorawfile = { version = "0.1.0", optional = true }
+# Open mzML writer (mzdata); only built with the `mzml` feature — the vendor-neutral render output.
+mzdata = { version = "0.63", optional = true }
+
+[features]
+# Off by default: enable the Thermo .raw writer/rewindow path, or the open mzML writer. Mirror of the
+# features ms-io::sim used to carry — they moved here with the engine (ms-io 0.2.0 is pure Bruker I/O).
+thermo = ["dep:thermorawfile"]
+mzml = ["dep:mzdata"]
+
+[[example]]
+name = "thermo_m0_survival"
+required-features = ["thermo"]
+
+[[example]]
+name = "thermo_m1_seam"
+required-features = ["thermo"]
+
+[package.metadata.docs.rs]
+features = ["thermo", "mzml"]
