@@ -2483,10 +2483,6 @@ dependencies = [
 [[package]]
 name = "ms-chem"
 version = "0.1.0"
-dependencies = [
- "mscore",
- "timsim-chem",
-]
 
 [[package]]
 name = "mscore"
@@ -2502,7 +2498,6 @@ dependencies = [
  "regex",
  "serde",
  "statrs",
- "timsim-chem",
 ]
 
 [[package]]
@@ -4724,6 +4719,8 @@ name = "timsim-chem"
 version = "0.1.0"
 dependencies = [
  "approx",
+ "ms-chem",
+ "mscore",
  "rayon",
  "regex",
 ]

@@ -11,4 +11,7 @@ regex = "1.11"
 rayon = "1.10"
 
 [dev-dependencies]
+# R1 cross-impl parity gate (relocated here — all 3 impls reachable)
+ms-chem = "0.1.0"
+mscore = "0.5.0"
 approx = "0.5"

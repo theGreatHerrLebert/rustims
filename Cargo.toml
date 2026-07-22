@@ -1,7 +1,5 @@
 [workspace]
 members = [
-    "ms-chem",
-    "mscore",
     "rustdf",
     "rustms",
     "timsim-chem",
@@ -20,3 +18,9 @@ debug = true
 overflow-checks = true
 lto = "thin"
 panic = "abort"
+
+# R2 cutover: ms-chem + mscore now live in github.com/theGreatHerrLebert/mscore and are
+# published on crates.io. For local dev, patch them back to the sibling foundation checkout.
+[patch.crates-io]
+ms-chem = { path = "../../mscore/ms-chem" }
+mscore = { path = "../../mscore/mscore" }

@@ -28,7 +28,7 @@ zstd = "0.13.3"
 # Byte order utilities
 byteorder = "1.5.0"
 # Core library for computational proteomics
-mscore = { path = "../mscore", version = "0.5.0" }
+mscore = { version = "0.5.0" }
 # Parallelism
 rayon = "1.10.0"
 # Serialization

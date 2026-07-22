@@ -44,7 +44,7 @@ rayon = "1.10"
 rustdf = { path = "../rustdf", optional = true }
 # The peptide-ion spectrum machinery (precursor + fragment isotopic spectra) the render uses. Optional,
 # alongside rustdf, so the lightweight tools don't pull it.
-mscore = { path = "../mscore", optional = true }
+mscore = { version = "0.5.0", optional = true }
 
 [features]
 # Enables everything that touches the real TDF format + spectrum generation — the encode path in the
