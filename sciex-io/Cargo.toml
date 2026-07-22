@@ -1,0 +1,14 @@
+[package]
+name = "sciex-io"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.84"
+license = "MIT"
+description = "SCIEX .wiff acquisition-scheme reader on top of ms-io. Rustims-local (private sciexwiff dep); not published until sciexwiff is cleared."
+publish = false
+
+[dependencies]
+# ms-io lives in the foundation repo (published once sciex is sorted; local path for now).
+ms-io = { path = "../../../mscore/ms-io" }
+# private, on legal hold — legal here because sciex-io is never published to crates.io.
+sciexwiff = { git = "https://github.com/theGreatHerrLebert/sciexwiff", rev = "ef7c0cd7e59d3b51160e446cbe3af240d230668d" }

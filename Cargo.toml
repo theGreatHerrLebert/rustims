@@ -2,6 +2,7 @@
 members = [
     "rustdf",
     "timsim-chem",
+    "sciex-io",
     "timsim-schema",
     "timsim-cli",
     "imspy_connector",
