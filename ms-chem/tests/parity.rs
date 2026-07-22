@@ -125,6 +125,44 @@ fn isotope_envelope_matches_timsim_and_mscore() {
 }
 
 #[test]
+fn modification_catalog_matches_mscore_and_is_coverage_consistent() {
+    use mscore::chemistry::unimod::unimod_modifications_mass_numerical;
+
+    // (1) every ms-chem modification cross-checks (mass == composition-derived mass)
+    for m in ms_chem::BUILTIN_MODIFICATIONS {
+        m.validate().unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    // (2) where mscore's UNIMOD mass table has the same id, the masses agree (Gate 3)
+    let mscore_table = unimod_modifications_mass_numerical();
+    let mut checked = 0;
+    for m in ms_chem::BUILTIN_MODIFICATIONS {
+        if let Some(&mass) = mscore_table.get(&m.unimod_id) {
+            assert!(
+                (mass - m.mass_delta).abs() < 1e-3,
+                "{} (id {}): ms-chem {:.5} vs mscore {:.5}",
+                m.name, m.unimod_id, m.mass_delta, mass
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked >= 5, "expected the shared sim mods to be present in mscore's table");
+
+    // (3) the coverage fix: GG (121) — which mscore had in its COMPOSITION table but NOT its mass
+    // table — is present in ms-chem with BOTH mass and composition, cross-checked.
+    let gg = ms_chem::modification_by_id(121).expect("GG present in ms-chem");
+    assert_eq!(gg.name, "GG");
+    gg.validate().unwrap();
+    assert!(mscore_table.get(&121).is_none(), "precondition: mscore mass table lacks 121");
+
+    eprintln!(
+        "[ms-chem/mod] {} builtins cross-check; {checked} agree with mscore's mass table; \
+         GG(121) coverage gap fixed",
+        ms_chem::BUILTIN_MODIFICATIONS.len()
+    );
+}
+
+#[test]
 fn selenocysteine_correct_and_surfaces_mscore_bug() {
     // ms-chem is a superset: it accepts U (selenocysteine), which timsim's residue table lacked.
     // Computed from elements as C3H5NOSe (⁸⁰Se), the residue mass is the standard 150.95364 Da.

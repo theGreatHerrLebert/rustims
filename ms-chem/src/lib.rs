@@ -22,10 +22,14 @@
 //! The parity suite that proved the equivalence rides along as ms-chem's regression gate.
 
 pub mod elements;
+pub mod formula;
 pub mod isotope;
 pub mod mass;
+pub mod modification;
 pub mod residue;
 
+pub use formula::FormulaError;
 pub use isotope::{envelope, EnvelopeError};
 pub use mass::{monoisotopic, mz, UnknownResidue, PROTON, WATER};
+pub use modification::{by_id as modification_by_id, Modification, BUILTIN as BUILTIN_MODIFICATIONS};
 pub use residue::{peptide_composition, residue_composition, residue_monoisotopic_mass, Composition};
