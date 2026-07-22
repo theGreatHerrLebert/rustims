@@ -20,7 +20,12 @@ dependencies = [
     "tqdm>=4.66",
     "zstd>=1.5",
     "matplotlib>=3.5",
-    "imspy-search>=0.4.0",
+    # sagepy (torch-free core) is imported directly on the sim path
+    # (proteome.py, jobs/simulate_proteins.py: EnzymeBuilder / PeptideIx digest).
+    # It used to arrive transitively via imspy-search — but imspy-search is
+    # imported nowhere in the sim, and post-P0 it pulls torch (imspy-predictors[local]),
+    # which would re-defeat the torch-free simulation. Declare sagepy directly, drop imspy-search.
+    "sagepy>=0.4.0",
 ]
 
 [project.optional-dependencies]

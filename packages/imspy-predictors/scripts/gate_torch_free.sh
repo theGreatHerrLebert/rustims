@@ -36,6 +36,26 @@ python -c "import imspy_predictors; print('   ok: import imspy_predictors')"
 echo ">> running the torch-optional gate suite"
 pytest -q "$PKG_DIR/tests/test_torch_optional.py"
 
-echo ">> PASS: imspy-predictors is torch-free; local models raise the [local] hint"
+# --- P1: end-to-end torch-free simulation -----------------------------------
+# If imspy-simulation is present as a sibling, install it (no extras) and assert
+# the whole `timsim` chain stays torch-free. This is what catches transitive
+# leaks like the losses.py one and the imspy-search dep. Requires the sagepy
+# connector to be installable in this env.
+SIM_DIR="$(cd "$PKG_DIR/../imspy-simulation" 2>/dev/null && pwd || true)"
+if [ -n "$SIM_DIR" ]; then
+  echo ">> installing imspy-simulation (no extras) — must NOT pull torch"
+  pip install -q -e "$SIM_DIR"
+  if python -c "import torch" 2>/dev/null; then
+    echo "!! FAIL: installing imspy-simulation pulled torch back in" >&2
+    exit 1
+  fi
+  echo "   ok: sim install is torch-free"
+  python -c "import imspy_simulation.timsim.simulator as s; assert callable(s.main); print('   ok: timsim entry point loads torch-free')"
+  python -c "import imspy_simulation.timsim.jobs.simulate_fragment_intensities; print('   ok: Koina intensity job imports torch-free')"
+else
+  echo ">> (imspy-simulation not found as sibling — skipping end-to-end sim gate)"
+fi
+
+echo ">> PASS: imspy-predictors + timsim are torch-free; local models raise the [local] hint"
 deactivate
 rm -rf "$(dirname "$VENV")"
