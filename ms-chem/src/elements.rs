@@ -19,7 +19,14 @@ pub const O: f64 = 15.99491461957;
 pub const S: f64 = 31.9720711744;
 /// ³¹P monoisotopic mass (Da) — mononuclidic.
 pub const P: f64 = 30.97376199842;
-/// ⁸⁰Se monoisotopic (most-abundant-isotope) mass (Da) — for selenocysteine.
+/// Selenium base mass (Da) — **⁸⁰Se, the most-abundant isotope** (matches mscore's element table).
+///
+/// CONVENTION (load-bearing): this ecosystem's "monoisotopic" base for each element is the
+/// *most-abundant* isotope, not the lightest. For CHNOPS the two coincide, but selenium is the
+/// exception — ⁸⁰Se is most abundant while ⁷⁴Se is lightest, and Se has abundant isotopes *lighter*
+/// than the base. So when the `isotope` module lands it MUST base Se's envelope on ⁸⁰Se too (and
+/// handle its sub-base peaks), or a Se-containing mass and its envelope would disagree by ~6 Da.
+/// The `se_convention_matches_mscore` test pins this.
 pub const SE: f64 = 79.9165218;
 
 /// Monoisotopic mass of the most abundant isotope of `symbol` (Da), or `None` if the symbol is not
@@ -130,6 +137,21 @@ pub fn monoisotopic_mass(symbol: &str) -> Option<f64> {
         "Md" => 258.0,
         "No" => 259.0,
         "Lr" => 262.0,
+        "Rf" => 267.0,
+        "Db" => 270.0,
+        "Sg" => 271.0,
+        "Bh" => 270.0,
+        "Hs" => 277.0,
+        "Mt" => 276.0,
+        "Ds" => 281.0,
+        "Rg" => 280.0,
+        "Cn" => 285.0,
+        "Nh" => 284.0,
+        "Fl" => 289.0,
+        "Mc" => 288.0,
+        "Lv" => 293.0,
+        "Ts" => 294.0,
+        "Og" => 294.0,
         _ => return None,
     })
 }
@@ -145,5 +167,19 @@ mod tests {
             assert_eq!(monoisotopic_mass(sym), Some(val), "{sym}");
         }
         assert_eq!(monoisotopic_mass("Xx"), None);
+    }
+
+    #[test]
+    fn full_table_reaches_oganesson() {
+        // the port is faithful through element 118 (superheavies included for completeness)
+        assert_eq!(monoisotopic_mass("Og"), Some(294.0));
+        assert_eq!(monoisotopic_mass("Rf"), Some(267.0));
+    }
+
+    #[test]
+    fn se_convention_is_80se() {
+        // Pin the most-abundant-isotope base: ⁸⁰Se, not ⁷⁴Se. The isotope module MUST match this
+        // base for Se, or a selenocysteine mass and its envelope would disagree by ~6 Da.
+        assert!((SE - 79.9165218).abs() < 1e-9, "Se base must be ⁸⁰Se");
     }
 }

@@ -61,7 +61,10 @@ pub fn residue_composition(aa: u8) -> Option<Composition> {
         b'R' => comp(6, 12, 4, 1, 0, 0),
         b'Y' => comp(9, 9, 1, 2, 0, 0),
         b'W' => comp(11, 10, 2, 1, 0, 0),
-        // superset over timsim: selenocysteine = cysteine with Se in place of S
+        // superset over timsim: selenocysteine = cysteine with Se in place of S. Its MASS is
+        // correct under the ⁸⁰Se (most-abundant) convention (see elements::SE). NOTE: Se-containing
+        // isotope ENVELOPES need the isotope module to base Se on ⁸⁰Se and handle its sub-base
+        // peaks — deferred until that module lands (timsim didn't support U at all).
         b'U' => Composition { c: 3, h: 5, n: 1, o: 1, s: 0, p: 0, se: 1 },
         _ => return None,
     })

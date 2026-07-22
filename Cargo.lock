@@ -2481,6 +2481,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ms-chem"
+version = "0.1.0"
+dependencies = [
+ "mscore",
+ "timsim-chem",
+]
+
+[[package]]
 name = "mscore"
 version = "0.4.1"
 dependencies = [
@@ -2493,6 +2501,7 @@ dependencies = [
  "regex",
  "serde",
  "statrs",
+ "timsim-chem",
 ]
 
 [[package]]
