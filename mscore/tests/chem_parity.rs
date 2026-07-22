@@ -196,6 +196,96 @@ fn fmt(v: &[f64]) -> Vec<String> {
     v.iter().map(|x| format!("{:.5}", x)).collect()
 }
 
+/// Gate 4 — backbone fragment ions (b / y ladders). Both compute pure chemistry: a running residue
+/// sum + terminal group + proton, so this also exercises the proton constant (mscore
+/// MASS_PROTON=1.007276466621 vs timsim PROTON=1.007276466 — ~6e-10 Da apart).
+///
+/// API note (verified empirically): mscore's `calculate_mono_isotopic_product_ion_spectrum` returns
+/// the FULL b+y spectrum regardless of the `FragmentType` argument (it builds both terminal series),
+/// while timsim's `fragment_ions` returns typed b and y fragments. So we compare mscore's full
+/// spectrum (one call) against timsim's full b∪y set, aligned by sorted m/z.
+///
+/// Uses a focused corpus (exhaustive di/tri-peptides cover every residue-pair transition; a small
+/// sample of longer peptides adds ladder depth) — mscore's product-ion builder is heavy, and ladder
+/// chemistry does not need 50-mers to be exercised.
+#[test]
+fn fragment_ion_parity() {
+    use mscore::data::peptide::{FragmentType, PeptideSequence};
+    use timsim_chem::fragment::fragment_ions;
+
+    let full = corpus();
+    let mut frag_corpus: Vec<&String> =
+        full.iter().filter(|s| (2..=3).contains(&s.len())).collect();
+    frag_corpus.extend(full.iter().filter(|s| s.len() >= 10).take(300));
+
+    let abs_tol = 1e-5; // residue tables agree ~1e-8/residue + proton ~6e-10
+    let mut max_abs = 0.0f64;
+    let mut worst = String::new();
+    let mut count_mismatches = 0usize;
+    let mut compared = 0usize;
+
+    for seq in &frag_corpus {
+        let ps = PeptideSequence::new((*seq).clone(), None);
+        // one call -> the complete b+y spectrum
+        let mut ms: Vec<f64> = ps
+            .calculate_mono_isotopic_product_ion_spectrum(1, FragmentType::B)
+            .mz
+            .iter()
+            .copied()
+            .collect();
+        let ti = match fragment_ions(seq, 1) {
+            Ok(f) => f,
+            Err(_) => continue,
+        };
+        let mut ts: Vec<f64> = ti.iter().map(|f| f.mz).collect();
+        ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        ts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // mscore returns an MzSpectrum, which MERGES isobaric peaks (a b ion and a y ion can share
+        // an m/z), while timsim lists both typed fragments. Compare unique m/z sets: dedupe near-equal
+        // values in both so the merge is not counted as a divergence (the values themselves match).
+        ms.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+        ts.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+
+        if ms.len() != ts.len() {
+            count_mismatches += 1;
+            continue;
+        }
+        for (a, b) in ms.iter().zip(&ts) {
+            let d = (a - b).abs();
+            if d > max_abs {
+                max_abs = d;
+                worst = (*seq).clone();
+            }
+            compared += 1;
+        }
+    }
+
+    eprintln!(
+        "[parity/fragment] peptides={} ions_compared={}  max|Δ m/z|={:.3e}  \
+         ladder-length mismatches={}  worst={}",
+        frag_corpus.len(),
+        compared,
+        max_abs,
+        count_mismatches,
+        worst
+    );
+
+    assert_eq!(
+        count_mismatches, 0,
+        "fragment ladder-length mismatch on {} peptides (b/y enumeration differs)",
+        count_mismatches
+    );
+    // A wrong terminal group or ion definition would show O(1 Da); proton-constant + residue
+    // rounding live far below abs_tol.
+    assert!(
+        max_abs < abs_tol,
+        "fragment m/z divergence {:.3e} exceeds {:.0e} on {:?}",
+        max_abs,
+        abs_tol,
+        worst
+    );
+}
+
 /// Gate 3 — modification masses. timsim-chem has NO UNIMOD mirror: its modifications are
 /// `Modification` structs carrying a `mass_delta` + elemental `composition`, self-validated
 /// (composition mono-mass must equal mass_delta). mscore owns the authoritative 2144-entry

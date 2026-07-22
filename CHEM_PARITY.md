@@ -24,6 +24,7 @@ did not inherit mscore's choices).
 | **1 — monoisotopic mass** | neutral peptide mass | 18,420 seqs | **0 divergences**; max rel 8.4e-9 (pure float rounding) |
 | **2 — isotope envelope** | first 6 peaks, normalized | 18,420 seqs | max **1.26e-3** abundance; driven by N/S abundance tables; worst = high-sulfur peptides |
 | **3 — modification mass** | 6 sim-critical mods, 3 routes | curated set | all present routes agree ≤ **5.3e-6**; mscore's mass & composition tables are **disjoint** |
+| **4 — fragment ions (b/y)** | full b∪y m/z ladders | 8,700 peptides / 38k ions | **0 mismatches** (after isobaric-peak merge); max Δ m/z **2.5e-6** (float + proton) |
 
 ## Canonical decisions for `ms-chem`
 
@@ -40,13 +41,21 @@ did not inherit mscore's choices).
    modification is not a scalar; its composition reshapes the isotope envelope, and the two routes to
    its mass validate each other). Seed it from mscore's 1028 mass entries, backfill compositions,
    and require every sim-used id to have both.
+5. **Proton constant** — mscore `1.007276466621` (full CODATA) vs timsim `1.007276466` (truncated),
+   ~6e-10 Da apart. **Canonical: the full CODATA value `1.007276466621`.** It enters every m/z; the
+   difference is sub-nano-Dalton, but there is no reason to carry the truncated one.
+6. **Fragment ions** — b/y ladders are identical to 2.5e-6 (Gate 4). Note the *representation*
+   difference to preserve a choice on: mscore returns a merged `MzSpectrum` (isobaric b/y collapse
+   to one peak); timsim returns typed `Fragment`s (b and y kept distinct). ms-chem should expose the
+   **typed** form — a peak's ion type is information the merged spectrum destroys, and the sim's
+   modification-localization needs it.
 
 ## Remaining R1 work before extraction (R2)
 
 - [ ] **Property-based differential test** (plan requirement): generate random formulas + modified
       peptides, assert mscore ≡ timsim within the documented tolerances *or* an approved
       semantic-difference record — catches parser/ordering/terminal-mod edges the fixed corpus won't.
-- [ ] **Fragment ions** (candidate Gate 4): mscore product-ion spectra vs timsim `fragment.rs`.
+- [x] **Fragment ions** (Gate 4): b/y m/z ladders identical to 2.5e-6 across 8,700 peptides.
 - [ ] **Build `ms-chem`**: element/residue tables (compute-from-elements) + CIAAW abundances +
       unified modification table + the composition↔mass cross-check; port mscore's formula parser.
 - [ ] **Migrate + fold**: point mscore and rustms at `ms-chem`, delete the two copies, keep the
