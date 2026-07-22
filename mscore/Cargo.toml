@@ -36,5 +36,10 @@ ordered-float = "4.6.0"
 # Binary serialization
 bincode = "2.0.0-rc.3"
 
+[dev-dependencies]
+# R1 ms-chem parity: differential-test mscore/chem against the independent
+# timsim-chem v2 impl (anti-self-consistency). Dev-only — not a published dep.
+timsim-chem = { path = "../timsim-chem" }
+
 [package.metadata.docs.rs]
 features = ["all"]
