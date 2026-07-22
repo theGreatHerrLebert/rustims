@@ -119,9 +119,10 @@ fn isotope_envelope_matches_timsim_and_mscore() {
     );
     // vs timsim: same tables+algo → f32 rounding only.
     assert!(max_vs_timsim < 1e-6, "ms-chem vs timsim envelope {max_vs_timsim:.3e}");
-    // vs mscore: bounded by the N/S abundance-table difference (Gate 2 ~1.3e-3; corpus has no
-    // pathological homopolymers, so it stays small).
-    assert!(max_vs_mscore < 5e-3, "ms-chem vs mscore envelope {max_vs_mscore:.3e}");
+    // vs mscore: after the R1 fold adopted CIAAW abundances in mscore too, the old ~1.3e-3 N/S
+    // table divergence collapsed to ~2.4e-4 (the residual is ms-chem's 36S entry at +4, which
+    // mscore's 3-isotope S omits — negligible).
+    assert!(max_vs_mscore < 5e-4, "ms-chem vs mscore envelope {max_vs_mscore:.3e}");
 }
 
 #[test]

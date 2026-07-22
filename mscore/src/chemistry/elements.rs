@@ -110,7 +110,7 @@ pub fn isotopic_abundance() -> HashMap<&'static str, Vec<f64>> {
     map.insert("Be", vec![1.0]);
     map.insert("B", vec![0.199, 0.801]);
     map.insert("C", vec![0.9893, 0.0107]);
-    map.insert("N", vec![0.99632, 0.00368]);
+    map.insert("N", vec![0.99636, 0.00364]); // CIAAW (R1 fold step 5)
     map.insert("O", vec![0.99757, 0.00038, 0.00205]);
     map.insert("F", vec![1.0]);
     map.insert("Ne", vec![0.9048, 0.0027, 0.0925]);
@@ -119,7 +119,7 @@ pub fn isotopic_abundance() -> HashMap<&'static str, Vec<f64>> {
     map.insert("Al", vec![1.0]);
     map.insert("Si", vec![0.9223, 0.0467, 0.0310]);
     map.insert("P", vec![1.0]);
-    map.insert("S", vec![0.9493, 0.0076, 0.0429]);
+    map.insert("S", vec![0.9499, 0.0075, 0.0425]); // CIAAW (R1 fold step 5)
     map.insert("Cl", vec![0.7578, 0.2422]);
     map.insert("Ar", vec![0.003365, 0.000632, 0.996003]);
     map.insert("K", vec![0.932581, 0.000117, 0.067302]);
