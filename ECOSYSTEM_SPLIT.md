@@ -52,7 +52,7 @@ principle below is already live there — this plan is, in one line, *"make rust
 |---|---|---|---|
 | **Chemistry / modifications** | `unimod` (leaf) | `ms-chem` (leaf) | reuse; today *triplicated* → R1 |
 | **Data structures** (spectra, peptides, m/z, mobility) | `sage-core` types | `mscore` (frozen anchor) | stable → publish early (R2) |
-| **Raw data access** (.d / .raw / .wiff / mzML) | `mzdata` (reused) | `ms-io`/`rustdf` + `thermo-io`/`sciex-io` | vendor = weight + license → satellites |
+| **Raw data access** (.d / .raw / .wiff / mzML) | `mzdata` (reused) | `ms-io`/`rustdf` + `thermo-io`/`sciex-io` | standalone audience + clean-room provenance → satellites (**NOT** license: both pure-Rust, no vendor SDK) |
 | **Algorithms** (FDR, rescore, simulation) | `qfdrust` (pure Rust) | `qfdrust`(!) + `timsim-core` | independent cadence |
 | **Database search** | `sage-core` (reused) | reuse `sage` + `imspy-search` (Py) | don't reinvent |
 | **Deep learning / prediction** | `sagepy-rescore` (owns torch) | `imspy-predictors` (torch = *extra*) | weight → the P0 template |
@@ -112,15 +112,41 @@ L0  ms-chem*          elements, amino acids, UNIMOD, sum formulas, isotopes, mas
                       -> DEDUP TARGET: collapses mscore/chemistry + rustms/chemistry + timsim-chem
 L1  mscore            spectra, peptides, m/z + mobility, core algorithms          dep: ms-chem
     ms-io (rustdf)    Bruker TDF read/write                                       dep: mscore
-L2  thermo-io*        Thermo .raw (thermorawfile)   [optional, leaf, licensed]    dep: mscore, mzdata
-    sciex-io*         SCIEX .wiff read + native write (sciexwiff)                 dep: mscore, mzdata
+L2  thermo-io*        Thermo .raw (thermorawfile)   [clean-room pure-Rust, no .NET]   (mscore-free; adapter in connector — R9)
+    sciex-io*         SCIEX .wiff read+write (sciexwiff, dep: cfb only, no SDK)         (mscore-free; adapter in connector — R9)
     timsim-schema     the Parquet feature-space contract (the decoupling seam)
     timsim-core*      v2 sim engine: feature-space assembly + streaming render    dep: mscore, timsim-schema
-                      (sweep-line; Python-free; vendor-io behind features: tdf default, thermo/sciex/mzml opt-in)
+                      (sweep-line; Python-free; readers behind features — tdf default because timsTOF is
+                       the primary target [demand-driven, not vendor-status]; thermo/sciex/mzml opt-in for build size)
     timsim-properties?  OPTIONAL Rust analytical property models (see open Q)      dep: ms-chem
 ```
 `*` = candidate to become its own repo. `mscore`/`rustdf` may stay in the ecosystem repo longer
 (see R4).
+
+## Repo grouping (which crates capsule into which repos)
+
+A repo is **not** a crate. **A repo is a Cargo workspace that publishes N crates independently.** So
+the repo seam falls where **ownership + license + release cadence + audience** change — *not* where a
+dependency edge is. (Audience is load-bearing, not decorative — a capability someone wants *alone*
+earns its own installable home; it's the same force from the seam heuristic above.) Crates that
+co-evolve under one owner, one license story, and one release rhythm belong in one repo, published as
+separate crates.
+
+| Repo | Capsules (crates) | License | Grouping driver |
+|---|---|---|---|
+| **`mscore`** (foundation) | `ms-chem` + `mscore` + `ms-io` (Bruker TDF) | MIT | one bottom-up type/release/test unit; all first-party |
+| **`thermo-io`** | `thermo-io` (thermorawfile) | MIT OR Apache-2.0 (+NOTICE) | already independent; standalone audience; clean-room provenance |
+| **`sciex-io`** | `sciex-io` (sciexwiff) | *(add before publish — R3a)* | already independent; standalone audience; clean-room provenance |
+| **`timsim`** | `timsim-schema` + `timsim-core` + `timsim-cli` (+ `timsim-properties`?) | MIT | one product; schema/core/CLI co-evolve while v2 settles |
+| **`rustims`** (ecosystem) | `imspy_connector` + `packages/` + `flow/` | MIT | integration layer; owns the connector, integration lockfiles, feature profiles — **not** primitives |
+
+**The policy that makes this consistent (claudex):** now that Bruker/Thermo/SCIEX are *all* permissive
+pure-Rust, **license is no longer the splitter.** The operative rule is **"existing, independently
+useful products stay independent"** — Thermo/SCIEX are already separate repos with distinct user
+communities and separately-auditable clean-room histories, so they stay out; Bruker `ms-io` lives in
+the foundation because it's an extension of the foundation type model and shares its maintainership.
+Revisit periodically: if the Bruker reader ever grows its own community + release cadence, it earns
+the same independence.
 
 ## Ecosystem repo (`rustims`) — what stays / integrates
 
@@ -238,17 +264,25 @@ P can run fully in parallel with R.
   stability (17% co-change, 0 of last 150 commits) makes it the *compatibility anchor* everything
   downstream pins — publishing it *first* avoids the "everyone re-pins together at the end"
   intermediate state. Keep temporary re-export shims if the chem move changed public paths.
-- **R3. Vendor-io + `rustdf` onto versioned `mscore`.** Publish `sciex-io` + `thermo-io`, drop the
-  local-path/pinned-rev deps (`thermorawfile` = a *local patched dir*, not even git; `sciexwiff`
-  pinned to a rev predating this session's writer push — live checkout-drift). Split `rustdf`/`ms-io`
-  to pin versioned `mscore`. Zero binding risk (vendor crates carry no PyO3; glue stays in the
-  connector).
-- **Parallel exception (not an R3 action):** a vendor crate whose *released manifest has no `mscore`
-  dependency* may publish immediately after R0 (before R2) to kill the local-path fragility now.
-  Any vendor crate that *does* depend on `mscore` waits for R2.
+- **R3. Vendor readers + `ms-io`, in three separable moves (restructured — claudex).** The old single
+  step conflated things R9 says are independent (readers have *no* `mscore` dep; `ms-io` does):
+  - **R3a. Publish the standalone reader libs** (`thermo-io`, `sciex-io`) right after R0 — they carry
+    no `mscore` dep, so they need not wait for R2, and publishing kills the local-path/pinned-rev drift
+    now (`thermorawfile` is now its own git repo w/ a `thermorawfile-connector` member; `sciexwiff` is
+    pinned to a pre-writer rev). **Hard publication gate: `sciexwiff` has NO license declared
+    (all-rights-reserved by default) — add one, with copyright-holder confirmation + SPDX metadata,
+    before it can be published anywhere.** `thermorawfile`'s Apache NOTICE travels with it.
+  - **R3b. Migrate + publish `ms-io` (rustdf)** onto versioned `mscore` — this one *does* pin `mscore`,
+    so it waits for R2.
+  - **R3c. Implement the connector adapters** (`from_thermo_raw`/`from_sciex_wiff`) once the reader libs
+    *and* `mscore` are published — the mix-and-match (B) path from R9, glue in `imspy_connector`. Low
+    binding risk (reader libs carry no PyO3).
 - **R3.5. Version + fixture `timsim-schema` (R7) — prerequisite to R4.** The Parquet contract becomes
   a cross-repo boundary the moment producer and consumer split; version it and add producer/consumer
-  conformance fixtures *before* extracting `timsim-core`.
+  conformance fixtures *before* extracting `timsim-core`. **The fixtures must be genuinely
+  cross-language (claudex):** Python-produced Parquet must be consumable by the Rust consumer *and*
+  Rust-produced Parquet by the Python orchestration path — a Rust-only schema test wouldn't protect the
+  actual producer/consumer contract.
 - **R4. Extract `timsim-core`** out of `rustdf/sim` + `timsim-render*`; enforce Python-free; pins the
   versioned `timsim-schema` (R3.5) + `mscore` (R2).
 
@@ -266,13 +300,17 @@ green.
   graph* or changed behavior. Mitigation: version deps for published releases + a **committed
   lockfile** for the wheel; the CI matrix (locked / min-versions / latest-compatible / vendor
   feature combos) from R0 is what actually catches skew.
-- **R3 — crates.io vs private git.** The vendor-io crates are license-sensitive; they may want a
-  private/tagged-git home rather than crates.io. Decide per crate.
+- **R3 — crates.io publishability. CORRECTED (2026-07).** Both readers are permissive-compatible
+  clean-room pure-Rust (`thermorawfile` = MIT OR Apache-2.0; `sciexwiff` = *needs a license added*,
+  see R3 step). Neither is license-*blocked* from crates.io — the earlier "license-sensitive, maybe
+  private git" framing was wrong. Residual: `thermorawfile` carries an Apache **NOTICE** (derives from
+  `unthermo`/`OpenTFRaw`/`unfinnigan`) that must travel with the crate.
 - **R4 — `mscore` API stability. RESOLVED (2026-07): safe to split.** Co-change with `rustdf` is
   56/321 = **17%** all-history, and **0 of the last ~150 commits** touch mscore (last change was
   June 25, before the whole SCIEX/thermo/flow burst). mscore is loosely coupled *and* currently
-  frozen → versionable independently today. Split it *last* only because it's the highest-fan-in
-  crate (most consumers to re-pin), not for churn risk.
+  frozen → versionable independently today. Its high fan-in (most consumers to re-pin) isn't a reason
+  to split it *late* — R2 publishes it *early*; rather, the fan-in is exactly why that early baseline
+  release must be especially conservative: publish early, then change rarely.
 - **R5 — `timsim-core` repo home.** Own repo (max independence, its own release) vs ecosystem repo
   (simpler). Decide with the property-provider choice.
 - **R6 — dev ergonomics.** Across repos: a dev `[patch]`/path-dep meta-workspace for local
@@ -283,15 +321,41 @@ green.
   required/optional columns, units, nullability, metadata/provenance, a backward-read policy, and
   **producer/consumer conformance fixtures** owned in the schema crate. Version it *before* R4
   extracts `timsim-core`.
-- **R8 — vendor distribution + legal (claudex).** `sciex-io`/`thermo-io` need a distribution decision
-  beyond source licensing: their native SDK/runtime availability, wheel CI per platform, and whether
-  they publish to crates.io or a private registry. Decide per crate (see R3).
+- **R8 — vendor distribution + legal. CORRECTED (2026-07): overstated.** Both readers are
+  **clean-room pure-Rust** — `thermorawfile` is explicitly "no .NET/DLL"; `sciexwiff` parses the
+  `.wiff` CFB container via the `cfb` crate "from the data file alone (no Clearcore2 SDK)." So there is
+  **no vendor binary to redistribute, no native SDK/runtime, no per-platform native wheel CI** — pure
+  Rust builds everywhere. The residual legal surface is narrow: (1) `thermorawfile`'s Apache **NOTICE**
+  attribution (clean-room lineage: `unthermo`, `OpenTFRaw`, `unfinnigan`) + its "not affiliated with
+  Thermo Fisher" disclaimer — kept auditable by giving it its own repo; (2) `sciexwiff` must have a
+  license *added* before any publish. Not a distribution blocker — a provenance-hygiene reason to keep
+  each vendor reader as its own clean-room unit. **Narrow ≠ empty (claudex):** don't overcorrect to "no
+  legal concerns." Clean-room provenance, vendor trademarks + the "not affiliated" disclaimers,
+  redistributed test data (the Thermo NOTICE already flags Apache-licensed `.raw` fixtures from
+  ThermoRawFileParser), and format-related claims each warrant an explicit per-reader **release
+  checklist / counsel review** before first publish.
+- **R9 — vendor reader Python surface: two integration models (new, 2026-07).** A vendor reader can
+  expose Python two non-exclusive ways: **(A) self-contained** — the reader repo ships its *own* PyO3
+  wheel returning its *own* types (`thermorawfile-connector` already does this) → a standalone
+  `pip install thermorawfile` for the reader-alone audience; **(B) mix-and-match** — the connector
+  constructs `mscore` pyclasses *from* reader output → the integrated path. **The precise PyO3 rule
+  (claudex):** two wheels *can* import and accept each other's Python classes; what's forbidden is the
+  *same Rust `#[pyclass]` being registered/owned by two extension modules*, and independently-defined
+  wrapper classes are not interchangeable. So (A)'s own types are never automatically
+  `imspy_connector`'s `mscore` objects — the connector must build them. **"Reader stays `mscore`-free;
+  adapter lives in the connector" holds only if the reader's public *Rust* API exposes enough
+  neutral/raw data to do the conversion — make that an explicit API gate,** with dependency direction
+  fixed at `imspy_connector → {reader, mscore}` (never reader → mscore just for integration). Decide
+  per reader: (A), (B), or both — they coexist; the adapter lives in the connector, so the reader crate
+  carries **no** `mscore` dep either way.
 - **Open Q — vendor-io Python surface. RESOLVED (2026-07): zero binding risk, but not render-only.**
   The vendor crates carry **no PyO3** (pure Rust) — but they *are* reachable from Python via
   `imspy_connector/src/py_acquisition.rs` (`from_sciex_wiff`/`from_thermo_raw`, feature-gated pyclass
   methods), chain `connector[sciex] → rustdf/sciex → dep:sciexwiff`. The glue lives in the connector,
-  not the vendor crate, so publishing + pinning them changes nothing about the Python surface. Step 2
-  is safe.
+  not the vendor crate, so publishing + pinning them changes nothing about *that* Python surface. Step
+  2 is safe. **But** the reader *repos* may ALSO ship their own standalone connector
+  (`thermorawfile-connector` already does) — a second, independent Python surface. That coexistence is
+  the integration-model fork now tracked as **R9**.
 
 ## Non-goals
 
