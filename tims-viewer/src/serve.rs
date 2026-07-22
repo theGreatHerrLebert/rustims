@@ -561,7 +561,7 @@ fn build_windows_json(is_demo: bool, data_path: &str) -> Arc<[u8]> {
     let json = if is_demo {
         serde_json::json!({ "max_window_group": 0, "windows": [] })
     } else {
-        let ds = rustdf::data::dataset::TimsDataset::new("NO_SDK", data_path, false, false);
+        let ds = ms_io::data::dataset::TimsDataset::new("NO_SDK", data_path, false, false);
         let (rects, max_group) = crate::data::loader::dia_window_rects(&ds, data_path);
         let windows: Vec<[f64; 5]> = rects
             .iter()

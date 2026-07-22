@@ -4,7 +4,7 @@
 //! Pipeline: read `precursors` + `peptide_rt` → place each precursor on the acquisition grid (m/z→TOF
 //! and 1/K0→scan, rt_index→frame) → stream-render isotope envelopes with the proven sweep
 //! ([`timsim_cli::render::stream_render_flat`]) → write frames through the Rust-native
-//! [`rustdf::data::tdf_writer::TdfWriter`].
+//! [`ms_io::data::tdf_writer::TdfWriter`].
 //!
 //! Two calibration modes:
 //!   - **`--reference-d <PATH>`** (recommended): copy the Bruker `MzCalibration`/`TimsCalibration`/
@@ -25,14 +25,14 @@ use mscore::chemistry::formulas::ccs_to_one_over_reduced_mobility;
 use timsim_schema::tables::ion_spectra as SP;
 use timsim_schema::tables::precursor_ccs as CCS;
 
-use rustdf::data::calibration::{MobilityCalibrator, MzCalibrator};
-use rustdf::data::handle::{
+use ms_io::data::calibration::{MobilityCalibrator, MzCalibrator};
+use ms_io::data::handle::{
     IndexConverter, SimpleIndexConverter, TimsData, TimsIndexConverter, TimsLazyLoder,
     TimsRawDataLayout,
 };
-use rustdf::data::meta::{read_global_meta_sql, read_meta_data_sql, read_mz_calibration, read_tims_calibration};
-use rustdf::data::tdf_writer::{RenderedFrame, TdfWriter, TdfWriterConfig};
-use rustdf::data::utility::flatten_scan_values;
+use ms_io::data::meta::{read_global_meta_sql, read_meta_data_sql, read_mz_calibration, read_tims_calibration};
+use ms_io::data::tdf_writer::{RenderedFrame, TdfWriter, TdfWriterConfig};
+use ms_io::data::utility::flatten_scan_values;
 use timsim_cli::render::{stream_render_flat, Geometry, Ion};
 use timsim_schema::tables::{peptide_rt as RT, precursors as PRE};
 
@@ -576,7 +576,7 @@ fn scan_window_dda(scan: i64, g: &Geometry, n_scans: u32) -> (u32, u32) {
 /// answer key tying each selection event to the true precursor. Oracle-isolation baseline: clean single
 /// target per band; in-window co-isolation contaminants (and DDA memory streaming) are follow-ups.
 fn run_dda(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f64, span: f64) -> Result<()> {
-    use rustdf::data::tdf_writer::{DdaPasefWindow, DdaPrecursor, TdfWriter, TdfWriterConfig};
+    use ms_io::data::tdf_writer::{DdaPasefWindow, DdaPrecursor, TdfWriter, TdfWriterConfig};
     use timsim_cli::dda::{schedule, Candidate, SelectionParams};
     use timsim_cli::render::gauss_frac;
 
@@ -703,7 +703,7 @@ fn run_dda(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
         .filter(|&(f0, f1)| f0 <= f1)
         .collect();
 
-    type ChunkOut = (Vec<(u32, u8, rustdf::data::tdf_writer::EncodedBlock)>, u64, u64);
+    type ChunkOut = (Vec<(u32, u8, ms_io::data::tdf_writer::EncodedBlock)>, u64, u64);
     let chunks: Vec<Result<ChunkOut, String>> = bounds
         .par_iter()
         .map(|&(f0, f1)| {
@@ -714,7 +714,7 @@ fn run_dda(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
             while cursor < win.len() && win[order_start[cursor]].0 <= f0 { active.push(order_start[cursor]); cursor += 1; }
             active.retain(|&i| win[i].1 >= f0);
             let (mut c_ms1, mut c_ms2) = (0u64, 0u64);
-            let mut out: Vec<(u32, u8, rustdf::data::tdf_writer::EncodedBlock)> = Vec::with_capacity((f1 - f0 + 1) as usize);
+            let mut out: Vec<(u32, u8, ms_io::data::tdf_writer::EncodedBlock)> = Vec::with_capacity((f1 - f0 + 1) as usize);
             for frame in f0..=f1 {
                 while cursor < win.len() && win[order_start[cursor]].0 <= frame { active.push(order_start[cursor]); cursor += 1; }
                 active.retain(|&i| win[i].1 >= frame);
@@ -751,7 +751,7 @@ fn run_dda(a: &Args, p: &Placement, g: &Geometry, rt: &HashMap<u64, f64>, lo: f6
                 }
                 let (scans, tofs, ints) = dedup_and_quantise(&tri, a.intensity_scale, a.min_peak_intensity);
                 if is_ms1 { c_ms1 += scans.len() as u64 } else { c_ms2 += scans.len() as u64 }
-                let blk = rustdf::data::tdf_writer::encode_frame_block(&scans, &tofs, &ints, n_scans, compression_level)
+                let blk = ms_io::data::tdf_writer::encode_frame_block(&scans, &tofs, &ints, n_scans, compression_level)
                     .map_err(|e| e.to_string())?;
                 out.push((frame, if is_ms1 { 0u8 } else { 8u8 }, blk));
             }

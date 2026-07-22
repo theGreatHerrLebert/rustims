@@ -3,8 +3,8 @@ use pyo3::wrap_pyfunction;
 
 use numpy::{IntoPyArray, PyArray1};
 
-use rustdf::cluster::cluster::ClusterResult1D;
-use rustdf::cluster::feature::{
+use ms_io::cluster::cluster::ClusterResult1D;
+use ms_io::cluster::feature::{
     AveragineLut,
     SimpleFeature,
     SimpleFeatureParams,

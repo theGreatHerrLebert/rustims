@@ -1,9 +1,9 @@
 use pyo3::prelude::*;
 use numpy::{PyArray1, IntoPyArray};
 
-use rustdf::data::dda::{PASEFDDAFragment, TimsDatasetDDA, PrecursorCoord, PrecursorMS1Signal, SignalMoments};
-use rustdf::data::handle::{TimsData, IndexConverter};
-use rustdf::data::meta::DDAPrecursor;
+use ms_io::data::dda::{PASEFDDAFragment, TimsDatasetDDA, PrecursorCoord, PrecursorMS1Signal, SignalMoments};
+use ms_io::data::handle::{TimsData, IndexConverter};
+use ms_io::data::meta::DDAPrecursor;
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 use crate::py_spectrum_processing::{PyPreprocessedSpectrum, PySpectrumProcessingConfig};

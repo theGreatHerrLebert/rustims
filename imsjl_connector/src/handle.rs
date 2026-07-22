@@ -1,8 +1,8 @@
 use libc::c_char;
 use std::ffi::CString;
 
-use rustdf::data::dataset::TimsDataset;
-use rustdf::data::handle::TimsData;
+use ms_io::data::dataset::TimsDataset;
+use ms_io::data::handle::TimsData;
 use crate::frame::{convert_to_ctims_frame, CTimsFrame};
 
 #[repr(C)]

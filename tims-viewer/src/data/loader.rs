@@ -15,10 +15,10 @@ use std::time::Duration;
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 
 use mscore::data::spectrum::MsType;
-use rustdf::data::acquisition::AcquisitionMode;
-use rustdf::data::dataset::TimsDataset;
-use rustdf::data::handle::{IndexConverter, TimsData};
-use rustdf::data::meta::{
+use ms_io::data::acquisition::AcquisitionMode;
+use ms_io::data::dataset::TimsDataset;
+use ms_io::data::handle::{IndexConverter, TimsData};
+use ms_io::data::meta::{
     read_dda_precursor_meta, read_dia_ms_ms_info, read_dia_ms_ms_windows, read_meta_data_sql,
 };
 

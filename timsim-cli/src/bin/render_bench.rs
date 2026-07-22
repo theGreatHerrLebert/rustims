@@ -219,7 +219,7 @@ fn peak_rss_mb() -> f64 {
 /// zstd, `len+total_scans` header) — so the throughput proof measures the actual compressor.
 #[cfg(feature = "tdf")]
 fn encode_block(scans: Vec<u32>, tofs: Vec<u32>, ints: Vec<u32>, total_scans: u32) -> Result<Vec<u8>> {
-    rustdf::data::utility::reconstruct_compressed_data(scans, tofs, ints, total_scans, 1)
+    ms_io::data::utility::reconstruct_compressed_data(scans, tofs, ints, total_scans, 1)
         .map_err(|e| anyhow::anyhow!("TDF block encode failed: {e}"))
 }
 

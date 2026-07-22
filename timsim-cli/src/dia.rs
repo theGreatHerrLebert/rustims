@@ -13,7 +13,7 @@
 
 use anyhow::{anyhow, Result};
 use mscore::timstof::quadrupole::TimsTransmissionDIA;
-use rustdf::data::meta::{read_dia_ms_ms_info, read_dia_ms_ms_windows, DiaMsMisInfo, DiaMsMsWindow};
+use ms_io::data::meta::{read_dia_ms_ms_info, read_dia_ms_ms_windows, DiaMsMisInfo, DiaMsMsWindow};
 use std::collections::{HashMap, HashSet};
 
 /// The replayed DIA schedule for our run + the transmission gate built from the reference windows.

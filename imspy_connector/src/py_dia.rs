@@ -6,13 +6,13 @@ use numpy::{Ix1, Ix2, PyArray, PyArray1, PyArray2, PyReadonlyArray1};
 use numpy::ndarray::{Array2, ShapeBuilder};
 use pyo3::exceptions::PyValueError;
 use rayon::prelude::*;
-use rustdf::cluster::candidates::{fragment_from_cluster, AssignmentResult, CandidateOpts, FragmentIndex, FragmentQueryOpts, PseudoBuildResult, ScoreOpts};
-use rustdf::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, BuildSpecOpts, ClusterMergeDistancePolicy, ClusterResult1D, Eval1DOpts, RawPoints};
-use rustdf::cluster::feature::SimpleFeature;
-use rustdf::data::dia::{DiaIndex, TimsDatasetDIA};
-use rustdf::data::handle::TimsData;
-use rustdf::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid, ThresholdMode};
-use rustdf::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams};
+use ms_io::cluster::candidates::{fragment_from_cluster, AssignmentResult, CandidateOpts, FragmentIndex, FragmentQueryOpts, PseudoBuildResult, ScoreOpts};
+use ms_io::cluster::cluster::{merge_clusters_by_distance, Attach1DOptions, BuildSpecOpts, ClusterMergeDistancePolicy, ClusterResult1D, Eval1DOpts, RawPoints};
+use ms_io::cluster::feature::SimpleFeature;
+use ms_io::data::dia::{DiaIndex, TimsDatasetDIA};
+use ms_io::data::handle::TimsData;
+use ms_io::cluster::peak::{TofScanWindowGrid, FrameBinView, build_frame_bin_view, ImPeak1D, RtPeak1D, RtExpandParams, TofRtGrid, ThresholdMode};
+use ms_io::cluster::utility::{TofScale, smooth_vector_gaussian, Fit1D, blur_tof_all_frames, stitch_im_peaks_flat_unordered_impl, StitchParams};
 use crate::py_tims_frame::PyTimsFrame;
 use crate::py_tims_slice::PyTimsSlice;
 
@@ -3059,9 +3059,9 @@ fn results_to_py(py: Python<'_>, v: Vec<ClusterResult1D>) -> PyResult<Vec<Py<PyC
         .collect()
 }
 
-use rustdf::cluster::io as cio;
-use rustdf::cluster::pseudo::{PseudoFragment, PseudoSpecOpts, PseudoSpectrum};
-use rustdf::cluster::scoring::{MatchScoreMode, ScoredHit, XicScoreOpts};
+use ms_io::cluster::io as cio;
+use ms_io::cluster::pseudo::{PseudoFragment, PseudoSpecOpts, PseudoSpectrum};
+use ms_io::cluster::scoring::{MatchScoreMode, ScoredHit, XicScoreOpts};
 use crate::py_feature::PySimpleFeature;
 use crate::py_pseudo::PyPseudoSpectrum;
 

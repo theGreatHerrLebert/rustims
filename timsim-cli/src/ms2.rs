@@ -285,7 +285,7 @@ pub fn dia_render_range<F: FnMut(u32, u8, &[(u32, u32, f64)])>(
 mod tests {
     use super::*;
     use crate::render::cube_diff;
-    use rustdf::data::meta::{DiaMsMisInfo, DiaMsMsWindow};
+    use ms_io::data::meta::{DiaMsMisInfo, DiaMsMsWindow};
 
     fn geom() -> Geometry {
         Geometry { n_frames: 9, n_scans: 3, sigma_frames: 2.0, sigma_scans: 1.0, n_sigma: 2.0 }

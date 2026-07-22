@@ -6,7 +6,7 @@
 
 use anyhow::{Context, Result};
 
-use rustdf::data::meta::{read_global_meta_sql, read_meta_data_sql};
+use ms_io::data::meta::{read_global_meta_sql, read_meta_data_sql};
 
 use super::point::{AxisBounds, AxisTransform};
 

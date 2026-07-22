@@ -4,10 +4,10 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use rustdf::sim::scheme::AcquisitionScheme;
+use ms_io::sim::scheme::AcquisitionScheme;
 
 /// Python wrapper over the vendor-neutral DIA acquisition scheme
-/// (`rustdf::sim::scheme::AcquisitionScheme`).
+/// (`ms_io::sim::scheme::AcquisitionScheme`).
 ///
 /// Exposes the vendor extractors and the Bruker backward-compat adapter, so the
 /// Python simulator can build its DIA layout from a real Bruker/Thermo/SCIEX run
@@ -93,7 +93,7 @@ impl PyAcquisitionScheme {
         ce_intercept: Option<f64>,
         ce_slope_per_mz: Option<f64>,
     ) -> PyResult<Self> {
-        use rustdf::sim::scheme::CollisionEnergyPolicy;
+        use ms_io::sim::scheme::CollisionEnergyPolicy;
         let ce = match (ce_intercept, ce_slope_per_mz) {
             (Some(intercept), Some(slope_per_mz)) => {
                 CollisionEnergyPolicy::Linear { intercept, slope_per_mz }
@@ -107,7 +107,7 @@ impl PyAcquisitionScheme {
         };
         let inner = py
             .detach(|| {
-                AcquisitionScheme::from_sciex_wiff(path, cycle_time_s, gradient_length_s, ce)
+                sciex_io::from_sciex_wiff(path, cycle_time_s, gradient_length_s, ce)
             })
             .map_err(PyErr::from)?;
         Ok(Self { inner })
@@ -129,7 +129,7 @@ impl PyAcquisitionScheme {
         ce_intercept: Option<f64>,
         ce_slope_per_mz: Option<f64>,
     ) -> PyResult<Vec<(u32, f64, u8, Option<f64>, Option<f64>, Option<f64>)>> {
-        use rustdf::sim::scheme::CollisionEnergyPolicy;
+        use ms_io::sim::scheme::CollisionEnergyPolicy;
         let ce = match (ce_intercept, ce_slope_per_mz) {
             (Some(intercept), Some(slope_per_mz)) => {
                 CollisionEnergyPolicy::Linear { intercept, slope_per_mz }
@@ -143,7 +143,7 @@ impl PyAcquisitionScheme {
         };
         let rows = py
             .detach(|| {
-                AcquisitionScheme::from_sciex_wiff(path, cycle_time_s, gradient_length_s, ce)
+                sciex_io::from_sciex_wiff(path, cycle_time_s, gradient_length_s, ce)
                     .map(|s| s.dia_frame_schedule())
             })
             .map_err(PyErr::from)?;
@@ -257,7 +257,7 @@ impl PyAcquisitionScheme {
 #[cfg(feature = "thermo")]
 #[pyclass]
 pub struct PyThermoRawWriter {
-    inner: rustdf::sim::acquisition::ThermoRawWriter,
+    inner: ms_io::sim::acquisition::ThermoRawWriter,
     /// Set after a successful `finalize`. Guards against write-after-finalize
     /// (which would leave the on-disk `.raw` stale) and double-finalize.
     finalized: bool,
@@ -327,7 +327,7 @@ impl PyThermoRawWriter {
         overlay_merge_tol_ppm: Option<f64>,
         allow_partial: bool,
     ) -> PyResult<Self> {
-        use rustdf::sim::acquisition::{ThermoRawWriter, WriteMode};
+        use ms_io::sim::acquisition::{ThermoRawWriter, WriteMode};
         if let Some(tol) = overlay_merge_tol_ppm {
             if !tol.is_finite() || tol <= 0.0 {
                 return Err(PyValueError::new_err(
@@ -361,7 +361,7 @@ impl PyThermoRawWriter {
         mz: Vec<f64>,
         intensity: Vec<f64>,
     ) -> PyResult<()> {
-        use rustdf::sim::acquisition::{AcquisitionWriter, ScanDescriptor};
+        use ms_io::sim::acquisition::{AcquisitionWriter, ScanDescriptor};
         self.ensure_open()?;
         let peaks = pack_peaks(&mz, &intensity)?;
         let d = ScanDescriptor {
@@ -387,7 +387,7 @@ impl PyThermoRawWriter {
         mz: Vec<f64>,
         intensity: Vec<f64>,
     ) -> PyResult<()> {
-        use rustdf::sim::acquisition::{AcquisitionWriter, IsolationWindow, ScanDescriptor};
+        use ms_io::sim::acquisition::{AcquisitionWriter, IsolationWindow, ScanDescriptor};
         self.ensure_open()?;
         if !isolation_center.is_finite() || isolation_center <= 0.0 {
             return Err(PyValueError::new_err("isolation_center must be finite and > 0"));
@@ -415,7 +415,7 @@ impl PyThermoRawWriter {
     /// Recompute the checksum and write the `.raw` to disk. May be called once;
     /// subsequent writes or finalizes raise `RuntimeError`.
     pub fn finalize(&mut self, py: Python<'_>) -> PyResult<()> {
-        use rustdf::sim::acquisition::AcquisitionWriter;
+        use ms_io::sim::acquisition::AcquisitionWriter;
         if self.finalized {
             return Err(PyRuntimeError::new_err("writer already finalized"));
         }
@@ -441,7 +441,7 @@ impl PyThermoRawWriter {
 }
 
 /// LegacyCompat frame (time) projection — the exact Rust path
-/// (`rustdf::sim::projector::project_time_legacy`), exposed so parity tests
+/// (`ms_io::sim::projector::project_time_legacy`), exposed so parity tests
 /// drive the real projector rather than the bare kernels. Inputs are the legacy
 /// f64 EMG params + the full frames table; returns one list of
 /// `(frame_id, abundance)` per peptide.
@@ -462,7 +462,7 @@ pub fn legacy_frame_projection(
     num_threads: usize,
 ) -> Vec<Vec<(u32, f64)>> {
     py.detach(|| {
-        rustdf::sim::projector::project_time_legacy(
+        ms_io::sim::projector::project_time_legacy(
             &rt_mus, &rt_sigmas, &rt_lambdas, &frame_ids, &frame_times, rt_cycle_length, target_p,
             step_size, n_steps, remove_epsilon, num_threads,
         )
@@ -470,7 +470,7 @@ pub fn legacy_frame_projection(
 }
 
 /// LegacyCompat scan (mobility) projection for one ion — the exact Rust path
-/// (`rustdf::sim::projector::project_mobility_ion_legacy`). `mean`/`sigma` are
+/// (`ms_io::sim::projector::project_mobility_ion_legacy`). `mean`/`sigma` are
 /// the original 1/K0 mean+std; `scan_mobilities` ascending, `scan_ids` aligned.
 /// Returns `(scan, abundance)`.
 #[pyfunction]
@@ -484,13 +484,13 @@ pub fn legacy_scan_projection(
     target_p: f64,
     step_size: f64,
 ) -> Vec<(i32, f64)> {
-    rustdf::sim::projector::project_mobility_ion_legacy(
+    ms_io::sim::projector::project_mobility_ion_legacy(
         mean, sigma, &scan_ids, &scan_mobilities, im_cycle_length, target_p, step_size,
     )
 }
 
 /// Batched + parallel LegacyCompat scan projection over many ions
-/// (`rustdf::sim::projector::project_mobility_legacy_par`) — the kernels the
+/// (`ms_io::sim::projector::project_mobility_legacy_par`) — the kernels the
 /// legacy job used. `means`/`sigmas` per ion; `scan_ids`/`scan_mobilities`
 /// ascending+aligned, shared. Returns one `(scan, abundance)` list per ion.
 #[pyfunction]
@@ -507,7 +507,7 @@ pub fn legacy_scan_projection_par(
     num_threads: usize,
 ) -> Vec<Vec<(i32, f64)>> {
     py.detach(|| {
-        rustdf::sim::projector::project_mobility_legacy_par(
+        ms_io::sim::projector::project_mobility_legacy_par(
             &means, &sigmas, &scan_ids, &scan_mobilities, im_cycle_length, target_p, step_size,
             num_threads,
         )
@@ -547,7 +547,7 @@ pub fn accurate_frame_projection(
 }
 
 /// Accurate scan (mobility) projection over many ions
-/// (`rustdf::sim::projector::project_mobility_accurate_par`): a Gaussian per ion
+/// (`ms_io::sim::projector::project_mobility_accurate_par`): a Gaussian per ion
 /// onto the ascending `mobility_grid`, with per-scan midpoint bins (correct on
 /// non-uniform grids). Returns one `(ascending_scan_index, abundance)` list per
 /// ion; the caller maps the ascending index to a native scan id.
@@ -563,7 +563,7 @@ pub fn accurate_scan_projection(
     num_threads: usize,
 ) -> Vec<Vec<(i32, f64)>> {
     py.detach(|| {
-        rustdf::sim::projector::project_mobility_accurate_par(
+        ms_io::sim::projector::project_mobility_accurate_par(
             &means, &sigmas, &mobility_grid, target_p, step_size, num_threads,
         )
     })
@@ -588,7 +588,7 @@ pub fn has_sciex() -> bool {
 /// selection code).
 #[pyclass(unsendable)]
 pub struct PyActivationPolicy {
-    pub inner: rustdf::sim::scheme::ActivationPolicy,
+    pub inner: ms_io::sim::scheme::ActivationPolicy,
 }
 
 #[pymethods]
@@ -597,7 +597,7 @@ impl PyActivationPolicy {
     #[staticmethod]
     pub fn bruker_pasef(ce_bias: f64, ce_slope: f64) -> Self {
         PyActivationPolicy {
-            inner: rustdf::sim::scheme::ActivationPolicy::bruker_pasef(ce_bias, ce_slope),
+            inner: ms_io::sim::scheme::ActivationPolicy::bruker_pasef(ce_bias, ce_slope),
         }
     }
 
@@ -634,9 +634,9 @@ impl PyActivationPolicy {
     #[getter]
     pub fn energy_unit(&self) -> String {
         match self.inner.unit {
-            rustdf::sim::scheme::EnergyUnit::ElectronVolt => "ev".to_string(),
-            rustdf::sim::scheme::EnergyUnit::NormalizedCe => "nce".to_string(),
-            rustdf::sim::scheme::EnergyUnit::Unknown => "unknown".to_string(),
+            ms_io::sim::scheme::EnergyUnit::ElectronVolt => "ev".to_string(),
+            ms_io::sim::scheme::EnergyUnit::NormalizedCe => "nce".to_string(),
+            ms_io::sim::scheme::EnergyUnit::Unknown => "unknown".to_string(),
         }
     }
 }
@@ -666,7 +666,7 @@ pub fn write_astral_raw(
     fragment_noise_ppm: f64,
     superimpose_ppm: f64,
 ) -> PyResult<(usize, usize, usize, usize, usize, bool)> {
-    use rustdf::sim::astral_dispatch::{write_astral_raw as run, AstralWriteOptions};
+    use ms_io::sim::astral_dispatch::{write_astral_raw as run, AstralWriteOptions};
     use std::path::Path;
     for (name, v) in [
         ("precursor_noise_ppm", precursor_noise_ppm),
@@ -706,7 +706,7 @@ pub fn rewindow_thermo_template(
     dst_path: &str,
     isolation_width: f64,
 ) -> PyResult<usize> {
-    use rustdf::sim::acquisition::rewindow_thermo_template as run;
+    use ms_io::sim::acquisition::rewindow_thermo_template as run;
     use std::path::Path;
     py.detach(|| run(Path::new(src_path), Path::new(dst_path), isolation_width))
         .map_err(PyValueError::new_err)
@@ -729,7 +729,7 @@ pub fn render_dia_mzml(
     use std::path::Path;
     let s = py
         .detach(|| {
-            rustdf::sim::mzml::render_db_to_mzml(
+            ms_io::sim::mzml::render_db_to_mzml(
                 Path::new(db_path),
                 Path::new(out_path),
                 num_threads,

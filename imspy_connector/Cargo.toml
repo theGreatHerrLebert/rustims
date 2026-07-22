@@ -12,7 +12,8 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.29.0", features = ["extension-module"] }
 numpy = "0.29.0"
 mscore = { version = "0.5.0" }
-rustdf = { path = "../rustdf", version = "0.4.1" }
+ms-io = { path = "../../../mscore/ms-io" }
+sciex-io = { path = "../sciex-io", optional = true }
 serde = "1.0.219"
 serde_json = "1.0.140"
 rayon = "1.10.0"
@@ -20,9 +21,9 @@ regex = "1.11.1"
 rustc-hash = "2.1.0"
 
 [features]
-# Forward the vendor extractors to rustdf (each needs its private repo at build
+# Forward the vendor extractors to ms-io (sciex -> sciex-io) (each needs its private repo at build
 # time). Off by default: the core connector + Bruker scheme path stay unaffected.
-thermo = ["rustdf/thermo"]
-sciex = ["rustdf/sciex"]
+thermo = ["ms-io/thermo"]
+sciex = ["dep:sciex-io"]
 # Open mzML output writer (mzdata); no private repo needed.
-mzml = ["rustdf/mzml"]
+mzml = ["ms-io/mzml"]

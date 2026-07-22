@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 libc = "0.2.148"
 mscore = { version = "0.5.0" }
-rustdf = { path = "../rustdf", version = "0.4.1" }
+ms-io = { path = "../../../mscore/ms-io" }
 
 [lib]
 crate-type = ["cdylib"]

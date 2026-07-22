@@ -1,15 +1,15 @@
 use mscore::timstof::frame::TimsFrame;
 use pyo3::prelude::*;
-use rustdf::data::dataset::TimsDataset;
-use rustdf::data::utility::{zstd_compress, zstd_decompress, reconstruct_compressed_data, compress_collection, parse_decompressed_bruker_binary_data};
+use ms_io::data::dataset::TimsDataset;
+use ms_io::data::utility::{zstd_compress, zstd_decompress, reconstruct_compressed_data, compress_collection, parse_decompressed_bruker_binary_data};
 
 use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
 use numpy::{IntoPyArray, PyArray1};
 use pyo3::types::PyList;
 use pyo3::{PyResult, Python};
-use rustdf::data::acquisition::AcquisitionMode;
-use rustdf::data::handle::TimsData;
+use ms_io::data::acquisition::AcquisitionMode;
+use ms_io::data::handle::TimsData;
 
 #[pyclass]
 pub struct PyTimsDataset {
@@ -267,28 +267,28 @@ impl PyAcquisitionMode {
 
 #[pyfunction]
 pub fn get_peak_cnts(total_scans: u32, scans: Vec<u32>) -> Vec<u32> {
-    rustdf::data::utility::get_peak_cnts(total_scans, &scans)
+    ms_io::data::utility::get_peak_cnts(total_scans, &scans)
 }
 
 // pub fn modify_tofs(tofs: &mut [u32], scans: &[u32]) {
 #[pyfunction]
 pub fn modify_tofs(mut tofs: Vec<u32>, scans: Vec<u32>) -> Vec<u32> {
-    rustdf::data::utility::modify_tofs(&mut tofs, &scans);
+    ms_io::data::utility::modify_tofs(&mut tofs, &scans);
     tofs
 }
 #[pyfunction]
 pub fn get_realdata(peak_cnts: Vec<u32>, interleaved: Vec<u32>) -> Vec<u8> {
-    rustdf::data::utility::get_realdata(&peak_cnts, &interleaved)
+    ms_io::data::utility::get_realdata(&peak_cnts, &interleaved)
 }
 
 #[pyfunction]
 pub fn get_data_for_compression(tofs: Vec<u32>, scans: Vec<u32>, intensities: Vec<u32>, max_scans: u32) -> Vec<u8> {
-    rustdf::data::utility::get_data_for_compression(&tofs, &scans, &intensities, max_scans)
+    ms_io::data::utility::get_data_for_compression(&tofs, &scans, &intensities, max_scans)
 }
 
 #[pyfunction]
 pub fn get_data_for_compression_par(tofs: Vec<Vec<u32>>, scans: Vec<Vec<u32>>, intensities: Vec<Vec<u32>>, max_scans: u32, num_threads: usize) -> Vec<Vec<u8>> {
-    rustdf::data::utility::get_data_for_compression_par(tofs, scans, intensities, max_scans, num_threads)
+    ms_io::data::utility::get_data_for_compression_par(tofs, scans, intensities, max_scans, num_threads)
 }
 
 #[pymodule]
