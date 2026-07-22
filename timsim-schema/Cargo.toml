@@ -2,6 +2,7 @@
 name = "timsim-schema"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.84"
 license = "MIT"
 description = "The schema contract for timsim v2. One definition of every column, read by Rust and Python alike."
 

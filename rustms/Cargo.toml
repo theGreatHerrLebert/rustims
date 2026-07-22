@@ -2,6 +2,7 @@
 name = "rustms"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.84"
 
 [dependencies]
 serde = { version = "1.0.198", features = ["derive"] }
