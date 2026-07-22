@@ -11,7 +11,10 @@ requires-python = ">=3.11,<3.14"
 
 dependencies = [
     "imspy-core>=0.4.0",
-    "imspy-predictors>=0.4.0",
+    # imspy-search unconditionally instantiates LOCAL CCS/RT predictors
+    # (rescoring.create_feature_space + the DDA/rescore CLIs), so it needs the
+    # torch-backed `local` extra — the Koina-only path does not apply here.
+    "imspy-predictors[local]>=0.4.0",
     "sagepy>=0.4.0",
     "mokapot>=0.9.0",
     "scikit-learn>=1.0",

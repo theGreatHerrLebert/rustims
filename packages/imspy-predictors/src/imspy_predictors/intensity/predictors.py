@@ -26,7 +26,6 @@ from imspy_predictors.intensity.utility import (
 
 from imspy_core.data import PeptideProductIonSeriesCollection, PeptideSequence
 from imspy_core.utility import remove_unimod_annotation
-from imspy_predictors.losses import masked_spectral_distance
 from imspy_predictors.utility import InMemoryCheckpoint
 
 # Lazy imports for optional dependencies
@@ -35,8 +34,12 @@ from imspy_predictors.lazy_imports import (
     get_simulation_flatten_prosit,
 )
 
-from imspy_predictors.utility import InMemoryCheckpoint
-from imspy_predictors.losses import masked_spectral_distance
+# NOTE: `masked_spectral_distance` (from imspy_predictors.losses, which imports
+# torch unconditionally) is intentionally NOT imported here. Importing this module
+# must stay torch-free so the Koina (remote) intensity path — Prosit2023TimsTofWrapper,
+# predict_fragment_intensities_with_koina — loads without torch. The loss is used
+# only in the training loops (fine_tune_model), where it is imported at point-of-use
+# alongside the already-deferred torch DataLoader import.
 
 
 # -----------------------------------------------------------------------------
@@ -966,6 +969,7 @@ class DeepPeptideIntensityPredictor(IonIntensityPredictor):
         assert 'intensity_target' in data.columns, 'Data must contain column "intensity_target"'
 
         from torch.utils.data import DataLoader, TensorDataset
+        from imspy_predictors.losses import masked_spectral_distance
 
         if len(data) < 2:
             if verbose:
@@ -1266,6 +1270,7 @@ class DeepPeptideIntensityPredictor(IonIntensityPredictor):
         assert 'intensity_target' in data.columns, 'Data must contain column "intensity_target"'
 
         from torch.utils.data import DataLoader, TensorDataset
+        from imspy_predictors.losses import masked_spectral_distance
 
         if len(data) < 2:
             if verbose:
