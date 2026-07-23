@@ -97,6 +97,26 @@ timsim-predict  (rustims-adjacent or in <DLREPO>? — D3)
      exposes: timsim-ccs, timsim-rt, timsim-fragments
 
 necroflow DAG → timsim-ccs/rt/fragments  (unchanged command names; new provider)
+
+## THREE consumers of pepdl (not two) — the rescoring facet
+The DL predictions serve **simulation, rescoring, AND training** — three consumers of one inference core:
+- **timsim-predict** (simulation) — parquet I/O → the necroflow pipeline.
+- **sagepy-rescore** (rescoring, EXISTING repo `theGreatHerrLebert/sagepy-rescore`) — PSM I/O + mokapot.
+- **pepdl-train** (training) — datasets + loops.
+
+**Consequence for the boundary:** the `sagepy predict_*` adapters (`predict_inverse_ion_mobility`,
+`predict_retention_time`, `associate_fragment_ions_with_prosit_predicted_intensities`, the
+`get_sagepy_*` bridges) are **rescoring** code, NOT training and NOT core inference. They **leave `pepdl`
+entirely** — the inference core stays 100% sagepy-free (no `get_sagepy_*`, no sagepy in any closure). Their
+home is the **rescoring layer** (`sagepy-rescore`, which then consumes `pepdl` for the raw predictions,
+exactly like `timsim-predict` does). This is cleaner than my earlier plan of folding them into `pepdl-train`.
+
+**Scope call (D6):** the *initial* extraction ships `pepdl` + `pepdl-train` + `timsim-predict` and simply
+*excludes* the sagepy adapters from `pepdl` (they stay put in imspy-search/-predictors for now, untouched).
+`sagepy-rescore` adopting `pepdl` (and absorbing those adapters) is a **clean follow-on** — same pattern,
+separate PR — so it doesn't expand the critical path. Design `pepdl`'s inference API to be rescoring-friendly
+(peptide→prediction primitives that a PSM adapter can wrap) so that adoption is a thin layer later.
+Open item: confirm `sagepy-rescore`'s current deps (does it already pull imspy-predictors?) when we get to it.
 ```
 
 ## Decisions to make (with recommendations)
