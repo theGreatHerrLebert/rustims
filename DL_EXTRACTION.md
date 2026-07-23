@@ -281,6 +281,17 @@ could re-layer `imspy_connector` on top of this wheel to dedupe, but that is out
 - **`mscore-py` namespace (v2):** distinct Python module paths from `imspy_connector` (safer than matching
   names, which invite accidental mixed-type imports).
 
+## Pre-existing bugs in copied primitives (backlog — fix at the shared-source-crate refactor)
+Surfaced by the Stage-1 codex review; verified byte-identical to the `imspy_connector` originals (faithful
+copies, NOT introduced here) and **off the pepdl DL path**. Fixing them in `mscorepy` only would diverge it
+from `imspy_connector` — so fix both at once when the pyo3 binding source is factored into a shared crate:
+- **[P2] `py_chemistry::calculate_transmission_dependent_fragment_ion_isotope_distribution`** — builds the
+  transmitted-isotope set from `transmitted_isotopes`'s *length* only, ignoring its m/z/intensity, so any
+  same-length spectrum yields indices `0..n` (can't express a non-contiguous selection). Quadrupole fn, not
+  a DL primitive.
+- **[P2] `py_spectrum_processing` (all three fns)** — `as_slice().unwrap()` panics (`PanicException`) on
+  strided/reversed NumPy inputs (`mz[::2]`); should propagate the error or copy. Not a DL primitive.
+
 ## Open risks
 - **Stage 2 surgery** — predict and fine_tune share intra-class helpers; the fix is `_model_common`
   extraction, not a shared base class (which could reverse the dependency edge). The public-method-with-
