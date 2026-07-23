@@ -292,6 +292,17 @@ from `imspy_connector` — so fix both at once when the pyo3 binding source is f
 - **[P2] `py_spectrum_processing` (all three fns)** — `as_slice().unwrap()` panics (`PanicException`) on
   strided/reversed NumPy inputs (`mz[::2]`); should propagate the error or copy. Not a DL primitive.
 
+## pepdl Stage-2 codex findings (all pre-existing copies, verified byte-identical to imspy-predictors)
+- **[P2] fine_tune_model imports `pepdl.losses`** (intensity/predictors.py:972,1273) — RESOLVED BY STAGE 3
+  (fine_tune → pepdl-train, which owns losses). Lazy import, so the inference gate is unaffected.
+- **[P1] koina-intensity column rename is backwards** (intensity/predictors.py:~601) — renames
+  `peptide_sequences`→`seq_col` so Koina's required columns go missing → `ModelFromKoina.predict()` raises.
+  Pre-existing on the koina INTENSITY path (my Stage-2 live test covered koina RT, not intensity). **Verify +
+  fix in Stage 4** with a live koina-intensity test against the real fragments-job usage.
+- **[P1] single-peptide intensity squeezes the batch axis** (intensity/predictors.py:~512) — `reshape_dims`
+  →(1,29,6), `squeeze`→(29,6) so the flatten treats 29 rows as separate predictions. Pre-existing; **verify +
+  fix in Stage 4** (same live-koina-intensity test; guard: don't squeeze the batch dim).
+
 ## Open risks
 - **Stage 2 surgery** — predict and fine_tune share intra-class helpers; the fix is `_model_common`
   extraction, not a shared base class (which could reverse the dependency edge). The public-method-with-
