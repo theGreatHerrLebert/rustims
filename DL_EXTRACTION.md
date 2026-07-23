@@ -90,8 +90,21 @@ series (`py_peptide` → `mscore::data::peptide`), mass/mz + isotopes (`py_chemi
 sumformula/unimod/constants/mz_spectrum. **Closure carries NO `ms-io`/`timsim-*`** — verified: the
 connector's peptide/chem/tokenizer modules are backed solely by `mscore`/`ms-chem`; the timsTOF/TDF/sim
 modules (`py_dataset/dda/dia/feature/pseudo/quadrupole/tims_frame/tims_slice/acquisition/simulation`) are
-the ms-io/timsim-backed set that `mscore-py` simply omits. Some pyclass duplication with the full
-`imspy_connector` is accepted (per guidance); the two wheels' types don't cross on any single path.
+the ms-io/timsim-backed set that `mscore-py` simply omits.
+
+**`mscore-py` is a real, versioned public API — not a copy-paste convenience layer (codex).** To avoid
+semantics drifting between two wheels: factor the shared pyo3 binding *source* (`py_peptide`, `py_chemistry`,
+`py_ml_utility`, …) into a **shared Rust module/crate that BOTH `mscore-py` and `imspy_connector` compile**
+(one source of truth; a bug fix lands once). Give `mscore-py` a **distinct Python namespace** (not
+`imspy_connector`'s module paths) so nothing mixes the two by accident.
+
+**Two-types coexistence rule (codex — enforced, not assumed).** Even sharing Rust source, a process importing
+BOTH wheels gets two *distinct* Python `PeptideSequence` classes (isinstance / pyo3-extract / pickle / dict-
+by-type won't interoperate). Safe only if enforced: `pepdl` never accepts or returns `imspy_connector`
+peptide/ion objects; all cross-boundary interchange is **strings / ProForma / primitive arrays**, never
+duck-typed objects; a **coexistence test** imports both wheels and asserts `pepdl` runs without consuming
+connector objects (clear `TypeError` if mixed). Do not promise future interchangeability from Rust-type
+similarity — a later `imspy_connector`-on-`mscore-py` re-layer would be an API migration, not a dedupe.
 
 **This SUPERSEDES D1** (the "keep a thin imspy-core dep for the 2 connector-backed classes" call): those
 classes come from `mscore-py` now, so **`pepdl` needs neither `imspy-core` nor `imspy_connector`** — a clean
@@ -180,9 +193,15 @@ the rustims release (works, but leaves a cord). Recommend re-host on `<DLREPO>` 
 bundled `.pt` fallbacks keep it working in the interim.
 
 **D6 — sagepy-rescore scope. ✅ DECIDED: in scope (Stage 6).** It installs `imspy-predictors @ git+…rustims`
-+ `imspy-search` today (the dead weight); it already isolates its sage adapters (`sage_loader`/`features`)
-and needs *inference only*, so adoption is a clean dep-swap → `pepdl`, drop `imspy-search`. Rescoring-parity
-gate. The imspy-predictors sagepy PSM functions stay in imspy-search-land (neither pepdl nor sagepy-rescore).
++ `imspy-search` today (the dead weight). Key fact (resolves the codex contradiction): **`sagepy-rescore`
+already OWNS every adapter it executes** — its own `sage_loader.py`/`features.py` do the sage-PSM↔predictor
+bridging, and it uses `sagepy.core.ml.mobility_model.predict_sage_im` (from `sagepy`, not imspy). It does NOT
+use imspy-predictors' sagepy PSM functions (`predict_inverse_ion_mobility` etc.) — those belong to the
+*separate* imspy-search rescoring path and stay there, untouched. So adoption = swap `imspy-predictors(git)`
+→ `pepdl` (inference), and drop `imspy-search`. **Gated (codex):** an import/dependency audit of the whole
+repo (incl. optional paths + CLI entry points) confirming **no direct runtime import of `imspy-search`**
+(its declaration is only there to satisfy imspy-predictors' *fine-tune*, which rescoring never calls), then a
+clean-venv test running the rescoring path with both `imspy-search` and `imspy-predictors` **absent**.
 
 **D7 — the shared wheel's name + home.** Home = **mscore foundation repo** (it binds `mscore` + `ms-chem`).
 Name candidates (verify PyPI/GitHub-topic free): `mscore` (clean PyPI name for the crate's bindings, mirrors
@@ -199,16 +218,24 @@ could re-layer `imspy_connector` on top of this wheel to dedupe, but that is out
   pyo3 modules (`py_peptide`, `py_ml_utility`, `py_chemistry`, `py_amino_acids`, `py_elements`,
   `py_sumformula`, `py_unimod`, `py_constants`, `py_mz_spectrum` — reused from `imspy_connector`); Cargo deps
   = `mscore` + `ms-chem` ONLY. Add the pure physics helpers (`ccs_to_one_over_k0`/`one_over_k0_to_ccs`) if
-  they belong in primitives. **Gate:** `cargo tree` shows no `ms-io`/`timsim-*`; the wheel builds; a Python
-  smoke-test tokenizes a peptide + builds a product-ion series + `calculate_mz`. Publish to PyPI (D7 name).
+  they belong in primitives. **Closure gate (codex — Cargo deps alone are insufficient):** `cargo tree -e
+  features -i ms-io` and `-i timsim-*` return nothing across *every shippable feature profile* (inspect
+  `mscore`'s default features — ensure no convenience feature pulls I/O); a **CI policy test fails on any
+  forbidden package** in the resolved graph; and `pipdeptree` on the **installed wheel from a clean venv**
+  shows no ms-io/timsim. Then: wheel builds; Python smoke-test tokenizes + builds a product-ion series +
+  `calculate_mz`. Publish to PyPI (D7 name) BEFORE `pepdl` depends on it.
 - **Stage 2 — `pepdl` inference package (seam+copy+REPOINT, one pass).** The files carry *unconditional*
   training imports, so a naive copy is unimportable — do the seam pass WITH the copy: push heavyweight/
   training imports behind training-only methods or into dependency-neutral `_model_common.py`/`_features.py`;
   **repoint the tokenizer + `PeptideSequence`/product-ion classes from `imspy_core`/`imspy_connector` →
   `mscore-py`** (the one real redesign); vendor the pure funcs (`linear_map`, `remove_unimod_annotation`)
-  + copy `flatten_prosit_array` (each with provenance + regression vectors); drop sklearn/wandb. **Gate:**
-  `import pepdl` + a Koina predict smoke-test succeed in a venv with **NO imspy package at all** (mscore-py
-  replaces imspy-core/connector).
+  + copy `flatten_prosit_array` (each with provenance + regression vectors); drop sklearn/wandb.
+  **Intensity-repoint contract tests FIRST (codex):** before swapping the ion-series class, characterize the
+  current `imspy_core` object's behavior on representative peptides (modified residues, terminal mods, charge
+  states, neutral losses, empty/no-product cases) — series membership + ordering, labels, m/z, charge, and the
+  exact arrays/dtype/None-handling passed to the model/postprocessor — and assert `mscore-py`'s equivalent
+  matches. **Gate:** those contract tests pass; `import pepdl` + a Koina predict smoke-test succeed in a venv
+  with **NO imspy package at all** (mscore-py replaces imspy-core/connector).
 - **Stage 3 — enforce the one-way graph.** Move training-only public methods (`fine_tune_*`) into
   `pepdl-train`; they import inference's shared internals, never vice-versa; inference classes stay intact
   (no cross-package split, no edge-reversing base class). **Gate:** every public inference method runs with
@@ -227,8 +254,10 @@ could re-layer `imspy_connector` on top of this wheel to dedupe, but that is out
 - **Stage 6 — publish, sagepy-rescore adoption, weights re-host.** Publish `mscore-py` (done Stage 1),
   `pepdl` (+ `-train`), `timsim-predict` to PyPI. **sagepy-rescore:** swap its
   `imspy-predictors @ git+…rustims` dep → `pepdl`, drop `imspy-search`, keep its own `sage_loader`/`features`
-  adapters; **rescoring parity gate** (same mokapot features/q-values on a fixed sage input, model version
-  pinned). **Weights (D5):** re-host as `pepdl` releases (SHA-256 + version), rustims URL a time-limited
+  adapters; **rescoring parity in TWO tiers (codex):** first pin **raw prediction + feature parity** (the RT/
+  IM/intensity values and derived rescoring columns), THEN mokapot q-value parity — q-values drift from tiny
+  score/dep changes, so the prediction/feature contract is the real gate, pinned to a named model version.
+  **Weights (D5):** re-host as `pepdl` releases (SHA-256 + version), rustims URL a time-limited
   tracked mirror; **no Git LFS in wheels**, prefer download-cache over fat bundled `.pt`, no silent-old-model
   substitution. Leave a deprecation **shim** for the old imspy-simulation predictor entry points, then remove.
 
@@ -245,6 +274,12 @@ could re-layer `imspy_connector` on top of this wheel to dedupe, but that is out
   vendored imspy-core funcs, Unimod vocab, Chronologer assets, and the Rust tokenizer.
 - **Migration policy:** shim for existing `imspy_predictors`/`imspy_simulation` imports + the CLI names
   during the DAG cutover.
+- **`mscore-py`↔`pepdl` API-compat policy (v2):** semver + min/max version bounds; how tokenizer/model
+  feature semantics are versioned so a wheel bump can't silently change predictions.
+- **Canonical ProForma/Unimod version (v2):** one vocabulary version + shared regression fixtures across
+  `mscore-py` and `imspy_connector` — tokenizer vocab *ordering* is model-compatibility, not a detail.
+- **`mscore-py` namespace (v2):** distinct Python module paths from `imspy_connector` (safer than matching
+  names, which invite accidental mixed-type imports).
 
 ## Open risks
 - **Stage 2 surgery** — predict and fine_tune share intra-class helpers; the fix is `_model_common`
