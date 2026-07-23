@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "sciex-io",
-    "timsim-cli",
     "imspy_connector",
     "imsjl_connector",
     "tims-viewer",
