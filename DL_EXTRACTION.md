@@ -54,6 +54,30 @@ Chronologer base weights fetch from upstream `searlelab/chronologer`.
 **Dead deps to drop on the way:** `scikit-learn` (a *core* dep, never imported) and `wandb` (a
 `[training]` extra, never imported — training logs via TensorBoard).
 
+## Stage 0 — RESULTS (audit complete; decisions resolved)
+- **S0a closures CLEAN ✅** — `imspy-core` deps only `imspy-connector`; `imspy_connector` is a pure pyo3
+  wheel (no imspy Python deps). Neither pulls sim/dia/search/vis. So a thin imspy-core dep re-introduces
+  **no** application dead weight.
+- **S0b data classes are CONNECTOR-BACKED** — `PeptideSequence` + `PeptideProductIonSeriesCollection` are
+  `RustWrapperObject`s wrapping Rust types (not value objects) → **not vendorable cheaply**. They're used on
+  the **intensity/fragment** path (both local AND Koina). Since that path already needs imspy_connector
+  (local: tokenizer; both: these classes), keeping imspy-core there is free of new weight. → **D1 RESOLVED
+  = (a):** vendor the 6 pure leaf funcs (CCS + RT paths become imspy-core-free); **fragments/intensity
+  keeps imspy-core + imspy_connector** (essentials, clean closure — not dead weight). Full decouple of the
+  fragment path (reimplement the ion-series builder in pure Python) is deferred D1(b), not now.
+- **S0c boundary CONFIRMED (by capability, not name)** — INFERENCE = `simulate_*`, `predict` (DL),
+  `predict_*_with_koina`, `ModelFromKoina.predict`, `predict_intensities`. TRAINING/SEARCH = `fine_tune_*`
+  and the sagepy PSM helpers `predict_inverse_ion_mobility` / `predict_retention_time` (consume PSM
+  collections via `get_sagepy_*`). The 3 jobs call only the inference set. `*_with_koina` is inference
+  despite the `predict_` name.
+- **S0d weights = 146M** (charge 62M, intensity/encoder 24M each, ccs/rt 21M each, vocab 27K) → **D5
+  RESOLVED:** do NOT bundle in the wheel; download-cache from `pepdl` GitHub releases (SHA-256), source-tree
+  `.pt` as dev fallback only. The pyproject already excludes `.pt` from wheels.
+- **Independence-gate refinement:** the leanest install still legitimately pulls `imspy-core` +
+  `imspy_connector` (the fragment path's connector-backed classes). So gate ① asserts **"no imspy
+  APPLICATION packages (sim/dia/search/vis)"**, NOT "no imspy distributions at all." imspy-core/connector
+  are allowed essentials with a clean closure; the dead weight is what must be absent.
+
 ## Target architecture
 
 ```
@@ -137,10 +161,12 @@ bundled `.pt` fallbacks keep it working in the interim.
   parity pinned to a named Koina model revision.
 - **Stage 4 — flip the DAG + prove independence, from a WHEEL.** Point `flow/timsim_flow.py`'s three
   commands at the new entry points. **Two independence gates, each from a built wheel (not the source
-  checkout):** ① `pip install timsim-predict[koina]` → no torch, no connector, no imspy distributions;
-  remote nodes run. ② `pip install timsim-predict[local,rt]` → local nodes run; resolved env contains no
-  simulation/dia/search/vis. A missing `[local]` at local-mode selection must raise an **actionable
-  install error**, while Koina stays importable without it.
+  checkout):** ① `pip install timsim-predict[koina]` → **no imspy application packages (sim/dia/search/vis),
+  no torch**; CCS/RT remote nodes pull neither imspy-core nor connector (vendored funcs), the fragment node
+  legitimately pulls imspy-core + connector (its connector-backed ion-series classes) — that is allowed.
+  ② `pip install timsim-predict[local,rt]` → local nodes run; resolved env still contains **no
+  sim/dia/search/vis**. A missing `[local]` at local-mode selection must raise an **actionable install
+  error**, while Koina stays importable without it.
 - **Stage 5 — weights re-host (D5) + publish.** Re-host weight assets as `<DLREPO>` releases (SHA-256 +
   model-version metadata); keep the rustims URL only as a **time-limited, tracked** mirror. **No Git LFS in
   wheel contents** (ships pointers). Prefer a small default wheel + first-use download cache (or a
