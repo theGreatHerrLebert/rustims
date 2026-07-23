@@ -99,9 +99,9 @@ Koina HCD for fragments in some configs) — no behavior change, just a leaner i
 own small repo, or (c) a `flow/`-adjacent package. Recommend **(a)** — keep jobs next to the inference lib
 they wrap; one repo to version. (The DAG only cares about the entry-point names.)
 
-**D4 — repo + package name.** The models predict peptide properties (CCS, RT, MS2 intensity, charge) via
-a `UnifiedPeptideModel`/`PeptideTransformer`. Candidates: `peptdl`, `pepprop`, `koinalocal`,
-`peptide-predictors`. Pick a name that isn't imspy-branded (the point is independence). **Open — David.**
+**D4 — repo + package name. ✅ DECIDED: `pepdl`** (peptide deep learning). Names verified free on PyPI +
+GitHub. So throughout this doc: `<DLREPO>` = `pepdl` repo (github.com/theGreatHerrLebert/pepdl); `<dl>` =
+`pepdl` (inference package); training = `pepdl-train`; the 3 CLI jobs = `timsim-predict`.
 
 **D5 — pretrained-weight hosting.** Weights are GitHub-Release assets on the *rustims* repo. On extraction,
 re-host them as releases on `<DLREPO>` (and update `hub.py`'s base URL + SHA registry), OR keep pointing at
