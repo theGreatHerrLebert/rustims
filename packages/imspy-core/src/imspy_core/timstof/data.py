@@ -27,6 +27,39 @@ def is_amd64():
     return arch in ("amd64", "x86_64")
 
 
+def sdk_candidate_paths() -> List[str]:
+    """Bruker SDK shared-library candidates for *this* platform, best guess first.
+
+    open-tims-bruker-bridge ships the vendor binaries for every platform, so
+    checking ``Path(p).exists()`` never rules one out. It orders
+    ``get_so_paths()`` by ``platform.architecture()``, which shells out to the
+    ``file`` command; when ``file`` is missing -- common in slim Docker images --
+    that reports ``('64bit', '')`` instead of ``('64bit', 'ELF')`` and the
+    Windows ``timsdata.dll`` is returned first. Handing that DLL to the reader
+    makes the Rust ``dlopen`` fail with "invalid ELF header". Filter by the real
+    operating system instead of trusting the order.
+
+    Returns an empty list where no usable SDK exists (macOS, non-amd64).
+    """
+    system = platform.system()
+    if not is_amd64():
+        return []
+    if system == "Windows":
+        marker = ".dll"
+    elif system == "Linux":
+        marker = ".so"
+    else:
+        # macOS and friends: Bruker ships no binary we could load.
+        return []
+
+    try:
+        paths = list(obb.get_so_paths())
+    except Exception:
+        return []
+
+    return [p for p in paths if marker in Path(p).name.lower() and Path(p).exists()]
+
+
 class AcquisitionMode(RustWrapperObject):
     def __init__(self, mode: str):
         """AcquisitionMode class.
@@ -121,20 +154,13 @@ class TimsDataset(ABC):
                 self.use_bruker_sdk = False
 
         # Try to find SDK path (needed for calibration even when use_bruker_sdk=False).
-        # NOTE: open-tims-bruker-bridge ships the vendor binaries for *all* platforms, so
-        # Path(so_path).exists() is True even for the Windows timsdata.dll on macOS. Loading
-        # a foreign-platform binary makes the Rust dlopen panic ("slice is not valid mach-o
-        # file"). There is no usable Bruker SDK on macOS / non-amd64, so stay on NO_SDK there
-        # (the reader degrades to the boundary m/z model, matching the native viewer).
-        sdk_path = "NO_SDK"
-        if current_os != "Darwin" and is_amd64():
-            try:
-                for so_path in obb.get_so_paths():
-                    if Path(so_path).exists():
-                        sdk_path = so_path
-                        break
-            except Exception:
-                pass
+        # sdk_candidate_paths() already restricts to binaries for this platform: passing a
+        # foreign-platform binary makes the Rust dlopen fail ("invalid ELF header" on Linux,
+        # "slice is not valid mach-o file" on macOS). Where no candidate exists (macOS,
+        # non-amd64) we stay on NO_SDK and the reader degrades to the boundary m/z model,
+        # matching the native viewer.
+        candidates = sdk_candidate_paths()
+        sdk_path = candidates[0] if candidates else "NO_SDK"
 
         if not self.use_bruker_sdk:
             # Pass SDK path for calibration derivation, but use_bruker_sdk=False for fast parallel access
@@ -144,7 +170,7 @@ class TimsDataset(ABC):
         else:
             # Try to load the data with the first binary found
             appropriate_found = False
-            for so_path in obb.get_so_paths():
+            for so_path in candidates:
                 try:
                     self.__dataset = ims.PyTimsDataset(self.data_path, so_path, in_memory, self.use_bruker_sdk)
                     self.binary_path = so_path
@@ -152,7 +178,8 @@ class TimsDataset(ABC):
                     break
                 except Exception:
                     continue
-            assert appropriate_found is True, ("No appropriate bruker binary could be found, please check if your "
+            assert appropriate_found is True, ("No appropriate bruker binary could be found for "
+                                               f"{current_os}/{platform.machine()}, please check if your "
                                                "operating system is supported by open-tims-bruker-bridge.")
 
     @property
