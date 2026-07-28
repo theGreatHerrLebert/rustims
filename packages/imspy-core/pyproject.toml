@@ -1,6 +1,6 @@
 [project]
 name = "imspy-core"
-version = "0.4.0"
+version = "0.4.1"
 description = "Core data structures and utilities for processing timsTOF ion mobility spectrometry data."
 authors = [
     { name = "theGreatHerrLebert", email = "davidteschner@googlemail.com" }
