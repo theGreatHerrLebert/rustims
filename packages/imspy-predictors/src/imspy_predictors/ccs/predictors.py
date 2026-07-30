@@ -501,6 +501,14 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         """
         pad_id = int(self.tokenizer.pad_token_id)
         n = len(sequences)
+        # int16 halves the resident matrix (830 MB vs 1.7 GB at 8.3M rows). `vocab_size` is a
+        # COUNT, though, and is only a valid ceiling on the ids under a dense-id invariant that
+        # the tokenizer API does not promise: a sparse or externally-assigned vocabulary could
+        # report a small size and still emit an id past int16. So the guess below is checked
+        # against the ids actually observed, per chunk, and widened if it was ever wrong. Do not
+        # replace that check with a try/except OverflowError — NumPy >= 2 raises on an
+        # out-of-range assignment, but NumPy 1.x casts it silently (40000 -> -25536), which would
+        # corrupt the padding region the encoder reads and move the predicted CCS.
         narrow = max(int(self.tokenizer.vocab_size), pad_id) < 2 ** 15
         ids = np.zeros((n, pad_len), dtype=np.int16 if narrow else np.int32)
         lengths = np.zeros(n, dtype=np.int64)
@@ -512,6 +520,12 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
             encoded, _ = self.tokenizer.encode_batch(
                 self.tokenizer.tokenize_batch(chunk), pad=False
             )
+            if ids.dtype == np.int16:
+                # One C-level pass per chunk (~65k rows), negligible beside tokenising them.
+                hi = max((max(row) for row in encoded if row), default=0)
+                lo = min((min(row) for row in encoded if row), default=0)
+                if hi > 2 ** 15 - 1 or lo < -(2 ** 15):
+                    ids = ids.astype(np.int32)
             for j, row in enumerate(encoded):
                 lengths[start + j] = len(row)
                 keep = row[:pad_len]

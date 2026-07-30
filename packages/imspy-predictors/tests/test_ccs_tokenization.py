@@ -67,3 +67,46 @@ def test_sequence_longer_than_pad_len_truncates_identically(chunk_size):
 def test_empty_input():
     apex = _apex()
     assert apex._token_ids([]).shape == (0, PAD_LEN)
+
+
+# The cases below were raised by an independent review as reachable-but-unpinned. Each one is a
+# distinct way the reconstructed `width` could be wrong while the cases above still passed.
+@pytest.mark.parametrize("chunk_size", [1, 2, 8])
+@pytest.mark.parametrize(
+    "seqs, why",
+    [
+        (["PEPTIDEK", "ANOTHERK"], "all rows the same length: width == every len, so no PAD region"),
+        (["K", "K", "K"], "all rows minimal and equal"),
+        (["A" * 48, "K"], "width lands exactly on pad_len for one row, PAD-filling the other"),
+        (["A" * 90, "A" * 91], "every row truncated: width == pad_len, no PAD region anywhere"),
+        (["PEPTIDEK"], "a single sequence — width is that row's own length"),
+    ],
+)
+def test_width_edge_cases_match_one_shot(seqs, why, chunk_size):
+    apex = _apex()
+    want = apex._preprocess_sequences(seqs)
+    got = torch.as_tensor(apex._token_ids(seqs, chunk_size=chunk_size), dtype=torch.long)
+    assert torch.equal(got, want), why
+
+
+@pytest.mark.parametrize("pad_len", [8, 32, 64])
+def test_non_default_pad_len(pad_len):
+    """`pad_len` is a parameter on both methods; the reconstruction must track it, not assume 50."""
+    apex = _apex()
+    want = apex._preprocess_sequences(SEQS, pad_len=pad_len)
+    got = torch.as_tensor(apex._token_ids(SEQS, pad_len=pad_len, chunk_size=2), dtype=torch.long)
+    assert want.shape == (len(SEQS), pad_len)
+    assert torch.equal(got, want)
+
+
+def test_ids_fit_the_narrowed_dtype():
+    """The int16 narrowing keys off `vocab_size`, which is a COUNT, not an id ceiling. If the
+    tokenizer ever emits an id outside int16 the matrix must widen rather than wrap — silent
+    wraparound (NumPy 1.x) would corrupt the padding region the encoder reads."""
+    import numpy as np
+
+    apex = _apex()
+    ids = apex._token_ids(SEQS)
+    assert ids.dtype in (np.int16, np.int32)
+    assert int(ids.max()) <= np.iinfo(ids.dtype).max, "id outstripped the dtype it was stored in"
+    assert int(ids.min()) >= 0, "negative token id — the hallmark of a silent int16 wrap"
