@@ -47,19 +47,48 @@ class block_torch:
         return False
 
 
-def _evict(prefix):
-    for mod in list(sys.modules):
-        if mod == prefix or mod.startswith(prefix + "."):
+class fresh_import:
+    """Force a re-import of ``prefix`` inside the block, then put the originals back.
+
+    ``block_torch`` alone is not enough for anything that inspects state decided at import time
+    (the ``TORCH_AVAILABLE`` branches): those modules are already in ``sys.modules``, imported
+    *with* torch, so they must be re-imported under the block to see the torch-free branch.
+
+    The restore half matters as much as the evict half. Dropping the package and walking away
+    leaks into every later test in the process: the re-import builds NEW class objects, so
+    `isinstance` checks elsewhere compare against classes that are equal by name and distinct by
+    identity, and fail. That was real — running this file before tests/test_utility.py turned 1
+    genuine failure into 7, and the 6 extras were pure cross-test pollution.
+    """
+
+    def __init__(self, prefix):
+        self.prefix = prefix
+        self._saved = {}
+
+    def _matching(self):
+        return [m for m in list(sys.modules)
+                if m == self.prefix or m.startswith(self.prefix + ".")]
+
+    def __enter__(self):
+        for mod in self._matching():
+            self._saved[mod] = sys.modules.pop(mod)
+        return self
+
+    def __exit__(self, *exc):
+        for mod in self._matching():  # whatever the block imported
             del sys.modules[mod]
+        sys.modules.update(self._saved)
+        self._saved.clear()
+        return False
 
 
 def test_package_imports_without_torch():
     """`import imspy_predictors` must succeed with torch unavailable."""
     with block_torch():
-        _evict("imspy_predictors")
-        import imspy_predictors  # noqa: F401
+        with fresh_import("imspy_predictors"):
+            import imspy_predictors  # noqa: F401
 
-        assert imspy_predictors is not None
+            assert imspy_predictors is not None
 
 
 def test_require_torch_raises_actionable_hint():
@@ -105,3 +134,19 @@ def test_koina_wrapper_constructs_without_torch():
 
         wrapper = Prosit2023TimsTofWrapper()  # default use_koina=True; no torch touched
         assert wrapper.use_koina is True
+
+
+def test_torch_only_alias_is_not_a_silent_none():
+    """`SquareRootProjectionLayer` is re-exported from `imspy_predictors.ccs`, so without torch it
+    used to be an importable `None` that failed as `TypeError: 'NoneType' object is not callable` —
+    naming neither torch nor the fix. It must fail through `require_torch` like every other local
+    path."""
+    with block_torch():
+        with fresh_import("imspy_predictors"):
+            from imspy_predictors.ccs import SquareRootProjectionLayer
+
+        assert SquareRootProjectionLayer is not None, "silent None: the contract forbids this"
+        with pytest.raises(ImportError) as ei:
+            SquareRootProjectionLayer()
+
+    assert "imspy-predictors[local]" in str(ei.value)

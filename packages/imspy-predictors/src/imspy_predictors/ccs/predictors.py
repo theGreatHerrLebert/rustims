@@ -364,8 +364,24 @@ if TORCH_AVAILABLE:
                 total_ccs = initial_ccs + residual
                 return total_ccs, residual
 
-# Backwards compatibility alias
-SquareRootProjectionLayer = SquareRootProjectionLayerPyTorch if TORCH_AVAILABLE else None
+# Backwards compatibility alias.
+#
+# Without torch this used to be a bare `None`, which `imspy_predictors.ccs.__init__` re-exports —
+# so `from imspy_predictors.ccs import SquareRootProjectionLayer` handed back None and using it
+# died with `TypeError: 'NoneType' object is not callable`, naming neither torch nor the fix. The
+# torch-optional contract at the top of tests/test_torch_optional.py requires a missing torch to
+# surface through `require_torch`, never as a silent None, so the placeholder below keeps the name
+# importable and fails actionably at the point of use instead.
+if TORCH_AVAILABLE:
+    SquareRootProjectionLayer = SquareRootProjectionLayerPyTorch
+else:
+    class SquareRootProjectionLayer:  # type: ignore[no-redef]
+        """Stand-in for the torch layer when torch is not installed."""
+
+        def __init__(self, *_args, **_kwargs):
+            from imspy_predictors.utility import require_torch
+
+            require_torch("SquareRootProjectionLayer (local ion-mobility model)")
 
 
 def load_deep_ccs_predictor(backend: Optional[str] = None):
