@@ -248,20 +248,74 @@ class TestGetDevice:
 class TestResourcePaths:
     """Test suite for resource path functions."""
 
-    def test_get_model_path(self):
-        """A real model name resolves to the bundled file, without hitting the network.
+    def test_get_model_path(self, monkeypatch):
+        """A real model name resolves, and does so without downloading anything.
 
         This used to pass `'test_model'` and assert the name appeared in the returned string, from
         when `get_model_path` merely composed a path and never checked anything. It resolves against
         a registry now and falls through to `ensure_model`, so a made-up name is a `ValueError` —
         the test had been red ever since, asserting behaviour the function deliberately dropped.
+
+        `ensure_model` is stubbed rather than trusted to be unreachable. The bundled `.pt` files
+        make step 1 succeed in a source checkout, but pyproject excludes
+        `src/imspy_predictors/pretrained/**/*.pt` from the wheel, so in a wheel or clean CI install
+        the same call falls through and fetches from GitHub Releases. Asserting "this never hits the
+        network" while depending on a file the wheel omits would be true here and false in CI.
         """
+        import pathlib
+
         from imspy_predictors.utility import get_model_path
 
+        calls = []
+
+        def _stub_ensure_model(model_name):
+            calls.append(model_name)
+            return pathlib.Path('/nonexistent/cache') / model_name
+
+        monkeypatch.setattr(
+            'imspy_predictors.pretrained.hub.ensure_model', _stub_ensure_model
+        )
+
         path = get_model_path('ccs/best_model.pt')
+
+        # Either step 1 found the bundled copy (source checkout) or it delegated to the stub
+        # (wheel). Both are correct; neither touches the network.
         assert 'best_model.pt' in str(path)
-        # Bundled in the package, so this resolves at step 1 and never reaches the downloader.
-        assert path.is_file()
+        assert calls in ([], ['ccs/best_model.pt'])
+
+    def test_get_model_path_falls_through_to_hub_when_not_bundled(self, monkeypatch):
+        """The wheel case: `.pt` files are excluded from the wheel, so step 1 misses and the hub
+        does the work. That is the branch CI takes and the one a source checkout never exercises,
+        so the bundled lookup is forced to miss here rather than left to chance."""
+        import pathlib
+
+        from imspy_predictors.utility import get_model_path
+
+        class _Missing:
+            def joinpath(self, *_):
+                return self
+
+            def is_file(self):
+                return False
+
+        monkeypatch.setattr(
+            'imspy_predictors.utility.resources.files', lambda _pkg: _Missing()
+        )
+
+        calls = []
+
+        def _stub_ensure_model(model_name):
+            calls.append(model_name)
+            return pathlib.Path('/nonexistent/cache') / model_name
+
+        monkeypatch.setattr(
+            'imspy_predictors.pretrained.hub.ensure_model', _stub_ensure_model
+        )
+
+        path = get_model_path('ccs/best_model.pt')
+
+        assert calls == ['ccs/best_model.pt'], "should have delegated to the hub"
+        assert 'best_model.pt' in str(path)
 
     def test_get_model_path_rejects_unknown_model(self):
         """An unknown name must name the known ones, not return an unusable path or 404 later."""

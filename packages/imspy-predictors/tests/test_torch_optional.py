@@ -41,9 +41,20 @@ class block_torch:
         return self
 
     def __exit__(self, *exc):
-        sys.meta_path.remove(self)
-        sys.modules.update(self._saved)
-        self._saved.clear()
+        # Ordered so a failure to unhook cannot strand the process without torch: removing the
+        # finder is best-effort, restoring sys.modules is not. Bare `remove` would raise
+        # ValueError if the block reordered sys.meta_path, skipping the restore below and
+        # masking whatever exception was already propagating.
+        try:
+            if self in sys.meta_path:
+                sys.meta_path.remove(self)
+        finally:
+            # Purge anything the block let in under the same names before putting the real
+            # modules back, so `update` cannot leave a half-blocked torch behind.
+            for mod in [m for m in sys.modules if m == "torch" or m.startswith("torch.")]:
+                del sys.modules[mod]
+            sys.modules.update(self._saved)
+            self._saved.clear()
         return False
 
 
@@ -59,9 +70,21 @@ class fresh_import:
     `isinstance` checks elsewhere compare against classes that are equal by name and distinct by
     identity, and fail. That was real — running this file before tests/test_utility.py turned 1
     genuine failure into 7, and the 6 extras were pure cross-test pollution.
+
+    Scope, deliberately narrow: TOP-LEVEL package names only. A dotted prefix would leave the
+    retained parent package holding its old attribute — `fresh_import("imspy_predictors.ccs")`
+    rebinds `imspy_predictors.ccs` to the temporary module, and restoring `sys.modules` does not
+    put the parent's attribute back, so the module graph splits. Rather than half-support that,
+    it raises. What this does NOT undo either way: references the block handed to modules outside
+    the prefix, and import side effects on anything else.
     """
 
     def __init__(self, prefix):
+        if "." in prefix:
+            raise ValueError(
+                f"fresh_import is top-level only, got {prefix!r}: restoring sys.modules would "
+                "leave the parent package's attribute pointing at the temporary module."
+            )
         self.prefix = prefix
         self._saved = {}
 
@@ -70,15 +93,21 @@ class fresh_import:
                 if m == self.prefix or m.startswith(self.prefix + ".")]
 
     def __enter__(self):
-        for mod in self._matching():
-            self._saved[mod] = sys.modules.pop(mod)
+        try:
+            for mod in self._matching():
+                self._saved[mod] = sys.modules.pop(mod)
+        except BaseException:
+            self.__exit__()  # a partial eviction is exactly the leak this class exists to prevent
+            raise
         return self
 
     def __exit__(self, *exc):
-        for mod in self._matching():  # whatever the block imported
-            del sys.modules[mod]
-        sys.modules.update(self._saved)
-        self._saved.clear()
+        try:
+            for mod in self._matching():  # whatever the block imported
+                del sys.modules[mod]
+        finally:
+            sys.modules.update(self._saved)
+            self._saved.clear()
         return False
 
 
@@ -145,8 +174,8 @@ def test_torch_only_alias_is_not_a_silent_none():
         with fresh_import("imspy_predictors"):
             from imspy_predictors.ccs import SquareRootProjectionLayer
 
-        assert SquareRootProjectionLayer is not None, "silent None: the contract forbids this"
-        with pytest.raises(ImportError) as ei:
-            SquareRootProjectionLayer()
+            assert SquareRootProjectionLayer is not None, "silent None: the contract forbids this"
+            with pytest.raises(ImportError) as ei:
+                SquareRootProjectionLayer()
 
     assert "imspy-predictors[local]" in str(ei.value)
