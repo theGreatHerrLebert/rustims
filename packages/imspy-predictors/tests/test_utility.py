@@ -249,11 +249,32 @@ class TestResourcePaths:
     """Test suite for resource path functions."""
 
     def test_get_model_path(self):
-        """Test getting model path."""
+        """A real model name resolves to the bundled file, without hitting the network.
+
+        This used to pass `'test_model'` and assert the name appeared in the returned string, from
+        when `get_model_path` merely composed a path and never checked anything. It resolves against
+        a registry now and falls through to `ensure_model`, so a made-up name is a `ValueError` —
+        the test had been red ever since, asserting behaviour the function deliberately dropped.
+        """
         from imspy_predictors.utility import get_model_path
 
-        path = get_model_path('test_model')
-        assert 'test_model' in str(path)
+        path = get_model_path('ccs/best_model.pt')
+        assert 'best_model.pt' in str(path)
+        # Bundled in the package, so this resolves at step 1 and never reaches the downloader.
+        assert path.is_file()
+
+    def test_get_model_path_rejects_unknown_model(self):
+        """An unknown name must name the known ones, not return an unusable path or 404 later."""
+        import pytest
+
+        from imspy_predictors.utility import get_model_path
+
+        with pytest.raises(ValueError) as ei:
+            get_model_path('test_model')
+
+        msg = str(ei.value)
+        assert 'test_model' in msg
+        assert 'ccs/best_model.pt' in msg, "the error should list what IS available"
 
     def test_get_tokenizer_path(self):
         """Test getting tokenizer path."""
