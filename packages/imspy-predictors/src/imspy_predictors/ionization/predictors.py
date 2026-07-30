@@ -354,6 +354,82 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
 
         return tokens.to(self._device), padding_mask.to(self._device)
 
+    def _token_ids(
+        self, sequences: List[str], pad_len: int = 50, chunk_size: int = 65536
+    ) -> Tuple[NDArray, NDArray]:
+        """``_preprocess_sequences`` for an arbitrarily long list, at bounded memory.
+
+        Returns ``(ids, padding_mask)`` — the same token matrix and boolean padding mask
+        ``_preprocess_sequences`` returns (on the host, as numpy, ids in the narrowest integer
+        dtype the vocabulary fits) — but built from ``chunk_size`` sequences at a time. See
+        ``ccs.predictors.DeepPeptideIonMobilityApex._token_ids`` for the full mechanics of why the
+        whole-batch ``ProformaTokenizer.__call__`` is the pipeline's memory wall and why the ids'
+        PAD-fill needs the GLOBAL ``width`` (longest tokenisation in the whole input) threaded
+        through rather than re-derived per chunk.
+
+        # The padding mask does NOT need ``width``
+
+        This is the one place this head's tokenisation differs from CCS/RT, and it is worth
+        spelling out because it is easy to over-generalize the "global width" trap from those
+        heads to this one. The Rust encoder (``encode_many``, see ``py_ml_utility.rs``) builds the
+        attention mask as ``[1] * len(row) + [0] * (max_len - len(row))`` — i.e. **1 up to that
+        row's own length, 0 for every position past it**, independent of what any other row in the
+        batch looks like. ``_preprocess_sequences`` then zero-fills (still 0 = pad) or truncates
+        the tail to ``pad_len`` alongside the ids. So for any position ``pos < pad_len``:
+        ``padding_mask[pos] = pos >= min(length, pad_len)`` — a function of that row's own length
+        only. Unlike the ids (whose PAD-id tail sits between ``length`` and the batch-wide
+        ``width``, and whose true-zero tail sits between ``width`` and ``pad_len``), the mask
+        collapses both regions to the same value (0/True-for-pad), so it never has to know
+        ``width`` at all. Reusing ``clipped`` — already computed in the ids pass below for exactly
+        this comparison — makes this a one-line addition, not a second bookkeeping pass.
+        """
+        pad_id = int(self.tokenizer.pad_token_id)
+        n = len(sequences)
+        # int16 halves the resident matrix. `vocab_size` is a COUNT, though, and is only a valid
+        # ceiling on the ids under a dense-id invariant the tokenizer API does not promise: a
+        # sparse or externally-assigned vocabulary could report a small size and still emit an id
+        # past int16. So the guess below is checked against the ids actually observed, per chunk,
+        # and widened if it was ever wrong. Do not replace that check with a try/except
+        # OverflowError — NumPy >= 2 raises on an out-of-range assignment, but NumPy 1.x casts it
+        # silently (40000 -> -25536), which would corrupt the padding region the encoder reads and
+        # move the predicted charge-state distribution.
+        narrow = max(int(self.tokenizer.vocab_size), pad_id) < 2 ** 15
+        ids = np.zeros((n, pad_len), dtype=np.int16 if narrow else np.int32)
+        lengths = np.zeros(n, dtype=np.int64)
+
+        for start in range(0, n, chunk_size):
+            chunk = sequences[start:start + chunk_size]
+            # pad=False: the per-chunk width is deliberately NOT applied here (see above).
+            encoded, _ = self.tokenizer.encode_batch(
+                self.tokenizer.tokenize_batch(chunk), pad=False
+            )
+            if ids.dtype == np.int16:
+                # One C-level pass per chunk (~65k rows), negligible beside tokenising them.
+                hi = max((max(row) for row in encoded if row), default=0)
+                lo = min((min(row) for row in encoded if row), default=0)
+                if hi > 2 ** 15 - 1 or lo < -(2 ** 15):
+                    ids = ids.astype(np.int32)
+            for j, row in enumerate(encoded):
+                lengths[start + j] = len(row)
+                keep = row[:pad_len]
+                ids[start + j, :len(keep)] = keep
+
+        padding_mask = np.zeros((n, pad_len), dtype=bool)
+        if n == 0:
+            return ids, padding_mask
+
+        # The width a single whole-list call would have padded to, clipped by pad_len: a longer
+        # tokenisation is truncated and so contributes no PAD region at all.
+        width = min(int(lengths.max()), pad_len)
+        clipped = np.minimum(lengths, pad_len)
+        col = np.arange(pad_len)
+        for start in range(0, n, chunk_size):  # chunked so the boolean blocks stay bounded too
+            stop = min(start + chunk_size, n)
+            is_pad = col[None, :] >= clipped[start:stop, None]
+            ids[start:stop][is_pad & (col[None, :] < width)] = pad_id
+            padding_mask[start:stop] = is_pad
+        return ids, padding_mask
+
     def simulate_ionizations(
         self,
         sequences: List[str],
@@ -370,13 +446,21 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
             Most likely charge state for each peptide
         """
         self.model.eval()
-        tokens, padding_mask = self._preprocess_sequences(sequences)
+
+        # The token matrix and padding mask are built chunkwise and kept on the host in bounded
+        # dtypes, then moved to the device one batch at a time: tokenising all of it in one call
+        # is what made `timsim-ccs` the pipeline's memory wall (see `_token_ids`).
+        token_ids, padding_mask = self._token_ids(sequences)
 
         all_probs = []
         with torch.no_grad():
             for i in range(0, len(sequences), batch_size):
-                batch_tokens = tokens[i:i + batch_size]
-                batch_mask = padding_mask[i:i + batch_size]
+                batch_tokens = torch.as_tensor(
+                    token_ids[i:i + batch_size], dtype=torch.long, device=self._device
+                )
+                batch_mask = torch.as_tensor(
+                    padding_mask[i:i + batch_size], dtype=torch.bool, device=self._device
+                )
                 probs = self.model.predict_charge(batch_tokens, padding_mask=batch_mask)
                 all_probs.append(probs.cpu().numpy())
 
@@ -405,13 +489,20 @@ class DeepChargeStateDistribution(PeptideChargeStateDistribution):
             Probability distributions of shape (n_samples, max_charge)
         """
         self.model.eval()
-        tokens, padding_mask = self._preprocess_sequences(sequences)
+
+        # See `simulate_ionizations` / `_token_ids` for why this is chunked rather than a single
+        # whole-batch `_preprocess_sequences` call.
+        token_ids, padding_mask = self._token_ids(sequences)
 
         all_probs = []
         with torch.no_grad():
             for i in range(0, len(sequences), batch_size):
-                batch_tokens = tokens[i:i + batch_size]
-                batch_mask = padding_mask[i:i + batch_size]
+                batch_tokens = torch.as_tensor(
+                    token_ids[i:i + batch_size], dtype=torch.long, device=self._device
+                )
+                batch_mask = torch.as_tensor(
+                    padding_mask[i:i + batch_size], dtype=torch.bool, device=self._device
+                )
                 probs = self.model.predict_charge(batch_tokens, padding_mask=batch_mask)
                 all_probs.append(probs.cpu().numpy())
 

@@ -361,6 +361,88 @@ class DeepChromatographyApex(PeptideChromatographyApex):
 
         return tokens.to(self._device)
 
+    def _token_ids(
+        self, sequences: List[str], pad_len: int = 50, chunk_size: int = 65536
+    ) -> NDArray:
+        """``_preprocess_sequences`` for an arbitrarily long list, at bounded memory.
+
+        Returns the same token matrix, on the host, in the narrowest integer dtype the vocabulary
+        fits — but built from ``chunk_size`` sequences at a time.
+
+        # Why this exists
+
+        Same whole-batch trap as ``ccs.predictors.DeepPeptideIonMobilityApex._token_ids`` (see
+        that docstring for the full mechanics): ``ProformaTokenizer.__call__`` tokenizes,
+        encodes, and pads the ENTIRE input list in one call, materializing ~18 short-lived Python
+        objects per peptide across the whole list before a single batch is predicted.
+        ``timsim-rt`` runs on the deduplicated peptide table (STRUCTURE axis, not the
+        charge-expanded precursor table `timsim-ccs` runs on), which sounds smaller — but a
+        full-proteome digest is still on the order of millions of unique peptides, and this
+        module had none of the CCS fix, so it carried the exact same unbounded whole-batch call.
+
+        Unlike CCS this is PREVENTATIVE, and the distinction is worth keeping straight: RT has
+        never been observed to fail. It completed a full-proteome HeLa run at 1,956,844 unique
+        peptides, and its worst realistic input (a human+yeast+E.coli digest, ~4.8M peptides) is
+        still well short of the ~8.3M rows that killed CCS. What it did do was sit needlessly
+        close to the ceiling on a box hosting the rest of the pipeline. No before/after RSS was
+        measured for this head — do not assume the CCS numbers transfer.
+
+        # Why the global width has to be threaded through
+
+        ``pad_token_id`` is **not** 0. ``__call__(padding=True)`` pads to the longest tokenisation
+        *in the list it is handed*, and ``_preprocess_sequences`` then zero-fills from there up to
+        ``pad_len``. So a row's tail is ``[pad_id] * (width - len) + [0] * (pad_len - width)``,
+        where ``width`` is a property of the WHOLE input. Tokenising per chunk and stacking would
+        give each chunk its own ``width`` — and the encoder reads those positions, so the predicted
+        retention time would silently change. Hence: one pass records the ids and the lengths,
+        ``width`` falls out of the lengths, and the PAD-id fill is applied afterwards.
+        """
+        pad_id = int(self.tokenizer.pad_token_id)
+        n = len(sequences)
+        # int16 halves the resident matrix. `vocab_size` is a COUNT, though, and is only a valid
+        # ceiling on the ids under a dense-id invariant the tokenizer API does not promise: a
+        # sparse or externally-assigned vocabulary could report a small size and still emit an id
+        # past int16. So the guess below is checked against the ids actually observed, per chunk,
+        # and widened if it was ever wrong. Do not replace that check with a try/except
+        # OverflowError — NumPy >= 2 raises on an out-of-range assignment, but NumPy 1.x casts it
+        # silently (40000 -> -25536), which would corrupt the padding region the encoder reads and
+        # move the predicted retention time.
+        narrow = max(int(self.tokenizer.vocab_size), pad_id) < 2 ** 15
+        ids = np.zeros((n, pad_len), dtype=np.int16 if narrow else np.int32)
+        lengths = np.zeros(n, dtype=np.int64)
+
+        for start in range(0, n, chunk_size):
+            chunk = sequences[start:start + chunk_size]
+            # pad=False: the per-chunk width is deliberately NOT applied here (see above), and the
+            # attention mask is the half of __call__'s work that this path throws away.
+            encoded, _ = self.tokenizer.encode_batch(
+                self.tokenizer.tokenize_batch(chunk), pad=False
+            )
+            if ids.dtype == np.int16:
+                # One C-level pass per chunk (~65k rows), negligible beside tokenising them.
+                hi = max((max(row) for row in encoded if row), default=0)
+                lo = min((min(row) for row in encoded if row), default=0)
+                if hi > 2 ** 15 - 1 or lo < -(2 ** 15):
+                    ids = ids.astype(np.int32)
+            for j, row in enumerate(encoded):
+                lengths[start + j] = len(row)
+                keep = row[:pad_len]
+                ids[start + j, :len(keep)] = keep
+
+        if n == 0:
+            return ids
+
+        # The width a single whole-list call would have padded to, clipped by pad_len: a longer
+        # tokenisation is truncated and so contributes no PAD region at all.
+        width = min(int(lengths.max()), pad_len)
+        clipped = np.minimum(lengths, pad_len)
+        col = np.arange(pad_len)
+        for start in range(0, n, chunk_size):  # chunked so the boolean mask stays bounded too
+            stop = min(start + chunk_size, n)
+            block = ids[start:stop]
+            block[(col[None, :] >= clipped[start:stop, None]) & (col[None, :] < width)] = pad_id
+        return ids
+
     def simulate_separation_times(
         self,
         sequences: List[str],
@@ -377,12 +459,19 @@ class DeepChromatographyApex(PeptideChromatographyApex):
             Predicted retention times
         """
         self.model.eval()
-        tokens = self._preprocess_sequences(sequences)
+
+        # The token matrix is built chunkwise and kept on the host in a narrow dtype, then moved
+        # to the device one batch at a time: tokenising all of it in one call is what made
+        # `timsim-ccs` the pipeline's memory wall (see `_token_ids`), and `timsim-rt` carried the
+        # same unbounded call on the deduplicated peptide table.
+        token_ids = self._token_ids(sequences)
 
         all_rt = []
         with torch.no_grad():
             for i in range(0, len(sequences), batch_size):
-                batch_tokens = tokens[i:i + batch_size]
+                batch_tokens = torch.as_tensor(
+                    token_ids[i:i + batch_size], dtype=torch.long, device=self._device
+                )
                 rt = self.model.predict_rt(batch_tokens)
                 all_rt.append(rt.cpu().numpy())
 
