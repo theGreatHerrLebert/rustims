@@ -470,6 +470,67 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
 
         return tokens.to(self._device)
 
+    def _token_ids(
+        self, sequences: List[str], pad_len: int = 50, chunk_size: int = 65536
+    ) -> NDArray:
+        """``_preprocess_sequences`` for an arbitrarily long list, at bounded memory.
+
+        Returns the same token matrix, on the host, in the narrowest integer dtype the vocabulary
+        fits — but built from ``chunk_size`` sequences at a time.
+
+        # Why this exists
+
+        ``ProformaTokenizer.__call__`` is a whole-batch API: it turns the input into a
+        ``List[List[str]]`` of per-token strings, then into two ``List[List[int]]`` (the ids and an
+        attention mask this path never reads), then into two int64 tensors. At ~18 tokens per
+        peptide that is ~150M short-lived Python objects for 8M sequences, and it is what made
+        ``timsim-ccs`` the pipeline's memory wall: 24.4 GB RSS + 1.8 GB swap on a 9M-precursor HeLa
+        digest, SIGKILLed on a 31 GB box before a single batch had been predicted. Everything else
+        in that job — the parquet reads, the peptide merge, the dedup, the scatter-back — accounts
+        for ~4 GB of it. Chunking this one call is the whole fix.
+
+        # Why the global width has to be threaded through
+
+        ``pad_token_id`` is **not** 0. ``__call__(padding=True)`` pads to the longest tokenisation
+        *in the list it is handed*, and ``_preprocess_sequences`` then zero-fills from there up to
+        ``pad_len``. So a row's tail is ``[pad_id] * (width - len) + [0] * (pad_len - width)``,
+        where ``width`` is a property of the WHOLE input. Tokenising per chunk and stacking would
+        give each chunk its own ``width`` — and the encoder reads those positions, so the predicted
+        CCS would silently change. Hence: one pass records the ids and the lengths, ``width`` falls
+        out of the lengths, and the PAD-id fill is applied afterwards.
+        """
+        pad_id = int(self.tokenizer.pad_token_id)
+        n = len(sequences)
+        narrow = max(int(self.tokenizer.vocab_size), pad_id) < 2 ** 15
+        ids = np.zeros((n, pad_len), dtype=np.int16 if narrow else np.int32)
+        lengths = np.zeros(n, dtype=np.int64)
+
+        for start in range(0, n, chunk_size):
+            chunk = sequences[start:start + chunk_size]
+            # pad=False: the per-chunk width is deliberately NOT applied here (see above), and the
+            # attention mask is the half of __call__'s work that this path throws away.
+            encoded, _ = self.tokenizer.encode_batch(
+                self.tokenizer.tokenize_batch(chunk), pad=False
+            )
+            for j, row in enumerate(encoded):
+                lengths[start + j] = len(row)
+                keep = row[:pad_len]
+                ids[start + j, :len(keep)] = keep
+
+        if n == 0:
+            return ids
+
+        # The width a single whole-list call would have padded to, clipped by pad_len: a longer
+        # tokenisation is truncated and so contributes no PAD region at all.
+        width = min(int(lengths.max()), pad_len)
+        clipped = np.minimum(lengths, pad_len)
+        col = np.arange(pad_len)
+        for start in range(0, n, chunk_size):  # chunked so the boolean mask stays bounded too
+            stop = min(start + chunk_size, n)
+            block = ids[start:stop]
+            block[(col[None, :] >= clipped[start:stop, None]) & (col[None, :] < width)] = pad_id
+        return ids
+
     def simulate_ion_mobilities(
         self,
         sequences: List[str],
@@ -536,8 +597,10 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         valid_charges = charges_arr[valid_idx].tolist()
         valid_mz = [mz[i] for i in valid_idx]
 
-        # Prepare data on the filtered subset.
-        tokens = self._preprocess_sequences(valid_sequences)
+        # Prepare data on the filtered subset. The token matrix is built chunkwise and kept on the
+        # host in a narrow dtype, then moved to the device one batch at a time: tokenising all of it
+        # in one call is what made this the pipeline's memory wall (see _token_ids).
+        token_ids = self._token_ids(valid_sequences)
         mz_tensor = torch.tensor(valid_mz, dtype=torch.float32, device=self._device)
         charges_onehot = F.one_hot(
             torch.tensor(valid_charges, dtype=torch.long, device=self._device) - 1,
@@ -549,7 +612,9 @@ class DeepPeptideIonMobilityApex(PeptideIonMobilityApex):
         all_ccs_std = []
         with torch.no_grad():
             for i in range(0, len(valid_sequences), batch_size):
-                batch_tokens = tokens[i:i + batch_size]
+                batch_tokens = torch.as_tensor(
+                    token_ids[i:i + batch_size], dtype=torch.long, device=self._device
+                )
                 batch_mz = mz_tensor[i:i + batch_size]
                 batch_charges = charges_onehot[i:i + batch_size]
 
