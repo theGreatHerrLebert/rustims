@@ -1,0 +1,38 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "peptide-property-ng"
+version = "0.0.1"
+description = "Next-generation unified neural predictor for peptide properties (fragment intensity, ion mobility/CCS, retention time, charge) on timsTOF proteomics data."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+
+# Core, pip-installable dependencies.
+dependencies = [
+    "torch>=2.0",
+    "depthcharge-ms>=0.4.9",
+    "numpy>=1.24",
+    "pyarrow>=15",
+    "scipy>=1.10",
+]
+
+# NOTE: two further dependencies are Rust-built monorepo artifacts, not on PyPI,
+# and must be provided by the environment:
+#   - imspy_connector  -> the Rust-backed `ProformaTokenizer`
+#   - sagepy / sagepy_connector -> the UNIMOD atomic-composition tables
+# During development we run against the claudius-proteomics `.venv`, which has both.
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/peptide_property_ng"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/peptide_property_ng/modifications/data" = "peptide_property_ng/modifications/data"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
