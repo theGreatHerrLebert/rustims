@@ -18,6 +18,21 @@ which is unambiguous, and takes the one axis fact it needs — that axis-2 index
 index 1 is a *b* ion — from ``flatten_prosit_array``'s own source (``array[:, 0, c]`` is y,
 ``array[:, 1, c]`` is b), not from reasoning. ``test_fragment_decode.py`` pins that fact against that
 function, so an axis mistake fails a test rather than corrupting a benchmark.
+
+# Collision energy: one number for the run, or one per precursor
+
+By default every precursor is predicted at the single ``--collision-energy``. That is right for a
+no-IMS instrument — an Astral/Orbitrap DIA method sets one NCE — but wrong for the timsTOF, where
+dda-PASEF ramps the collision energy with the mobility scan, so a compact ion is fragmented ~30 eV
+harder than an extended one.
+
+``--collision-energies`` (opt-in) closes that gap. ``timsim-frag-ce`` walks CCS → ``1/K0`` → scan →
+CE using the run's own mobility calibration and the same ``ActivationPolicy`` v1's
+``dda_selection_scheme`` drives, and this stage lifts that per-precursor table onto the per-key axis
+the predictor already accepts. CE is a deterministic function of ``(sequence, charge)`` — via CCS —
+so the dedup is untouched and the prediction volume does not change; the collapse measures the
+within-key spread and refuses to proceed if the invariant is ever violated. Leaving the flag off
+produces byte-identical artifacts, down to the schema metadata.
 """
 
 from __future__ import annotations
@@ -143,8 +158,27 @@ def predict_tensors(sequences, charges, collision_energies, model: Optional[str]
     return pred, name
 
 
-def fragment_schema(prov: str, collision_energy: float) -> pa.Schema:
-    """The ``fragment_intensities`` (measurement) schema, stamped with model + CE provenance."""
+def fragment_schema(prov: str, collision_energy: float, ce_source: Optional[str] = None) -> pa.Schema:
+    """The ``fragment_intensities`` (measurement) schema, stamped with model + CE provenance.
+
+    ``ce_source`` is the per-precursor collision-energy table the run was driven with, if any. When
+    it is ``None`` — the default, flat-CE behaviour — the metadata is EXACTLY what it has always
+    been, so a default run stays byte-identical to every artifact already on disk. The extra keys
+    only appear when the mobility-derived CE capability is actually used.
+    """
+    meta = {
+        "timsim.table": "fragment_intensities",
+        "timsim.schema_version": "2.0",
+        "timsim.axis": "measurement",
+        "timsim.producer": "timsim-fragments",
+        "timsim.fragments.model": prov,
+        "timsim.fragments.collision_energy": repr(float(collision_energy)),
+    }
+    if ce_source is not None:
+        # The flat `collision_energy` above is retained (it is what `--collision-energy` was set to)
+        # but it is NOT what was predicted at; say so, loudly, in the artifact itself.
+        meta["timsim.fragments.collision_energy_mode"] = "per-precursor-mobility"
+        meta["timsim.fragments.collision_energies"] = ce_source
     return pa.schema(
         [
             pa.field("precursor_id", pa.uint64(), nullable=False),
@@ -153,15 +187,57 @@ def fragment_schema(prov: str, collision_energy: float) -> pa.Schema:
             pa.field("frag_charge", pa.uint8(), nullable=False),
             pa.field("intensity", pa.float32(), nullable=False),
         ],
-        metadata={
-            "timsim.table": "fragment_intensities",
-            "timsim.schema_version": "2.0",
-            "timsim.axis": "measurement",
-            "timsim.producer": "timsim-fragments",
-            "timsim.fragments.model": prov,
-            "timsim.fragments.collision_energy": repr(float(collision_energy)),
-        },
+        metadata=meta,
     )
+
+
+def load_precursor_collision_energies(path) -> dict:
+    """``precursor_id -> collision energy (eV)`` from a ``timsim-frag-ce`` artifact.
+
+    Built off numpy arrays rather than pandas scalar indexing: at PTM scale this table has one row
+    per precursor (100M+), and a `.iloc` loop over it would cost more than the model call.
+    """
+    t = pd.read_parquet(path, columns=["precursor_id", "collision_energy"])
+    return dict(zip(t["precursor_id"].to_numpy(), t["collision_energy"].to_numpy()))
+
+
+def collision_energy_per_key(key_tuples, key2pids, ce_by_precursor: dict, tolerance: float):
+    """Collapse a per-PRECURSOR collision energy onto the per-KEY axis the predictor dedups on.
+
+    Returns ``(list of CE aligned to key_tuples, worst within-key spread)``.
+
+    # Why this is allowed to collapse at all
+
+    CE here is mobility-derived: CCS→1/K0→scan→CE. CCS is predicted from ``(sequence, charge, mz)``
+    and ``mz`` is fixed by ``(composition, charge)``, so every precursor sharing a ``(sequence,
+    charge)`` key — the positional isomers — has the same CCS, the same scan and therefore the same
+    CE. The key axis is thus still a complete description of the model input, and the prediction
+    count does not move by a single call.
+
+    That is a claim about the whole upstream chain, not an axiom, so it is MEASURED: the worst
+    within-key spread is computed and anything above ``tolerance`` raises instead of silently
+    picking one isomer's CE for all of them.
+    """
+    out = []
+    worst = 0.0
+    for key in key_tuples:
+        pids = key2pids.get(key, ())
+        ces = [ce_by_precursor[pid] for pid in pids]
+        if not ces:
+            # A key with no precursors cannot happen (keys come from the precursors), but a silent
+            # 0.0 CE would be a catastrophic, invisible mis-prediction. Refuse.
+            raise ValueError(f"key {key!r} has no precursors to take a collision energy from")
+        lo, hi = min(ces), max(ces)
+        worst = max(worst, hi - lo)
+        out.append(float(ces[0]))
+    if worst > tolerance:
+        raise ValueError(
+            f"collision energy is not constant within a (sequence, charge) key: worst spread "
+            f"{worst:.6g} eV > tolerance {tolerance:g}. The predictor dedups on that key, so one "
+            f"isomer's CE would be applied to all of them. Either the CCS/precursor artifacts are "
+            f"inconsistent, or raise --ce-key-tolerance deliberately."
+        )
+    return out, worst
 
 
 def predict_fragment_batches(
@@ -171,6 +247,9 @@ def predict_fragment_batches(
     model: Optional[str] = None,
     chunk: int = 2_000_000,
     verbose: bool = True,
+    collision_energies: Optional[dict] = None,
+    collision_energies_source: Optional[str] = None,
+    ce_key_tolerance: float = 1e-9,
 ) -> tuple[str, pa.Schema, "Iterator[pa.RecordBatch]"]:
     """Streaming core: ``(provenance, schema, generator of RecordBatch)``.
 
@@ -180,6 +259,10 @@ def predict_fragment_batches(
     row-groups of ``chunk`` fragments. Peak memory is one chunk — not the full ~n_precursors×54-row
     frame, which at scale cost ~17 GB (and a slow per-row ``.iloc`` loop). Rows above ``floor``;
     structurally-absent slots (Prosit marks them -1) are dropped.
+
+    ``collision_energies`` is the OPT-IN per-precursor collision energy (``precursor_id -> eV``,
+    from ``timsim-frag-ce``). Left ``None`` — the default — every precursor is predicted at the flat
+    ``collision_energy``, exactly as before.
     """
     need = {"precursor_id", "sequence", "charge"}
     missing = need - set(precursors.columns)
@@ -194,18 +277,6 @@ def predict_fragment_batches(
         print(f"    distinct (seq,z)  : {len(keys):,}")
         print(f"    collision energy  : {collision_energy}")
 
-    # A SINGLE collision energy for every precursor. This is correct for a no-IMS instrument (Astral/
-    # Orbitrap DIA sets one NCE for the whole run), which is what the Koina HCD path serves. It is NOT
-    # correct for the timsTOF path: DDA-PASEF collision energy is SCAN-DRIVEN (a function of the ion's
-    # mobility — see handle.get_transmitted_ions' per-ion collision_energies and
-    # dda_selection_scheme's activation_policy.collision_energy_for_scan). If this node is ever wired to
-    # feed the timsTOF DeepPeptide model, the input must carry a per-precursor mobility-derived CE here,
-    # not this constant. predict_tensors already takes a per-key list, so the plumbing is ready.
-    tensors, prov = predict_tensors(
-        keys["sequence"], keys["charge"], [collision_energy] * len(keys), model=model
-    )
-    schema = fragment_schema(prov, collision_energy)
-
     # key -> the precursor_ids sharing it, built with numpy .values (no pandas scalar indexing in the
     # hot path — that indexing, not the model, was the bulk of the old runtime).
     key2pids: dict = defaultdict(list)
@@ -214,6 +285,51 @@ def predict_fragment_batches(
     ):
         key2pids[(s, int(c))].append(int(pid))
     key_tuples = list(zip(keys["sequence"].values, keys["charge"].astype(int).values))
+
+    # THE collision energy axis.
+    #
+    # By default: a SINGLE collision energy for every precursor. That is correct for a no-IMS
+    # instrument (Astral/Orbitrap DIA sets one NCE for the whole run), which is what the Koina HCD
+    # path serves. It is NOT correct for the timsTOF: dda-PASEF collision energy is SCAN-DRIVEN — a
+    # function of the ion's mobility (see `handle.get_transmitted_ions`' per-ion collision_energies
+    # and `dda_selection_scheme`'s `activation_policy.collision_energy_for_scan`).
+    #
+    # `--collision-energies` closes that gap: `timsim-frag-ce` walks CCS→1/K0→scan→CE with the run's
+    # own mobility calibration and the SAME `ActivationPolicy` v1 uses, and this stage maps that onto
+    # the per-key axis the predictor already takes. Because CE is a deterministic function of
+    # (sequence, charge) — via CCS — the dedup is untouched and the prediction volume is identical.
+    if collision_energies is None:
+        ces = [collision_energy] * len(keys)
+    else:
+        # Coverage check, counted but not materialised: a fully-unmatched run must not build a
+        # 100M-entry list just to report it.
+        n_unknown, examples = 0, []
+        for pids in key2pids.values():
+            for pid in pids:
+                if pid not in collision_energies:
+                    n_unknown += 1
+                    if len(examples) < 5:
+                        examples.append(pid)
+        if n_unknown:
+            raise ValueError(
+                f"{n_unknown} precursors are absent from the collision-energy table (e.g. "
+                f"{examples}). Predicting those at the flat --collision-energy would silently mix "
+                f"two CE regimes in one artifact; fix the frag-ce input instead."
+            )
+        ces, worst_spread = collision_energy_per_key(
+            key_tuples, key2pids, collision_energies, ce_key_tolerance
+        )
+        if verbose:
+            arr = np.asarray(ces, dtype=float)
+            print(f"    CE mode           : per-precursor mobility-derived ({collision_energies_source})")
+            print(
+                f"    CE over keys (eV) : min {arr.min():.3f}  median {float(np.median(arr)):.3f}  "
+                f"max {arr.max():.3f}"
+            )
+            print(f"    worst within-key CE spread: {worst_spread:g} eV  (dedup stays valid)")
+
+    tensors, prov = predict_tensors(keys["sequence"], keys["charge"], ces, model=model)
+    schema = fragment_schema(prov, collision_energy, ce_source=collision_energies_source)
 
     def batches():
         bp, bi, bo, bf, bv = [], [], [], [], []
@@ -249,12 +365,18 @@ def predict_fragments(
     floor: float = 1e-3,
     model: Optional[str] = None,
     verbose: bool = True,
+    collision_energies: Optional[dict] = None,
+    collision_energies_source: Optional[str] = None,
+    ce_key_tolerance: float = 1e-9,
 ) -> tuple[pd.DataFrame, str]:
     """Return ``(fragment_intensities frame, provenance)`` — the in-memory convenience wrapper around
     :func:`predict_fragment_batches`. Materialises the whole frame, so for large inputs prefer the
     streaming batch generator (that is what the CLI uses)."""
     prov, schema, batches = predict_fragment_batches(
-        precursors, collision_energy, floor=floor, model=model, verbose=verbose
+        precursors, collision_energy, floor=floor, model=model, verbose=verbose,
+        collision_energies=collision_energies,
+        collision_energies_source=collision_energies_source,
+        ce_key_tolerance=ce_key_tolerance,
     )
     table = pa.Table.from_batches(list(batches), schema=schema)
     return table.to_pandas(), prov
@@ -279,6 +401,18 @@ def main(argv=None) -> int:
                     help="RAW normalized collision energy (~20-45 NCE), NOT the /100-encoded value "
                          "the .d stores. This artifact is the pre-acquisition model prediction; the "
                          "render applies per-run CE calibration and down-sampling on top.")
+    ap.add_argument("--collision-energies", type=Path, default=None,
+                    help="OPT-IN: a `timsim-frag-ce` artifact (precursor_id, scan, collision_energy) "
+                         "giving each precursor the MOBILITY-DERIVED collision energy a timsTOF "
+                         "dda-PASEF ramp would apply to it, instead of one CE for the whole run. "
+                         "Omit for the historical flat-CE behaviour (byte-identical output). "
+                         "--collision-energy stays required and is recorded in the artifact "
+                         "metadata, but is not what the model is driven at.")
+    ap.add_argument("--ce-key-tolerance", type=float, default=1e-9,
+                    help="Largest within-(sequence,charge) collision-energy spread tolerated, in eV. "
+                         "CE is a deterministic function of that key (via CCS), so the default is "
+                         "effectively exact agreement; a violation raises rather than letting one "
+                         "isomer's CE stand in for its siblings'.")
     ap.add_argument("--floor", type=float, default=1e-3)
     ap.add_argument("--model", default=None,
                     help="intensity model spec: omit for our default. See ...timsim.models.")
@@ -310,9 +444,14 @@ def main(argv=None) -> int:
         prec = pd.read_parquet(a.precursors)
     a.out.parent.mkdir(parents=True, exist_ok=True)
 
+    ce_map = None if a.collision_energies is None else load_precursor_collision_energies(a.collision_energies)
+
     # Stream row-groups straight to the file: the full fragment frame is never resident.
     _prov, schema, batches = predict_fragment_batches(
-        prec, a.collision_energy, floor=a.floor, model=a.model, verbose=not a.quiet
+        prec, a.collision_energy, floor=a.floor, model=a.model, verbose=not a.quiet,
+        collision_energies=ce_map,
+        collision_energies_source=None if ce_map is None else str(a.collision_energies),
+        ce_key_tolerance=a.ce_key_tolerance,
     )
     writer = pq.ParquetWriter(a.out, schema)
     try:
