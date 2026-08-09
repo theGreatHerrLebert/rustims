@@ -120,7 +120,15 @@ def simulate_peptides(
         "peptide_id": peptide_id,
         "sequence": sequences,
         "protein": names,
-        "decoys": decoys,
+        # Singular `decoy` is the name every downstream consumer reads
+        # (`DeepChromatographyApex.simulate_separation_times_pandas` accesses `row.decoy`,
+        # and `simulator.py` selects a `decoy` column out of the peptide table). This used
+        # to be built as `decoys` and renamed to `decoy` *inside* the
+        # `exclude_accumulated_gradient_start` branch below, so the `False` branch returned
+        # a table with the wrong column name and blew up downstream with
+        # `AttributeError: 'Series' object has no attribute 'decoy'`. Name it correctly at
+        # construction so the column name never depends on an unrelated flag.
+        "decoy": decoys,
         "missed_cleavages": missed_cleavages,
         "n_term": n_term,
         "c_term": c_term,
@@ -170,9 +178,6 @@ def simulate_peptides(
             tokenizer=load_tokenizer_from_resources(tokenizer_name='tokenizer-ptm'),
             verbose=False
         )
-
-        # rename column for compatibility
-        peptide_table.rename(columns={"decoys": "decoy"}, inplace=True)
 
         peptide_rt = RTColumn.simulate_separation_times_pandas(
             data=peptide_table.copy(),

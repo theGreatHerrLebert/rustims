@@ -451,9 +451,9 @@ def load_from_v2(
             "protein": [name_of[a] for a in prot_acc],
             # A sample contains no decoys. Decoys are search-engine apparatus.
             #
-            # Singular `decoy`, not `decoys`: v1's own `simulate_peptides` builds the column as
-            # `decoys` and renames it on the way out (`simulate_peptides.py:175`). Since we replace
-            # that job, we must hand over the POST-rename name everything downstream reads.
+            # Singular `decoy`, not `decoys`: that is the name v1's own `simulate_peptides`
+            # emits and the name everything downstream reads. Since we replace that job, we
+            # must hand over the same name.
             "decoy": np.zeros(len(pep), dtype=bool),
             "missed_cleavages": sel["n_missed_cleavages"].to_numpy().astype(int),
             # Protein-terminal peptides, derived from protein-residue coordinates.
