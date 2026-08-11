@@ -59,10 +59,24 @@ jobs:
 
   build-rust-docs:
     runs-on: ubuntu-latest
+    env:
+      # cargo's built-in libgit2 ignores SSH config; shell out to real git instead
+      CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Auth for private git dependency (sciexwiff)
+        env:
+          SSH_KEY: ${{ secrets.SCIEXWIFF_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/sciexwiff_deploy
+          chmod 600 ~/.ssh/sciexwiff_deploy
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'Host github.com\n  IdentityFile ~/.ssh/sciexwiff_deploy\n' >> ~/.ssh/config
+          git config --global url."git@github.com:theGreatHerrLebert/sciexwiff".insteadOf "https://github.com/theGreatHerrLebert/sciexwiff"
 
       - name: Set up Python
         uses: actions/setup-python@v5
