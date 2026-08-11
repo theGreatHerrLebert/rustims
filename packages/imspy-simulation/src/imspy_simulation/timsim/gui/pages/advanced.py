@@ -1144,7 +1144,7 @@ def create_3d_preview_panel(state: "SimulationState") -> None:
             "[PLACEHOLDER]", state.config.experiment.acquisition_type
         )
         exp_name = exp_name.replace(" ", "_").replace("/", "_")
-        return str(Path(save_path) / f"{exp_name}.d")
+        return str(Path(save_path) / exp_name / f"{exp_name}.d")
 
     sim_current_path[0] = get_sim_output_path()
 
