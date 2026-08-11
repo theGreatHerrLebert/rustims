@@ -26,7 +26,7 @@ def prepare_point_cloud(
         or None if loading fails
     """
     try:
-        from imspy_timstof.dia import TimsDatasetDIA
+        from imspy_core.timstof.dia import TimsDatasetDIA
 
         dataset = TimsDatasetDIA(data_path, in_memory=False, use_bruker_sdk=True)
 

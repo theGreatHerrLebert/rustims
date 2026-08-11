@@ -57,7 +57,7 @@ def get_precursor_data(reference_path: str, num_frames: int = 10, max_points: in
         return _precursor_cache[cache_key]
 
     try:
-        from imspy_timstof.dia import TimsDatasetDIA
+        from imspy_core.timstof.dia import TimsDatasetDIA
         from pathlib import Path
 
         ref_path = Path(reference_path)
@@ -110,7 +110,7 @@ def get_scan_mobility_converter(reference_path: str) -> Optional[Callable[[np.nd
         return _calibration_cache[reference_path]
 
     try:
-        from imspy_timstof.dia import TimsDatasetDIA
+        from imspy_core.timstof.dia import TimsDatasetDIA
 
         ref_path = Path(reference_path)
         if not ref_path.exists() or ref_path.suffix != ".d":
