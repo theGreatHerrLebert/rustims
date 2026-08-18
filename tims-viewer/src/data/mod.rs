@@ -42,3 +42,18 @@ pub fn loader_mode_for(meta: &meta::MetaIndex, frame_ids: Vec<u32>) -> loader::L
     }
     loader::LoaderMode::Real { path: meta.data_path.clone(), frame_ids }
 }
+
+/// Whether a source can carry DIA isolation windows at all.
+///
+/// MOBILion MAF acquisitions are quadrupole-free — there are no isolation windows
+/// to draw, and trying to read them would mean opening the path as a Bruker
+/// dataset, which it is not.
+#[cfg(feature = "native")]
+pub fn has_isolation_windows(path: &str) -> bool {
+    #[cfg(feature = "mbi")]
+    if mbi::is_mbi_path(path) {
+        return false;
+    }
+    let _ = path;
+    true
+}

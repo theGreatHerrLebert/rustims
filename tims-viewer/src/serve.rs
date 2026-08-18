@@ -558,7 +558,7 @@ fn get_or_build(state: &State, region: &Region4D, budget: usize) -> Result<Arc<L
 /// Build the static `/windows` JSON: `{ max_window_group, windows: [[group, mz0, mz1, im0, im1], …] }`
 /// in real units. Demo or non-DIA runs yield an empty set.
 fn build_windows_json(is_demo: bool, data_path: &str) -> Arc<[u8]> {
-    let json = if is_demo {
+    let json = if is_demo || !crate::data::has_isolation_windows(data_path) {
         serde_json::json!({ "max_window_group": 0, "windows": [] })
     } else {
         let ds = rustdf::data::dataset::TimsDataset::new("NO_SDK", data_path, false, false);
