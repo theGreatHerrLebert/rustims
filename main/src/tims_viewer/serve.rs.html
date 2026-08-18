@@ -558,7 +558,7 @@
 <a href=#558 id=558 data-nosnippet>558</a>/// Build the static `/windows` JSON: `{ max_window_group, windows: [[group, mz0, mz1, im0, im1], …] }`
 <a href=#559 id=559 data-nosnippet>559</a>/// in real units. Demo or non-DIA runs yield an empty set.
 <a href=#560 id=560 data-nosnippet>560</a></span><span class="kw">fn </span>build_windows_json(is_demo: bool, data_path: <span class="kw-2">&amp;</span>str) -&gt; Arc&lt;[u8]&gt; {
-<a href=#561 id=561 data-nosnippet>561</a>    <span class="kw">let </span>json = <span class="kw">if </span>is_demo {
+<a href=#561 id=561 data-nosnippet>561</a>    <span class="kw">let </span>json = <span class="kw">if </span>is_demo || !<span class="kw">crate</span>::data::has_isolation_windows(data_path) {
 <a href=#562 id=562 data-nosnippet>562</a>        <span class="macro">serde_json::json!</span>({ <span class="string">"max_window_group"</span>: <span class="number">0</span>, <span class="string">"windows"</span>: [] })
 <a href=#563 id=563 data-nosnippet>563</a>    } <span class="kw">else </span>{
 <a href=#564 id=564 data-nosnippet>564</a>        <span class="kw">let </span>ds = rustdf::data::dataset::TimsDataset::new(<span class="string">"NO_SDK"</span>, data_path, <span class="bool-val">false</span>, <span class="bool-val">false</span>);
