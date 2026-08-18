@@ -159,6 +159,66 @@ The pipeline produces HTML reports with pass/fail metrics for identification rat
 
 See the full [Validation README](packages/imspy-simulation/src/imspy_simulation/timsim/integration/VALIDATION_README.md) for setup, configuration, and adding custom tests.
 
+### Interactive Visualization (tims-viewer)
+
+`tims-viewer` is a GPU point-cloud / volume viewer for raw IM-MS data. It runs as a native
+window, as a headless PNG renderer, or as a **web app** — the browser does the rendering on
+its own GPU (WebGPU, WebGL2 fallback) while a small local server streams the points.
+
+**Supported sources**
+
+| source | path to pass |
+| --- | --- |
+| Bruker timsTOF | a `.d` folder, or a directory containing several |
+| MOBILion SLIM / MOBIE | a single `.mbi` file (needs `--features mbi`) |
+| synthetic | the literal `DEMO` |
+
+**Prerequisites**
+
+```bash
+rustup target add wasm32-unknown-unknown   # web app only
+cargo install trunk                        # web app only
+sudo apt install libhdf5-dev               # only for --features mbi (MOBILion)
+```
+
+**TL;DR — web viewer in three commands**
+
+```bash
+# 1. build (drop --features mbi if you only need Bruker .d)
+cargo build -p tims-viewer --release --features mbi
+
+# 2. point server — pass a .d folder, a directory of them, an .mbi file, or DEMO
+./target/release/tims-viewer /path/to/run.mbi --serve 8090 --budget 12000000
+
+# 3. web app, in a second terminal
+cd tims-viewer/web && trunk serve --release
+```
+
+Then open **http://localhost:8080/?port=8090** and pick a dataset in the ① Data tab.
+
+Serving over a network? Add `--compress` to the point server: it zstd-compresses `/points`
+when the browser advertises support (~2.6x, e.g. 356 MB to 138 MB, decoded transparently).
+Leave it off for localhost, where raw is faster.
+
+**Without a browser**
+
+```bash
+# native window
+./target/release/tims-viewer /path/to/run.d
+
+# headless render to a PNG (no display needed)
+./target/release/tims-viewer /path/to/run.mbi --render-png out.png --ms ms1
+```
+
+The axes are m/z, ion mobility, and retention time. Mobility is `1/K0` for Bruker sources and
+arrival time in milliseconds for MOBILion (SLIM has no inverse reduced mobility). `--ms
+ms1|ms2|all` filters by MS level; for MOBILion MAF acquisitions that is the low- vs high-
+collision-energy frames.
+
+MOBILion reading is provided by [`mobilionmbi`](https://github.com/theGreatHerrLebert/mobilionmbi),
+an independent pure-Rust reader/writer for the `.mbi` format — no vendor SDK required. Public
+test data: MassIVE [MSV000099577](https://massive.ucsd.edu/ProteoSAFe/dataset.jsp?task=c613463dcd5a48a48c8ee04d62ea6bcd) (CC0).
+
 ## Architecture
 
 <p align="center">
