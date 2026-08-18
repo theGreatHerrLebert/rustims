@@ -414,7 +414,7 @@ fn minimap(
     ui.painter().rect_stroke(
         wr,
         egui::Rounding::ZERO,
-        egui::Stroke::new(1.5, egui::Color32::from_rgb(120, 200, 255)),
+        egui::Stroke::new(1.5_f32, egui::Color32::from_rgb(120, 200, 255)),
     );
 }
 
@@ -591,7 +591,7 @@ fn draw_colorbar(ctx: &egui::Context, state: &AppState) {
     painter.rect_stroke(
         bar,
         0.0,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120)),
     );
 
     let font = egui::FontId::proportional(11.0);

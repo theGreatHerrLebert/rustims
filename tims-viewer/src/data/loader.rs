@@ -90,6 +90,11 @@ pub struct RegionFilter {
 pub enum LoaderMode {
     Real { path: String, frame_ids: Vec<u32> },
     Demo(DemoSource),
+    /// MOBILion `.mbi`. Carries the frames themselves rather than just ids: RT and the
+    /// MS1/MS2 split come from per-frame HDF5 attributes, and re-reading them here would
+    /// repeat the metadata sweep the index already paid for.
+    #[cfg(feature = "mbi")]
+    Mbi { path: String, frames: Vec<super::meta::FrameInfo> },
 }
 
 /// Owns the loader thread and the channels to talk to it.
@@ -312,6 +317,8 @@ fn run_loader(
     let n_frames = match &mode {
         LoaderMode::Real { frame_ids, .. } => frame_ids.len(),
         LoaderMode::Demo(d) => d.num_frames(),
+        #[cfg(feature = "mbi")]
+        LoaderMode::Mbi { frames, .. } => frames.len(),
     };
     if n_frames == 0 {
         let _ = tx.send(LoadMsg::Error("run has no frames".into()));
@@ -322,6 +329,8 @@ fn run_loader(
     let dataset = match &mode {
         LoaderMode::Real { path, .. } => Some(TimsDataset::new("NO_SDK", path, false, false)),
         LoaderMode::Demo(_) => None,
+        #[cfg(feature = "mbi")]
+        LoaderMode::Mbi { .. } => None,
     };
 
     let mut last_progress = -1.0f32;
@@ -421,6 +430,44 @@ fn run_loader(
                 }
                 start = end;
                 let progress = end as f32 / n_frames as f32;
+                if progress - last_progress >= 0.01 {
+                    let _ = tx.try_send(LoadMsg::Progress(progress));
+                    last_progress = progress;
+                }
+            }
+        }
+        #[cfg(feature = "mbi")]
+        LoaderMode::Mbi { path, frames } => {
+            // One m/z lookup for the run turns a sqrt + residual polynomial per point
+            // into an array index; at ~10^8 points that is the difference between
+            // seconds and minutes.
+            let (file, lookup) = match super::mbi::open_for_points(path) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = tx.send(LoadMsg::Error(format!("{e:#}")));
+                    return;
+                }
+            };
+            for (idx, info) in frames.iter().enumerate() {
+                if cancelled!() {
+                    return;
+                }
+                let fid = info.id as usize;
+                let (frame, axis) = match (file.frame(fid), file.drift_axis(fid)) {
+                    (Ok(f), Ok(a)) => (f, a),
+                    _ => continue, // a single unreadable frame should not kill the load
+                };
+                let rt = info.retention_time;
+                let is_ms2 = info.is_ms2;
+                for row in 0..frame.n_rows {
+                    let at = axis.arrival_time_ms(row);
+                    let (a, b) = (frame.indptr[row] as usize, frame.indptr[row + 1] as usize);
+                    for k in a..b {
+                        let mz = lookup.get(frame.indices[k]);
+                        handle_point!(mz, at, rt, frame.data[k] as f32, is_ms2);
+                    }
+                }
+                let progress = (idx + 1) as f32 / n_frames as f32;
                 if progress - last_progress >= 0.01 {
                     let _ = tx.try_send(LoadMsg::Progress(progress));
                     last_progress = progress;

@@ -106,7 +106,10 @@ fn discover_datasets(input: &str) -> Result<Vec<PathBuf>> {
     if is_dataset_dir(p) {
         return Ok(vec![p.to_path_buf()]);
     }
-    anyhow::ensure!(p.is_dir(), "{input} is not a .d folder or a directory of them");
+    if p.is_file() && p.extension().map(|e| e.eq_ignore_ascii_case("mbi")).unwrap_or(false) {
+        return Ok(vec![p.to_path_buf()]);
+    }
+    anyhow::ensure!(p.is_dir(), "{input} is not a .d folder, an .mbi file, or a directory of them");
     let mut v = Vec::new();
     collect_datasets(p, 0, &mut v);
     v.sort();
@@ -145,7 +148,7 @@ fn main() -> Result<()> {
         (MetaIndex::demo(args.demo_frames, args.demo_points), true)
     } else {
         log::info!("loading metadata from {}", args.input);
-        let meta = MetaIndex::load(&args.input)?;
+        let meta = tims_viewer::data::load_meta_any(&args.input)?;
         log::info!(
             "{} frames, ~{} points, RT [{:.1}, {:.1}] s, m/z [{:.1}, {:.1}], 1/K0 [{:.3}, {:.3}]",
             meta.frames.len(),
