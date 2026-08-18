@@ -439,6 +439,7 @@ impl App {
 
         let n_colormaps = COLORMAP_NAMES.len() as u32;
         let mut state = AppState::new(plan.meta.bounds, total, n_colormaps);
+        state.im_unit = plan.meta.im_unit;
         state.capacity = capacity;
         state.downsample_stride =
             crate::data::loader::stride_for(total, capacity as usize) as u32;

@@ -96,6 +96,22 @@ pub fn load_meta(path: &str) -> Result<MetaIndex> {
         }
     }
     let im_max = (n_scans as f64) * period_ms;
+    // SLIM runs spend the first chunk of the drift cycle empty (ions are still in
+    // transit), so auto-trim the mobility floor to where signal actually starts.
+    let im_lo = detect_im_floor(&file, n, n_scans as usize, period_ms);
+    if im_lo > 0.0 {
+        log::info!(
+            "mobility floor auto-trimmed to {im_lo:.0} ms (<{:.1}% of intensity below)",
+            IM_TRIM_QUANTILE * 100.0
+        );
+    }
+    // Scans remaining on the trimmed axis (keeps `span / (num_scans-1)` ≈ the true
+    // per-scan spacing, which anchors the client's scans-based clustering reach).
+    let scans_trimmed = if period_ms > 0.0 {
+        n_scans.saturating_sub((im_lo / period_ms).round() as u32)
+    } else {
+        n_scans
+    };
 
     // m/z axis: the calibrated span of the TOF axis. `adc-record-size` is the full
     // digitiser record; the low bins are pre-injection and calibrate to ~0, so clamp
@@ -119,13 +135,61 @@ pub fn load_meta(path: &str) -> Result<MetaIndex> {
         frames,
         bounds: AxisBounds {
             mz: AxisTransform::new(mz_lo, mz_hi),
-            im: AxisTransform::new(0.0, im_max),
+            im: AxisTransform::new(im_lo, im_max),
             rt: AxisTransform::new(rt_lo, rt_hi),
         },
         total_points_estimate: total,
-        num_scans: n_scans,
+        num_scans: scans_trimmed,
         im_unit: "ms",
     })
+}
+
+/// Fraction of total intensity the auto-trimmed mobility floor may exclude. Chosen from a
+/// real CE-ramp HeLa run where the cut is insensitive to the exact value: the empty lead-in
+/// holds <0.1% of intensity, so anything in [0.1%, 1%] lands within a few ms.
+const IM_TRIM_QUANTILE: f64 = 0.005;
+/// Snap the detected floor DOWN to a multiple of this (ms), for a tick-friendly axis start.
+const IM_TRIM_SNAP_MS: f64 = 10.0;
+
+/// Arrival time (ms) below which the run holds under [`IM_TRIM_QUANTILE`] of its intensity.
+///
+/// SLIM has no signal in the early drift cycle (ions have not arrived yet), so the raw
+/// axis starts with a dead zone. Sample 16 frames spread across the run, accumulate
+/// per-scan intensity, and cut at the quantile — snapped down to a clean 10 ms, capped at
+/// half the cycle, and 0 for a run whose signal starts immediately.
+fn detect_im_floor(file: &MbiFile, n_frames: usize, n_scans: usize, period_ms: f64) -> f64 {
+    const SAMPLES: usize = 16;
+    if n_scans == 0 || period_ms <= 0.0 {
+        return 0.0;
+    }
+    let mut per_scan = vec![0f64; n_scans];
+    // Spread over `samples - 1` intervals so the first AND last frame are hit, and a run
+    // shorter than SAMPLES frames samples each frame exactly once (codex review).
+    let samples = SAMPLES.min(n_frames).max(1);
+    for s in 0..samples {
+        let fid = if samples == 1 { 1 } else { 1 + s * (n_frames - 1) / (samples - 1) };
+        let Ok(frame) = file.frame(fid) else { continue };
+        for row in 0..frame.n_rows.min(n_scans) {
+            let (a, b) = (frame.indptr[row] as usize, frame.indptr[row + 1] as usize);
+            per_scan[row] += frame.data[a..b].iter().map(|&v| v as f64).sum::<f64>();
+        }
+    }
+    let total: f64 = per_scan.iter().sum();
+    if total <= 0.0 {
+        return 0.0;
+    }
+    let threshold = IM_TRIM_QUANTILE * total;
+    let mut acc = 0.0;
+    let mut cut = 0usize;
+    for (row, v) in per_scan.iter().enumerate() {
+        acc += v;
+        if acc >= threshold {
+            cut = row;
+            break;
+        }
+    }
+    let floored = ((cut as f64 * period_ms) / IM_TRIM_SNAP_MS).floor() * IM_TRIM_SNAP_MS;
+    floored.clamp(0.0, 0.5 * n_scans as f64 * period_ms)
 }
 
 /// The m/z of the first TOF bin worth showing.

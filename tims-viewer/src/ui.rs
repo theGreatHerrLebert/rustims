@@ -126,7 +126,7 @@ fn filters_section(ui: &mut egui::Ui, state: &mut AppState) {
             let (rb, mb, ib) = (state.bounds.rt, state.bounds.mz, state.bounds.im);
             hist_filter(ui, "RT (s)", &mut state.rt_window, rb.min, rb.max, &state.hist_rt, false, true);
             hist_filter(ui, "m/z (Th)", &mut state.mz_window, mb.min, mb.max, &state.hist_mz, false, true);
-            hist_filter(ui, "1/K0", &mut state.im_window, ib.min, ib.max, &state.hist_im, false, true);
+            hist_filter(ui, im_axis_name(state.im_unit), &mut state.im_window, ib.min, ib.max, &state.hist_im, false, true);
             let (idlo, idhi) = (state.i_data_lo as f64, state.i_data_hi as f64);
             // Intensity range is a placeholder (i_data_hi = 1e6) until the loader's Stats land
             // (i_p99 > 0) — only then are the window clamps safe to apply.
@@ -481,6 +481,11 @@ pub(crate) fn screen_projector(
 
 /// Project the data cube's axis ends to screen and label them (name + units only; the
 /// per-tick numbers carry the values), so the orientation of m/z, 1/K0 and RT is readable.
+/// Display name of the mobility axis for the run's unit ("ms" = SLIM arrival time).
+fn im_axis_name(unit: &str) -> &'static str {
+    if unit == "ms" { "AT (ms)" } else { "1/K0" }
+}
+
 fn draw_axis_labels(ctx: &egui::Context, state: &AppState, camera: &OrbitCamera) {
     let project = screen_projector(ctx, camera);
     let painter = ctx.layer_painter(egui::LayerId::new(
@@ -514,7 +519,7 @@ fn draw_axis_labels(ctx: &egui::Context, state: &AppState, camera: &OrbitCamera)
     };
     // Each label sits just past the far end of its axis (from the shared min-corner).
     label(glam::vec3(1.16, -1.0, -1.0), "m/z (Th)", MZ_COL);
-    label(glam::vec3(-1.0, 1.16, -1.0), "1/K0", IM_COL);
+    label(glam::vec3(-1.0, 1.16, -1.0), im_axis_name(state.im_unit), IM_COL);
     label(glam::vec3(-1.0, -1.0, 1.16), rt_unit, RT_COL);
     // Mark the shared origin (min of all three axes).
     if let Some(p) = project(glam::vec3(-1.0, -1.0, -1.0)) {

@@ -75,6 +75,8 @@ pub enum RefineAction {
 
 pub struct AppState {
     pub bounds: AxisBounds,
+    /// Mobility-axis unit: "1/K0" (Bruker) or "ms" (MOBILion arrival time). Labels only.
+    pub im_unit: &'static str,
 
     pub view_mode: ViewMode,
     pub point_mode: PointMode,
@@ -171,6 +173,7 @@ impl AppState {
     pub fn new(bounds: AxisBounds, total_estimate: u64, n_colormaps: u32) -> Self {
         AppState {
             bounds,
+            im_unit: "1/K0",
             view_mode: ViewMode::Points,
             point_mode: PointMode::AdditiveDensity,
             vol_style: VolStyle::Composite,

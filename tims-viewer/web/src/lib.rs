@@ -787,6 +787,7 @@ async fn run() -> Result<(), String> {
         Ok(m) => match fetch_points(&initial).await {
             Ok(p) if !p.is_empty() => {
                 axis_bounds = m.bounds;
+                set_im_unit(&m.im_unit);
                 server_meta = Some(m);
                 (p, false)
             }
@@ -1828,6 +1829,24 @@ struct MetaInfo {
     /// Run-level 1/K0 per TIMS scan (full mobility span / ramp length); 0 if unknown. Anchors the
     /// clustering's 1/K0 reach to a fixed number of scans, focus-independent.
     im_per_scan: f64,
+    /// Mobility-axis unit from the server: "1/K0" (Bruker) or "ms" (MOBILion arrival time).
+    /// Labels only — the geometry is unit-agnostic. "1/K0" when the server predates the field.
+    im_unit: String,
+}
+
+thread_local! {
+    /// The current run's mobility unit, for label code without a `MetaInfo` at hand
+    /// (axis names, crop labels). Set wherever a fresh `/meta` is applied.
+    static IM_UNIT: std::cell::RefCell<String> = std::cell::RefCell::new("1/K0".to_string());
+}
+
+fn set_im_unit(unit: &str) {
+    IM_UNIT.with(|u| *u.borrow_mut() = unit.to_string());
+}
+
+/// Display name of the mobility axis for the current run's unit.
+fn im_axis_name() -> &'static str {
+    IM_UNIT.with(|u| if u.borrow().as_str() == "ms" { "AT (ms)" } else { "1/K₀" })
 }
 
 /// Derive the `/meta` URL from the `/points` URL: replace only the trailing path endpoint and keep
@@ -2200,6 +2219,7 @@ async fn fetch_meta(url: &str) -> Result<MetaInfo, String> {
         cycle_duration: jnum(&v, "cycle_duration").filter(|x| x.is_finite() && *x > 0.0).unwrap_or(0.0),
         n_points: jnum(&v, "n_points").filter(|x| x.is_finite() && *x >= 0.0).unwrap_or(0.0),
         im_per_scan: jnum(&v, "im_per_scan_1k0").filter(|x| x.is_finite() && *x > 0.0).unwrap_or(0.0),
+        im_unit: jget(&v, "im_unit").as_string().unwrap_or_else(|| "1/K0".to_string()),
     })
 }
 
@@ -2226,7 +2246,8 @@ fn crop_label(bounds: Option<[(f64, f64); 3]>, axis: usize, a: f32, b: f32) -> S
         Some(bnd) => {
             let (lo, hi) = bnd[axis];
             let (ra, rb) = (lo + fa * (hi - lo), lo + fb * (hi - lo));
-            let p = if axis == 1 { 3 } else { 0 }; // 1/K0 needs decimals; m/z & RT are integer-ish
+            // 1/K0 (span ~1) needs decimals; m/z, RT, and ms-scale mobility are integer-ish.
+            let p = if axis == 1 && (hi - lo).abs() <= 10.0 { 3 } else { 0 };
             format!("{ra:.*}–{rb:.*}", p, p)
         }
         None => format!("{:.0}–{:.0}%", fa * 100.0, fb * 100.0),
@@ -2313,7 +2334,7 @@ fn axis_label_specs(bounds: [(f64, f64); 3]) -> Vec<(String, [f32; 3], &'static 
     // Axis names (with the RT unit) at the far ends of each colored edge.
     let rt_name = if (rt.1 - rt.0).abs() > RT_MINUTES_SPAN { "RT (min)" } else { "RT (s)" };
     out.push(("m/z".into(), [1.28, -1.14, -1.0], MZ_CSS));
-    out.push(("1/K₀".into(), [-1.14, 1.28, -1.0], IM_CSS));
+    out.push((im_axis_name().into(), [-1.14, 1.28, -1.0], IM_CSS));
     out.push((rt_name.into(), [-1.0, -1.14, 1.28], RT_CSS));
     out
 }
@@ -2423,6 +2444,7 @@ fn apply_load(gfx: &Rc<RefCell<Gfx>>, meta: Option<MetaInfo>, pts: Vec<GpuPoint>
             g.axis_bounds = m.bounds;
             g.cycle_duration = m.cycle_duration;
             g.im_per_scan = m.im_per_scan;
+            set_im_unit(&m.im_unit);
         }
         // The new load defines the view: reset spatial crops + the intensity floor to "show all".
         for a in 0..3 {

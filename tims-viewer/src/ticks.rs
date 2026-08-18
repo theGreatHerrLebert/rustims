@@ -88,8 +88,13 @@ pub fn fmt_tick(axis: Axis, value: f64, span: f64) -> String {
     match axis {
         // m/z: integer Th normally, but a narrow focus window can need sub-Th precision.
         Axis::Mz => format!("{:.*}", decimals_for_step(step), value),
-        // 1/K0: at least 2 decimals (its native scale), more if the window is very narrow.
-        Axis::Im => format!("{:.*}", decimals_for_step(step).max(2), value),
+        // 1/K0 spans ~1, so force at least 2 decimals (its native scale). A mobility span
+        // over 10 units can only be arrival time in ms (SLIM), where step-resolving
+        // precision (usually integer) is right.
+        Axis::Im => {
+            let d = decimals_for_step(step);
+            format!("{:.*}", if span > 10.0 { d } else { d.max(2) }, value)
+        }
         Axis::Rt => {
             if span <= RT_MINUTES_SPAN {
                 format!("{:.*}", decimals_for_step(step), value)
@@ -163,6 +168,8 @@ mod tests {
     fn fmt_tick_per_axis() {
         assert_eq!(fmt_tick(Axis::Mz, 412.7, 1600.0), "413");
         assert_eq!(fmt_tick(Axis::Im, 1.234, 1.0), "1.23");
+        // Arrival-time mobility (SLIM, ms scale): integer labels, no forced decimals.
+        assert_eq!(fmt_tick(Axis::Im, 150.0, 280.0), "150");
         // RT seconds branch (span <= 600).
         assert_eq!(fmt_tick(Axis::Rt, 120.0, 300.0), "120");
         // RT minutes branch (span > 600): 1800 s -> 30.0 min.

@@ -461,6 +461,11 @@ fn run_loader(
                 let is_ms2 = info.is_ms2;
                 for row in 0..frame.n_rows {
                     let at = axis.arrival_time_ms(row);
+                    // The meta pass auto-trims the empty low-mobility lead-in off the axis;
+                    // points below it would normalize outside the cube, so cull them here.
+                    if at < bounds.im.min {
+                        continue;
+                    }
                     let (a, b) = (frame.indptr[row] as usize, frame.indptr[row + 1] as usize);
                     for k in a..b {
                         let mz = lookup.get(frame.indices[k]);

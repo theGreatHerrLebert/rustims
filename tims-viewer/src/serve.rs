@@ -668,8 +668,8 @@ fn build_load_result(
         0.0
     };
     let meta_json = build_meta_json(
-        region, n_points, stride, cycle_duration, im_per_scan, meta.num_scans, i_p1, i_p50, i_p99,
-        &i_hist, hist.as_ref(),
+        region, n_points, stride, cycle_duration, im_per_scan, meta.num_scans, meta.im_unit,
+        i_p1, i_p50, i_p99, &i_hist, hist.as_ref(),
     );
 
     Ok(Built {
@@ -910,6 +910,7 @@ fn build_meta_json(
     cycle_duration: f64,
     im_per_scan: f64,
     num_scans: u32,
+    im_unit: &str,
     i_p1: f32,
     i_p50: f32,
     i_p99: f32,
@@ -925,6 +926,9 @@ fn build_meta_json(
         "cycle_duration": fin(cycle_duration),
         "im_per_scan_1k0": fin(im_per_scan),
         "num_scans": num_scans,
+        // Mobility-axis unit: "1/K0" (Bruker) or "ms" (MOBILion arrival time). Labels only —
+        // the geometry is unit-agnostic.
+        "im_unit": im_unit,
         // Region bounds in real units — the client re-normalizes axes/crops/strips to these.
         "bounds": {
             "mz": [fin(region.mz.0), fin(region.mz.1)],
@@ -955,7 +959,8 @@ fn empty_result(meta: &MetaIndex, region: &Region4D) -> Built {
         0.0
     };
     let meta_json = build_meta_json(
-        region, 0, 1, 0.0, im_per_scan, meta.num_scans, 1.0, 1.0, 1.0, &vec![0u32; I_HIST_BINS], None,
+        region, 0, 1, 0.0, im_per_scan, meta.num_scans, meta.im_unit, 1.0, 1.0, 1.0,
+        &vec![0u32; I_HIST_BINS], None,
     );
     Built {
         result: LoadResult {
