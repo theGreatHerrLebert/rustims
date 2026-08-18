@@ -41,7 +41,7 @@ rustdf = { path = "../rustdf", version = "0.4.1", optional = true }
 mscore = { path = "../mscore", version = "0.4.1", optional = true }
 # MOBILion .mbi reader (HDF5), published on crates.io.
 mobilionmbi = { version = "0.1.1", optional = true }
-winit = { version = "=0.30.5", optional = true }
+winit = { version = "0.30.5", optional = true }
 egui-winit = { version = "=0.29.1", default-features = false, features = ["links", "wayland", "x11"], optional = true }
 env_logger = { version = "0.11", optional = true }
 clap = { version = "4.5", features = ["derive"], optional = true }
