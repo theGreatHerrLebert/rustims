@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["demo","loader","meta","point"]};
+window.SIDEBAR_ITEMS = {"fn":["load_meta_any","loader_mode_for"],"mod":["demo","loader","meta","point"]};
