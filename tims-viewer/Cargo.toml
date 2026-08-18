@@ -39,6 +39,8 @@ pollster = { version = "0.3", optional = true }
 anyhow = { version = "1", optional = true }
 rustdf = { path = "../rustdf", version = "0.4.1", optional = true }
 mscore = { path = "../mscore", version = "0.4.1", optional = true }
+# MOBILion .mbi reader (HDF5), published on crates.io.
+mobilionmbi = { version = "0.1.1", optional = true }
 winit = { version = "=0.30.5", optional = true }
 egui-winit = { version = "=0.29.1", default-features = false, features = ["links", "wayland", "x11"], optional = true }
 env_logger = { version = "0.11", optional = true }
@@ -62,6 +64,9 @@ native = [
     "dep:env_logger", "dep:clap", "dep:rayon", "dep:crossbeam-channel", "dep:png",
     "dep:tiny_http", "dep:serde_json", "dep:zstd",
 ]
+# MOBILion .mbi support: adds the HDF5-backed reader as a second native source.
+# Opt-in rather than part of `native` because it builds/links HDF5.
+mbi = ["native", "dep:mobilionmbi"]
 # (reserved) Pack positions/intensity as f16 to roughly halve on-GPU/wire size. Not yet
 # implemented — see NATIVE_WEB.md Phase 3.
 compact = []

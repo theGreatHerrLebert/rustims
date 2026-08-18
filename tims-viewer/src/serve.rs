@@ -217,7 +217,7 @@ impl Hub {
                 let p = paths
                     .get(id)
                     .ok_or_else(|| anyhow::anyhow!("dataset {id} out of range"))?;
-                let meta = MetaIndex::load(&p.display().to_string())?;
+                let meta = crate::data::load_meta_any(&p.display().to_string())?;
                 Ok(Plan::new(meta, false, self.budget))
             }
         }
@@ -633,10 +633,7 @@ fn build_load_result(
     let mode = if is_demo {
         LoaderMode::Demo(DemoSource::new(frame_ids.len(), rt_total))
     } else {
-        LoaderMode::Real {
-            path: meta.data_path.clone(),
-            frame_ids,
-        }
+        crate::data::loader_mode_for(meta, frame_ids)
     };
 
     let (mut points, stats, hist) = collect(mode, bounds, estimate, budget, filter)?;

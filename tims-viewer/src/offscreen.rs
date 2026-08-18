@@ -118,10 +118,7 @@ pub fn render_png(plan: Plan, out: &Path, opts: &Options) -> Result<()> {
     let mode = if plan.is_demo {
         LoaderMode::Demo(DemoSource::new(plan.meta.frames.len(), total))
     } else {
-        LoaderMode::Real {
-            path: plan.meta.data_path.clone(),
-            frame_ids: plan.meta.frames.iter().map(|f| f.id).collect(),
-        }
+        crate::data::loader_mode_for(&plan.meta, plan.meta.frames.iter().map(|f| f.id).collect())
     };
     let loader = LoaderHandle::spawn(mode, bounds, total, capacity as usize, None);
     let keep = |p: &GpuPoint| match opts.ms {

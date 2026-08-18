@@ -32,6 +32,10 @@ pub struct MetaIndex {
     /// TIMS scans per frame (the mobility ramp length; constant across frames). Used to anchor the
     /// clustering's 1/K0 reach to a fixed number of scans (run-level, focus-independent).
     pub num_scans: u32,
+    /// Unit of the mobility (y) axis: `1/K0` for Bruker TIMS, `ms` (arrival time) for
+    /// SLIM sources, which have no inverse reduced mobility. Axis labels and any
+    /// mobility read-out should use this rather than assuming 1/K0.
+    pub im_unit: &'static str,
 }
 
 impl MetaIndex {
@@ -127,6 +131,7 @@ impl MetaIndex {
             bounds,
             total_points_estimate: total,
             num_scans,
+            im_unit: "1/K0",
         })
     }
 
@@ -153,6 +158,7 @@ impl MetaIndex {
             bounds,
             total_points_estimate: total_points,
             num_scans: 709, // a typical timsTOF mobility ramp length
+            im_unit: "1/K0",
         }
     }
 }

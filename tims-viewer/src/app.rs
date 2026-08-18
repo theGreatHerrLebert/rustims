@@ -481,10 +481,7 @@ impl App {
             LoaderMode::Demo(DemoSource::new(plan.meta.frames.len(), total))
         } else {
             let frame_ids = plan.meta.frames.iter().map(|f| f.id).collect();
-            LoaderMode::Real {
-                path: plan.meta.data_path.clone(),
-                frame_ids,
-            }
+            crate::data::loader_mode_for(&plan.meta, frame_ids)
         };
         let loader = LoaderHandle::spawn(mode, plan.meta.bounds, total, capacity as usize, None);
 
@@ -775,10 +772,7 @@ impl Gfx {
         let mode = if self.is_demo {
             LoaderMode::Demo(DemoSource::new(frame_ids.len(), demo_source_total))
         } else {
-            LoaderMode::Real {
-                path: self.full_meta.data_path.clone(),
-                frame_ids,
-            }
+            crate::data::loader_mode_for(&self.full_meta, frame_ids)
         };
         self.loader = LoaderHandle::spawn(mode, bounds, total, capacity, filter);
         // Reset GPU/CPU buffers for a fresh stream.
