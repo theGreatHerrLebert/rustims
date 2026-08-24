@@ -365,52 +365,124 @@ impl IndexConverter for BrukerLibTimsDataConverter {
 
 /// SDK-free converter using the exact Bruker calibration formulas.
 ///
-/// Reads the `MzCalibration` and `TimsCalibration` tables from analysis.tdf and
-/// evaluates the published calibration curves directly (see
+/// Reads the `MzCalibration`, `TimsCalibration` and `Frames` tables from
+/// analysis.tdf and evaluates the published calibration curves directly (see
 /// [`crate::data::calibration`]). Verified against the Bruker SDK:
 ///   * scan <-> 1/K0 : machine-precision exact (ModelType 2).
 ///   * TOF  <-> m/z  : bit-exact for MzCalibration ModelType 1; ModelType 2 uses
-///     the same C0/C1/C2 quadratic-in-sqrt(m) curve and reproduces the SDK to a
-///     few ppm (the proprietary ModelType-2 C8..C14 fine correction is not
+///     the same C0/C1/C2 quadratic-in-sqrt(m) curve and reproduces the SDK to
+///     ~1 ppm (the proprietary ModelType-2 C8..C14 fine correction is not
 ///     modelled).
 ///
-/// This is a **fixed-calibration** converter: it captures one frame's
-/// calibration rows + temperatures at build time and applies them to every
-/// frame, ignoring the per-call `frame_id` (like the other SDK-free converters
-/// `Simple`/`Calibrated`/`Lookup`). Valid because the coefficients are
-/// effectively constant across a run; use the SDK-backed `BrukerLib` converter
-/// if a run genuinely carries multiple calibration rows.
+/// The calibration is resolved **per frame**: every frame's `Frames.T1`/`T2` and
+/// its `MzCalibration`/`TimsCalibration` foreign keys are read, so a run that
+/// carries more than one calibration row is handled, and the temperature
+/// compensation is evaluated for the frame the caller asks about. That matters
+/// because `dC1` is ~20 ppm/degC: pinning one frame's temperature for a whole run
+/// costs ~20 ppm of mass accuracy per degC the digitizer drifts.
+/// [`Self::temperature_spread`] reports how far the temperatures actually moved,
+/// so callers can tell a quiet run from a drifting one.
+///
+/// Frame ids that are not in the file, and frames whose calibration rows use an
+/// unsupported ModelType, fall back to the calibrators built from
+/// `fallback_frame_id`.
 pub struct BrukerFormulaConverter {
+    /// Calibrator built from `fallback_frame_id`; also used for unknown frames.
     pub mz: crate::data::calibration::MzCalibrator,
+    /// Mobility calibrator for `fallback_frame_id`; also used for unknown frames.
     pub im: crate::data::calibration::MobilityCalibrator,
+    /// `MzCalibration.ModelType` of the fallback frame's row.
     pub mz_model_type: i64,
+    /// Supported `MzCalibration` rows, by `Id`.
+    mz_rows: std::collections::HashMap<i64, crate::data::meta::MzCalibration>,
+    /// Ready-built mobility calibrators, by `TimsCalibration.Id`.
+    im_rows: std::collections::HashMap<i64, crate::data::calibration::MobilityCalibrator>,
+    /// Per-frame calibration linkage and digitizer temperatures.
+    frames: std::collections::HashMap<u32, FrameCalibrationRef>,
+    /// (T1, T2) spread (max - min) over all frames of the run, in degC.
+    temp_spread: (f64, f64),
+}
+
+/// One frame's link into the calibration tables, plus its digitizer temperatures.
+struct FrameCalibrationRef {
+    mz_id: i64,
+    tims_id: i64,
+    t1: f64,
+    t2: f64,
 }
 
 impl BrukerFormulaConverter {
-    /// Build the converter from a `.d` folder, using `frame_id`'s calibration
-    /// row and per-frame temperatures (coefficients are near-constant per run).
+    /// Build the converter from a `.d` folder.
+    ///
+    /// `fallback_frame_id` (conventionally 1) selects the calibration used for
+    /// frames that are missing from the `Frames` table or whose calibration rows
+    /// this converter cannot evaluate; every frame that *is* in the file uses its
+    /// own rows and temperatures.
     pub fn from_d_folder(
         data_path: &str,
-        frame_id: u32,
+        fallback_frame_id: u32,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         use crate::data::calibration::{MobilityCalibrator, MzCalibrator};
         use crate::data::meta::{read_mz_calibration, read_tims_calibration};
+        use std::collections::HashMap;
 
         let tdf = PathBuf::from(data_path).join("analysis.tdf");
         let con = rusqlite::Connection::open(&tdf)?;
-        let (t1, t2, mz_id, tims_id): (f64, f64, i64, i64) = con.query_row(
-            "SELECT T1, T2, MzCalibration, TimsCalibration FROM Frames WHERE Id = ?1",
-            [frame_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )?;
 
-        let mzc = read_mz_calibration(data_path)?
-            .into_iter()
-            .find(|c| c.id == mz_id)
+        // Per-frame calibration linkage + digitizer temperatures for the whole run.
+        // T1/T2 are nullable in Bruker's schema; frames without them cannot be
+        // temperature compensated and are left to the fallback calibration.
+        let mut stmt =
+            con.prepare("SELECT Id, T1, T2, MzCalibration, TimsCalibration FROM Frames")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, Option<f64>>(1)?,
+                r.get::<_, Option<f64>>(2)?,
+                r.get::<_, i64>(3)?,
+                r.get::<_, i64>(4)?,
+            ))
+        })?;
+
+        let mut frames: HashMap<u32, FrameCalibrationRef> = HashMap::new();
+        let (mut t1_min, mut t1_max) = (f64::INFINITY, f64::NEG_INFINITY);
+        let (mut t2_min, mut t2_max) = (f64::INFINITY, f64::NEG_INFINITY);
+        for row in rows {
+            let (id, t1, t2, mz_id, tims_id) = row?;
+            let (t1, t2) = match (t1, t2) {
+                (Some(t1), Some(t2)) => (t1, t2),
+                _ => continue,
+            };
+            t1_min = t1_min.min(t1);
+            t1_max = t1_max.max(t1);
+            t2_min = t2_min.min(t2);
+            t2_max = t2_max.max(t2);
+            frames.insert(
+                id as u32,
+                FrameCalibrationRef {
+                    mz_id,
+                    tims_id,
+                    t1,
+                    t2,
+                },
+            );
+        }
+        drop(stmt);
+
+        let fallback = frames
+            .get(&fallback_frame_id)
+            .ok_or("fallback frame has no calibration/temperature row in Frames")?;
+
+        let mz_all = read_mz_calibration(data_path)?;
+        let tims_all = read_tims_calibration(data_path)?;
+
+        let mzc = mz_all
+            .iter()
+            .find(|c| c.id == fallback.mz_id)
             .ok_or("MzCalibration row not found")?;
-        let tc = read_tims_calibration(data_path)?
-            .into_iter()
-            .find(|c| c.id == tims_id)
+        let tc = tims_all
+            .iter()
+            .find(|c| c.id == fallback.tims_id)
             .ok_or("TimsCalibration row not found")?;
 
         // Reject calibration models this converter does not implement, rather
@@ -422,50 +494,95 @@ impl BrukerFormulaConverter {
             return Err(format!("unsupported TimsCalibration ModelType {}", tc.model_type).into());
         }
 
-        let mz = MzCalibrator::new(
-            mzc.model_type,
-            mzc.digitizer_timebase,
-            mzc.digitizer_delay,
-            mzc.t1,
-            mzc.t2,
-            mzc.dc1,
-            mzc.dc2,
-            mzc.c0,
-            mzc.c1,
-            mzc.c2,
-            mzc.c3,
-            mzc.c4,
-            t1,
-            t2,
-        );
-        let im = MobilityCalibrator::new(
-            tc.c0, tc.c1, tc.c2, tc.c3, tc.c4, tc.c5, tc.c6, tc.c7, tc.c8, tc.c9,
-        );
-        Ok(Self { mz, im, mz_model_type: mzc.model_type })
+        let mz = MzCalibrator::from_calibration(mzc, fallback.t1, fallback.t2);
+        let im = MobilityCalibrator::from_calibration(tc);
+        let mz_model_type = mzc.model_type;
+
+        // Keep only the rows this converter can evaluate; frames pointing at any
+        // other row fall back to the calibration above.
+        let mz_rows: HashMap<i64, crate::data::meta::MzCalibration> = mz_all
+            .into_iter()
+            .filter(|c| c.model_type == 1 || c.model_type == 2)
+            .map(|c| (c.id, c))
+            .collect();
+        let im_rows: HashMap<i64, MobilityCalibrator> = tims_all
+            .iter()
+            .filter(|c| c.model_type == 2)
+            .map(|c| (c.id, MobilityCalibrator::from_calibration(c)))
+            .collect();
+
+        let temp_spread = if frames.is_empty() {
+            (0.0, 0.0)
+        } else {
+            (t1_max - t1_min, t2_max - t2_min)
+        };
+
+        Ok(Self {
+            mz,
+            im,
+            mz_model_type,
+            mz_rows,
+            im_rows,
+            frames,
+            temp_spread,
+        })
+    }
+
+    /// Spread (max - min, in degC) of `Frames.T1` and `Frames.T2` across the run.
+    ///
+    /// A near-zero spread means per-frame and fixed-frame calibration agree; a
+    /// large one means the digitizer temperature moved and per-frame
+    /// compensation is doing real work (~20 ppm of m/z per degC).
+    pub fn temperature_spread(&self) -> (f64, f64) {
+        self.temp_spread
+    }
+
+    /// m/z calibrator for `frame_id`, falling back to the default calibration.
+    fn mz_for(&self, frame_id: u32) -> crate::data::calibration::MzCalibrator {
+        self.frames
+            .get(&frame_id)
+            .and_then(|f| {
+                self.mz_rows.get(&f.mz_id).map(|row| {
+                    crate::data::calibration::MzCalibrator::from_calibration(row, f.t1, f.t2)
+                })
+            })
+            .unwrap_or_else(|| self.mz.clone())
+    }
+
+    /// Mobility calibrator for `frame_id`, falling back to the default one.
+    fn im_for(&self, frame_id: u32) -> &crate::data::calibration::MobilityCalibrator {
+        self.frames
+            .get(&frame_id)
+            .and_then(|f| self.im_rows.get(&f.tims_id))
+            .unwrap_or(&self.im)
     }
 }
 
 impl IndexConverter for BrukerFormulaConverter {
-    fn tof_to_mz(&self, _frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64> {
-        tof_values.iter().map(|&t| self.mz.tof_to_mz(t)).collect()
+    fn tof_to_mz(&self, frame_id: u32, tof_values: &Vec<u32>) -> Vec<f64> {
+        let mz = self.mz_for(frame_id);
+        tof_values.iter().map(|&t| mz.tof_to_mz(t)).collect()
     }
-    fn mz_to_tof(&self, _frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32> {
-        mz_values.iter().map(|&m| self.mz.mz_to_tof(m)).collect()
+    fn mz_to_tof(&self, frame_id: u32, mz_values: &Vec<f64>) -> Vec<u32> {
+        let mz = self.mz_for(frame_id);
+        mz_values.iter().map(|&m| mz.mz_to_tof(m)).collect()
     }
-    fn scan_to_inverse_mobility(&self, _frame_id: u32, scan_values: &Vec<u32>) -> Vec<f64> {
+    fn scan_to_inverse_mobility(&self, frame_id: u32, scan_values: &Vec<u32>) -> Vec<f64> {
+        let im = self.im_for(frame_id);
         scan_values
             .iter()
-            .map(|&s| self.im.scan_to_one_over_k0(s))
+            .map(|&s| im.scan_to_one_over_k0(s))
             .collect()
     }
     fn inverse_mobility_to_scan(
         &self,
-        _frame_id: u32,
+        frame_id: u32,
         inverse_mobility_values: &Vec<f64>,
     ) -> Vec<u32> {
+        let im = self.im_for(frame_id);
         inverse_mobility_values
             .iter()
-            .map(|&v| self.im.one_over_k0_to_scan(v))
+            .map(|&v| im.one_over_k0_to_scan(v))
             .collect()
     }
 }
@@ -953,8 +1070,11 @@ pub enum TimsDataLoader {
 /// - `use_bruker_sdk` → try the live Bruker SDK converter; if the SDK shared library can't be
 ///   loaded (missing / wrong arch / mismatched version) this now **falls back** (with a warning)
 ///   instead of panicking.
-/// - Otherwise (or after that fallback): derive an accurate calibration from the SDK if the
-///   `bruker_lib_path` is usable, else the simple boundary model (~5 Da error on some datasets).
+/// - Otherwise (or after that fallback): evaluate the calibration curves stored in the file
+///   itself ([`BrukerFormulaConverter`]) — no SDK needed, 1/K0 machine-exact and m/z within
+///   ~1 ppm of the SDK. Only if those tables cannot be read does it fall back to the
+///   SDK-derived regression, and finally to the simple boundary model (which is ~5 Da off on
+///   some datasets for m/z and thousands of ppm off on the mobility axis).
 fn build_index_converter(
     bruker_lib_path: &str,
     data_path: &str,
@@ -975,6 +1095,16 @@ fn build_index_converter(
             ),
         }
     }
+    // SDK-free, and better than anything derived: evaluate the calibration curves the tdf
+    // carries for this very run (per-frame temperature compensated, exact 1/K0).
+    match BrukerFormulaConverter::from_d_folder(data_path, 1) {
+        Ok(converter) => return TimsIndexConverter::BrukerFormula(converter),
+        Err(e) => eprintln!(
+            "Warning: could not build the SDK-free Bruker formula converter ({e}); \
+            falling back to derived/simple m/z calibration."
+        ),
+    }
+
     // Derive an accurate calibration via the SDK if possible, else the simple boundary model.
     match derive_mz_calibration(bruker_lib_path, data_path, tof_max_index) {
         Some((intercept, slope)) => TimsIndexConverter::Calibrated(CalibratedIndexConverter::new(
@@ -1167,7 +1297,7 @@ impl TimsDataLoader {
     /// `TimsCalibration` tables (frame `calibration_frame_id`, default 1 — the
     /// coefficients are near-constant per run). Needs no Bruker SDK at build or
     /// runtime; 1/K0 is machine-exact and m/z is bit-exact for MzCalibration
-    /// ModelType 1 (few ppm for ModelType 2).
+    /// ModelType 1 (~1 ppm for ModelType 2).
     pub fn new_lazy_with_bruker_formula(data_path: &str, calibration_frame_id: u32) -> Self {
         let raw_data_layout = TimsRawDataLayout::new(data_path);
         let index_converter = TimsIndexConverter::BrukerFormula(
