@@ -33,6 +33,8 @@
 /// * `c3`       — cubic term `C3*s^3`; ModelType 1 only (in ModelType 2 the C3
 ///               column is a duplicate of C0 and is dropped).
 /// * `c4`       — "reduced mass" shift m0 (`x = m - m0`); patent US7,851,746.
+///               ModelType 1 only (in ModelType 2 the C4 column is a duplicate of
+///               C2 and is dropped, exactly like C3).
 /// Temperature compensation (`T1/T2` = reference temps in `MzCalibration`,
 /// `dC1/dC2` its sensitivities, `T1f/T2f` = per-frame `Frames.T1/Frames.T2`):
 /// `tc = 1 + (dC1*(T1-T1f) + dC2*(T2-T2f)) / 1e6`, applied as `C1 *= tc`.
@@ -78,8 +80,38 @@ impl MzCalibrator {
         // C8..C14 fine correction (~few ppm, worst at low m/z) that is NOT an
         // additive polynomial in m/z and is left unmodelled here.
         let c2 = c2 / tc;
-        let c3 = if model_type == 1 { c3 } else { 0.0 };
+        // ModelType 2 reuses the C3 *and* C4 columns as duplicates of C0/C2
+        // (verified bit-for-bit on real files: C3 == C0, C4 == C2), so neither is
+        // the cubic term nor the reduced-mass shift there and both must be
+        // dropped. Subtracting the duplicated C4 as if it were m0 costs ~1.4 ppm
+        // mean / 6 ppm max against the SDK on ModelType-2 data.
+        let (c3, c4) = if model_type == 1 { (c3, c4) } else { (0.0, 0.0) };
         Self { timebase, delay, c0, b, c2, c3, c4 }
+    }
+
+    /// Build a calibrator straight from an `MzCalibration` row plus the
+    /// per-frame digitizer temperatures (`Frames.T1`, `Frames.T2`).
+    pub fn from_calibration(
+        cal: &crate::data::meta::MzCalibration,
+        t1_frame: f64,
+        t2_frame: f64,
+    ) -> Self {
+        Self::new(
+            cal.model_type,
+            cal.digitizer_timebase,
+            cal.digitizer_delay,
+            cal.t1,
+            cal.t2,
+            cal.dc1,
+            cal.dc2,
+            cal.c0,
+            cal.c1,
+            cal.c2,
+            cal.c3,
+            cal.c4,
+            t1_frame,
+            t2_frame,
+        )
     }
 
     /// Flight time (digitizer units) for a TOF index.
@@ -193,6 +225,13 @@ impl MobilityCalibrator {
         }
     }
 
+    /// Build a mobility calibrator straight from a `TimsCalibration` row.
+    pub fn from_calibration(cal: &crate::data::meta::TimsCalibration) -> Self {
+        Self::new(
+            cal.c0, cal.c1, cal.c2, cal.c3, cal.c4, cal.c5, cal.c6, cal.c7, cal.c8, cal.c9,
+        )
+    }
+
     /// scan index -> trapping voltage (clamped to the valid window).
     #[inline]
     fn voltage(&self, scan: f64) -> f64 {
@@ -212,5 +251,160 @@ impl MobilityCalibrator {
         let v = self.c1m / (inv - self.c0m);
         let scan = (v - self.dv_start) / self.slope + self.ttrans + self.ndelay;
         scan.round().max(0.0) as u32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `synchro-hela.d`: `MzCalibration` ModelType 1, frame 1 temperatures.
+    fn model1() -> MzCalibrator {
+        MzCalibrator::new(
+            1,
+            0.2,
+            25585.2,
+            25.432518231649194,
+            22.91046717419208,
+            21.0,
+            0.0,
+            319.4836862507276,
+            156650.78463959479,
+            -4.7797946742077594e-05,
+            0.0,
+            2.6639979911791643e-05,
+            25.454778878245186,
+            23.065621750666164,
+        )
+    }
+
+    /// `G8602.d`: `MzCalibration` ModelType 2, frame 1 temperatures. Note that
+    /// C3 duplicates C0 and C4 duplicates C2 in this model — the calibrator has
+    /// to ignore both.
+    fn model2() -> MzCalibrator {
+        MzCalibrator::new(
+            2,
+            0.2,
+            18290.2,
+            25.3488367593942,
+            25.618275892137202,
+            20.0,
+            0.0,
+            319.95445850882476,
+            154831.91077331622,
+            -0.0005550791433026118,
+            319.95445850882476,
+            -0.0005550791433026118,
+            25.37849141449188,
+            26.171382195221447,
+        )
+    }
+
+    fn ppm(got: f64, want: f64) -> f64 {
+        (got - want).abs() / want * 1e6
+    }
+
+    /// ModelType 1 is fully modelled, so it must reproduce
+    /// `tims_index_to_mz` bit-for-bit (reference values read from the SDK).
+    #[test]
+    fn model1_is_bit_exact_against_the_sdk() {
+        let cal = model1();
+        for (tof, sdk) in [
+            (1u32, 100.00058181811438),
+            (50000, 194.8219835433269),
+            (150000, 478.458543155091),
+            (250000, 887.4159830461258),
+            (350000, 1421.6944158188035),
+        ] {
+            let got = cal.tof_to_mz(tof);
+            assert!(
+                (got - sdk).abs() / sdk < 1e-12,
+                "tof {tof}: got {got}, SDK {sdk}"
+            );
+        }
+    }
+
+    /// In ModelType 2 the C3/C4 columns are duplicates of C0/C2, not the cubic
+    /// term and the reduced-mass shift, so the calibrator must zero both.
+    #[test]
+    fn model2_drops_duplicated_c3_and_c4() {
+        let cal = model2();
+        assert_eq!(cal.c3, 0.0);
+        assert_eq!(cal.c4, 0.0);
+    }
+
+    /// The ModelType-2 fine correction is windowed to `[C5, C6]` in m/z, so
+    /// *below* that window (here C5 = 225.95) the C0/C1/C2 base curve is the
+    /// whole model and must match the SDK exactly. This is what regresses --
+    /// by 4.6 to 11.1 ppm -- if the duplicated C4 is subtracted as if it were m0.
+    #[test]
+    fn model2_is_exact_below_the_correction_window() {
+        let cal = model2();
+        for (tof, sdk) in [(1u32, 50.00106408611359), (50000, 121.13087702783326)] {
+            let got = cal.tof_to_mz(tof);
+            assert!(ppm(got, sdk) < 0.01, "tof {tof}: got {got}, SDK {sdk}");
+        }
+    }
+
+    /// Inside the correction window the unmodelled C8..C14 polynomial leaves a
+    /// small residual; it stays within a few ppm of the SDK.
+    #[test]
+    fn model2_is_within_a_few_ppm_inside_the_correction_window() {
+        let cal = model2();
+        for (tof, sdk) in [
+            (150000u32, 356.29356381674006),
+            (250000, 715.3229449956262),
+            (350000, 1198.2257163072832),
+        ] {
+            let got = cal.tof_to_mz(tof);
+            assert!(ppm(got, sdk) < 3.0, "tof {tof}: got {got}, SDK {sdk}");
+        }
+    }
+
+    #[test]
+    fn mz_tof_round_trips() {
+        for cal in [model1(), model2()] {
+            for tof in [1u32, 50_000, 150_000, 250_000, 350_000] {
+                let back = cal.mz_to_tof(cal.tof_to_mz(tof));
+                assert!(
+                    back.abs_diff(tof) <= 1,
+                    "round trip {tof} -> {} -> {back}",
+                    cal.tof_to_mz(tof)
+                );
+            }
+        }
+    }
+
+    /// `synchro-hela.d` `TimsCalibration` (ModelType 2) against
+    /// `tims_scannum_to_oneoverk0`: the mobility model is the SDK computation,
+    /// so agreement is at the floating-point rounding limit.
+    #[test]
+    fn mobility_matches_the_sdk() {
+        let cal = MobilityCalibrator::new(
+            1.0,
+            926.0,
+            174.99089000590644,
+            89.34134412781896,
+            33.333333333333336,
+            1.0,
+            0.031163511286580903,
+            129.15504635187241,
+            12.75853947905552,
+            3135.217073581985,
+        );
+        for (scan, sdk) in [
+            (0u32, 1.3226192435624091),
+            (1, 1.321960900558156),
+            (100, 1.2566451818439914),
+            (400, 1.0570143319893166),
+            (900, 0.7184888610899344),
+        ] {
+            let got = cal.scan_to_one_over_k0(scan);
+            assert!(
+                (got - sdk).abs() / sdk < 1e-12,
+                "scan {scan}: got {got}, SDK {sdk}"
+            );
+            assert_eq!(cal.one_over_k0_to_scan(sdk), scan);
+        }
     }
 }

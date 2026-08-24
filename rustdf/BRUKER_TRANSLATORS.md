@@ -36,13 +36,19 @@ m/z      = s^2 - C4        (invert the curve for s, given t)
   `a1→√(1e12/C1)`, `a2→C2`. The cubic `C3·s³` term is real only for ModelType 1
   (in ModelType 2 the `C3` column duplicates `C0` and is dropped).
 
-**Temperature compensation** (applied to `C1`, and to `c2` for ModelType 1):
+**Temperature compensation** (applied to `C1` and `C2`):
 
 ```
 tc = 1 + ( dC1*(T1 - T1_frame) + dC2*(T2 - T2_frame) ) / 1e6
 ```
 
-where `T1_frame`, `T2_frame` are the per-frame `Frames.T1`, `Frames.T2`.
+where `T1_frame`, `T2_frame` are the per-frame `Frames.T1`, `Frames.T2`. `dC1` is
+~20 ppm/degC on the instruments seen here, so this is not a rounding detail: a run
+whose digitizer temperature drifts by 1 degC is ~20 ppm of mass error if a single
+frame's temperature is pinned for the whole run, and ~200 ppm for the 10 degC
+offset of a failed chiller. `BrukerFormulaConverter` therefore reads `Frames.T1`
+/`T2` for *every* frame and compensates per frame; `temperature_spread()` reports
+how far the temperatures actually moved over the run.
 
 ### `MzCalibration` table parameters
 
@@ -57,7 +63,7 @@ where `T1_frame`, `T2_frame` are the per-frame `Frames.T1`, `Frames.T2`.
 | `C1` | `C1` | governs the dominant √ term: `b = sqrt(1e12 / C1)` |
 | `C2` | `C2` | quadratic `s²` term of the curve — **used by both ModelTypes** |
 | `C3` | `C3` | cubic `s³` term — **ModelType 1 only** (in ModelType 2 this column duplicates C0 and is dropped) |
-| `C4` | `C4` | "reduced mass" shift `m0` (`x = m − m0`); the element claimed by Bruker patent US 7,851,746 |
+| `C4` | `C4` | "reduced mass" shift `m0` (`x = m − m0`); the element claimed by Bruker patent US 7,851,746 — **ModelType 1 only** (in ModelType 2 this column duplicates C2 and is dropped, exactly like C3) |
 | `C5` | window low  | ModelType-2 fine correction: **lower m/z bound** of the correction window. A **universal constant** `225.951491` across every dataset seen. |
 | `C6` | window high | ModelType-2 fine correction: **upper m/z bound** of the correction window (per-dataset, e.g. 1383.7 / 1519.7). |
 | `C7` | degree | ModelType-2 fine correction: polynomial **degree = 7** (matches the fit below). |
@@ -122,11 +128,17 @@ Measured by `examples/compare_calibration.rs` (residual of this formula vs
 | Dataset | m/z ModelType | TOF → m/z residual | scan → 1/K0 residual |
 |---|---|---|---|
 | `synchro-hela.d` | **1** | **0.0000 ppm (bit-exact)** | ~4e-16 (machine ε) |
-| `G8602.d` | **2** | mean 2.5 ppm / max 11.1 ppm | ~7e-16 (machine ε) |
-| `G8027.d` | **2** | mean 3.6 ppm / max 20.8 ppm | ~4e-16 (machine ε) |
+| `G8602.d` | **2** | median 0.57 / p90 3.2 / max 4.8 ppm | ~7e-16 (machine ε) |
 
-(ModelType-2 m/z figures are with the `C0/C1/C2` quadratic; the older base-only
-curve without `C2` was ~9 ppm mean.)
+(ModelType-2 m/z figures are with the `C0/C1/C2` quadratic and the duplicated
+`C3`/`C4` columns dropped. For reference on `G8602.d`: keeping `C4` as if it were
+the reduced-mass shift costs median 1.9 / max 11.1 ppm, and the base-only curve
+without `C2` was ~9 ppm mean. `G8027.d` was measured at mean 3.6 ppm before the
+`C4` fix and has not been re-measured since.)
+
+A useful consequence of the window: **below `C5` (225.95 m/z) the ModelType-2 base
+curve is the entire model**, and agreement with the SDK there is exact (< 0.01 ppm),
+which is what the unit tests in `src/data/calibration.rs` assert.
 
 **Takeaways**
 
@@ -134,9 +146,13 @@ curve without `C2` was ~9 ppm mean.)
   the floating-point rounding limit). The mobility formula *is* what we were
   looking for.
 - **TOF → m/z is exact for ModelType-1** data (bit-for-bit). For **ModelType-2**
-  data (modern instruments) the `C0/C1/C2` quadratic reproduces the SDK to a few
-  ppm; the last few ppm come from the `C8…C14` correction whose exact form is not
-  resolved (see the ModelType-2 note above).
+  data (modern instruments) the `C0/C1/C2` quadratic reproduces the SDK to ~1 ppm
+  (exactly, below the correction window); the remainder comes from the `C8…C14`
+  correction whose exact form is not resolved (see the ModelType-2 note above).
+- This makes the SDK-free converter more accurate than the SDK-*derived*
+  regression fit (`Calibrated`/`Lookup`, median 0.09–1.6 ppm m/z but a linear
+  mobility model that is 2000–6000 ppm off), which is why
+  `build_index_converter` now prefers it whenever the live SDK is not used.
 
 ## Reproduce
 
