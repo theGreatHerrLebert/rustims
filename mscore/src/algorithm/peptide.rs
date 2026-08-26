@@ -55,10 +55,15 @@ pub fn calculate_peptide_mono_isotopic_mass(peptide_sequence: &PeptideSequence) 
         *aa_counts.entry(char).or_insert(0) += 1;
     }
 
-    // Mass of amino acids and modifications
-    let mass_sequence: f64 = aa_counts
-        .iter()
-        .map(|(aa, &count)| {
+    // Mass of amino acids and modifications. HashMap iteration order is
+    // randomized, while floating-point addition is not associative. Sort the
+    // residue counts to make monoisotopic mass calculation bitwise reproducible.
+    let mut aa_counts_sorted: Vec<_> = aa_counts.into_iter().collect();
+    aa_counts_sorted.sort_unstable_by_key(|(aa, _)| *aa);
+
+    let mass_sequence: f64 = aa_counts_sorted
+        .into_iter()
+        .map(|(aa, count)| {
             amino_acid_masses.get(&aa.to_string()[..]).unwrap_or(&0.0) * count as f64
         })
         .sum();
@@ -468,4 +473,26 @@ pub fn simulate_charge_states_for_sequences(
             })
             .collect()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn peptide_monoisotopic_mass_is_bitwise_stable() {
+        let peptide = PeptideSequence::new("CNHHDGPSHADGK".to_string(), Some(1));
+
+        let mut observed_bits = BTreeSet::new();
+        for _ in 0..1024 {
+            observed_bits.insert(calculate_peptide_mono_isotopic_mass(&peptide).to_bits());
+        }
+
+        assert_eq!(
+            observed_bits.len(),
+            1,
+            "identical peptide sequence produced multiple exact monoisotopic masses: {observed_bits:?}"
+        );
+    }
 }
