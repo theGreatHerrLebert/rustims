@@ -19,8 +19,19 @@ impl SumFormula {
     }
     pub fn monoisotopic_weight(&self) -> f64 {
         let atomic_weights = atomic_weights_mono_isotopic();
-        self.elements.iter().fold(0.0, |acc, (element, count)| {
-            acc + atomic_weights[element.as_str()] * *count as f64
+
+        // Iterate elements in a deterministic (sorted) order. `elements` is a
+        // HashMap whose iteration order is randomized per instance, and
+        // floating-point addition is not associative, so an unsorted fold can
+        // return masses that differ in their least-significant bits between
+        // calls. Sorting pins one canonical accumulation order, matching what
+        // `generate_isotope_distribution` already does for the same map.
+        let mut elements: Vec<(&String, i32)> =
+            self.elements.iter().map(|(k, v)| (k, *v)).collect();
+        elements.sort_unstable_by(|a, b| a.0.cmp(b.0));
+
+        elements.into_iter().fold(0.0, |acc, (element, count)| {
+            acc + atomic_weights[element.as_str()] * count as f64
         })
     }
 
@@ -70,4 +81,39 @@ fn parse_formula(formula: &str) -> Result<HashMap<String, i32>, String> {
     }
 
     Ok(element_counts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    // A formula whose element masses are genuinely order-sensitive: summing its
+    // five elements in different orders yields two distinct f64 bit patterns
+    // (a 66/54 split over the 120 permutations), so a randomized HashMap order
+    // reliably produces both within this many draws. Small formulas such as
+    // C6H12O6 round identically under every permutation and cannot catch the bug.
+    const ORDER_SENSITIVE_FORMULA: &str = "C100H150N20O30S2";
+
+    #[test]
+    fn monoisotopic_weight_is_bitwise_stable() {
+        let mut observed_bits = BTreeSet::new();
+        for _ in 0..1024 {
+            let formula = SumFormula::new(ORDER_SENSITIVE_FORMULA);
+            observed_bits.insert(formula.monoisotopic_weight().to_bits());
+        }
+
+        assert_eq!(
+            observed_bits.len(),
+            1,
+            "identical sum formula produced multiple exact monoisotopic weights: {observed_bits:?}"
+        );
+    }
+
+    #[test]
+    fn monoisotopic_weight_matches_expected_mass() {
+        let formula = SumFormula::new("C6H12O6");
+        let quantized = (formula.monoisotopic_weight() * 1e6).round() as i64;
+        assert_eq!(quantized, 180063388);
+    }
 }
