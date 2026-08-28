@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["NOISE"],"fn":["axis_reach","cluster_axis_scales","dbscan","dbscan_with_progress"],"struct":["AxisScales","ScaleInputs"]};

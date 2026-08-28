@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["RT_MINUTES_SPAN"],"enum":["Axis"],"fn":["fmt_tick","nice_step","ticks_for"],"struct":["Tick"]};

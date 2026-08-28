@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DIA_WINDOW_RT_SLICES"],"struct":["AxisBounds","AxisTransform","GpuPoint","WindowRect"]};

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"mod":["app","camera","cluster","data","offscreen","render","serve","state","ticks","ui"]};

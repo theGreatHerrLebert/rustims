@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["ROLL_UP_AXIS"],"enum":["AxisView","Projection"],"struct":["OrbitCamera"]};

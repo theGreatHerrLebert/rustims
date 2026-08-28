@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["MsFilter"],"fn":["render_png"],"struct":["Options"]};

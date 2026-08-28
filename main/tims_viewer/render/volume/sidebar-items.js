@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["VOLUME_DIMS"],"struct":["VolumeGrid","VolumeRenderer"]};

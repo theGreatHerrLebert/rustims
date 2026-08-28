@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["HIST_BINS","PROJ_BINS"],"enum":["LoadCmd","LoadMsg","LoaderMode"],"fn":["dia_window_rects","stride_for"],"struct":["LoaderHandle","RegionFilter"]};

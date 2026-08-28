@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["has_isolation_windows","load_meta_any","loader_mode_for"],"mod":["demo","loader","meta","point"]};
