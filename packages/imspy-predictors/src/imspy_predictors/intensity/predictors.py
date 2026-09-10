@@ -435,13 +435,18 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         data['sequence_length'] = data.apply(lambda r: len(remove_unimod_annotation(r.sequence)), axis=1)
 
         # Use Koina for prediction
-        I_pred = self._predict_with_koina(
+        I_pred, predicted = self._predict_with_koina(
             data.sequence.tolist(),
             data.charge.tolist(),
             data.collision_energy.tolist(),
             batch_size=batch_size,
+            return_mask=True,
         )
 
+        # False marks a precursor the model refused; its spectrum is all zeros,
+        # so a consumer can drop or flag it instead of treating the absence of
+        # fragments as a prediction.
+        data['intensity_predicted'] = predicted
         data['intensity_raw'] = list(I_pred)
         I_pred = self._to_prosit_tensors(post_process_predicted_fragment_spectra(data))
 
@@ -492,7 +497,13 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
     @classmethod
     def _assert_response_echoes_input(cls, result: pd.DataFrame, input_df: pd.DataFrame,
                                       rows: NDArray) -> None:
-        """Fail loudly if the response index no longer identifies the input row."""
+        """Fail loudly if the response index no longer identifies the input row.
+
+        Two submitted rows carrying an identical peptide, charge, collision energy
+        and instrument are indistinguishable to this check, so a reset index
+        would go unnoticed between them -- harmless, because the prediction they
+        would swap is by definition the same one.
+        """
         for column in cls._KOINA_ECHO_COLUMNS:
             if column not in result.columns or column not in input_df.columns:
                 continue
@@ -641,12 +652,19 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             charges: List[int],
             collision_energies: List[float],
             batch_size: int = 512,
-    ) -> NDArray:
+            return_mask: bool = False,
+    ):
         """Predict fragment intensities via Koina.
+
+        Args:
+            return_mask: also return the boolean mask of precursors Koina
+                answered for. The rest keep an all-zero spectrum because the
+                model rejected them, which a caller may want to record or act
+                on rather than only read in the log.
 
         Returns:
             (len(sequences), 174) array of Prosit-layout intensities, aligned
-            row-for-row with ``sequences``.
+            row-for-row with ``sequences``; and the mask when ``return_mask``.
         """
         koina_model = self._get_koina_model()
 
@@ -662,8 +680,8 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
 
         result = koina_model.predict(input_df)
 
-        intensities, _predicted = self._koina_result_to_prosit_array(result, input_df)
-        return intensities
+        intensities, predicted = self._koina_result_to_prosit_array(result, input_df)
+        return (intensities, predicted) if return_mask else intensities
     def predict_intensities(
             self,
             sequences: List[str],
