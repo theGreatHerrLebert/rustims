@@ -76,6 +76,87 @@ def _koina_input_df(model, data: pd.DataFrame, encoded_ce) -> pd.DataFrame:
     return pd.DataFrame(cols)
 
 
+def _fill_prosit_rejects_with_local_model(
+    i_pred: pd.DataFrame,
+    transmitted_fragment_ions: pd.DataFrame,
+    batch_size: int,
+    verbose: bool,
+) -> pd.DataFrame:
+    """Predict the precursors Prosit refused with the local PyTorch model.
+
+    Prosit accepts only unmodified residues, C[UNIMOD:4] and M[UNIMOD:35], up to
+    30 aa. Everything else -- N-terminal acetylation and cysteinylation above all,
+    both common in immunopeptidomics -- comes back with an empty spectrum, which
+    would simulate a precursor that no search engine can ever identify. The local
+    model has no such restriction, so it covers exactly those precursors.
+
+    The subset is taken from ``transmitted_fragment_ions`` rather than from
+    ``i_pred`` because both predictors normalise ``collision_energy`` in place
+    (dividing by 100, which the Rust frame builder keys on); re-predicting from an
+    already-normalised frame would divide a second time and quietly shift every
+    fallback spectrum to a collision energy 100x too low.
+    """
+    if "intensity_predicted" not in i_pred.columns:
+        return i_pred
+
+    rejected = ~i_pred["intensity_predicted"].to_numpy(dtype=bool)
+    n_rejected = int(rejected.sum())
+    if n_rejected == 0:
+        return i_pred
+
+    if len(i_pred) != len(transmitted_fragment_ions):
+        raise ValueError(
+            f"Prosit returned {len(i_pred)} rows for {len(transmitted_fragment_ions)} "
+            f"transmitted ions. Row order is the only thing tying the two frames "
+            f"together, so the fallback subset cannot be identified safely."
+        )
+
+    # Row order is the only link between the two frames; verify the whole column
+    # rather than trust it, since a mismatch would predict the wrong peptide's
+    # spectrum. Checking every row, not just the rejected ones, catches a frame
+    # that has been reordered somewhere upstream even when the rejected rows
+    # happen to land on themselves.
+    got = i_pred["sequence"].to_numpy()
+    expected = transmitted_fragment_ions["sequence"].to_numpy()
+    if not np.array_equal(got, expected):
+        i = int(np.argmax(got != expected))
+        raise ValueError(
+            f"Prosit result row {i} holds sequence {got[i]!r} but the transmitted ion "
+            f"at that position is {expected[i]!r}. The two frames are no longer in the "
+            f"same order, so refusing to predict a fallback spectrum for the wrong peptide."
+        )
+
+    positions = np.flatnonzero(rejected)
+    source = transmitted_fragment_ions.iloc[positions]
+
+    logger.info(
+        "Falling back to the local intensity model for %d/%d precursor(s) Prosit rejected ...",
+        n_rejected, len(i_pred),
+    )
+
+    local_predictor = DeepPeptideIntensityPredictor(verbose=verbose)
+    filled = local_predictor.simulate_ion_intensities_pandas_batched(
+        source.copy(),
+        batch_size_tf_ds=batch_size,
+    )
+    if len(filled) != n_rejected:
+        raise ValueError(
+            f"Local intensity model returned {len(filled)} spectra for {n_rejected} "
+            f"rejected precursors; refusing to splice a misaligned result."
+        )
+
+    # Positional splice: the local model's batching resets the index, so only the
+    # row order carries the correspondence back.
+    intensities = list(i_pred["intensity"])
+    for position, spectrum in zip(positions, list(filled["intensity"])):
+        intensities[position] = spectrum
+    i_pred["intensity"] = intensities
+    i_pred["intensity_predicted"] = True
+    i_pred["intensity_model"] = np.where(rejected, "local", "prosit")
+
+    return i_pred
+
+
 def _predict_intensities_with_koina(
     data: pd.DataFrame,
     model_name: str,
@@ -396,6 +477,9 @@ def _simulate_fragment_intensities_standard(
         i_pred = IntensityPredictor.simulate_ion_intensities_pandas_batched(
             transmitted_fragment_ions,
             batch_size_tf_ds=batch_size,
+        )
+        i_pred = _fill_prosit_rejects_with_local_model(
+            i_pred, transmitted_fragment_ions, batch_size=batch_size, verbose=verbose,
         )
         intensity_already_flat = False  # (len,2,3) tensors
 
