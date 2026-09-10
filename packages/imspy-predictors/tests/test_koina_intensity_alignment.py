@@ -171,6 +171,57 @@ class TestResponseIntegrityGuards:
             Prosit2023TimsTofWrapper._koina_result_to_prosit_array(res, inp)
 
 
+class TestPrositTensorShape:
+    """The Prosit path must hand consumers (29, 2, 3) tensors, not (29, 6).
+
+    ``imspy_simulation.utility.flatten_prosit_array`` reads ``array[:, 0, c]``
+    and ``array[:, 1, c]``, so a 2-D array raises a numba TypingError deep in
+    frame assembly; and ``np.squeeze`` on a single-precursor batch silently
+    turns 29 ordinals into 29 'precursors'.
+    """
+
+    def test_flat_vector_maps_onto_ordinal_iontype_charge(self):
+        # Label every slot with its own index so each one can be traced.
+        processed = np.arange(VECTOR_LENGTH, dtype=np.float32)[None, :]
+        tensors = Prosit2023TimsTofWrapper._to_prosit_tensors(processed)
+
+        assert len(tensors) == 1
+        assert tensors[0].shape == (29, 2, 3)
+        t = tensors[0]
+        assert t[0, 0, 0] == 0      # y1+1
+        assert t[0, 0, 2] == 2      # y1+3
+        assert t[0, 1, 0] == 3      # b1+1
+        assert t[1, 0, 0] == 6      # y2+1
+        assert t[28, 1, 2] == 173   # b29+3
+
+    @pytest.mark.parametrize("n_precursors", [1, 2, 5])
+    def test_one_tensor_per_precursor(self, n_precursors):
+        """A batch of one must not collapse into 29 pseudo-precursors."""
+        processed = np.zeros((n_precursors, VECTOR_LENGTH), dtype=np.float32)
+        tensors = Prosit2023TimsTofWrapper._to_prosit_tensors(processed)
+        assert len(tensors) == n_precursors
+        assert all(t.shape == (29, 2, 3) for t in tensors)
+
+    def test_flatten_prosit_array_accepts_the_tensor(self):
+        """The simulation-side consumer needs 3 dimensions and a lossless layout."""
+        from imspy_predictors.lazy_imports import get_simulation_flatten_prosit
+
+        flatten_prosit_array = get_simulation_flatten_prosit()
+        processed = np.arange(VECTOR_LENGTH, dtype=np.float32)[None, :]
+        tensor = Prosit2023TimsTofWrapper._to_prosit_tensors(processed)[0]
+
+        flat = flatten_prosit_array(tensor)
+
+        assert flat.shape == (VECTOR_LENGTH,)
+        # Block layout: [y c1][b c1][y c2][b c2][y c3][b c3], 29 entries each.
+        assert flat[0] == 0 and flat[1] == 6      # y1+1, y2+1
+        assert flat[29] == 3 and flat[30] == 9    # b1+1, b2+1
+        assert flat[58] == 1                      # y1+2
+        assert flat[87] == 4                      # b1+2
+        # A permutation: nothing lost, nothing duplicated.
+        assert sorted(flat.tolist()) == sorted(float(i) for i in range(VECTOR_LENGTH))
+
+
 @pytest.mark.skipif(
     True,  # Set to False to run network tests
     reason="Network tests disabled by default"

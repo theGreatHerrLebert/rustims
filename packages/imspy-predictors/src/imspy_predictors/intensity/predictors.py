@@ -443,14 +443,34 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         )
 
         data['intensity_raw'] = list(I_pred)
-        I_pred = np.squeeze(reshape_dims(post_process_predicted_fragment_spectra(data)))
+        I_pred = self._to_prosit_tensors(post_process_predicted_fragment_spectra(data))
 
         if flatten:
-            I_pred = np.vstack([flatten_prosit_array(r) for r in I_pred])
+            I_pred = [flatten_prosit_array(r) for r in I_pred]
 
-        data['intensity'] = list(I_pred)
+        data['intensity'] = I_pred
 
         return data
+
+    @staticmethod
+    def _to_prosit_tensors(processed: NDArray) -> List[NDArray]:
+        """Turn post-processed (n, 174) intensities into one (29, 2, 3) tensor per precursor.
+
+        Consumers index these as [ordinal, ion_type, charge] with ion_type 0 = y
+        and 1 = b -- see ``imspy_simulation.utility.flatten_prosit_array``, which
+        reads ``array[:, 0, c]`` / ``array[:, 1, c]`` and therefore requires three
+        dimensions. A C-order reshape of the (29, 6) layout produces exactly that,
+        because the 6 slots per ordinal are already ordered y+1, y+2, y+3, b+1,
+        b+2, b+3.
+
+        ``np.squeeze`` must not be used here: for a single-precursor batch it drops
+        the batch axis, and every consumer then reads the 29 ordinals as if they
+        were 29 separate precursors.
+        """
+        cube = reshape_dims(processed)          # (n, 29, 6), or (29, 6) for n == 1
+        if cube.ndim == 2:
+            cube = cube[None, ...]
+        return [arr.reshape(29, 2, 3) for arr in cube]
 
     # Prosit fragment layout: 174 flat slots = 29 fragment ordinals x 6 ion
     # types, ordered y+1, y+2, y+3, b+1, b+2, b+3. Must stay in step with
@@ -668,13 +688,13 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         )
 
         I_pred = list(I_pred)
-        I_pred = np.squeeze(reshape_dims(post_process_predicted_fragment_spectra(pd.DataFrame({
+        I_pred = self._to_prosit_tensors(post_process_predicted_fragment_spectra(pd.DataFrame({
             'sequence': sequences,
             'charge': charges,
             'collision_energy': collision_energies,
             'sequence_length': sequence_length,
             'intensity_raw': I_pred,
-        }))))
+        })))
 
         if flatten:
             I_pred = np.vstack([flatten_prosit_array(r) for r in I_pred])
@@ -704,13 +724,13 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         )
 
         I_pred = list(I_pred)
-        I_pred = np.squeeze(reshape_dims(post_process_predicted_fragment_spectra(pd.DataFrame({
+        I_pred = self._to_prosit_tensors(post_process_predicted_fragment_spectra(pd.DataFrame({
             'sequence': sequences,
             'charge': charges,
             'collision_energy': collision_energies,
             'sequence_length': sequence_length,
             'intensity_raw': I_pred,
-        }))))
+        })))
 
         intensities = np.vstack([flatten_prosit_array(r) for r in I_pred])
         peptide_sequences = [PeptideSequence(s) for s in sequences]
