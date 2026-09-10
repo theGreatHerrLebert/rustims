@@ -9,7 +9,9 @@ Classes:
     - IonIntensityPredictor: Abstract base class for intensity predictors
 """
 
+import logging
 import os
+import re
 from typing import List, Tuple, Optional
 
 from numpy.typing import NDArray
@@ -37,6 +39,8 @@ from imspy_predictors.lazy_imports import (
 
 from imspy_predictors.utility import InMemoryCheckpoint
 from imspy_predictors.losses import masked_spectral_distance
+
+logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------------
@@ -431,34 +435,242 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         data['sequence_length'] = data.apply(lambda r: len(remove_unimod_annotation(r.sequence)), axis=1)
 
         # Use Koina for prediction
-        I_pred = self._predict_with_koina(
+        I_pred, predicted = self._predict_with_koina(
             data.sequence.tolist(),
             data.charge.tolist(),
             data.collision_energy.tolist(),
             batch_size=batch_size,
+            return_mask=True,
         )
 
+        # False marks a precursor the model refused; its spectrum is all zeros,
+        # so a consumer can drop or flag it instead of treating the absence of
+        # fragments as a prediction.
+        data['intensity_predicted'] = predicted
         data['intensity_raw'] = list(I_pred)
-        I_pred = np.squeeze(reshape_dims(post_process_predicted_fragment_spectra(data)))
+        I_pred = self._to_prosit_tensors(post_process_predicted_fragment_spectra(data))
 
         if flatten:
-            I_pred = np.vstack([flatten_prosit_array(r) for r in I_pred])
+            I_pred = [flatten_prosit_array(r) for r in I_pred]
 
-        data['intensity'] = list(I_pred)
+        data['intensity'] = I_pred
 
         return data
 
+    @staticmethod
+    def _to_prosit_tensors(processed: NDArray) -> List[NDArray]:
+        """Turn post-processed (n, 174) intensities into one (29, 2, 3) tensor per precursor.
+
+        Consumers index these as [ordinal, ion_type, charge] with ion_type 0 = y
+        and 1 = b -- see ``imspy_simulation.utility.flatten_prosit_array``, which
+        reads ``array[:, 0, c]`` / ``array[:, 1, c]`` and therefore requires three
+        dimensions. A C-order reshape of the (29, 6) layout produces exactly that,
+        because the 6 slots per ordinal are already ordered y+1, y+2, y+3, b+1,
+        b+2, b+3.
+
+        ``np.squeeze`` must not be used here: for a single-precursor batch it drops
+        the batch axis, and every consumer then reads the 29 ordinals as if they
+        were 29 separate precursors.
+        """
+        cube = reshape_dims(processed)          # (n, 29, 6), or (29, 6) for n == 1
+        if cube.ndim == 2:
+            cube = cube[None, ...]
+        return [arr.reshape(29, 2, 3) for arr in cube]
+
+    # Prosit fragment layout: 174 flat slots = 29 fragment ordinals x 6 ion
+    # types, ordered y+1, y+2, y+3, b+1, b+2, b+3. Must stay in step with
+    # utility.reshape_dims (174 -> 29 x 6) and utility.mask_outofcharge,
+    # which assume exactly this ordering.
+    _PROSIT_MAX_ORDINAL = 29
+    _PROSIT_MAX_ION_CHARGE = 3
+    _PROSIT_ION_TYPES = 6
+    _PROSIT_VECTOR_LENGTH = _PROSIT_MAX_ORDINAL * _PROSIT_ION_TYPES
+    _PROSIT_ION_TYPE_OFFSET = {"y": 0, "b": 3}
+    _KOINA_ANNOTATION_RE = re.compile(r"^([by])(\d+)\+(\d+)$")
+
+    # Columns Koina echoes back unchanged. Comparing them against the submitted
+    # frame is what proves the response index still identifies the peptide it
+    # was built from -- a bare range check cannot tell a preserved index from a
+    # reset one, and a reset index is precisely the silent-corruption case.
+    _KOINA_ECHO_COLUMNS = ("peptide_sequences", "precursor_charges", "instrument_types")
+
+    @classmethod
+    def _assert_response_echoes_input(cls, result: pd.DataFrame, input_df: pd.DataFrame,
+                                      rows: NDArray) -> None:
+        """Fail loudly if the response index no longer identifies the input row.
+
+        Two submitted rows carrying an identical peptide, charge, collision energy
+        and instrument are indistinguishable to this check, so a reset index
+        would go unnoticed between them -- harmless, because the prediction they
+        would swap is by definition the same one.
+        """
+        for column in cls._KOINA_ECHO_COLUMNS:
+            if column not in result.columns or column not in input_df.columns:
+                continue
+            expected = input_df[column].to_numpy()[rows]
+            got = result[column].to_numpy()
+            mismatch = expected != got
+            if mismatch.any():
+                i = int(np.argmax(mismatch))
+                raise ValueError(
+                    f"Koina response row {i} echoes {column}={got[i]!r}, but input row "
+                    f"{int(rows[i])} holds {expected[i]!r}. The response index no longer "
+                    f"identifies the submitted peptide, so fragment intensities would be "
+                    f"assigned to the wrong precursor. Refusing to continue."
+                )
+
+        if "collision_energies" in result.columns and "collision_energies" in input_df.columns:
+            expected = input_df["collision_energies"].to_numpy(dtype=np.float64)[rows]
+            got = result["collision_energies"].to_numpy(dtype=np.float64)
+            mismatch = ~np.isclose(expected, got, rtol=0.0, atol=1e-4)
+            if mismatch.any():
+                i = int(np.argmax(mismatch))
+                raise ValueError(
+                    f"Koina response row {i} echoes collision_energies={got[i]!r}, but input "
+                    f"row {int(rows[i])} holds {expected[i]!r}. Refusing to continue."
+                )
+
+    @classmethod
+    def _koina_result_to_prosit_array(cls, result: pd.DataFrame, input_df: pd.DataFrame) -> NDArray:
+        """Fold Koina's long-format response into one Prosit vector per input row.
+
+        Koina returns one row *per fragment ion*, not one row per peptide, and
+        ``ModelFromKoina.predict`` silently drops peptides that violate the
+        model's requirements (length > 30, unsupported modifications, charge out
+        of range). Surviving rows keep the index of the input frame, so keying on
+        that index is the only safe way back: assigning positionally shifts every
+        spectrum after the first dropped peptide onto the wrong precursor, which
+        no downstream step can detect. See the warning in
+        ``koina_models.access_models.ModelFromKoina.predict``.
+
+        Every assumption this makes about the response is checked rather than
+        trusted, because the failure mode is silent corruption of simulated
+        ground truth, not a crash. Peptides the filter rejected keep an all-zero
+        spectrum and are reported by the returned mask.
+
+        Returns:
+            (intensities, predicted) where ``intensities`` is
+            (len(input_df), 174) in Prosit layout and ``predicted`` is a boolean
+            mask marking the rows Koina actually returned fragments for.
+        """
+        n_inputs = len(input_df)
+        out = np.zeros((n_inputs, cls._PROSIT_VECTOR_LENGTH), dtype=np.float32)
+        predicted = np.zeros(n_inputs, dtype=bool)
+
+        if result is None or len(result) == 0:
+            logger.warning(
+                "Koina returned no predictions for %d peptides (model %s); "
+                "all fragment spectra will be empty.", n_inputs, cls.KOINA_MODEL_NAME,
+            )
+            return out, predicted
+
+        missing = [c for c in ("intensities", "annotation") if c not in result.columns]
+        if missing:
+            raise ValueError(
+                f"Koina response for {cls.KOINA_MODEL_NAME} is missing column(s) "
+                f"{missing}; got {list(result.columns)}. Cannot map fragment "
+                f"intensities back to their precursors."
+            )
+
+        rows = np.asarray(result.index, dtype=np.int64)
+        if rows.min() < 0 or rows.max() >= n_inputs:
+            raise ValueError(
+                f"Koina response index is out of range for the {n_inputs} peptides "
+                f"submitted (saw [{rows.min()}, {rows.max()}]). Refusing to guess the "
+                f"peptide each fragment belongs to."
+            )
+
+        cls._assert_response_echoes_input(result, input_df, rows)
+
+        intensities = result["intensities"].to_numpy(dtype=np.float32)
+        if not np.isfinite(intensities).all():
+            n_bad = int((~np.isfinite(intensities)).sum())
+            raise ValueError(
+                f"Koina returned {n_bad} non-finite fragment intensities for "
+                f"{cls.KOINA_MODEL_NAME}. These would propagate through base-peak "
+                f"normalisation into corrupted spectra."
+            )
+
+        slots = np.full(rows.shape, -1, dtype=np.int64)
+        unmapped = []
+        for i, annotation in enumerate(result["annotation"].to_numpy()):
+            if isinstance(annotation, (bytes, bytearray)):
+                annotation = annotation.decode("ascii", errors="replace")
+            annotation = str(annotation).strip()
+            match = cls._KOINA_ANNOTATION_RE.match(annotation)
+            if match is None:
+                unmapped.append(annotation)
+                continue
+            ion_type, ordinal, ion_charge = match.group(1), int(match.group(2)), int(match.group(3))
+            if not 1 <= ordinal <= cls._PROSIT_MAX_ORDINAL:
+                unmapped.append(annotation)
+                continue
+            if not 1 <= ion_charge <= cls._PROSIT_MAX_ION_CHARGE:
+                unmapped.append(annotation)
+                continue
+            slots[i] = ((ordinal - 1) * cls._PROSIT_ION_TYPES
+                        + cls._PROSIT_ION_TYPE_OFFSET[ion_type]
+                        + (ion_charge - 1))
+
+        if unmapped:
+            raise ValueError(
+                f"{len(unmapped)} of {len(result)} fragment annotations from "
+                f"{cls.KOINA_MODEL_NAME} do not fit the Prosit b/y layout "
+                f"(e.g. {sorted(set(unmapped))[:5]}). The response format has changed; "
+                f"refusing to silently drop that signal."
+            )
+
+        # One flat slot must be written at most once. 'Last row wins' would make
+        # the result depend on response ordering.
+        flat = rows * cls._PROSIT_VECTOR_LENGTH + slots
+        unique_flat, counts = np.unique(flat, return_counts=True)
+        if (counts > 1).any():
+            n_dup = int((counts > 1).sum())
+            raise ValueError(
+                f"Koina returned {n_dup} duplicated (peptide, fragment) slots for "
+                f"{cls.KOINA_MODEL_NAME}. Which intensity wins would depend on response "
+                f"ordering, so the result is not reproducible. Refusing to continue."
+            )
+
+        out.reshape(-1)[flat] = intensities
+        predicted[np.unique(rows)] = True
+
+        n_dropped = n_inputs - int(predicted.sum())
+        if n_dropped:
+            logger.warning(
+                "%d/%d peptides were rejected by the Koina input filter for %s and keep an "
+                "all-zero fragment spectrum (no MS2 signal will be simulated for them). "
+                "Prosit supports only unmodified residues, C[UNIMOD:4] and M[UNIMOD:35], "
+                "sequences up to 30 aa and charges 1-6.",
+                n_dropped, n_inputs, cls.KOINA_MODEL_NAME,
+            )
+
+        return out, predicted
     def _predict_with_koina(
             self,
             sequences: List[str],
             charges: List[int],
             collision_energies: List[float],
             batch_size: int = 512,
-    ) -> NDArray:
-        """Predict intensities using Koina API."""
+            return_mask: bool = False,
+    ):
+        """Predict fragment intensities via Koina.
+
+        Args:
+            return_mask: also return the boolean mask of precursors Koina
+                answered for. The rest keep an all-zero spectrum because the
+                model rejected them, which a caller may want to record or act
+                on rather than only read in the log.
+
+        Returns:
+            (len(sequences), 174) array of Prosit-layout intensities, aligned
+            row-for-row with ``sequences``; and the mask when ``return_mask``.
+        """
         koina_model = self._get_koina_model()
 
-        # Prepare input DataFrame for Koina
+        # Prepare input DataFrame for Koina. The default RangeIndex is what
+        # _koina_result_to_prosit_array keys the response back on, so it must
+        # stay 0..n-1 and positional.
         input_df = pd.DataFrame({
             'peptide_sequences': sequences,
             'precursor_charges': charges,
@@ -466,23 +678,10 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
             'instrument_types': ['TIMSTOF'] * len(sequences),
         })
 
-        # Get predictions from Koina
         result = koina_model.predict(input_df)
 
-        # Extract intensities from result
-        # Koina returns a DataFrame with intensities column
-        if 'intensities' in result.columns:
-            intensities = np.vstack(result['intensities'].values)
-        else:
-            # Fallback: try to extract from first numeric column
-            numeric_cols = result.select_dtypes(include=[np.number]).columns
-            if len(numeric_cols) > 0:
-                intensities = result[numeric_cols].values
-            else:
-                raise ValueError("Could not extract intensities from Koina response")
-
-        return intensities
-
+        intensities, predicted = self._koina_result_to_prosit_array(result, input_df)
+        return (intensities, predicted) if return_mask else intensities
     def predict_intensities(
             self,
             sequences: List[str],
@@ -507,13 +706,13 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         )
 
         I_pred = list(I_pred)
-        I_pred = np.squeeze(reshape_dims(post_process_predicted_fragment_spectra(pd.DataFrame({
+        I_pred = self._to_prosit_tensors(post_process_predicted_fragment_spectra(pd.DataFrame({
             'sequence': sequences,
             'charge': charges,
             'collision_energy': collision_energies,
             'sequence_length': sequence_length,
             'intensity_raw': I_pred,
-        }))))
+        })))
 
         if flatten:
             I_pred = np.vstack([flatten_prosit_array(r) for r in I_pred])
@@ -543,13 +742,13 @@ class Prosit2023TimsTofWrapper(IonIntensityPredictor):
         )
 
         I_pred = list(I_pred)
-        I_pred = np.squeeze(reshape_dims(post_process_predicted_fragment_spectra(pd.DataFrame({
+        I_pred = self._to_prosit_tensors(post_process_predicted_fragment_spectra(pd.DataFrame({
             'sequence': sequences,
             'charge': charges,
             'collision_energy': collision_energies,
             'sequence_length': sequence_length,
             'intensity_raw': I_pred,
-        }))))
+        })))
 
         intensities = np.vstack([flatten_prosit_array(r) for r in I_pred])
         peptide_sequences = [PeptideSequence(s) for s in sequences]
