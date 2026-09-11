@@ -248,12 +248,33 @@ class TestGetDevice:
 class TestResourcePaths:
     """Test suite for resource path functions."""
 
-    def test_get_model_path(self):
-        """Test getting model path."""
+    def test_get_model_path_rejects_unknown_model(self):
+        """An unrecognised model name is refused, and the error lists what exists.
+
+        Models are no longer bundled in the wheel: get_model_path falls through
+        to the hub, which downloads and hash-verifies against a fixed registry.
+        An unknown name therefore cannot resolve to a path, and must say so
+        rather than returning one that will never exist.
+        """
         from imspy_predictors.utility import get_model_path
 
-        path = get_model_path('test_model')
-        assert 'test_model' in str(path)
+        with pytest.raises(ValueError, match="Unknown model"):
+            get_model_path('test_model')
+
+    def test_known_models_are_registered(self):
+        """The registry carries the models the predictors actually ask for.
+
+        Registry membership is asserted instead of calling get_model_path on a
+        real name: on a wheel install that would download ~21 MB per model, so
+        the resolution path stays out of the unit tests.
+        """
+        from imspy_predictors.pretrained.hub import MODELS
+
+        for name in ('ccs/best_model.pt', 'rt/best_model.pt',
+                     'charge/best_model.pt', 'intensity/best_model.pt',
+                     'pretrained_encoder.pt'):
+            assert name in MODELS, f"{name} missing from the model registry"
+            assert MODELS[name].get('sha256'), f"{name} has no pinned hash"
 
     def test_get_tokenizer_path(self):
         """Test getting tokenizer path."""
