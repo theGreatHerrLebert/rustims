@@ -1,6 +1,6 @@
 [project]
 name = "imspy-core"
-version = "0.4.1"
+version = "0.4.2"
 description = "Core data structures and utilities for processing timsTOF ion mobility spectrometry data."
 authors = [
     { name = "theGreatHerrLebert", email = "davidteschner@googlemail.com" }
@@ -20,7 +20,7 @@ dependencies = [
     "pyarrow>=13.0",
     "mendeleev>=0.7.0",
     "toml>=0.10.2",
-    "imspy-connector>=0.3.0",
+    "imspy-connector>=0.4.2",
     "opentims-bruker-bridge>=1.1.0",
 ]
 

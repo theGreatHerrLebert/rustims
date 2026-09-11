@@ -1,6 +1,6 @@
 [project]
 name = "imspy-vis"
-version = "0.4.0"
+version = "0.4.1"
 description = "Lightweight visualization tools for timsTOF proteomics data."
 authors = [
     { name = "theGreatHerrLebert", email = "davidteschner@googlemail.com" }
@@ -10,7 +10,7 @@ license = "MIT"
 requires-python = ">=3.11,<3.14"
 
 dependencies = [
-    "imspy-core>=0.4.0",
+    "imspy-core>=0.4.2",
     "plotly>=5.0",
     "ipywidgets>=8.0",
     "matplotlib>=3.5",
