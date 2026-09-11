@@ -1,0 +1,82 @@
+name: Python Tests
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # Cheap, no-build guard: the connector's version is declared in BOTH
+  # Cargo.toml and pyproject.toml, and maturin takes the WHEEL version from
+  # pyproject.toml. Bumping only Cargo.toml compiles the new version but emits a
+  # wheel carrying the old one, which PyPI rejects as a duplicate — the release
+  # then publishes nothing while reporting success.
+  version-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Connector Cargo.toml and pyproject.toml agree
+        run: |
+          cargo_v=$(grep -m1 '^version' imspy_connector/Cargo.toml | cut -d'"' -f2)
+          py_v=$(grep -m1 '^version' imspy_connector/pyproject.toml | cut -d'"' -f2)
+          echo "Cargo.toml=$cargo_v  pyproject.toml=$py_v"
+          if [ "$cargo_v" != "$py_v" ]; then
+            echo "::error::imspy_connector version mismatch: Cargo.toml=$cargo_v but pyproject.toml=$py_v (maturin uses pyproject.toml for the wheel version)"
+            exit 1
+          fi
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: [ "3.11", "3.12" ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: imspy_connector
+
+      # Default features only — the vendor extractors (thermo/sciex) need extra
+      # repositories and are not what these tests exercise. This mirrors what the
+      # published wheels contain.
+      - name: Build and install imspy-connector
+        run: |
+          python -m pip install --upgrade pip maturin
+          cd imspy_connector
+          maturin build --release
+          pip install ../target/wheels/*.whl
+
+      # CPU-only torch: the default index resolves CUDA wheels (~2 GB) that a CI
+      # runner neither needs nor has a GPU for.
+      - name: Install CPU torch
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install packages under test
+        run: |
+          pip install ./packages/imspy-core
+          pip install ./packages/imspy-predictors
+          pip install ./packages/imspy-search
+          pip install ./packages/imspy-simulation
+          pip install pytest
+
+      - name: imspy-core
+        run: cd packages/imspy-core && pytest tests/ -q
+
+      - name: imspy-predictors
+        run: cd packages/imspy-predictors && pytest tests/ -q
+
+      - name: imspy-simulation
+        run: cd packages/imspy-simulation && pytest tests/ -q

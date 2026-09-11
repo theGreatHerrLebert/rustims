@@ -6,6 +6,8 @@ names exist, the ``astral_acquisition`` back-compat aliases still point at them
 the same objects.
 """
 
+import pandas as pd
+
 from imspy_simulation.timsim.jobs import astral_acquisition as A
 from imspy_simulation.timsim.jobs import sciex_acquisition as S
 from imspy_simulation.timsim.jobs import template_acquisition_common as C
@@ -166,11 +168,30 @@ def test_rt_cycle_length_uses_ms1_spacing_not_scan_spacing():
 
 
 def test_rt_cycle_length_raises_on_single_ms1():
-    import pytest
-    ft, *_ = C.build_frame_tables_from_schedule(
-        [(1, 0.0, 1, None, None, None), (2, 0.33, 2, 500.0, 20.0, 25.0)], num_scans=10
-    )
-    with pytest.raises(ValueError):
+    # The frame table is built directly rather than through
+    # build_frame_tables_from_schedule: the schedule gate now rejects a
+    # single-MS1 schedule at ingestion (covered by
+    # test_schedule_gate_rejects_single_ms1), so routing through the builder
+    # never reaches the helper's own guard — which is what this test is for.
+    ft = pd.DataFrame({
+        "frame_id": [1, 2],
+        "time": [0.0, 0.33],
+        "ms_type": [0, 9],  # one MS1 survey => the MS1->MS1 interval is undefined
+    })
+    with pytest.raises(ValueError, match="rt_cycle_length"):
+        C.rt_cycle_length_from_ms1(ft)
+
+
+def test_rt_cycle_length_raises_when_ms1_surveys_share_a_timestamp():
+    # Two MS1 frames, but at the same time: every diff is zero, so the cycle
+    # interval is as undefined as with a single survey. Falling back to a zero
+    # (or per-scan) cycle length is the bug this guard exists to prevent.
+    ft = pd.DataFrame({
+        "frame_id": [1, 2, 3],
+        "time": [1.0, 1.0, 1.5],
+        "ms_type": [0, 0, 9],
+    })
+    with pytest.raises(ValueError, match="rt_cycle_length"):
         C.rt_cycle_length_from_ms1(ft)
 
 
