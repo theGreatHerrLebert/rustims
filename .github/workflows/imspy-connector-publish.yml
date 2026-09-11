@@ -3,6 +3,10 @@ name: Build and Publish Rust Binding
 on:
   release:
     types: [published]
+  # Lets a partially-published version be completed without cutting a new
+  # release: re-run against the same ref and --skip-existing uploads only the
+  # wheels PyPI is still missing.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -11,8 +15,16 @@ jobs:
   build-and-publish:
     runs-on: ${{ matrix.os }}
     strategy:
+      # One platform failing must not cancel the others: they publish
+      # independent wheels, and a cancelled job means that platform gets no
+      # wheel at all for this version.
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-14, macos-15]
+        # macos-14 and macos-15 are both arm64 and were both built with
+        # --target aarch64-apple-darwin, producing byte-identical wheel names
+        # (macosx_11_0_arm64). Whichever uploaded second failed with "File
+        # already exists" and, under the default fail-fast, cancelled the rest.
+        os: [ubuntu-latest, windows-latest, macos-14]
         python-version: ['3.11', '3.12', '3.13']
 
     steps:
@@ -31,7 +43,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ (matrix.os == 'macos-14' || matrix.os == 'macos-15') && 'aarch64-apple-darwin' || '' }}
+          targets: ${{ matrix.os == 'macos-14' && 'aarch64-apple-darwin' || '' }}
 
       - name: Clean Cargo Artifacts
         run: |
@@ -42,7 +54,7 @@ jobs:
         shell: bash
         run: |
           cd imspy_connector
-          if [ "${{ matrix.os }}" = "macos-14" ] || [ "${{ matrix.os }}" = "macos-15" ]; then
+          if [ "${{ matrix.os }}" = "macos-14" ]; then
             maturin build --release --target aarch64-apple-darwin
           else
             maturin build --release
@@ -53,4 +65,6 @@ jobs:
           MATURIN_PYPI_TOKEN: ${{ secrets.IMSPY_CONNECTOR_PYPI_API_TOKEN }}
         run: |
           cd imspy_connector
-          maturin publish --no-sdist
+          # Idempotent: a wheel this version already has on PyPI is skipped rather
+          # than failing the job, so a dispatch can fill in missing platforms.
+          maturin publish --no-sdist --skip-existing
