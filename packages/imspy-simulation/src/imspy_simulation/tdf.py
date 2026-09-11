@@ -1,4 +1,7 @@
+import os
 import sqlite3
+import warnings
+
 import pandas as pd
 import numpy as np
 
@@ -46,8 +49,92 @@ def validate_frames_id_uniqueness(meta_df: pd.DataFrame) -> None:
     )
 
 
+# SQLite's default busy timeout (5 s via the sqlite3 module) is short enough
+# that ordinary contention surfaces as a hard failure; 30 s absorbs a slow
+# flush without masking a genuinely stuck lock.
+_SQLITE_BUSY_TIMEOUT_S = 30.0
+
+# Filesystems on which SQLite's POSIX advisory locking is unreliable or simply
+# absent. Writing a `.d` onto one of these reports "database is locked" even
+# with a single writer, which is the failure people hit when they move a run to
+# a VM and point --save_path at a mounted share.
+_UNSAFE_LOCK_FILESYSTEMS = {
+    "nfs", "nfs4", "cifs", "smbfs", "smb3", "vboxsf", "9p", "virtiofs",
+    "afs", "lustre", "gpfs", "fuse", "fuseblk", "fuse.sshfs", "fuse.s3fs",
+    "fuse.rclone", "fuse.glusterfs",
+}
+
+
+def _filesystem_type(path) -> str:
+    """Best-effort filesystem type of the mount that ``path`` lives on.
+
+    Linux-only (reads ``/proc/mounts``); returns ``"unknown"`` anywhere the
+    lookup is unavailable. Used only to enrich a diagnostic, never for control
+    flow.
+    """
+    try:
+        target = os.path.realpath(str(path))
+        best_mount, best_type = "", "unknown"
+        with open("/proc/mounts", "r") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                mount_point = parts[1].replace("\\040", " ")
+                fstype = parts[2]
+                if target == mount_point or target.startswith(mount_point.rstrip("/") + "/"):
+                    if len(mount_point) >= len(best_mount):
+                        best_mount, best_type = mount_point, fstype
+        return best_type
+    except OSError:
+        return "unknown"
+
+
+def _locked_database_error(db_path, exc: Exception) -> RuntimeError:
+    """Turn SQLite's bare "database is locked" into an actionable diagnostic.
+
+    The bare message says nothing about *why* the file is locked, and the two
+    causes need opposite fixes: a live process still holding the lock, versus a
+    filesystem that cannot take the lock at all.
+    """
+    fstype = _filesystem_type(Path(db_path).parent)
+    if fstype in _UNSAFE_LOCK_FILESYSTEMS:
+        fs_verdict = (
+            f"Detected filesystem: '{fstype}' — SQLite locking does not work "
+            f"reliably there, so this is almost certainly the cause."
+        )
+    else:
+        fs_verdict = (
+            f"Detected filesystem: '{fstype}' — locking should work there, so "
+            f"cause (1) or (3) is more likely."
+        )
+
+    return RuntimeError(
+        f"Cannot write the output .d, SQLite reports the database as locked:\n"
+        f"    {db_path}\n"
+        f"\n"
+        f"'database is locked' means another process holds a write lock on this "
+        f"file, or the filesystem it lives on cannot take the lock. Check, in "
+        f"this order:\n"
+        f"\n"
+        f"  1. Is an earlier timsim still running? A run holds this lock from "
+        f"start to finish, and a backgrounded / Ctrl+Z-suspended run (or one "
+        f"alive in another ssh or tmux session) keeps holding it:\n"
+        f"         ps aux | grep timsim\n"
+        f"         fuser -v '{db_path}'      # or: lsof '{db_path}'\n"
+        f"  2. Is the output on a network or shared mount (NFS, CIFS/SMB, "
+        f"VirtualBox vboxsf, 9p/virtiofs, sshfs)? {fs_verdict}\n"
+        f"     Fix: point --save_path at local disk (e.g. ~/timsim_out) and "
+        f"copy the finished .d to the share afterwards.\n"
+        f"  3. Is this output folder left over from an earlier run? Use a fresh "
+        f"experiment name, or an empty output directory.\n"
+        f"\n"
+        f"Original error: {exc}"
+    )
+
+
 class TDFWriter:
-    def __init__(self, helper_handle: TimsDataset, path: str = "./", exp_name: str = "RAW.d", offset_bytes: int = 64, verbose: bool=False, use_rust_compression: bool=False) -> None:
+    def __init__(self, helper_handle: TimsDataset, path: str = "./", exp_name: str = "RAW.d", offset_bytes: int = 64, verbose: bool=False, use_rust_compression: bool=False, expect_existing: bool = False) -> None:
 
         self.path = Path(path)
         self.exp_name = exp_name
@@ -59,6 +146,9 @@ class TDFWriter:
         self.helper_handle = helper_handle
         self.offset_bytes = offset_bytes
         self.verbose = verbose
+        # Set by the ``from_existing`` builders, which legitimately reopen an
+        # already-written .d; suppresses the re-used-output-folder warning.
+        self.expect_existing = expect_existing
         # When True, the per-frame tdf_bin realdata is produced by the Rust
         # encoder (imspy_connector get_data_for_compression) instead of the
         # NumPy/Numba get_compressible_data. The Python dedup+lexsort over
@@ -66,7 +156,6 @@ class TDFWriter:
         # Rust encoder reproduces it byte-for-byte (see scripts/parity_tof_writer.py).
         # Also togglable globally via TIMSIM_RUST_COMPRESSION=1 so a stock
         # `timsim` run can exercise the Rust writer without code changes.
-        import os
         self.use_rust_compression = use_rust_compression or os.environ.get(
             "TIMSIM_RUST_COMPRESSION", "0"
         ) not in ("0", "", "false", "False")
@@ -77,7 +166,14 @@ class TDFWriter:
     def _setup_connections(self) -> None:
         # Create the directory and connect to DB
         self.full_path.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(f'{self.full_path}/analysis.tdf')
+        db_path = self.full_path / "analysis.tdf"
+        self.conn = sqlite3.connect(str(db_path), timeout=_SQLITE_BUSY_TIMEOUT_S)
+
+        # Take the write lock up front: if the file is locked by another process
+        # (or sits on a filesystem that cannot lock), fail here with a diagnostic
+        # that names the cause, instead of deep inside a pandas `to_sql` stack.
+        self._acquire_write_lock(db_path)
+        self._warn_if_output_reused(db_path)
 
         # Create the tables for the analysis.tdf
         frame_ms_ms_info = self.helper_handle.get_table("FrameMsmsInfo")
@@ -91,11 +187,62 @@ class TDFWriter:
         segments.iloc[0, segments.columns.get_loc("LastFrame")] = last_frame
 
         # Save table to analysis.tdf
-        self._create_table(self.conn, self.helper_handle.mz_calibration, "MzCalibration")
-        self._create_table(self.conn, self.helper_handle.tims_calibration, "TimsCalibration")
-        self._create_table(self.conn, self.helper_handle.global_meta_data_pandas, "GlobalMetadata")
-        self._create_table(self.conn, frame_ms_ms_info, "FrameMsmsInfo")
-        self._create_table(self.conn, segments, "Segments")
+        try:
+            self._create_table(self.conn, self.helper_handle.mz_calibration, "MzCalibration")
+            self._create_table(self.conn, self.helper_handle.tims_calibration, "TimsCalibration")
+            self._create_table(self.conn, self.helper_handle.global_meta_data_pandas, "GlobalMetadata")
+            self._create_table(self.conn, frame_ms_ms_info, "FrameMsmsInfo")
+            self._create_table(self.conn, segments, "Segments")
+        except Exception as e:
+            # pandas wraps the sqlite3 error, so match on the message rather than
+            # the exception type; anything else propagates untouched.
+            if "database is locked" in str(e).lower():
+                raise _locked_database_error(db_path, e) from e
+            raise
+
+    def _acquire_write_lock(self, db_path) -> None:
+        """Probe that this process can actually take SQLite's write lock.
+
+        ``BEGIN IMMEDIATE`` reserves the database without writing anything, so a
+        contended or unlockable file is detected before the first table is
+        touched.
+        """
+        try:
+            self.conn.execute("BEGIN IMMEDIATE")
+            self.conn.execute("COMMIT")
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e).lower() or "busy" in str(e).lower():
+                raise _locked_database_error(db_path, e) from e
+            raise
+
+    def _warn_if_output_reused(self, db_path) -> None:
+        """Warn when writing into a `.d` that an earlier run already populated.
+
+        ``mkdir(exist_ok=True)`` plus ``to_sql(if_exists='replace')`` silently
+        overwrites the metadata tables while the old ``analysis.tdf_bin`` blob
+        file is kept, so a re-run into a used folder can produce a `.d` whose
+        metadata and binary disagree.
+        """
+        if self.expect_existing:
+            return
+        try:
+            existing = self.conn.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table'"
+            ).fetchone()[0]
+        except sqlite3.Error:
+            return
+        if existing == 0:
+            return
+        warnings.warn(
+            f"Output .d already contains an analysis.tdf with {existing} tables: "
+            f"{db_path}. Re-running into an existing output folder overwrites the "
+            f"metadata tables while the old analysis.tdf_bin is kept, which can "
+            f"silently produce a corrupt .d. Use a fresh experiment name or an "
+            f"empty output directory unless you are resuming (--resume / "
+            f"--from_existing).",
+            RuntimeWarning,
+            stacklevel=3,
+        )
 
         # Create the binary file and add the offset bytes
         # TODO: check if this is necessary

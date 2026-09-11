@@ -109,6 +109,8 @@ class TimsTofAcquisitionBuilder:
             path=instance.path,
             helper_handle=reference_ds,
             exp_name=exp_name,
+            # Reopening an already-written .d is the point of from_existing.
+            expect_existing=True,
         )
 
         return instance
@@ -377,6 +379,8 @@ class TimsTofAcquisitionBuilderDIA(TimsTofAcquisitionBuilder, ABC):
             path=instance.path,
             helper_handle=reference_ds,
             exp_name=exp_name,
+            # Reopening an already-written .d is the point of from_existing.
+            expect_existing=True,
         )
 
         # Ensure use_reference_ds_layout is supported
