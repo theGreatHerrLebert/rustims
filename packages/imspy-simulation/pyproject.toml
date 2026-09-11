@@ -10,8 +10,9 @@ license = "MIT"
 requires-python = ">=3.11,<3.14"
 
 dependencies = [
-    "imspy-core>=0.4.0",
-    "imspy-predictors[koina]>=0.4.0",  # Include Koina support for intensity prediction
+    "imspy-connector>=0.4.2",
+    "imspy-core>=0.4.2",
+    "imspy-predictors[koina]>=0.5.2",  # Include Koina support for intensity prediction
     "pandas>=2.0",
     "numpy>=1.24",
     "numba>=0.53",
@@ -20,7 +21,7 @@ dependencies = [
     "tqdm>=4.66",
     "zstd>=1.5",
     "matplotlib>=3.5",
-    "imspy-search>=0.4.0",
+    "imspy-search>=0.4.1",
 ]
 
 [project.optional-dependencies]

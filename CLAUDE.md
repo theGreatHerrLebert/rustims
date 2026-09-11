@@ -63,7 +63,7 @@ Additional MS utilities:
 - `algorithm/` - Isotope and peptide algorithms
 - `ms/` - Spectrum utilities
 
-### imspy_connector (Rust/PyO3) — v0.4.1
+### imspy_connector (Rust/PyO3) — v0.4.2
 Python bindings organized as 21 submodules:
 - `py_mz_spectrum`, `py_peptide`, `py_tims_frame`, `py_tims_slice`, `py_dataset`
 - `py_dda`, `py_dia`, `py_quadrupole`, `py_feature`, `py_pseudo`
@@ -76,12 +76,12 @@ Python bindings organized as 21 submodules:
 
 | Package | Version | Module | Description |
 |---------|---------|--------|-------------|
-| **imspy-core** | 0.4.1 | `imspy_core` | Base data structures, timsTOF dataset access |
-| **imspy-predictors** | 0.5.1 | `imspy_predictors` | PyTorch models for CCS, RT, fragment intensities |
+| **imspy-core** | 0.4.2 | `imspy_core` | Base data structures, timsTOF dataset access |
+| **imspy-predictors** | 0.5.2 | `imspy_predictors` | PyTorch models for CCS, RT, fragment intensities |
 | **imspy-dia** | 0.4.0 | `imspy_dia` | DIA-PASEF clustering and feature extraction |
-| **imspy-search** | 0.4.0 | `imspy_search` | Database search integration (sagepy, mokapot) |
+| **imspy-search** | 0.4.1 | `imspy_search` | Database search integration (sagepy, mokapot) |
 | **imspy-simulation** | 0.4.2 | `imspy_simulation` | TimSim synthetic data generation & EVAL pipeline |
-| **imspy-vis** | 0.4.0 | `imspy_vis` | Visualization and plotting tools |
+| **imspy-vis** | 0.4.1 | `imspy_vis` | Visualization and plotting tools |
 
 #### imspy-core
 - `core/` - RustWrapperObject base class
@@ -306,13 +306,13 @@ Versions are maintained in:
 - `mscore/Cargo.toml` (0.4.1)
 - `rustdf/Cargo.toml` (0.4.1)
 - `rustms/Cargo.toml` (0.1.0)
-- `imspy_connector/Cargo.toml` (0.4.1)
-- `packages/imspy-core/pyproject.toml` (0.4.1)
-- `packages/imspy-predictors/pyproject.toml` (0.5.1)
+- `imspy_connector/Cargo.toml` (0.4.2)
+- `packages/imspy-core/pyproject.toml` (0.4.2)
+- `packages/imspy-predictors/pyproject.toml` (0.5.2)
 - `packages/imspy-dia/pyproject.toml` (0.4.0)
-- `packages/imspy-search/pyproject.toml` (0.4.0)
+- `packages/imspy-search/pyproject.toml` (0.4.1)
 - `packages/imspy-simulation/pyproject.toml` (0.4.2)
-- `packages/imspy-vis/pyproject.toml` (0.4.0)
+- `packages/imspy-vis/pyproject.toml` (0.4.1)
 
 Dependencies between Rust crates reference specific versions (e.g., `mscore = { version = "0.4.1" }`).
 

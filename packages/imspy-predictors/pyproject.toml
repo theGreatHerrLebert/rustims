@@ -1,6 +1,6 @@
 [project]
 name = "imspy-predictors"
-version = "0.5.1"
+version = "0.5.2"
 description = "ML-based predictors for CCS, retention time, and fragment intensity in mass spectrometry."
 authors = [
     { name = "theGreatHerrLebert", email = "davidteschner@googlemail.com" }
@@ -10,7 +10,7 @@ license = "MIT"
 requires-python = ">=3.11,<3.14"
 
 dependencies = [
-    "imspy-core>=0.4.0",
+    "imspy-core>=0.4.2",
     # PyTorch - deep learning framework
     "torch>=2.0.0",
     # Scientific computing
