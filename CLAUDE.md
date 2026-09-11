@@ -80,7 +80,7 @@ Python bindings organized as 21 submodules:
 | **imspy-predictors** | 0.5.1 | `imspy_predictors` | PyTorch models for CCS, RT, fragment intensities |
 | **imspy-dia** | 0.4.0 | `imspy_dia` | DIA-PASEF clustering and feature extraction |
 | **imspy-search** | 0.4.0 | `imspy_search` | Database search integration (sagepy, mokapot) |
-| **imspy-simulation** | 0.4.1 | `imspy_simulation` | TimSim synthetic data generation & EVAL pipeline |
+| **imspy-simulation** | 0.4.2 | `imspy_simulation` | TimSim synthetic data generation & EVAL pipeline |
 | **imspy-vis** | 0.4.0 | `imspy_vis` | Visualization and plotting tools |
 
 #### imspy-core
@@ -311,7 +311,7 @@ Versions are maintained in:
 - `packages/imspy-predictors/pyproject.toml` (0.5.1)
 - `packages/imspy-dia/pyproject.toml` (0.4.0)
 - `packages/imspy-search/pyproject.toml` (0.4.0)
-- `packages/imspy-simulation/pyproject.toml` (0.4.1)
+- `packages/imspy-simulation/pyproject.toml` (0.4.2)
 - `packages/imspy-vis/pyproject.toml` (0.4.0)
 
 Dependencies between Rust crates reference specific versions (e.g., `mscore = { version = "0.4.1" }`).
