@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["TimsDataLoader","TimsIndexConverter"],"struct":["BrukerFormulaConverter","BrukerLibTimsDataConverter","CalibratedIndexConverter","LookupIndexConverter","SimpleIndexConverter","TimsInMemoryLoader","TimsLazyLoder","TimsRawDataLayout"],"trait":["IndexConverter","TimsData"]};
