@@ -182,9 +182,20 @@ def read_acquisition_config(acquisition_name: str = 'dia') -> Dict[str, Any]:
 
 # Function to convert a list (or a pandas series) to a JSON string
 def python_list_to_json_string(lst, as_float=True, num_decimals: int = 4) -> str:
+    """Serialise a 1-D sequence as a JSON array (floats rounded to ``num_decimals``, or ints).
+
+    Vectorised: one ``np.round`` over the whole array instead of a NumPy scalar call per element
+    (this helper runs once per peptide/ion in four pipeline stages, so the per-element version
+    cost minutes on a 250k simulation). Output is identical to the previous implementation.
+    """
     if as_float:
-        return json.dumps([float(np.round(x, num_decimals)) for x in lst])
-    return json.dumps([int(x) for x in lst])
+        arr = np.asarray(lst)
+        if arr.dtype.kind != 'f':  # ints, bools, object lists of Python numbers
+            arr = arr.astype(np.float64)
+        # round in the input precision (float32 stays float32) and widen afterwards, exactly as
+        # the former per-element ``float(np.round(x, n))`` did, so the strings are byte-identical.
+        return json.dumps(np.round(arr, num_decimals).astype(np.float64).tolist())
+    return json.dumps(np.asarray(lst).astype(np.int64).tolist())
 
 
 # load peptides and ions

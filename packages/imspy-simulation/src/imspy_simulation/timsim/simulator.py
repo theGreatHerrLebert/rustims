@@ -9,6 +9,8 @@ import platform
 import argparse
 import logging
 import time
+import json
+import resource
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, Optional
@@ -60,6 +62,94 @@ class SimulationTimer:
             hours = int(seconds // 3600)
             minutes = int((seconds % 3600) // 60)
             return f"{hours}h {minutes}m"
+
+
+class StageTracker:
+    """Per-stage wall clock, CPU seconds (all threads) and peak RSS, logged at every stage
+    transition and dumped to ``timings.json`` next to ``synthetic_data.db``.
+
+    Wall is ``time.perf_counter``; CPU is ``resource.getrusage(RUSAGE_SELF)`` user+sys, which
+    includes rayon/torch worker threads, so ``cpu_s / wall_s`` is the average number of busy
+    cores during the stage. ``peak_rss_gb`` is the process high-water mark reached by the end of
+    the stage (monotonic). ``laps`` are optional named sub-intervals inside a stage.
+    """
+
+    def __init__(self, logger: logging.Logger) -> None:
+        self._logger = logger
+        self.records: list[dict] = []
+        self._current: Optional[dict] = None
+        self._t0 = 0.0
+        self._cpu0 = 0.0
+        self._lap_t = 0.0
+
+    @staticmethod
+    def _cpu_seconds() -> float:
+        ru = resource.getrusage(resource.RUSAGE_SELF)
+        return ru.ru_utime + ru.ru_stime
+
+    @staticmethod
+    def _peak_rss_gb() -> float:
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024 ** 2  # KiB -> GiB on Linux
+
+    def begin(self, name: str) -> None:
+        self.end()
+        self._current = {'stage': name, 'laps': {}}
+        self._t0 = self._lap_t = time.perf_counter()
+        self._cpu0 = self._cpu_seconds()
+
+    def lap(self, label: str) -> None:
+        """Record the time since the stage start (or the previous lap) under ``label``."""
+        if self._current is None:
+            return
+        now = time.perf_counter()
+        self._current['laps'][label] = round(now - self._lap_t, 2)
+        self._lap_t = now
+
+    def annotate(self, **fields) -> None:
+        """Attach extra measurements (e.g. per-phase timers from a job) to the current stage."""
+        if self._current is not None:
+            self._current.update(fields)
+
+    def end(self) -> None:
+        if self._current is None:
+            return
+        wall = time.perf_counter() - self._t0
+        cpu = self._cpu_seconds() - self._cpu0
+        rec = self._current
+        rec.update(wall_s=round(wall, 2), cpu_s=round(cpu, 2),
+                   avg_cores=round(cpu / wall, 2) if wall > 0 else 0.0,
+                   peak_rss_gb=round(self._peak_rss_gb(), 2))
+        if not rec['laps']:
+            rec.pop('laps')
+        self.records.append(rec)
+        self._current = None
+        laps = f" | laps {rec['laps']}" if 'laps' in rec else ""
+        self._logger.info(
+            f"  stage done: {rec['stage']}: wall {wall:.1f} s | cpu {cpu:.1f} core-s "
+            f"(avg {rec['avg_cores']:.1f} cores) | peak RSS {rec['peak_rss_gb']:.2f} GB{laps}"
+        )
+
+    def summary_lines(self) -> list[str]:
+        total = sum(r['wall_s'] for r in self.records) or 1.0
+        rows = [(r['stage'], f"{r['wall_s']:.1f}", f"{100 * r['wall_s'] / total:.0f}%",
+                 f"{r['cpu_s']:.1f}", f"{r['avg_cores']:.1f}", f"{r['peak_rss_gb']:.2f}")
+                for r in self.records]
+        return tabulate(rows, headers=['stage', 'wall s', 'share', 'cpu s', 'avg cores', 'peak RSS GB'],
+                        tablefmt='simple').splitlines()
+
+    def dump(self, path) -> None:
+        self.end()
+        payload = {
+            'stages': self.records,
+            'total_wall_s': round(sum(r['wall_s'] for r in self.records), 2),
+            'total_cpu_s': round(sum(r['cpu_s'] for r in self.records), 2),
+            'peak_rss_gb': round(self._peak_rss_gb(), 2),
+        }
+        try:
+            with open(path, 'w') as fh:
+                json.dump(payload, fh, indent=1)
+        except OSError as e:  # never fail a finished simulation over telemetry
+            self._logger.warning(f"could not write {path}: {e}")
 
 
 @dataclass
@@ -1310,9 +1400,15 @@ def main():
     # Initialize timer and stats
     timer = SimulationTimer()
     stats = SimulationStats()
+    stages = StageTracker(logger)
+
+    def section(title: str) -> str:
+        """Start timing ``title`` and return its banner (closes the previous stage)."""
+        stages.begin(title)
+        return section_header(title, use_unicode)
 
     # Configure GPU
-    logger.info(section_header("GPU Configuration", use_unicode))
+    logger.info(section("GPU Configuration"))
     configure_gpu_memory(memory_limit_gb=config.gpu_memory_limit_gb, use_gpu=config.use_gpu)
 
     # Handle macOS Bruker SDK limitation
@@ -1322,7 +1418,7 @@ def main():
         use_bruker_sdk = False
 
     # Load modifications config
-    logger.info(section_header("Loading Configuration", use_unicode))
+    logger.info(section("Loading Configuration"))
     script_dir = Path(__file__).parent
     modifications_path = config.modifications
     if not modifications_path or modifications_path == "":
@@ -1360,7 +1456,7 @@ def main():
         f.write(tabulate(table_data, headers=["Argument", "Value"], tablefmt="grid"))
 
     # Build the acquisition (frames, scans, etc.)
-    logger.info(section_header("Building Acquisition", use_unicode))
+    logger.info(section("Building Acquisition"))
     if not config.silent_mode:
         logger.info("")
         logger.info(f"  Experiment:  {name}")
@@ -1486,7 +1582,7 @@ def main():
         factors = {}
 
     if config.from_existing and not resume_after:
-        logger.info(section_header("Loading Existing Simulation", use_unicode))
+        logger.info(section("Loading Existing Simulation"))
         # Load existing simulation data
         if config.acquisition_type == 'DIA':
             existing_sim_handle = SyntheticExperimentDataHandleDIA(database_path=config.existing_path)
@@ -1610,7 +1706,7 @@ def main():
     # ----------------------------------------
     findings_result = None
     if config.from_findings and not resume_after:
-        logger.info(section_header("Loading Search Engine Findings", use_unicode))
+        logger.info(section("Loading Search Engine Findings"))
         rt_lower = acquisition_builder.frame_table['time'].min()
         rt_upper = acquisition_builder.frame_table['time'].max()
         findings_result = load_findings(
@@ -1638,7 +1734,7 @@ def main():
     protein_list, peptide_list = [], []
 
     if not config.from_existing and not config.from_findings and not resume_after:
-        logger.info(section_header("Processing FASTA Files", use_unicode))
+        logger.info(section("Processing FASTA Files"))
         for fasta_name, fasta_path in fastas.items():
             if not config.silent_mode:
                 logger.info("")
@@ -1668,6 +1764,7 @@ def main():
                 remove_degenerate_peptides=config.remove_degenerate_peptides,
             )
 
+            stages.lap('digest+rt_filter')
             # JOB 1: Simulate peptides
             if not config.silent_mode:
                 logger.info("  Creating peptides from proteins...")
@@ -1685,6 +1782,7 @@ def main():
                 proteome_mix=config.proteome_mix,
             )
 
+            stages.lap('sample_peptides')
             if config.proteome_mix:
                 # Scale by mixture factor
                 peptides_tmp['events'] *= mixture_factor
@@ -1725,7 +1823,7 @@ def main():
             logger.info(f"  Total peptides to simulate: {peptides.shape[0]}")
 
         # JOB 3: Simulate retention times
-        logger.info(section_header("Simulating Retention Times", use_unicode))
+        logger.info(section("Simulating Retention Times"))
         # Support both rt_model and deprecated koina_rt_model
         rt_model = config.rt_model or config.koina_rt_model
         if rt_model:
@@ -1739,7 +1837,7 @@ def main():
 
     # Simulate RT for from_findings when not provided in the input
     if config.from_findings and findings_result is not None and not findings_result.has_rt and not resume_after:
-        logger.info(section_header("Simulating Retention Times (not in findings)", use_unicode))
+        logger.info(section("Simulating Retention Times (not in findings)"))
         rt_model = config.rt_model or config.koina_rt_model
         if rt_model:
             logger.info(f"  Using RT model: {rt_model}")
@@ -1764,7 +1862,7 @@ def main():
 
     if resume_after != "ions":
         # JOB 4: Frame distributions
-        logger.info(section_header("Simulating Frame Distributions", use_unicode))
+        logger.info(section("Simulating Frame Distributions"))
         peptides = simulate_frame_distributions_emg(
             peptides=peptides,
             frames=acquisition_builder.frame_table,
@@ -1819,7 +1917,7 @@ def main():
         )
 
         if need_charge:
-            logger.info(section_header("Simulating Charge States", use_unicode))
+            logger.info(section("Simulating Charge States"))
             # JOB 5: Charge states
             ions = simulate_charge_states(
                 peptides=peptides,
@@ -1838,7 +1936,7 @@ def main():
                 ions = ions.drop_duplicates(subset=['sequence', 'charge'])
 
         if need_im:
-            logger.info(section_header("Simulating Ion Mobilities", use_unicode))
+            logger.info(section("Simulating Ion Mobilities"))
             # JOB 6: Ion mobilities
             if config.ccs_model:
                 logger.info(f"  Using CCS model: {config.ccs_model}")
@@ -1855,7 +1953,7 @@ def main():
 
         if not config.from_existing:
             # JOB 7: Precursor isotopic distributions (always needed)
-            logger.info(section_header("Simulating Precursor Isotope Patterns", use_unicode))
+            logger.info(section("Simulating Precursor Isotope Patterns"))
             ions = simulate_precursor_spectra_sequence(
                 ions=ions,
                 num_threads=num_threads,
@@ -1863,7 +1961,7 @@ def main():
             )
 
         # JOB 8: Scan distributions
-        logger.info(section_header("Simulating Scan Distributions", use_unicode))
+        logger.info(section("Simulating Scan Distributions"))
         ions = simulate_scan_distributions_with_variance(
             ions=ions,
             scans=acquisition_builder.scan_table,
@@ -1908,7 +2006,7 @@ def main():
             )
 
         if config.acquisition_type == 'DDA':
-            logger.info(section_header("Simulating DDA-PASEF Selection", use_unicode))
+            logger.info(section("Simulating DDA-PASEF Selection"))
             pasef_meta, precursors = simulate_dda_pasef_selection_scheme(
                 acquisition_builder=acquisition_builder,
                 verbose=not config.silent_mode,
@@ -1932,7 +2030,7 @@ def main():
 
     else:
         # Resuming from ions checkpoint — populate DB tables
-        logger.info(section_header("Restoring Database from Checkpoint", use_unicode))
+        logger.info(section("Restoring Database from Checkpoint"))
         acquisition_builder.synthetics_handle.create_table(table_name='proteins', table=proteins)
         acquisition_builder.synthetics_handle.create_table(table_name='peptides', table=peptides)
         acquisition_builder.synthetics_handle.create_table(table_name='ions', table=ions)
@@ -1943,7 +2041,7 @@ def main():
         logger.info(f"  Restored: proteins ({len(proteins)}), peptides ({len(peptides)}), ions ({len(ions)})")
 
     # JOB 9: Simulate fragment intensities
-    logger.info(section_header("Simulating Fragment Intensities", use_unicode))
+    logger.info(section("Simulating Fragment Intensities"))
     # Support both intensity_model and deprecated fragment_intensity_model
     intensity_model = config.intensity_model or config.fragment_intensity_model
     if intensity_model:
@@ -2122,8 +2220,8 @@ def main():
                 logger=logger,
             )
     else:
-        logger.info(section_header("Assembling Frames", use_unicode))
-        assemble_frames(
+        logger.info(section("Assembling Frames"))
+        assembly_timings = assemble_frames(
             acquisition_builder=acquisition_builder,
             frames=acquisition_builder.frame_table,
             batch_size=config.batch_size,
@@ -2149,6 +2247,8 @@ def main():
             quad_transmission_max_isotopes=config.quad_transmission_max_isotopes,
             superimpose_on_reference=config.superimpose_on_reference,
         )
+        if assembly_timings:
+            stages.annotate(**assembly_timings)
         # mzPROV provenance: sign the authored Bruker .d (self-disclosure that this is
         # TimSim-simulated data). Bruker-only — mzprov v0 doesn't canonicalize vendor
         # .raw, so the Thermo build-from-template branch above is intentionally skipped.
@@ -2175,7 +2275,7 @@ def main():
     # Optional: Generate preview video for visual inspection
     if config.generate_preview_video:
         if VIDEO_GENERATION_AVAILABLE:
-            logger.info(section_header("Generating Preview Video", use_unicode))
+            logger.info(section("Generating Preview Video"))
             data_path = os.path.join(save_path, name, f"{name}.d")
             video_path = os.path.join(save_path, f"{name}_preview.mp4")
             mode = 'dda' if config.acquisition_type == 'DDA' else 'dia'
@@ -2200,7 +2300,12 @@ def main():
     # Print completion banner and summary
     print(simulation_complete_banner(use_unicode))
 
+    stages.end()
     total_time = timer.format_duration(timer.total_elapsed())
+    logger.info("  Stage timings")
+    for line in stages.summary_lines():
+        logger.info(f"  {line}")
+    logger.info("")
     logger.info("  Simulation Summary")
     logger.info(f"  {'─' * 40}")
     logger.info(f"  Experiment:    {stats.experiment_name}")
@@ -2213,6 +2318,12 @@ def main():
     logger.info(f"  Total time:    {total_time}")
     logger.info(f"  Output:        {stats.output_path}")
     logger.info("")
+    try:
+        timings_path = Path(acquisition_builder.path) / 'timings.json'
+    except NameError:  # pragma: no cover - acquisition builder is always created in main()
+        timings_path = Path(save_path) / 'timings.json'
+    stages.dump(timings_path)
+    logger.info(f"  Stage timings written to {timings_path}")
 
 
 if __name__ == '__main__':

@@ -133,6 +133,26 @@ def _locked_database_error(db_path, exc: Exception) -> RuntimeError:
     )
 
 
+def dedup_scan_tof(scan: NDArray, tof: NDArray, intensity: NDArray) -> tuple[NDArray, NDArray, NDArray]:
+    """Merge peaks that fall on the same (scan, tof) cell and return them sorted by scan, then tof.
+
+    m/z -> TOF is not injective, so several simulated peaks can land on one TOF index; their
+    intensities are summed. The result is byte-identical to the previous
+    ``np.unique(np.stack((scan, tof)), axis=0)`` + ``np.lexsort`` implementation, but ~10-15x faster:
+    the pair is packed into one uint64 key (scan in the high 32 bits) so a single 1-D sort orders by
+    scan first and tof second, which is exactly the lexicographic order the TDF encoder needs.
+    """
+    scan = np.asarray(scan, dtype=np.uint32)
+    tof = np.asarray(tof, dtype=np.uint32)
+    intensity = np.asarray(intensity)
+    key = (scan.astype(np.uint64) << np.uint64(32)) | tof.astype(np.uint64)
+    unique_key, inverse = np.unique(key, return_inverse=True)
+    summed = np.bincount(inverse.ravel(), weights=intensity)
+    out_scan = (unique_key >> np.uint64(32)).astype(np.uint32)
+    out_tof = (unique_key & np.uint64(0xFFFFFFFF)).astype(np.uint32)
+    return out_scan, out_tof, summed.astype(np.uint32)
+
+
 class TDFWriter:
     def __init__(self, helper_handle: TimsDataset, path: str = "./", exp_name: str = "RAW.d", offset_bytes: int = 64, verbose: bool=False, use_rust_compression: bool=False, expect_existing: bool = False) -> None:
 
@@ -161,6 +181,9 @@ class TDFWriter:
         ) not in ("0", "", "false", "False")
 
         self.__conn_native = None
+        # Binary output handle; opened lazily on first write_frame() and kept open for the
+        # whole run instead of open/append/close per frame (34k+ syscalls, costly on NFS).
+        self._bin_fh = None
         self._setup_connections()
 
     def _setup_connections(self) -> None:
@@ -387,27 +410,8 @@ class TDFWriter:
         scan = self.inv_mobility_to_scan(i, frame.mobility).astype(np.uint32)
         intensity = frame.intensity.astype(np.uint32)
 
-        # Since, mz -> tof is not bijective, we need to check for duplicates
-        # stack scan and tof to form a 2D array for unique grouping
-        scan_tof = np.stack((scan, tof), axis=1)
-
-        # get unique (scan, tof) pairs and their inverse indices
-        unique_pairs, inverse_indices = np.unique(scan_tof, axis=0, return_inverse=True)
-
-        # sum intensities for each unique (scan, tof) pair
-        summed_intensity = np.bincount(inverse_indices, weights=intensity)
-
-        # now split back scan and tof
-        unique_scan = unique_pairs[:, 0]
-        unique_tof = unique_pairs[:, 1]
-
-        # sort first by scan, then by tof
-        sort_idx = np.lexsort((unique_tof, unique_scan))
-
-        # final sorted arrays
-        scan = unique_scan[sort_idx]
-        tof = unique_tof[sort_idx]
-        intensity = summed_intensity[sort_idx].astype(np.uint32)
+        # Since mz -> tof is not bijective, merge duplicate (scan, tof) cells and sort by scan, tof.
+        scan, tof, intensity = dedup_scan_tof(scan, tof, intensity)
 
         # get the real data as interleaved bytes (Rust encoder or NumPy/Numba)
         if self.use_rust_compression:
@@ -440,13 +444,27 @@ class TDFWriter:
                 only_frame_one
         ))
 
-        with open(self.binary_file, "ab") as bin_file:
-            bin_file.write(
-                (len(compressed_data) + 8).to_bytes(4, "little", signed=False)
-            )
-            bin_file.write(int(self.helper_handle.num_scans).to_bytes(4, "little", signed=False))
-            bin_file.write(compressed_data)
-            self.position = bin_file.tell()
+        bin_file = self._binary_handle()
+        bin_file.write(
+            (len(compressed_data) + 8).to_bytes(4, "little", signed=False)
+        )
+        bin_file.write(int(self.helper_handle.num_scans).to_bytes(4, "little", signed=False))
+        bin_file.write(compressed_data)
+        self.position = bin_file.tell()
+
+    def _binary_handle(self):
+        """Return the persistent append handle for analysis.tdf_bin, opening it on first use."""
+        if self._bin_fh is None or self._bin_fh.closed:
+            self._bin_fh = open(self.binary_file, "ab")
+        return self._bin_fh
+
+    def close_binary(self) -> None:
+        """Flush and close the analysis.tdf_bin handle (idempotent). Called once all frames are
+        written; a later write_frame() re-opens it transparently."""
+        if self._bin_fh is not None and not self._bin_fh.closed:
+            self._bin_fh.flush()
+            self._bin_fh.close()
+        self._bin_fh = None
 
     def get_frame_meta_data(self) -> pd.DataFrame:
         return pd.DataFrame(self.frame_meta_data)
@@ -466,6 +484,7 @@ class TDFWriter:
         prevents the noise-pipeline from producing duplicate-Id rows in
         the first place. The check below is the defence-in-depth.
         """
+        self.close_binary()
         meta_df = self.get_frame_meta_data()
         validate_frames_id_uniqueness(meta_df)
         self._create_table(self.conn, meta_df, "Frames")
