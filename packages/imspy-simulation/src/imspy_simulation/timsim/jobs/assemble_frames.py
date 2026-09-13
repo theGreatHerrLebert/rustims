@@ -118,6 +118,7 @@ def assemble_frames(
         quad_isotope_transmission_mode=quad_isotope_transmission_mode,
         quad_transmission_min_probability=quad_transmission_min_probability,
         quad_transmission_max_isotopes=quad_transmission_max_isotopes,
+        noise_seed=noise_seed,
     )
 
     logger.info("Signal noise settings:")

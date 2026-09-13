@@ -1,3 +1,4 @@
+use mscore::simulation::noise_rng::noise_rng;
 use mscore::data::peptide::PeptideIon;
 use mscore::data::spectrum::{IndexedMzSpectrum, MsType, MzSpectrum};
 use mscore::simulation::annotation::{
@@ -37,9 +38,17 @@ pub struct TimsTofSyntheticsPrecursorFrameBuilder {
     pub peptide_to_events: BTreeMap<u32, f32>,
     /// Mapping from ion_id to (peptide_id, charge) for DDA precursor lookup
     pub ion_id_to_peptide_charge: BTreeMap<u32, (u32, i8)>,
+    /// Master seed for the simulation's noise. 0 keeps the legacy `thread_rng` behaviour
+    /// for API users that never set it; TimSim sets it from the run's `sample_seed`.
+    pub noise_seed: u64,
 }
 
 impl TimsTofSyntheticsPrecursorFrameBuilder {
+
+    /// Set the master seed for the m/z jitter, making a run's noise reproducible.
+    pub fn set_noise_seed(&mut self, seed: u64) {
+        self.noise_seed = seed;
+    }
     /// Create a new instance of TimsTofSynthetics
     ///
     /// # Arguments
@@ -90,6 +99,7 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         }
 
         Self {
+            noise_seed: 0,
             ions: TimsTofSyntheticsDataHandle::build_peptide_to_ion_map(&ions),
             peptides: TimsTofSyntheticsDataHandle::build_peptide_map(&peptides),
             scans: scans.clone(),
@@ -245,6 +255,9 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         precursor_noise_ppm: f64,
         right_drag: bool,
     ) -> TimsFrame {
+        // One RNG per frame, keyed by the master seed and the frame id, so the m/z jitter
+        // does not depend on which thread builds the frame. See mscore::simulation::noise_rng.
+        let mut rng = noise_rng(self.noise_seed, &[frame_id as u64]);
         // Cache frame-level lookups
         let ms_type = if self.precursor_frame_id_set.contains(&frame_id) {
             MsType::Precursor
@@ -262,9 +275,9 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         for (scan, scaled_spec) in contributions {
             let mz_spectrum = if mz_noise_precursor {
                 if uniform {
-                    scaled_spec.add_mz_noise_uniform(precursor_noise_ppm, right_drag)
+                    scaled_spec.add_mz_noise_uniform_with_rng(precursor_noise_ppm, right_drag, &mut rng)
                 } else {
-                    scaled_spec.add_mz_noise_normal(precursor_noise_ppm)
+                    scaled_spec.add_mz_noise_normal_with_rng(precursor_noise_ppm, &mut rng)
                 }
             } else {
                 scaled_spec
@@ -353,6 +366,9 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         precursor_noise_ppm: f64,
         right_drag: bool,
     ) -> TimsFrameAnnotated {
+        // One RNG per frame, keyed by the master seed and the frame id, so the m/z jitter
+        // does not depend on which thread builds the frame. See mscore::simulation::noise_rng.
+        let mut rng = noise_rng(self.noise_seed, &[frame_id as u64]);
         // Cache frame-level lookups
         let ms_type = if self.precursor_frame_id_set.contains(&frame_id) {
             MsType::Precursor
@@ -402,9 +418,9 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
 
                     let mz_spectrum = if mz_noise_precursor {
                         if uniform {
-                            scaled_spec.add_mz_noise_uniform(precursor_noise_ppm, right_drag)
+                            scaled_spec.add_mz_noise_uniform_with_rng(precursor_noise_ppm, right_drag, &mut rng)
                         } else {
-                            scaled_spec.add_mz_noise_normal(precursor_noise_ppm)
+                            scaled_spec.add_mz_noise_normal_with_rng(precursor_noise_ppm, &mut rng)
                         }
                     } else {
                         scaled_spec
@@ -543,6 +559,7 @@ mod tests {
         frame_to_rt.insert(1u32, 60.0f32);
 
         TimsTofSyntheticsPrecursorFrameBuilder {
+            noise_seed: 0,
             ions: BTreeMap::new(),
             peptides: BTreeMap::new(),
             scans: Vec::new(),
