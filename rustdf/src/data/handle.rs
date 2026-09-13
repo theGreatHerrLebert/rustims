@@ -1435,6 +1435,23 @@ impl TimsDataLoader {
         }
     }
 
+    /// The loader's own index converter, if it is safe to use from several threads — i.e.
+    /// everything except the Bruker SDK wrapper, whose `tims_index_to_mz` must not be called
+    /// concurrently on one handle.
+    pub fn sync_index_converter(&self) -> Option<&(dyn IndexConverter + Sync)> {
+        let converter = match self {
+            TimsDataLoader::InMemory(loader) => &loader.index_converter,
+            TimsDataLoader::Lazy(loader) => &loader.index_converter,
+        };
+        match converter {
+            TimsIndexConverter::BrukerLib(_) => None,
+            TimsIndexConverter::Simple(c) => Some(c),
+            TimsIndexConverter::Calibrated(c) => Some(c),
+            TimsIndexConverter::Lookup(c) => Some(c),
+            TimsIndexConverter::BrukerFormula(c) => Some(c),
+        }
+    }
+
     /// A converter that is safe to use from many threads at once, for readers that want to
     /// run in parallel while the dataset itself was opened with the Bruker SDK.
     ///

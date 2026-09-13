@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 
 from pathlib import Path
+from typing import List
 
 from numpy._typing import NDArray
 
@@ -352,6 +353,24 @@ class TDFWriter:
             frame_start_pos: int,
             only_frame_one: bool = False
     ):
+        """Thin wrapper: derive the Frames statistics from an intensity array, then delegate."""
+        return self._frame_meta_row(
+            frame, scan_mode, frame_start_pos, only_frame_one,
+            num_peaks=len(intensity),
+            max_intensity=int(np.max(intensity)) if len(intensity) > 0 else 0,
+            summed_intensity=int(np.sum(intensity)) if len(intensity) > 0 else 0,
+        )
+
+    def _frame_meta_row(
+            self,
+            frame: TimsFrame,
+            scan_mode: int,
+            frame_start_pos: int,
+            only_frame_one: bool,
+            num_peaks: int,
+            max_intensity: int,
+            summed_intensity: int,
+    ):
         """Build a row for the frame meta data table from a TimsFrame object.
             Arguments:
                 intensity: NDArray
@@ -378,10 +397,10 @@ class TDFWriter:
         r.ScanMode = scan_mode
         r.MsMsType = frame.ms_type
         r.TimsId = frame_start_pos
-        r.MaxIntensity = int(np.max(intensity)) if len(intensity) > 0 else 0
-        r.SummedIntensities = int(np.sum(intensity)) if len(intensity) > 0 else 0
+        r.MaxIntensity = int(max_intensity)
+        r.SummedIntensities = int(summed_intensity)
         r.NumScans = self.helper_handle.num_scans
-        r.NumPeaks = len(intensity)
+        r.NumPeaks = int(num_peaks)
 
         return r
 
@@ -451,6 +470,59 @@ class TDFWriter:
         bin_file.write(int(self.helper_handle.num_scans).to_bytes(4, "little", signed=False))
         bin_file.write(compressed_data)
         self.position = bin_file.tell()
+
+    def _conversion_frame_id(self, frame: TimsFrame, only_frame_one: bool) -> int:
+        """Frame id whose calibration is used for this frame, clamped to the reference's range."""
+        try:
+            max_index = self.helper_handle.meta_data.Id.max()
+        except AttributeError:
+            max_index = self.helper_handle.meta_data.frame_id.max()
+        if only_frame_one:
+            return 1
+        return int(max_index) if frame.frame_id > max_index else int(frame.frame_id)
+
+    def write_frames(self, frames: List[TimsFrame], scan_mode: int, only_frame_one: bool = False,
+                     num_threads: int = 4) -> None:
+        """Batched counterpart of :meth:`write_frame`.
+
+        Convert, dedup, interleave and compress every frame in one parallel Rust call, then append
+        the payloads in order — only the append and the running byte offset have to stay sequential.
+        Previously this ran per frame in Python, where the m/z -> TOF and 1/K0 -> scan conversions
+        went through the Bruker SDK and so could not be parallelised; measured at 56 % of writer time.
+
+        Falls back to the per-frame path if the parallel builder is unavailable (old connector, or a
+        reference that carries no calibration tables for the SDK-free converter).
+        """
+        if len(frames) == 0:
+            return
+
+        builder = getattr(self.helper_handle, "build_compressed_frames", None)
+        if builder is not None:
+            conv_ids = [self._conversion_frame_id(f, only_frame_one) for f in frames]
+            mz = [np.ascontiguousarray(f.mz, dtype=np.float64) for f in frames]
+            mobility = [np.ascontiguousarray(f.mobility, dtype=np.float64) for f in frames]
+            intensity = [np.ascontiguousarray(f.intensity, dtype=np.float64) for f in frames]
+            try:
+                built = builder(conv_ids, mz, mobility, intensity,
+                                int(self.helper_handle.num_scans), 0, int(num_threads))
+            except Exception as e:
+                warnings.warn(f"batched frame writer unavailable ({e}); falling back to per-frame writing")
+                built = None
+            if built is not None:
+                bin_file = self._binary_handle()
+                num_scans_bytes = int(self.helper_handle.num_scans).to_bytes(4, "little", signed=False)
+                for frame, (num_peaks, max_i, sum_i, data) in zip(frames, built):
+                    self.frame_meta_data.append(
+                        self._frame_meta_row(frame, scan_mode, self.position, only_frame_one,
+                                             num_peaks, max_i, sum_i))
+                    bin_file.write((len(data) + 8).to_bytes(4, "little", signed=False))
+                    bin_file.write(num_scans_bytes)
+                    bin_file.write(data)
+                    self.position = bin_file.tell()
+                return
+
+        for frame in frames:
+            self.write_frame(frame, scan_mode, only_frame_one)
 
     def _binary_handle(self):
         """Return the persistent append handle for analysis.tdf_bin, opening it on first use."""
@@ -671,33 +743,3 @@ class TDFWriter:
 
         self._create_table(self.conn, out, "DiaFrameMsMsWindows")
 
-        # TODO: these methods needs to be debugged
-        """
-        def compress_frames(self, frames: List[TimsFrame], only_frame_one: bool = False, num_threads: int = 4) -> List[bytes]:
-            # same as compress_frame but for multiple frames
-            tofs, scans, intensities = [], [], []
-            for frame in frames:
-                i = 1 if only_frame_one else frame.frame_id
-                tofs.append(self.mz_to_tof(i, frame.mz).astype(np.uint32))
-                scans.append(self.inv_mobility_to_scan(i, frame.mobility).astype(np.uint32))
-                intensities.append(frame.intensity.astype(np.uint32))
-
-            real_data = ims.get_data_for_compression_par(tofs, scans, intensities, self.helper_handle.num_scans, num_threads)
-            return [zstd.ZSTD_compress(bytes(data), 1) for data in real_data]
-
-        def write_frames(self, frames: List[TimsFrame], scan_mode: int, only_frame_one: bool = False, num_threads: int = 4) -> None:
-
-            compressed_data = self.compress_frames(frames, only_frame_one, num_threads=num_threads)
-
-            for i, data in enumerate(compressed_data):
-
-                self.frame_meta_data.append(self.build_frame_meta_row(frames[i], scan_mode, self.position, only_frame_one))
-
-                with open(self.binary_file, "ab") as bin_file:
-                    bin_file.write(
-                        (len(data) + 8).to_bytes(4, "little", signed=False)
-                    )
-                    bin_file.write(int(self.helper_handle.num_scans).to_bytes(4, "little", signed=False))
-                    bin_file.write(data)
-                    self.position = bin_file.tell()
-        """

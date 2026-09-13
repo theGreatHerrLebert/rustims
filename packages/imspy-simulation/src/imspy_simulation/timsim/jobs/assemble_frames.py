@@ -172,11 +172,9 @@ def assemble_frames(
             )
         t2 = time.perf_counter()
 
-        for frame in built_frames:
-            if acquisition_builder.acquisition_mode.mode == 'DDA':
-                acquisition_builder.tdf_writer.write_frame(frame, scan_mode=8)
-            else:
-                acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
+        scan_mode = 8 if acquisition_builder.acquisition_mode.mode == 'DDA' else 9
+        acquisition_builder.tdf_writer.write_frames(
+            built_frames, scan_mode=scan_mode, num_threads=num_threads)
         t3 = time.perf_counter()
 
         t_build += t1 - t0

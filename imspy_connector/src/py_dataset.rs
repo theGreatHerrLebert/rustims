@@ -5,11 +5,25 @@ use rustdf::data::utility::{zstd_compress, zstd_decompress, reconstruct_compress
 
 use crate::py_tims_frame::{PyTimsFrame};
 use crate::py_tims_slice::PyTimsSlice;
-use numpy::{IntoPyArray, PyArray1};
+use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1};
+use pyo3::exceptions::PyRuntimeError;
+use rustdf::data::handle::IndexConverter;
+use rustdf::data::utility::build_compressed_frames as rust_build_compressed_frames;
 use pyo3::types::PyList;
 use pyo3::{PyResult, Python};
 use rustdf::data::acquisition::AcquisitionMode;
 use rustdf::data::handle::TimsData;
+
+/// Borrow each numpy array as a contiguous slice, keeping the arrays' lifetime.
+fn readonly_slices<'a>(arrays: &'a [PyReadonlyArray1<'_, f64>]) -> PyResult<Vec<&'a [f64]>> {
+    arrays
+        .iter()
+        .map(|a| {
+            a.as_slice()
+                .map_err(|_| PyRuntimeError::new_err("build_compressed_frames: arrays must be contiguous"))
+        })
+        .collect()
+}
 
 #[pyclass]
 pub struct PyTimsDataset {
@@ -117,6 +131,57 @@ impl PyTimsDataset {
 
     pub fn inverse_mobility_to_scan(&self, frame_id: u32, inverse_mobility_values: Vec<f64>) -> Vec<u32> {
         self.inner.loader.get_index_converter().inverse_mobility_to_scan(frame_id, &inverse_mobility_values)
+    }
+
+    /// Run the whole per-frame TDF writer pipeline for a batch of frames in parallel:
+    /// m/z -> TOF, 1/K0 -> scan, `(scan, tof)` dedup, interleave and zstd.
+    ///
+    /// Returns `(num_peaks, max_intensity, summed_intensity, compressed_bytes)` per frame, in input
+    /// order; the statistics are taken after the dedup, which is what the `Frames` row records.
+    ///
+    /// Raises if the dataset was opened with the Bruker SDK and the file carries no calibration
+    /// tables the SDK-free converter can use — the SDK cannot be called from several threads at
+    /// once, so the caller must fall back to the per-frame path in that case.
+    #[pyo3(signature = (frame_ids, mz, mobility, intensity, max_scans, compression_level=0, num_threads=4))]
+    pub fn build_compressed_frames(
+        &self,
+        py: Python<'_>,
+        frame_ids: Vec<u32>,
+        mz: Vec<PyReadonlyArray1<'_, f64>>,
+        mobility: Vec<PyReadonlyArray1<'_, f64>>,
+        intensity: Vec<PyReadonlyArray1<'_, f64>>,
+        max_scans: u32,
+        compression_level: i32,
+        num_threads: usize,
+    ) -> PyResult<Vec<(u32, u32, u64, Vec<u8>)>> {
+        let sdk_free = self.inner.loader.sdk_free_converter();
+        let converter: Option<&(dyn IndexConverter + Sync)> = match sdk_free.as_ref() {
+            Some(c) => Some(c),
+            None => self.inner.loader.sync_index_converter(),
+        };
+        let Some(converter) = converter else {
+            return Err(PyRuntimeError::new_err(
+                "build_compressed_frames: the Bruker SDK is in use and this .d carries no \
+                 calibration tables for the SDK-free converter, so frames cannot be converted \
+                 in parallel; use the per-frame writer path",
+            ));
+        };
+
+        let mz_slices = readonly_slices(&mz)?;
+        let im_slices = readonly_slices(&mobility)?;
+        let it_slices = readonly_slices(&intensity)?;
+
+        let frames = py.detach(|| {
+            rust_build_compressed_frames(
+                converter, &frame_ids, &mz_slices, &im_slices, &it_slices,
+                max_scans, compression_level, num_threads,
+            )
+        });
+
+        Ok(frames
+            .into_iter()
+            .map(|f| (f.num_peaks, f.max_intensity, f.summed_intensity, f.data))
+            .collect())
     }
 
     #[staticmethod]
