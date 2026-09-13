@@ -505,8 +505,16 @@ class TDFWriter:
             try:
                 built = builder(conv_ids, mz, mobility, intensity,
                                 int(self.helper_handle.num_scans), 0, int(num_threads))
-            except Exception as e:
-                warnings.warn(f"batched frame writer unavailable ({e}); falling back to per-frame writing")
+            except RuntimeError as e:
+                # Only the explicit capability signal falls back. Anything else — a ragged array,
+                # a compression or thread-pool failure — is a real error, and silently writing the
+                # file through the other path would hide it behind a subtly different output.
+                if "UNAVAILABLE" not in str(e):
+                    raise
+                warnings.warn(
+                    f"batched frame writer unavailable, using the per-frame path: {e}",
+                    RuntimeWarning,
+                )
                 built = None
             if built is not None:
                 bin_file = self._binary_handle()

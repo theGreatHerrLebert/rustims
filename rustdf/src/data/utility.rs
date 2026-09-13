@@ -404,15 +404,28 @@ pub fn build_compressed_frames(
     max_scans: u32,
     compression_level: i32,
     num_threads: usize,
-) -> Vec<CompressedFrame> {
-    assert_eq!(frame_ids.len(), mz.len(), "frame_ids and mz must align");
-    assert_eq!(frame_ids.len(), mobility.len(), "frame_ids and mobility must align");
-    assert_eq!(frame_ids.len(), intensity.len(), "frame_ids and intensity must align");
+) -> Result<Vec<CompressedFrame>, String> {
+    if frame_ids.len() != mz.len() || frame_ids.len() != mobility.len() || frame_ids.len() != intensity.len() {
+        return Err(format!(
+            "frame_ids ({}), mz ({}), mobility ({}) and intensity ({}) must have the same length",
+            frame_ids.len(), mz.len(), mobility.len(), intensity.len()
+        ));
+    }
+    // Per frame the three arrays index each other in `sort_dedup_scan_tof`, so a ragged triplet
+    // would be an out-of-bounds panic in Rust rather than an error the caller can handle.
+    for i in 0..frame_ids.len() {
+        if mz[i].len() != mobility[i].len() || mz[i].len() != intensity[i].len() {
+            return Err(format!(
+                "frame {} (id {}): mz ({}), mobility ({}) and intensity ({}) must have the same length",
+                i, frame_ids[i], mz[i].len(), mobility[i].len(), intensity[i].len()
+            ));
+        }
+    }
 
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads.max(1))
         .build()
-        .unwrap();
+        .map_err(|e| format!("could not build the writer thread pool: {e}"))?;
 
     pool.install(|| {
         (0..frame_ids.len())
@@ -444,16 +457,14 @@ pub fn build_compressed_frames(
                     .collect();
                 let real_data = get_realdata(&peak_cnts, &interleaved);
 
-                CompressedFrame {
-                    num_peaks,
-                    max_intensity,
-                    summed_intensity,
-                    // `zstd::bulk::compress` (ZSTD_compress) writes the decompressed size into the
-                    // frame header; `encode_all` does not, and readers that use the simple API —
-                    // including the Python `zstd` module every existing .d was written with —
-                    // refuse a frame without it. Keep the header shape the format already has.
-                    data: zstd::bulk::compress(real_data.as_slice(), compression_level).unwrap(),
-                }
+                // `zstd::bulk::compress` (ZSTD_compress) writes the decompressed size into the
+                // frame header; `encode_all` does not, and readers that use the simple API —
+                // including the Python `zstd` module every existing .d was written with — refuse
+                // a frame without it. Keep the header shape the format already has.
+                let data = zstd::bulk::compress(real_data.as_slice(), compression_level)
+                    .map_err(|e| format!("frame id {frame_id}: zstd compression failed: {e}"))?;
+
+                Ok(CompressedFrame { num_peaks, max_intensity, summed_intensity, data })
             })
             .collect()
     })

@@ -74,3 +74,29 @@ def test_batched_writer_output_still_decompresses_with_the_simple_api():
     )
     for _, _, _, blob in got:
         assert len(zstd.ZSTD_uncompress(bytes(blob))) > 0
+
+
+def test_ragged_arrays_raise_instead_of_panicking():
+    """A ragged triplet used to index out of bounds inside Rust; it must surface as an error."""
+    ds, frames, num_scans = _load(n=10)
+    if not hasattr(ds, "build_compressed_frames"):
+        pytest.skip("connector without build_compressed_frames")
+    mz = [np.ascontiguousarray(f.mz, dtype=np.float64) for f in frames]
+    mobility = [np.ascontiguousarray(f.mobility, dtype=np.float64) for f in frames]
+    intensity = [np.ascontiguousarray(f.intensity, dtype=np.float64) for f in frames]
+    mobility[0] = mobility[0][:-1]          # one value short
+    with pytest.raises(RuntimeError, match="must have the same length"):
+        ds.build_compressed_frames([f.frame_id for f in frames], mz, mobility, intensity,
+                                   num_scans, 0, 4)
+
+
+def test_mismatched_outer_lengths_raise():
+    ds, frames, num_scans = _load(n=10)
+    if not hasattr(ds, "build_compressed_frames"):
+        pytest.skip("connector without build_compressed_frames")
+    mz = [np.ascontiguousarray(f.mz, dtype=np.float64) for f in frames]
+    mobility = [np.ascontiguousarray(f.mobility, dtype=np.float64) for f in frames]
+    intensity = [np.ascontiguousarray(f.intensity, dtype=np.float64) for f in frames]
+    with pytest.raises(RuntimeError, match="same length"):
+        ds.build_compressed_frames([f.frame_id for f in frames][:-1], mz, mobility, intensity,
+                                   num_scans, 0, 4)

@@ -161,9 +161,10 @@ impl PyTimsDataset {
         };
         let Some(converter) = converter else {
             return Err(PyRuntimeError::new_err(
-                "build_compressed_frames: the Bruker SDK is in use and this .d carries no \
-                 calibration tables for the SDK-free converter, so frames cannot be converted \
-                 in parallel; use the per-frame writer path",
+                "UNAVAILABLE: build_compressed_frames needs a converter that reproduces the \
+                 Bruker SDK exactly; this .d either has no usable calibration tables or uses \
+                 MzCalibration ModelType 2, which is only accurate to ~2 ppm. Use the per-frame \
+                 writer path.",
             ));
         };
 
@@ -171,12 +172,14 @@ impl PyTimsDataset {
         let im_slices = readonly_slices(&mobility)?;
         let it_slices = readonly_slices(&intensity)?;
 
-        let frames = py.detach(|| {
-            rust_build_compressed_frames(
-                converter, &frame_ids, &mz_slices, &im_slices, &it_slices,
-                max_scans, compression_level, num_threads,
-            )
-        });
+        let frames = py
+            .detach(|| {
+                rust_build_compressed_frames(
+                    converter, &frame_ids, &mz_slices, &im_slices, &it_slices,
+                    max_scans, compression_level, num_threads,
+                )
+            })
+            .map_err(PyRuntimeError::new_err)?;
 
         Ok(frames
             .into_iter()

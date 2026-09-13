@@ -528,6 +528,30 @@ impl BrukerFormulaConverter {
         })
     }
 
+    /// True only when substituting this converter for the Bruker SDK cannot change a single
+    /// output value, which is the only condition under which it is safe to swap in.
+    ///
+    /// Two things have to hold for **every** frame in the run:
+    ///   * its `MzCalibration` row is `ModelType` 1 — the only m/z model this converter reproduces
+    ///     bit-exactly. ModelType 2 shares the C0/C1/C2 curve but omits the proprietary C8..C14
+    ///     fine correction, landing ~2 ppm away; measured on a real ModelType-2 run that moves
+    ///     **11.5 % of arbitrary m/z values into a neighbouring TOF bin**, which would change the
+    ///     `(scan, tof)` dedup and therefore the bytes written to `analysis.tdf_bin`.
+    ///   * it resolves to a real calibration row. Frames with NULL `T1`/`T2`, a missing `Frames`
+    ///     row, or a link to an unsupported calibration row silently fall back to the default
+    ///     calibration in `mz_for`/`im_for`, and the SDK does no such thing.
+    ///
+    /// Callers that cannot use a non-exact converter must fall back to the SDK, serially.
+    pub fn is_sdk_exact(&self) -> bool {
+        if self.frames.is_empty() {
+            return false;
+        }
+        self.frames.values().all(|f| {
+            self.mz_rows.get(&f.mz_id).map(|r| r.model_type == 1).unwrap_or(false)
+                && self.im_rows.contains_key(&f.tims_id)
+        })
+    }
+
     /// Spread (max - min, in degC) of `Frames.T1` and `Frames.T2` across the run.
     ///
     /// A near-zero spread means per-frame and fixed-frame calibration agree; a
@@ -1464,6 +1488,9 @@ impl TimsDataLoader {
         }
         BrukerFormulaConverter::from_d_folder(self.raw_data_path(), 1)
             .ok()
+            // Only substitute when the result is indistinguishable from the SDK's; otherwise the
+            // caller has to stay on the SDK and serialise. See `is_sdk_exact`.
+            .filter(|c| c.is_sdk_exact())
             .map(TimsIndexConverter::BrukerFormula)
     }
 
