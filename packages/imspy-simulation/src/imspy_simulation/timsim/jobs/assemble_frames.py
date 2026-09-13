@@ -42,6 +42,7 @@ def assemble_frames(
         quad_transmission_min_probability: float = 0.5,
         quad_transmission_max_isotopes: int = 10,
         superimpose_on_reference: bool = False,
+        noise_seed: Optional[int] = None,
 ) -> None:
     """Assemble frames from frame ids and write them to the database.
 
@@ -77,6 +78,8 @@ def assemble_frames(
             consider for transmission (default 10).
         superimpose_on_reference: If True, superimpose simulated signals on top
             of the full, unmodified reference frames (DIA only).
+        noise_seed: Master seed for the reference-noise sampler (DIA fast path); None keeps the
+            legacy unseeded per-frame sampling.
 
     Returns:
         None, writes frames to disk and metadata to database.
@@ -164,6 +167,8 @@ def assemble_frames(
                 num_fragment_frames=num_fragment_frames,
                 acquisition_mode=acquisition_builder.acquisition_mode.mode,
                 pasef_meta=pasef_meta,
+                noise_seed=noise_seed,
+                num_threads=num_threads,
             )
         t2 = time.perf_counter()
 

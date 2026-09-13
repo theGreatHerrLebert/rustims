@@ -1764,7 +1764,7 @@ def main():
                 remove_degenerate_peptides=config.remove_degenerate_peptides,
             )
 
-            stages.lap('digest+rt_filter')
+            stages.lap('digest')
             # JOB 1: Simulate peptides
             if not config.silent_mode:
                 logger.info("  Creating peptides from proteins...")
@@ -1782,7 +1782,7 @@ def main():
                 proteome_mix=config.proteome_mix,
             )
 
-            stages.lap('sample_peptides')
+            stages.lap('sample_peptides+rt_filter')
             if config.proteome_mix:
                 # Scale by mixture factor
                 peptides_tmp['events'] *= mixture_factor
@@ -2246,6 +2246,7 @@ def main():
             quad_transmission_min_probability=config.quad_transmission_min_probability,
             quad_transmission_max_isotopes=config.quad_transmission_max_isotopes,
             superimpose_on_reference=config.superimpose_on_reference,
+            noise_seed=config.sample_seed,
         )
         if assembly_timings:
             stages.annotate(**assembly_timings)

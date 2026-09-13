@@ -152,6 +152,78 @@ def protein_to_peptides(fasta,
         return None
 
 
+def proteins_to_peptides_batched(
+        names,
+        sequences,
+        missed_cleavages: int = 2,
+        min_len: int = 7,
+        max_len: int = 30,
+        cleave_at: str = 'KR',
+        restrict: str = 'P',
+        generate_decoys: bool = False,
+        c_terminal: bool = True,
+        variable_mods: dict = {"M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"]},
+        static_mods: dict = {"C": "[UNIMOD:4]"},
+        chunk_size: int = 2000,
+) -> list:
+    """Digest many proteins with ONE sage indexed database per chunk instead of one per protein.
+
+    Returns, for every input protein, the same ``set`` of UniMod peptide strings that
+    ``protein_to_peptides`` produces for that protein alone: sage attaches every protein a
+    peptide occurs in (``peptide.proteins``), so a shared peptide is credited to each of its
+    proteins exactly as the per-protein digest did. Proteins without a valid peptide get an
+    empty set (the per-protein version returned None; callers drop both).
+
+    Motivation: ``generate_indexed_database()`` sets up sage's parallel index build; calling it
+    20 000 times (once per protein) spent ~3 000 core-seconds on a 120-core machine for a
+    93 s stage that ran *faster* with 4 threads. One database per chunk is ~10x cheaper.
+    Headers are the positional index into ``names``; sage keeps the header token up to the first
+    whitespace, so protein names never leak into the mapping. Decoy proteins (``rev_`` prefix)
+    are credited to their target protein, matching the per-protein behaviour.
+    """
+    names = list(names)
+    sequences = list(sequences)
+    result = [set() for _ in names]
+    if not names:
+        return result
+    enzyme_builder = EnzymeBuilder(
+        missed_cleavages=missed_cleavages,
+        min_len=min_len,
+        max_len=max_len,
+        cleave_at=cleave_at,
+        restrict=restrict,
+        c_terminal=c_terminal,
+    )
+    for start in range(0, len(names), chunk_size):
+        stop = min(start + chunk_size, len(names))
+        fasta = "".join(
+            f">{i}\n" + "\n".join(sequences[i][j:j + 60] for j in range(0, len(sequences[i]), 60)) + "\n"
+            for i in range(start, stop)
+        )
+        sage_config = SageSearchConfiguration(
+            fasta=fasta,
+            enzyme_builder=enzyme_builder,
+            static_mods=static_mods,
+            variable_mods=variable_mods,
+            generate_decoys=generate_decoys,
+            bucket_size=int(np.power(2, 6)),
+        )
+        try:
+            with SuppressStderr():  # sage panics (harmlessly) on proteins that yield no peptide
+                indexed_db = sage_config.generate_indexed_database()
+        except Exception:
+            # whole chunk without a single valid peptide: leave the sets empty
+            continue
+        for k in range(indexed_db.num_peptides):
+            peptide = indexed_db[PeptideIx(idx=k)]
+            seq = peptide.to_unimod_sequence()
+            for prot in peptide.proteins:
+                if prot.startswith("rev_"):
+                    prot = prot[4:]
+                result[int(prot)].add(seq)
+    return result
+
+
 def get_tenzer_hokey():
     # Tenzer constants
     delta_exp = 0.005
@@ -246,21 +318,37 @@ def simulate_proteins(
         print("Skipping digestion, returning raw protein sequences as peptides.")
 
     # Generate peptides
-    sample["peptides"] = sample.apply(lambda f: protein_to_peptides(
-        generate_single_fasta(
-            f.name,
-            f.sequence,
-        ),
-        generate_decoys=generate_decoys,
-        variable_mods=variable_mods,
-        static_mods=static_mods,
-        cleave_at=cleave_at,
-        restrict=restrict,
-        missed_cleavages=missed_cleavages,
-        min_len=min_len,
-        max_len=max_len,
-        digest=digest,
-    ), axis=1)
+    if digest:
+        # one sage database per chunk of proteins instead of one per protein (see
+        # proteins_to_peptides_batched); same per-protein peptide sets as protein_to_peptides
+        peptide_sets = proteins_to_peptides_batched(
+            sample.index, sample.sequence,
+            generate_decoys=generate_decoys,
+            variable_mods=variable_mods,
+            static_mods=static_mods,
+            cleave_at=cleave_at,
+            restrict=restrict,
+            missed_cleavages=missed_cleavages,
+            min_len=min_len,
+            max_len=max_len,
+        )
+        sample["peptides"] = [s if len(s) > 0 else None for s in peptide_sets]
+    else:
+        sample["peptides"] = sample.apply(lambda f: protein_to_peptides(
+            generate_single_fasta(
+                f.name,
+                f.sequence,
+            ),
+            generate_decoys=generate_decoys,
+            variable_mods=variable_mods,
+            static_mods=static_mods,
+            cleave_at=cleave_at,
+            restrict=restrict,
+            missed_cleavages=missed_cleavages,
+            min_len=min_len,
+            max_len=max_len,
+            digest=digest,
+        ), axis=1)
 
     # Remove None values
     sample = sample[sample.peptides.notnull()]
