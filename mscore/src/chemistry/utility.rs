@@ -1,3 +1,4 @@
+use std::sync::LazyLock;
 use regex::Regex;
 use crate::chemistry::unimod::unimod_modifications_mass;
 
@@ -23,8 +24,11 @@ use crate::chemistry::unimod::unimod_modifications_mass;
 /// let tokens = unimod_sequence_to_tokens(sequence, true);
 /// assert_eq!(tokens, vec!["P", "E", "P", "T", "I", "D", "E[UNIMOD:1]", "H"]);
 /// ```
+/// Compiled once: these run per peptide, and `Regex::new` on every call dominated the cost.
+static UNIMOD_BRACKETED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[UNIMOD:\d+\]").unwrap());
+
 pub fn unimod_sequence_to_tokens(sequence: &str, group_modifications: bool) -> Vec<String> {
-    let pattern = Regex::new(r"\[UNIMOD:\d+\]").unwrap();
+    let pattern = &*UNIMOD_BRACKETED;
     let mut tokens = Vec::new();
     let mut last_index = 0;
 
@@ -97,12 +101,12 @@ pub fn find_unimod_patterns(input_string: &str) -> (String, Vec<f64>) {
 }
 
 fn remove_unimod_annotation(sequence: &str) -> String {
-    let pattern = Regex::new(r"\[UNIMOD:\d+]").unwrap();
+    let pattern = &*UNIMOD_BRACKETED;
     pattern.replace_all(sequence, "").to_string()
 }
 
 fn extract_unimod_patterns(input_string: &str) -> Vec<(usize, usize, String)> {
-    let pattern = Regex::new(r"\[UNIMOD:\d+]").unwrap();
+    let pattern = &*UNIMOD_BRACKETED;
     pattern.find_iter(input_string)
         .map(|mat| (mat.start(), mat.end(), mat.as_str().to_string()))
         .collect()

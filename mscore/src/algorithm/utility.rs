@@ -135,10 +135,30 @@ pub fn emg_cdf_range(lower_limit: f64, upper_limit: f64, mu: f64, sigma: f64, la
 pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, target: f64, lower_start: f64, upper_start: f64, n_steps: Option<usize>) -> (f64, f64) {
     assert!(0.0 <= target && target <= 1.0, "target must be in [0, 1]");
 
+    // Degenerate parameters must not reach the allocation below. An infinite sigma makes
+    // `(upper - lower) / step_size` infinite, `as usize` saturates it to usize::MAX, and the
+    // `collect` then aborts the whole process with a capacity overflow rather than returning.
+    // Hand back non-finite bounds and let the caller decide what an unusable peak means.
+    if !mu.is_finite() || !sigma.is_finite() || !lambda.is_finite() || !(step_size > 0.0) {
+        return (f64::NAN, f64::NAN);
+    }
+
     let lower_initial = mu - lower_start * sigma - 2.0;
     let upper_initial = mu + upper_start * sigma;
 
-    let steps = ((upper_initial - lower_initial) / step_size).round() as usize;
+    let span = upper_initial - lower_initial;
+    if !span.is_finite() || span < 0.0 {
+        return (f64::NAN, f64::NAN);
+    }
+    // A finite but absurd span would still allocate unboundedly: 1e8 points is already 800 MB.
+    // Anything past that is a nonsensical elution window, not a slow one.
+    const MAX_STEPS: f64 = 1e8;
+    let steps_f = (span / step_size).round();
+    if !steps_f.is_finite() || steps_f > MAX_STEPS {
+        return (f64::NAN, f64::NAN);
+    }
+
+    let steps = steps_f as usize;
     let search_space: Vec<f64> = (0..=steps).map(|i| lower_initial + i as f64 * step_size).collect();
 
     let calc_cdf = |low: usize, high: usize| -> f64 {

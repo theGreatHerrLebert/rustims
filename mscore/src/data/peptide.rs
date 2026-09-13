@@ -1,3 +1,4 @@
+use std::sync::LazyLock;
 use std::collections::{HashMap};
 use bincode::{Decode, Encode};
 use itertools::Itertools;
@@ -262,7 +263,8 @@ impl PeptideSequence {
     pub fn new(raw_sequence: String, peptide_id: Option<i32>) -> Self {
 
         // constructor will parse the sequence and check if it is valid
-        let pattern = Regex::new(r"\[UNIMOD:(\d+)]").unwrap();
+        static PAT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[UNIMOD:(\d+)]").unwrap());
+        let pattern = &*PAT;
 
         // remove the modifications from the sequence
         let sequence = pattern.replace_all(&raw_sequence, "").to_string();

@@ -1,5 +1,7 @@
 use std::collections::{HashMap};
 use pyo3::prelude::*;
+use pyo3::wrap_pyfunction;
+use rayon::prelude::*;
 
 use mscore::data::peptide::{FragmentType, PeptideSequence, PeptideProductIon,
                             PeptideProductIonSeries, PeptideProductIonSeriesCollection, PeptideIon};
@@ -345,6 +347,29 @@ impl PyPeptideProductIon {
     }
 }
 
+/// Monoisotopic mass for a batch of UniMod sequences, in parallel.
+///
+/// Constructing one `PyPeptideSequence` per peptide just to read `.mono_isotopic_mass` costs about
+/// 200 us each — 250 000 peptides took 48 s in a single Python loop, which was the largest remaining
+/// serial cost in the simulation. The work is per-sequence independent, so do the whole batch over a
+/// rayon pool and hand back one array.
+#[pyfunction]
+#[pyo3(signature = (sequences, num_threads=4))]
+pub fn mono_isotopic_masses(py: Python<'_>, sequences: Vec<String>, num_threads: usize) -> PyResult<Vec<f64>> {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads.max(1))
+        .build()
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(format!("thread pool: {e}")))?;
+    Ok(py.detach(|| {
+        pool.install(|| {
+            sequences
+                .par_iter()
+                .map(|s| PeptideSequence::new(s.clone(), None).mono_isotopic_mass())
+                .collect()
+        })
+    }))
+}
+
 #[pymodule]
 pub fn py_peptide(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPeptideSequence>()?;
@@ -352,5 +377,6 @@ pub fn py_peptide(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPeptideProductIon>()?;
     m.add_class::<PyPeptideProductIonSeries>()?;
     m.add_class::<PyPeptideProductIonSeriesCollection>()?;
+    m.add_function(wrap_pyfunction!(mono_isotopic_masses, m)?)?;
     Ok(())
 }

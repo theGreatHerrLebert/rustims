@@ -1796,6 +1796,7 @@ def main():
                 min_length=config.min_len,
                 max_length=config.max_len,
                 proteome_mix=config.proteome_mix,
+                num_threads=config.num_threads,
             )
 
             stages.lap('sample_peptides+rt_filter')
