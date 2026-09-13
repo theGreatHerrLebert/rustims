@@ -177,17 +177,26 @@ pub fn calculate_bounds_emg(mu: f64, sigma: f64, lambda: f64, step_size: f64, ta
 pub fn calculate_frame_occurrence_emg(retention_times: &[f64], rt: f64, sigma: f64, lambda_: f64, target_p: f64, step_size: f64, n_steps: Option<usize>) -> Vec<i32> {
     let (rt_min, rt_max) = calculate_bounds_emg(rt, sigma, lambda_, step_size, target_p, 20.0, 60.0, n_steps);
 
-    // Finding the frame closest to rt_min
+    // A degenerate EMG parameter upstream can make these bounds non-finite. `partial_cmp` returns
+    // None for NaN, so the comparators below used to unwrap a None and panic a worker thread
+    // mid-simulation. A peptide with no finite elution window occupies no frames; say that instead
+    // of aborting the run.
+    if !rt_min.is_finite() || !rt_max.is_finite() {
+        return Vec::new();
+    }
+
+    // Closest-frame search. `total_cmp` rather than `partial_cmp().unwrap()`: the inputs are finite
+    // by the guard above, but this can never panic regardless of what reaches it.
     let first_frame = retention_times.iter()
         .enumerate()
-        .min_by(|(_, &a), (_, &b)| (a - rt_min).abs().partial_cmp(&(b - rt_min).abs()).unwrap())
+        .min_by(|(_, &a), (_, &b)| (a - rt_min).abs().total_cmp(&(b - rt_min).abs()))
         .map(|(idx, _)| idx + 1) // Rust is zero-indexed, so +1 to match Python's 1-indexing
         .unwrap_or(0); // Fallback in case of an empty slice
 
     // Finding the frame closest to rt_max
     let last_frame = retention_times.iter()
         .enumerate()
-        .min_by(|(_, &a), (_, &b)| (a - rt_max).abs().partial_cmp(&(b - rt_max).abs()).unwrap())
+        .min_by(|(_, &a), (_, &b)| (a - rt_max).abs().total_cmp(&(b - rt_max).abs()))
         .map(|(idx, _)| idx + 1) // Same adjustment for 1-indexing
         .unwrap_or(0); // Fallback
 
@@ -422,12 +431,14 @@ pub fn calculate_scan_occurrence_gaussian(
         .map(|(i, &val)| (val, i))
         .collect();
 
+    // `total_cmp`, not `partial_cmp().unwrap()`: the same NaN hazard as the retention-time search
+    // above — a non-finite bound would otherwise panic a worker thread rather than degrade.
     // Find the closest index to ims_lower
     let upper_idx = indexed_values
         .iter()
         .enumerate()
         .min_by(|(_, (val_a, _)), (_, (val_b, _))| {
-            (val_a - ims_lower).abs().partial_cmp(&(val_b - ims_lower).abs()).unwrap()
+            (val_a - ims_lower).abs().total_cmp(&(val_b - ims_lower).abs())
         })
         .map(|(idx, _)| idx)
         .unwrap_or(0);
@@ -437,7 +448,7 @@ pub fn calculate_scan_occurrence_gaussian(
         .iter()
         .enumerate()
         .min_by(|(_, (val_a, _)), (_, (val_b, _))| {
-            (val_a - ims_upper).abs().partial_cmp(&(val_b - ims_upper).abs()).unwrap()
+            (val_a - ims_upper).abs().total_cmp(&(val_b - ims_upper).abs())
         })
         .map(|(idx, _)| idx)
         .unwrap_or(indexed_values.len() - 1);
@@ -746,5 +757,35 @@ mod tests {
             num_threads
         );
         assert_eq!(res_abundances.len(), 2, "Should produce 2 sets of abundances");
+    }
+}
+
+#[cfg(test)]
+mod emg_degenerate_tests {
+    use super::*;
+
+    /// A degenerate EMG parameter upstream used to make the retention-time bounds non-finite, and
+    /// the closest-frame search then unwrapped a `None` from `partial_cmp` and panicked a worker
+    /// thread mid-simulation. It must degrade to "this peptide occupies no frames" instead.
+    #[test]
+    fn non_finite_bounds_return_no_frames_instead_of_panicking() {
+        let rts: Vec<f64> = (0..100).map(|i| i as f64 * 0.5).collect();
+        for (sigma, lambda_) in [(f64::NAN, 1.0), (1.0, f64::NAN), (0.0, 0.0), (f64::INFINITY, 1.0)] {
+            let frames = calculate_frame_occurrence_emg(&rts, 10.0, sigma, lambda_, 0.999, 0.0001, None);
+            assert!(
+                frames.is_empty() || frames.iter().all(|&f| f >= 0),
+                "sigma={sigma}, lambda={lambda_} produced {frames:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn well_behaved_parameters_still_return_a_contiguous_frame_window() {
+        let rts: Vec<f64> = (0..100).map(|i| i as f64 * 0.5).collect();
+        let frames = calculate_frame_occurrence_emg(&rts, 10.0, 0.5, 0.5, 0.999, 0.0001, None);
+        assert!(!frames.is_empty(), "a valid peak must occupy at least one frame");
+        for w in frames.windows(2) {
+            assert_eq!(w[1], w[0] + 1, "frame window must be contiguous");
+        }
     }
 }
