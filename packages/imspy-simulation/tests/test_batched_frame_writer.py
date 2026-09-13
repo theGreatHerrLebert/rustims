@@ -100,3 +100,54 @@ def test_mismatched_outer_lengths_raise():
     with pytest.raises(RuntimeError, match="same length"):
         ds.build_compressed_frames([f.frame_id for f in frames][:-1], mz, mobility, intensity,
                                    num_scans, 0, 4)
+
+
+def test_two_writers_produce_equivalent_d_folders(tmp_path):
+    """End-to-end: write the same frames through both paths and compare the .d folders.
+
+    The per-frame check above compares payloads in isolation; this one compares what actually
+    lands on disk — the Frames table (including the TimsId byte offsets, which depend on every
+    preceding frame's compressed length) and the decompressed content of every frame.
+
+    Note the files are equivalent, not byte-identical: the Python `zstd` module and the Rust
+    `zstd` crate link different libzstd builds and can pick a different, equally valid encoding
+    of the same input. Observed at 4 bytes in 8.6 MB, in 2 frames of 600, all decompressing to
+    identical payloads. The contract is the decompressed data and the table, not the encoding.
+    """
+    import sqlite3
+    import pandas as pd
+    from imspy_simulation.tdf import TDFWriter
+
+    ds, frames, _ = _load(n=150)
+    if not hasattr(ds, "build_compressed_frames"):
+        pytest.skip("connector without build_compressed_frames")
+
+    def write(name, fn):
+        w = TDFWriter(helper_handle=ds, path=str(tmp_path), exp_name=name)
+        fn(w)
+        w.close_binary()
+        w.write_frame_meta_data()
+        return tmp_path / name
+
+    p_old = write("old.d", lambda w: [w.write_frame(f, scan_mode=9) for f in frames])
+    p_new = write("new.d", lambda w: w.write_frames(frames, scan_mode=9, num_threads=8))
+
+    old = pd.read_sql("select * from Frames order by Id", sqlite3.connect(str(p_old / "analysis.tdf")))
+    new = pd.read_sql("select * from Frames order by Id", sqlite3.connect(str(p_new / "analysis.tdf")))
+    assert old.equals(new), "Frames table differs between the per-frame and batched writers"
+
+    b_old = (p_old / "analysis.tdf_bin").read_bytes()
+    b_new = (p_new / "analysis.tdf_bin").read_bytes()
+    assert len(b_old) == len(b_new)
+
+    # Walk the frames by their recorded offsets and compare decompressed payloads.
+    for _, row in old.iterrows():
+        off = int(row.TimsId)
+        for buf in (b_old, b_new):
+            assert int.from_bytes(buf[off:off + 4], "little") > 0
+        n_old = int.from_bytes(b_old[off:off + 4], "little")
+        n_new = int.from_bytes(b_new[off:off + 4], "little")
+        assert n_old == n_new, f"frame {int(row.Id)}: compressed length differs"
+        d_old = zstd.ZSTD_uncompress(bytes(b_old[off + 8:off + n_old]))
+        d_new = zstd.ZSTD_uncompress(bytes(b_new[off + 8:off + n_new]))
+        assert d_old == d_new, f"frame {int(row.Id)}: decompressed payload differs"
