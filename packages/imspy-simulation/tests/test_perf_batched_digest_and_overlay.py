@@ -31,16 +31,35 @@ def test_batched_digest_matches_per_protein(decoys):
             variable_mods=VAR, static_mods=STAT, cleave_at='KR', restrict='P',
             missed_cleavages=2, min_len=7, max_len=30, digest=True,
         )
-        if ref is None:
-            assert got == set(), f"protein {idx}: per-protein digest empty, batched gave {len(got)}"
+        if not ref:
+            assert got == [], f"protein {idx}: per-protein digest empty, batched gave {len(got)}"
         else:
-            assert got == ref, f"protein {idx}: {len(got ^ ref)} differing peptides"
+            assert got == sorted(ref), f"protein {idx}: differing peptides"
+            # Sorted, so the draw downstream cannot depend on set iteration order.
+            assert got == sorted(got), f"protein {idx}: batched digest is not sorted"
             n_nonempty += 1
     assert n_nonempty > 300
 
 
 def test_batched_digest_empty_input():
     assert proteins_to_peptides_batched([], []) == []
+
+
+def test_digest_output_is_order_stable_not_a_set():
+    """Set iteration order varies with Python's per-process hash seed; the sampler draws from
+    these collections, so an unordered container makes a seeded run irreproducible."""
+    tbl = parse_fasta_to_dataframe(FASTA).sample(n=40, random_state=3)
+    batched = proteins_to_peptides_batched(tbl.index, tbl.sequence, variable_mods=VAR, static_mods=STAT)
+    assert any(len(p) > 1 for p in batched), "fixture produced nothing to order"
+    for peptides in batched:
+        assert isinstance(peptides, list), "digest must return an ordered container"
+        assert peptides == sorted(peptides)
+    for (idx, row) in tbl.iterrows():
+        got = protein_to_peptides(generate_single_fasta(idx, row.sequence), generate_decoys=False,
+                                  variable_mods=VAR, static_mods=STAT, cleave_at='KR', restrict='P',
+                                  missed_cleavages=2, min_len=7, max_len=30, digest=True)
+        if got:
+            assert isinstance(got, list) and got == sorted(got)
 
 
 @pytest.mark.skipif(not os.path.exists(REF_D), reason="local reference .d not available")

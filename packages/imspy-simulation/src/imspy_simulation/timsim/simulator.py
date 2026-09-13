@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 import toml
+import numpy as np
 import pandas as pd
 from tabulate import tabulate
 
@@ -1443,6 +1444,21 @@ def main():
     logger.debug("Configuration settings:")
     for key, value in config_dict.items():
         logger.debug(f"  {key}: {value}")
+
+    # Seed the global NumPy RNG for the whole run.
+    #
+    # Until 0.4.6 `sample_seed` reached exactly two places: the pandas down-sample below and the
+    # reference-noise overlay. Everything that decides *what* gets simulated — which peptides are
+    # drawn per protein and their abundances (simulate_peptides), the EMG retention-time shape,
+    # ion-mobility and scan variance, phosphosite choice, the decoy draw in digest_fasta — used
+    # bare `np.random.*` against the unseeded global RNG. Two runs of an identical config therefore
+    # shared only 11 of ~1690 peptides: same configuration, effectively unrelated datasets.
+    #
+    # Seeding once here makes a run reproducible from its config, which is what `sample_seed`
+    # always claimed to do. Note this changes which peptides a given config selects compared with
+    # releases before 0.4.6, so previously generated datasets are not reproduced by re-running
+    # their config — they were never reproducible in the first place.
+    np.random.seed(config.sample_seed & 0xFFFFFFFF)
 
     # Prepare paths
     save_path = check_path(config.save_path)

@@ -145,7 +145,10 @@ def protein_to_peptides(fasta,
             peptide = indexed_db[idx]
             peptide_set.add(peptide.to_unimod_sequence())
 
-        return peptide_set
+        # Sorted, not a set: `sample_peptides_from_proteins` draws from this with
+        # `np.random.choice`, and a set's iteration order depends on Python's per-process
+        # string hash seed. That made the draw differ between runs even with the RNG seeded.
+        return sorted(peptide_set)
 
     except Exception as e:
         # Proteins with no valid peptides after digestion will raise an exception
@@ -168,11 +171,11 @@ def proteins_to_peptides_batched(
 ) -> list:
     """Digest many proteins with ONE sage indexed database per chunk instead of one per protein.
 
-    Returns, for every input protein, the same ``set`` of UniMod peptide strings that
-    ``protein_to_peptides`` produces for that protein alone: sage attaches every protein a
+    Returns, for every input protein, the same UniMod peptide strings that
+    ``protein_to_peptides`` produces for that protein alone, as a sorted list: sage attaches every protein a
     peptide occurs in (``peptide.proteins``), so a shared peptide is credited to each of its
     proteins exactly as the per-protein digest did. Proteins without a valid peptide get an
-    empty set (the per-protein version returned None; callers drop both).
+    empty list (the per-protein version returned None; callers drop both).
 
     Motivation: ``generate_indexed_database()`` sets up sage's parallel index build; calling it
     20 000 times (once per protein) spent ~3 000 core-seconds on a 120-core machine for a
@@ -221,7 +224,9 @@ def proteins_to_peptides_batched(
                 if prot.startswith("rev_"):
                     prot = prot[4:]
                 result[int(prot)].add(seq)
-    return result
+    # Sorted lists rather than sets: see `protein_to_peptides`. The downstream sampler draws
+    # from these, and set iteration order is not stable across processes.
+    return [sorted(s) for s in result]
 
 
 def get_tenzer_hokey():
