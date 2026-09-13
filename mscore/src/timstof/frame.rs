@@ -582,9 +582,15 @@ impl TimsFrame {
     }
 
     pub fn generate_random_sample(&self, take_probability: f64) -> TimsFrame {
+        let mut rng = rand::thread_rng();
+        self.generate_random_sample_with_rng(take_probability, &mut rng)
+    }
+
+    /// Same as `generate_random_sample`, but drawing from a caller-supplied RNG so that the
+    /// selection is reproducible (used by the seeded, parallel reference-noise overlay).
+    pub fn generate_random_sample_with_rng<R: Rng>(&self, take_probability: f64, rng: &mut R) -> TimsFrame {
         assert!(take_probability >= 0.0 && take_probability <= 1.0);
 
-        let mut rng = rand::thread_rng();
         let mut scan = Vec::new();
         let mut mobility = Vec::new();
         let mut tof = Vec::new();

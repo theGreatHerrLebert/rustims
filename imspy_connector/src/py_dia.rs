@@ -2226,6 +2226,34 @@ impl PyTimsDatasetDIA {
         PyTimsFrame::from_inner(self.inner.sample_fragment_signal(num_frames, window_group, max_intensity, take_probability))
     }
 
+    /// Batched, parallel, seeded reference-noise overlay (see rustdf `overlay_reference_noise`).
+    /// `window_groups[i]` is the DIA window group of frame i, or None for a precursor frame.
+    #[pyo3(signature = (frames, window_groups, num_precursor_frames, num_fragment_frames, max_intensity_precursor, max_intensity_fragment, take_precursor, take_fragment, seed, num_threads))]
+    pub fn overlay_reference_noise(
+        &self,
+        frames: Vec<PyTimsFrame>,
+        window_groups: Vec<Option<u32>>,
+        num_precursor_frames: usize,
+        num_fragment_frames: usize,
+        max_intensity_precursor: f64,
+        max_intensity_fragment: f64,
+        take_precursor: f64,
+        take_fragment: f64,
+        seed: u64,
+        num_threads: usize,
+    ) -> Vec<PyTimsFrame> {
+        let inner: Vec<mscore::timstof::frame::TimsFrame> = frames.into_iter().map(|f| f.inner).collect();
+        self.inner
+            .overlay_reference_noise(
+                inner, window_groups, num_precursor_frames, num_fragment_frames,
+                max_intensity_precursor, max_intensity_fragment, take_precursor, take_fragment,
+                seed, num_threads,
+            )
+            .into_iter()
+            .map(PyTimsFrame::from_inner)
+            .collect()
+    }
+
     /// Convenience helper for Python-side planner
     #[getter]
     pub fn max_global_num_scans(&self) -> usize {
