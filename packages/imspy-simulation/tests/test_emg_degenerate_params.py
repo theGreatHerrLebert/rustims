@@ -45,3 +45,25 @@ def test_sampled_parameters_are_strictly_positive(sampler, second):
     assert (others > 0).all(), f"{(others <= 0).sum()} {second} draws were non-positive"
     mu = estimate_mu_from_mode_emg(np.full_like(sigmas, 10.0), sigmas, others)
     assert np.isfinite(mu).all(), f"{(~np.isfinite(mu)).sum()} non-finite mu values"
+
+
+def test_thinning_happens_before_retention_time_prediction():
+    """The expensive predictor must see only the peptides we intend to keep.
+
+    The digest produces `num_peptides_total` regardless of the requested complexity, so predicting
+    retention times for the whole digest meant a small run spent most of its time on peptides it
+    then discarded. Thinning first must still deliver at least the requested count, since the
+    retention-time filter drops part of the early-eluting population afterwards.
+    """
+    import inspect
+    from imspy_simulation.timsim.jobs import simulate_peptides as mod
+
+    src = inspect.getsource(mod.simulate_peptides)
+    thin = src.index("peptide_table.sample(")
+    predict = src.index("simulate_separation_times_pandas")
+    assert thin < predict, "thinning must precede retention-time prediction"
+
+    sig = inspect.signature(mod.simulate_peptides).parameters
+    assert "num_sample_peptides" in sig and "sample_margin" in sig
+    # Headroom must be real, or the retention-time filter can leave us short of the request.
+    assert sig["sample_margin"].default > 1.0

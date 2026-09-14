@@ -83,6 +83,9 @@ def simulate_peptides(
         proteome_mix: bool = False,
         use_koina_model: Optional[str] = None,
         num_threads: int = -1,
+        num_sample_peptides: Optional[int] = None,
+        sample_seed: Optional[int] = None,
+        sample_margin: float = 1.3,
 ) -> pd.DataFrame:
     """
     Simulate peptides from a protein table.
@@ -99,6 +102,12 @@ def simulate_peptides(
         proteome_mix: If True, simulate a proteome mix.
         use_koina_model: If not None, use the Koina model to predict peptide flyability, i.e. chances of being measured in the experiment, currently only supports pfly.
         num_threads: Threads for the batched monoisotopic mass calculation; -1 uses every core.
+        num_sample_peptides: If set, thin the table to roughly this many peptides *before* the
+            retention-time prediction, instead of predicting for the whole digest and discarding
+            afterwards. None keeps the old behaviour.
+        sample_seed: Seed for that thinning, so the choice is reproducible.
+        sample_margin: Oversample factor applied to `num_sample_peptides`, to leave headroom for
+            the retention-time filter below, which drops part of the early-eluting population.
     Returns:
         DataFrame with simulated peptides.
     """
@@ -147,6 +156,20 @@ def simulate_peptides(
         "monoisotopic-mass": masses,
         "events": events}
     )
+
+    # Thin the table here, before retention-time prediction, rather than after it.
+    #
+    # The caller asks for `num_sample_peptides` but the digest produces `num_peptides_total`, and
+    # the retention-time predictor used to run over the whole digest so that 98 % of its output
+    # could be thrown away downstream. A small run spent ~40 s predicting times it never used.
+    #
+    # `sample_margin` is headroom for the retention-time filter further down, which removes part of
+    # the early-eluting population; without it the table could fall below what the caller asked for.
+    # The filter itself is density-based (it thins the early bins to the median bin count), so it
+    # behaves the same on a uniformly thinned table as on the full one.
+    if num_sample_peptides is not None and len(peptide_table) > num_sample_peptides:
+        target = min(len(peptide_table), int(np.ceil(num_sample_peptides * max(sample_margin, 1.0))))
+        peptide_table = peptide_table.sample(n=target, random_state=sample_seed).reset_index(drop=True)
 
     # Simulate peptide efficiency using rejection sampling in log-normal space
     efficiency = generate_normal_efficiency(
@@ -222,9 +245,12 @@ def simulate_peptides(
             random_indices = np.array([], dtype=int)
         rt_filter[random_indices] = True
 
+        n_excluded = int((~rt_filter).sum())
         peptide_table = peptide_table[rt_filter]
 
         if verbose:
-            print(f"Excluded {len(peptide_table) - rt_filter.sum()} peptides with low retention times.")
+            # Count before the filter is applied: the old message subtracted the filtered length
+            # from itself and so always reported 0.
+            print(f"Excluded {n_excluded} peptides with low retention times.")
 
     return peptide_table
