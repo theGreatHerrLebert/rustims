@@ -16,10 +16,9 @@ VAR = {"M": ["[UNIMOD:35]"], "[": ["[UNIMOD:1]"]}
 STAT = {"C": "[UNIMOD:4]"}
 
 
-@pytest.mark.skipif(not os.path.exists(FASTA), reason="local HeLa subset fasta not available")
 @pytest.mark.parametrize("decoys", [False, True])
 def test_batched_digest_matches_per_protein(decoys):
-    tbl = parse_fasta_to_dataframe(FASTA).sample(n=400, random_state=7)
+    tbl = _proteins(n=400)
     batched = proteins_to_peptides_batched(
         tbl.index, tbl.sequence, generate_decoys=decoys, variable_mods=VAR, static_mods=STAT,
         chunk_size=150,  # force several chunks
@@ -38,24 +37,44 @@ def test_batched_digest_matches_per_protein(decoys):
             # Sorted, so the draw downstream cannot depend on set iteration order.
             assert got == sorted(got), f"protein {idx}: batched digest is not sorted"
             n_nonempty += 1
-    assert n_nonempty > 300
+    assert n_nonempty >= min(len(tbl) - 1, 300)
 
 
 def test_batched_digest_empty_input():
     assert proteins_to_peptides_batched([], []) == []
 
 
+# Synthetic proteins: several tryptic sites each, so every one yields multiple peptides.
+# Deliberately not the local HeLa fixture — the ordering guarantee is what is under test, and a
+# test that silently skips on a machine without that file proves nothing in CI.
+_SYNTH = {
+    "sp|TEST1|SYN1": "MKVLATRSEDKPEPTIDEKSAMPLERGGVTLLKDIFFERENTKAVQWYRPLNESTGGK",
+    "sp|TEST2|SYN2": "MSSGQKALTTRPEPTIDEKMNQWYFRAVCDEKLLGGTTRSEQPPLKYYTTRDDFGHIK",
+    "sp|TEST3|SYN3": "MTTKAAQPLRSEEDNKPEPTIDERGGWWYTKLNMFCVVRDDQQTTLKSSAHHPPYYRK",
+    "sp|TEST4|SYN4": "MNNKEFGHLRPPQTTSKVVCCWYKDDEEFFRAALLNMSTTKGGHHYYPPQRWWEEDDK",
+}
+
+
+def _proteins(n: int) -> pd.DataFrame:
+    """Protein table for the digest tests: the local HeLa subset when present, else the synthetic
+    set above. CI has no local fixtures, and a skipped parity test would leave the batched digest
+    unchecked there."""
+    if os.path.exists(FASTA):
+        return parse_fasta_to_dataframe(FASTA).sample(n=n, random_state=7)
+    return pd.DataFrame({"sequence": list(_SYNTH.values())}, index=list(_SYNTH))
+
+
 def test_digest_output_is_order_stable_not_a_set():
     """Set iteration order varies with Python's per-process hash seed; the sampler draws from
     these collections, so an unordered container makes a seeded run irreproducible."""
-    tbl = parse_fasta_to_dataframe(FASTA).sample(n=40, random_state=3)
-    batched = proteins_to_peptides_batched(tbl.index, tbl.sequence, variable_mods=VAR, static_mods=STAT)
+    ids, seqs = list(_SYNTH), list(_SYNTH.values())
+    batched = proteins_to_peptides_batched(ids, seqs, variable_mods=VAR, static_mods=STAT)
     assert any(len(p) > 1 for p in batched), "fixture produced nothing to order"
     for peptides in batched:
         assert isinstance(peptides, list), "digest must return an ordered container"
         assert peptides == sorted(peptides)
-    for (idx, row) in tbl.iterrows():
-        got = protein_to_peptides(generate_single_fasta(idx, row.sequence), generate_decoys=False,
+    for idx, seq in zip(ids, seqs):
+        got = protein_to_peptides(generate_single_fasta(idx, seq), generate_decoys=False,
                                   variable_mods=VAR, static_mods=STAT, cleave_at='KR', restrict='P',
                                   missed_cleavages=2, min_len=7, max_len=30, digest=True)
         if got:
