@@ -45,10 +45,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::sim::acquisition::ScanDescriptor;
 use mscore::data::spectrum::MzSpectrum;
 use sciexwiff::wiffscan::{
-    block_payload, encode_stream, mz_to_n, n_to_mz, rebuild_grow, retranslate_idx, scan_blocks,
-    GrowEdit, Peak, ScanBlock, MAX_INTENSITY,
+    block_payload, decode_stream, encode_stream, mz_to_n, n_to_mz, rebuild_grow, retranslate_idx,
+    scan_blocks,
+    GrowEdit, Peak, ScanBlock,
 };
 use sciexwiff::{patch_idx_stream, read_idx_stream, read_method};
 
@@ -74,6 +76,12 @@ pub struct SciexWriteOptions {
     /// scan's real-peak max`. `1.0` (default) ≈ comparable to the background; `> 1` makes the
     /// spike-ins dominant, `< 1` makes them trace. Ignored in pure-synthetic mode.
     pub spike_scale: f64,
+    /// Which quantile of the run's per-scan maximum intensities (per MS level) is mapped onto the
+    /// codec ceiling; scans above it saturate — the detector-saturation behaviour a real ZenoTOF
+    /// shows too. 1.0 = the run maximum (no saturation; every other scan is squeezed under it —
+    /// with the format's 2-byte ceiling and our ~4-order abundance span that left the median
+    /// precursor at ~60 counts and mid-abundance peptides quantised into noise). Default 0.99.
+    pub saturation_quantile: f64,
     /// Keep the template's real peaks in leading/trailing partial-cycle blocks instead of
     /// clearing them. Default `false` — preserving real signal in a "synthetic" file is
     /// leakage; only enable deliberately (the summary always reports how many were kept).
@@ -93,6 +101,7 @@ impl Default for SciexWriteOptions {
             fragment_noise_ppm: 0.0,
             overlay_ppm: 0.0,
             spike_scale: 1.0,
+            saturation_quantile: 0.99,
             preserve_template_partial: false,
         }
     }
@@ -145,7 +154,7 @@ fn log_short(sim_cycles: usize, template_cycles: usize) {
     );
 }
 
-fn read_hdr(scan: &[u8], ff: usize) -> Result<u32, String> {
+pub fn read_hdr(scan: &[u8], ff: usize) -> Result<u32, String> {
     scan.get(ff + 4..ff + 8)
         .map(|s| u32::from_le_bytes(s.try_into().expect("len 4")))
         .ok_or_else(|| format!("block header out of range at ff={ff}"))
@@ -282,29 +291,38 @@ fn apply_mz_noise(peaks: &[(f64, f32)], ppm: f64) -> Vec<(f64, f32)> {
 // target before rounding — otherwise every peak collapses toward 1 and the spectrum goes flat
 // (which destroys a search engine's ability to score it). Chosen to preserve ~4 orders of
 // dynamic range while keeping most intensities to a 2-byte codec field.
-const INTENSITY_FULL_SCALE: f64 = 50_000.0;
+// The run's largest peak per MS level maps onto this. It MUST stay below 65,536: the codec's
+// 3-byte `0x7e` escape for larger intensities is not what the vendor reader expects — every
+// peak authored with it read back through ProteoWizard/the SCIEX DLL as ~4.1e9 (a 250,000 full
+// scale corrupted the apex peaks of exactly the abundant, planted proteins; 2026-09-14). The
+// real K562 ZenoTOF template never exceeds ~15,900 counts, so the escape was never exercised
+// against real data. Cost of the 2-byte ceiling: our simulated abundance spans ~3.5 orders, so
+// the weakest scans end up at a few counts (the real template's floor is ~100 counts of noise).
+const INTENSITY_FULL_SCALE: f64 = 65_000.0;
+/// Largest intensity the 2-byte `0x7d` token carries; see `INTENSITY_FULL_SCALE`.
+const INTENSITY_MAX_ENCODABLE: u32 = 65_535;
 
 /// Convert simulated `(m/z, intensity)` peaks to `(n, intensity)`: m/z→n per the block cal,
-/// dropping peaks at/below the cutoff, and scaling intensities per-scan so the max maps to
-/// `full_scale` (preserving the relative pattern). No dedupe/cap yet (see [`finalize_peaks`]).
+/// dropping peaks at/below the cutoff, and multiplying intensities by `scale` — ONE factor for
+/// the whole run (see [`run_intensity_scale`]), never a per-scan normalisation. No dedupe/cap
+/// yet (see [`finalize_peaks`]).
+///
+/// This used to rescale every scan so its own top peak landed on `INTENSITY_FULL_SCALE`. That
+/// keeps the pattern inside a scan and destroys everything between scans: a peptide's MS2
+/// window scan always peaked at 50,000 whatever the peptide's abundance, so DIA-NN's precursor
+/// quantities were flat across a 10v10 cohort and the planted fold-changes came back at r≈0.
 fn sim_to_n(
     peaks: &[(f64, f32)],
     cal_a: f64,
     cal_b: f64,
     cut_n: i64,
     noise_ppm: f64,
-    full_scale: f64,
+    scale: f64,
 ) -> Vec<(i64, u32)> {
     let src = apply_mz_noise(peaks, noise_ppm);
-    let max_it = src
-        .iter()
-        .map(|(_, i)| *i as f64)
-        .filter(|v| v.is_finite() && *v > 0.0)
-        .fold(0.0f64, f64::max);
-    if max_it <= 0.0 {
+    if !scale.is_finite() || scale <= 0.0 {
         return Vec::new();
     }
-    let scale = full_scale.max(1.0) / max_it;
     let mut nv: Vec<(i64, u32)> = Vec::with_capacity(src.len());
     for (mz, inten) in src {
         if !mz.is_finite() || mz <= 0.0 || !inten.is_finite() || inten <= 0.0 {
@@ -314,10 +332,46 @@ fn sim_to_n(
         if n <= cut_n {
             continue; // below the scan's low-mass cutoff — not representable
         }
-        let iu = ((inten as f64 * scale).round() as i64).clamp(1, (MAX_INTENSITY - 1) as i64) as u32;
+        let iu = ((inten as f64 * scale).round() as i64).clamp(1, INTENSITY_MAX_ENCODABLE as i64) as u32;
         nv.push((n, iu));
     }
     nv
+}
+
+/// The run-wide intensity scale for one MS level: the factor that maps the level's largest
+/// simulated peak anywhere in the run onto `full_scale`. Applying one factor to every scan of
+/// that level preserves abundance ACROSS scans and runs (what a quantitative search needs),
+/// while the 2-byte token ceiling (`INTENSITY_MAX_ENCODABLE`) bounds the top peak. Levels are scaled
+/// separately so MS2 fragments, which are fractions of their precursors, keep count resolution.
+/// Returns 1.0 when the level has no positive peak (nothing to author).
+fn run_intensity_scale(rendered: &[ScanDescriptor], ms_level: u8, full_scale: f64) -> f64 {
+    run_intensity_scale_q(rendered, ms_level, full_scale, 1.0)
+}
+
+/// As [`run_intensity_scale`], but the reference is the `q` quantile of the level's per-scan
+/// maximum intensities rather than the run maximum: the scans above it saturate at the codec
+/// ceiling (see `SciexWriteOptions::saturation_quantile`). `q = 1.0` is the run maximum.
+fn run_intensity_scale_q(rendered: &[ScanDescriptor], ms_level: u8, full_scale: f64, q: f64) -> f64 {
+    let mut maxes: Vec<f64> = rendered
+        .iter()
+        .filter(|d| d.ms_level == ms_level)
+        .map(|d| {
+            d.peaks
+                .iter()
+                .map(|(_, i)| *i as f64)
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .fold(0.0f64, f64::max)
+        })
+        .filter(|m| *m > 0.0)
+        .collect();
+    if maxes.is_empty() {
+        return 1.0;
+    }
+    maxes.sort_by(|a, b| a.total_cmp(b));
+    let q = q.clamp(0.0, 1.0);
+    let idx = ((maxes.len() as f64 - 1.0) * q).round() as usize;
+    let reference = maxes[idx.min(maxes.len() - 1)];
+    if reference > 0.0 { full_scale.max(1.0) / reference } else { 1.0 }
 }
 
 /// Dedupe/merge equal n (sum intensity), cap to `cap` by intensity, re-sort by n (strictly
@@ -328,7 +382,7 @@ fn finalize_peaks(mut nv: Vec<(i64, u32)>, cap: usize) -> Vec<(i64, u32)> {
     for (n, iu) in nv {
         if let Some(last) = merged.last_mut() {
             if last.0 == n {
-                last.1 = last.1.saturating_add(iu).min(MAX_INTENSITY - 1);
+                last.1 = last.1.saturating_add(iu).min(INTENSITY_MAX_ENCODABLE);
                 continue;
             }
         }
@@ -452,6 +506,81 @@ pub fn scan_block_cals(scan_path: &Path) -> Result<Vec<(f64, f64)>, String> {
     Ok(scan_blocks(&scan).iter().map(|b| (b.cal_a, b.cal_b)).collect())
 }
 
+/// Per-block total ion current (sum of decoded intensities) in file order.
+///
+/// Intensities do NOT depend on the `cut_n` seed, so this is a seed-independent key — it works on
+/// templates where the K562-fit `Q` (and hence [`seed_cut_n`]) does not hold. The characterizer
+/// needs it because physical blocks and pwiz spectra are NOT 1:1 in file order on every template
+/// (a scan can be reported with no block behind it); pairing them by index silently mislabels
+/// every block after the first divergence. Returns `-1.0` for a block that fails to decode.
+/// Per-block base-peak m/z in file order — the key for aligning physical blocks to a pwiz
+/// spectrum list.
+///
+/// Blocks and pwiz spectra are NOT 1:1 in file order, so the characterizer must align them by
+/// content. TIC cannot do it: pwiz sums PROFILE points while a block holds centroids, and that
+/// expansion factor is not a constant (~1.08 on one ZenoTOF 7600 template, ~100 on another).
+/// Base-peak m/z is directly comparable to pwiz's reported `base peak m/z` and matches to ~1-10
+/// mDa when the pairing is right, versus hundreds of Da when it is wrong.
+///
+/// This uses [`seed_cut_n`], so it inherits the K562-fit `Q`. Where `Q` does not hold the m/z is
+/// biased and alignment simply fails to lock — the characterizer then refuses the template rather
+/// than emitting a mislabelled profile. Returns `-1.0` for a block that fails to decode.
+pub fn scan_block_basepeaks(scan_path: &Path) -> Result<Vec<f64>, String> {
+    let scan = std::fs::read(scan_path).map_err(|e| format!("read {scan_path:?}: {e}"))?;
+    let blocks = scan_blocks(&scan);
+    let mut out = Vec::with_capacity(blocks.len());
+    for b in &blocks {
+        let start = b.ff + 9;
+        if start >= b.end || b.end > scan.len() {
+            out.push(-1.0);
+            continue;
+        }
+        let cut_n = match read_hdr(&scan, b.ff) {
+            Ok(h) => seed_cut_n(h, b.cal_a, b.cal_b),
+            Err(_) => {
+                out.push(-1.0);
+                continue;
+            }
+        };
+        let body = &scan[start..b.end];
+        let mut e = body.len();
+        while e > 0 && body[e - 1] == 0xff {
+            e -= 1;
+        }
+        out.push(match decode_stream(&body[..e], 0, cut_n, usize::MAX, false) {
+            Ok(peaks) if !peaks.is_empty() => {
+                let n = peaks.iter().max_by_key(|p| p.1).expect("non-empty").0;
+                n_to_mz(n, b.cal_a, b.cal_b)
+            }
+            _ => -1.0,
+        });
+    }
+    Ok(out)
+}
+
+pub fn scan_block_tics(scan_path: &Path) -> Result<Vec<f64>, String> {
+    let scan = std::fs::read(scan_path).map_err(|e| format!("read {scan_path:?}: {e}"))?;
+    let blocks = scan_blocks(&scan);
+    let mut out = Vec::with_capacity(blocks.len());
+    for b in &blocks {
+        let start = b.ff + 9;
+        if start >= b.end || b.end > scan.len() {
+            out.push(-1.0);
+            continue;
+        }
+        let body = &scan[start..b.end];
+        let mut e = body.len();
+        while e > 0 && body[e - 1] == 0xff {
+            e -= 1;
+        }
+        out.push(match decode_stream(&body[..e], 0, 0, usize::MAX, false) {
+            Ok(peaks) => peaks.iter().map(|&(_, inten)| inten as f64).sum(),
+            Err(_) => -1.0,
+        });
+    }
+    Ok(out)
+}
+
 fn load_profile(path: &Path) -> Result<TemplateProfile, String> {
     let s = std::fs::read_to_string(path).map_err(|e| format!("read profile {path:?}: {e}"))?;
     serde_json::from_str(&s).map_err(|e| format!("parse profile {path:?}: {e}"))
@@ -530,6 +659,9 @@ pub fn write_sciex_wiff(
     if !opts.spike_scale.is_finite() || opts.spike_scale <= 0.0 {
         return Err(format!("spike_scale must be finite and > 0, got {}", opts.spike_scale));
     }
+    if !opts.saturation_quantile.is_finite() || opts.saturation_quantile <= 0.0 || opts.saturation_quantile > 1.0 {
+        return Err(format!("saturation_quantile must be in (0, 1], got {}", opts.saturation_quantile));
+    }
 
     // Template: method (window count) + spectra bytes (mutable — edited in place).
     let method = read_method(template_wiff).map_err(|e| format!("read .wiff method: {e}"))?;
@@ -582,6 +714,51 @@ pub fn write_sciex_wiff(
     }
     if sim_cycles < n_cycles {
         log_short(sim_cycles, n_cycles);
+    }
+
+    // Run-global intensity scales, one per MS level (see `run_intensity_scale`). Pure-synthetic:
+    // the level's run max maps onto INTENSITY_FULL_SCALE. Overlay: the level's run max maps onto
+    // `spike_scale` x the TEMPLATE's real run max for that level, so "spike strength vs the real
+    // background" is defined once per run, not once per scan.
+    let sim_scale = |lvl: u8| run_intensity_scale_q(&rendered, lvl, INTENSITY_FULL_SCALE, opts.saturation_quantile);
+    let (scale_ms1, scale_ms2) = if opts.overlay_ppm > 0.0 {
+        let mut real_max = [0.0f64; 2];
+        for (ci, cyc) in layout.cycles.iter().enumerate().take(sim_cycles) {
+            let _ = ci;
+            for (pos, &bidx) in cyc.blocks.iter().enumerate() {
+                let b = &blocks[bidx];
+                let m = decode_template_peaks(&scan, b, cut_n_of(bidx, b)?)
+                    .iter()
+                    .map(|&(_, i)| i as f64)
+                    .fold(0.0f64, f64::max);
+                let k = if pos == 0 { 0 } else { 1 };
+                real_max[k] = real_max[k].max(m);
+            }
+        }
+        let ov = |lvl: u8, rm: f64| {
+            let fs = if rm > 0.0 { (opts.spike_scale * rm).max(1.0) } else { INTENSITY_FULL_SCALE };
+            run_intensity_scale_q(&rendered, lvl, fs, opts.saturation_quantile)
+        };
+        (ov(1, real_max[0]), ov(2, real_max[1]))
+    } else {
+        (sim_scale(1), sim_scale(2))
+    };
+    {
+        // How much of the run saturates under this scale — a sanity number for the log.
+        let sat = |lvl: u8, sc: f64| {
+            let (mut n, mut over) = (0usize, 0usize);
+            for d in rendered.iter().filter(|d| d.ms_level == lvl) {
+                for (_, i) in &d.peaks {
+                    if *i > 0.0 { n += 1; if (*i as f64) * sc > INTENSITY_MAX_ENCODABLE as f64 { over += 1; } }
+                }
+            }
+            if n > 0 { 100.0 * over as f64 / n as f64 } else { 0.0 }
+        };
+        eprintln!(
+            "  sciex intensity scale (run-global, counts per sim unit; saturation quantile {:.3}): \
+             MS1 {scale_ms1:.4e} ({:.3}% of peaks saturate), MS2 {scale_ms2:.4e} ({:.3}% saturate)",
+            opts.saturation_quantile, sat(1, scale_ms1), sat(2, scale_ms2)
+        );
     }
 
     // Author the first `sim_cycles` template cycles positionally (MS1 then windows, MS-level
@@ -640,22 +817,11 @@ pub fn write_sciex_wiff(
                 } else {
                     (opts.max_ms2_peaks, opts.fragment_noise_ppm)
                 };
-                // In overlay mode, scale the synthetic peaks relative to the scan's real-peak
-                // background (spike_scale) so the spike-in strength is controllable; pure-
-                // synthetic uses the fixed full scale.
-                let (full_scale, real) = if opts.overlay_ppm > 0.0 {
-                    let real = decode_template_peaks(&scan, b, cut_n);
-                    let real_max = real.iter().map(|&(_, i)| i).max().unwrap_or(0) as f64;
-                    let fs = if real_max > 0.0 {
-                        (opts.spike_scale * real_max).max(1.0)
-                    } else {
-                        INTENSITY_FULL_SCALE
-                    };
-                    (fs, Some(real))
-                } else {
-                    (INTENSITY_FULL_SCALE, None)
-                };
-                let mut nv = sim_to_n(&desc.peaks, b.cal_a, b.cal_b, cut_n, ppm, full_scale);
+                // One run-global factor per MS level (computed above); overlay additionally keeps
+                // the block's real peaks and adds the synthetic ones on top.
+                let scale = if want_ms1 { scale_ms1 } else { scale_ms2 };
+                let real = (opts.overlay_ppm > 0.0).then(|| decode_template_peaks(&scan, b, cut_n));
+                let mut nv = sim_to_n(&desc.peaks, b.cal_a, b.cal_b, cut_n, ppm, scale);
                 if let Some(real) = real {
                     nv.extend(real); // spike-in: real⊕sim
                 }
@@ -772,7 +938,7 @@ mod tests {
         let cut_n = seed_cut_n(2_440_200, a, cal_b);
         // Peaks above this block's cutoff (~893 m/z); the two at 1000.0 merge to one n.
         let peaks = vec![(1200.0_f64, 5000.0_f32), (1000.0, 9000.0), (1000.0, 1000.0)];
-        let real = finalize_peaks(sim_to_n(&peaks, a, cal_b, cut_n, 0.0, INTENSITY_FULL_SCALE), 10);
+        let real = finalize_peaks(sim_to_n(&peaks, a, cal_b, cut_n, 0.0, INTENSITY_FULL_SCALE / peaks.iter().map(|p| p.1 as f64).fold(0.0, f64::max)), 10);
         assert_eq!(real.len(), 2, "1000.0 merged, 1200.0 kept");
         let payload = author_tokens(&real, cut_n).expect("author");
         assert_eq!(&payload[payload.len() - 4..], &[0xff, 0xff, 0xff, 0xff], "ends with 0xff terminator");
@@ -800,11 +966,50 @@ mod tests {
         let cal_b = -12.9765;
         let cut_n = seed_cut_n(2_440_200, a, cal_b);
         let peaks = vec![(1000.0_f64, 0.001_f32), (1100.0, 0.5), (1200.0, 20.0)];
-        let nv = sim_to_n(&peaks, a, cal_b, cut_n, 0.0, INTENSITY_FULL_SCALE);
+        let nv = sim_to_n(&peaks, a, cal_b, cut_n, 0.0, INTENSITY_FULL_SCALE / peaks.iter().map(|p| p.1 as f64).fold(0.0, f64::max));
         let max = nv.iter().map(|&(_, i)| i).max().unwrap();
         let min = nv.iter().map(|&(_, i)| i).min().unwrap();
         assert!(max >= 40_000, "top peak scaled to ~full scale, got {max}");
         assert!(max / min.max(1) > 100, "dynamic range preserved (not flattened), got {min}..{max}");
+    }
+
+    #[test]
+    fn run_global_scale_preserves_abundance_across_scans() {
+        // Two MS2 scans whose top peaks differ 8x must differ 8x in the file too. The old
+        // per-scan normalisation put both at INTENSITY_FULL_SCALE, which is the defect that made
+        // the SCIEX 10v10 cohort's planted fold-changes unrecoverable.
+        let a = 0.000489823;
+        let cal_b = -12.9765;
+        let cut_n = seed_cut_n(2_440_200, a, cal_b);
+        let mk = |lvl: u8, top: f32| ScanDescriptor {
+            ms_level: lvl,
+            retention_time: 0.0,
+            isolation: None,
+            peaks: vec![(1000.0, top / 10.0), (1100.0, top)],
+        };
+        let rendered = vec![mk(1, 4000.0), mk(2, 800.0), mk(2, 100.0)];
+        let s1 = run_intensity_scale(&rendered, 1, INTENSITY_FULL_SCALE);
+        let s2 = run_intensity_scale(&rendered, 2, INTENSITY_FULL_SCALE);
+        let top = |d: &ScanDescriptor, sc: f64| {
+            sim_to_n(&d.peaks, a, cal_b, cut_n, 0.0, sc).iter().map(|&(_, i)| i).max().unwrap()
+        };
+        assert_eq!(top(&rendered[0], s1), 65_000, "the level's run max lands on full scale");
+        assert_eq!(top(&rendered[1], s2), 65_000);
+        let weak = top(&rendered[2], s2);
+        assert!((8_050..=8_200).contains(&weak), "8x weaker scan must stay 8x weaker, got {weak}");
+        // and nothing may ever reach the 3-byte escape the vendor reader mis-decodes
+        let huge = sim_to_n(&[(1000.0, 1.0e9_f32)], a, cal_b, cut_n, 0.0, 1.0);
+        assert_eq!(huge[0].1, INTENSITY_MAX_ENCODABLE);
+        assert_eq!(run_intensity_scale(&[], 2, INTENSITY_FULL_SCALE), 1.0);
+        // Saturation quantile: with three MS2 scans (maxes 100, 800, 800), q=0.5 maps the median
+        // scan max (800) onto full scale, so the run max also lands on full scale and the weak
+        // one keeps its ratio; q=0 maps the weakest (100) onto full scale and the others clamp.
+        let r2 = vec![mk(2, 100.0), mk(2, 800.0), mk(2, 800.0)];
+        let s_med = run_intensity_scale_q(&r2, 2, INTENSITY_FULL_SCALE, 0.5);
+        assert_eq!(top(&r2[1], s_med), 65_000);
+        let s_lo = run_intensity_scale_q(&r2, 2, INTENSITY_FULL_SCALE, 0.0);
+        assert_eq!(top(&r2[0], s_lo), 65_000);
+        assert_eq!(top(&r2[1], s_lo), INTENSITY_MAX_ENCODABLE, "scans above the quantile saturate");
     }
 
     #[test]

@@ -737,7 +737,7 @@ pub fn has_mzml() -> bool {
 /// file stays purely synthetic).
 #[cfg(feature = "sciex")]
 #[pyfunction]
-#[pyo3(signature = (db_path, template_path, out_dir, num_threads=4, quad_k=15.0, max_ms1_peaks=2000, max_ms2_peaks=800, precursor_noise_ppm=0.0, fragment_noise_ppm=0.0, overlay_ppm=0.0, spike_scale=1.0, preserve_template_partial=false, profile_path=None))]
+#[pyo3(signature = (db_path, template_path, out_dir, num_threads=4, quad_k=15.0, max_ms1_peaks=2000, max_ms2_peaks=800, precursor_noise_ppm=0.0, fragment_noise_ppm=0.0, overlay_ppm=0.0, spike_scale=1.0, saturation_quantile=0.99, preserve_template_partial=false, profile_path=None))]
 #[allow(clippy::too_many_arguments)]
 pub fn write_sciex_wiff(
     py: Python<'_>,
@@ -752,6 +752,7 @@ pub fn write_sciex_wiff(
     fragment_noise_ppm: f64,
     overlay_ppm: f64,
     spike_scale: f64,
+    saturation_quantile: f64,
     preserve_template_partial: bool,
     profile_path: Option<&str>,
 ) -> PyResult<(usize, usize, usize, usize, usize, usize, usize, usize, usize, usize, bool)> {
@@ -775,6 +776,7 @@ pub fn write_sciex_wiff(
         fragment_noise_ppm,
         overlay_ppm,
         spike_scale,
+        saturation_quantile,
         preserve_template_partial,
     };
     let profile = profile_path.map(Path::new);
@@ -818,6 +820,26 @@ pub fn sciex_scan_blocks(scan_path: &str) -> PyResult<Vec<(f64, f64)>> {
     rustdf::sim::sciex_dispatch::scan_block_cals(Path::new(scan_path)).map_err(PyValueError::new_err)
 }
 
+/// Per-block total ion current in block order — a seed-independent key for aligning physical
+/// blocks to a pwiz spectrum list (blocks and spectra are not 1:1 on every template). Requires
+/// `sciex`.
+#[cfg(feature = "sciex")]
+#[pyfunction]
+pub fn sciex_scan_block_tics(scan_path: &str) -> PyResult<Vec<f64>> {
+    use std::path::Path;
+    rustdf::sim::sciex_dispatch::scan_block_tics(Path::new(scan_path)).map_err(PyValueError::new_err)
+}
+
+/// Per-block base-peak m/z in block order — the content key the characterizer aligns on.
+/// Requires `sciex`.
+#[cfg(feature = "sciex")]
+#[pyfunction]
+pub fn sciex_scan_block_basepeaks(scan_path: &str) -> PyResult<Vec<f64>> {
+    use std::path::Path;
+    rustdf::sim::sciex_dispatch::scan_block_basepeaks(Path::new(scan_path))
+        .map_err(PyValueError::new_err)
+}
+
 #[pymodule]
 pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAcquisitionScheme>()?;
@@ -842,5 +864,9 @@ pub fn py_acquisition(_py: Python, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(sciex_template_cycles, m)?)?;
     #[cfg(feature = "sciex")]
     m.add_function(wrap_pyfunction!(sciex_scan_blocks, m)?)?;
+    #[cfg(feature = "sciex")]
+    m.add_function(wrap_pyfunction!(sciex_scan_block_tics, m)?)?;
+    #[cfg(feature = "sciex")]
+    m.add_function(wrap_pyfunction!(sciex_scan_block_basepeaks, m)?)?;
     Ok(())
 }
