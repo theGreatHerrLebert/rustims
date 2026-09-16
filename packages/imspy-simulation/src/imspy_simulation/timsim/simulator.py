@@ -1213,6 +1213,76 @@ def emit_provenance_sidecar_raw(raw_path, config_path, experiment_name, key_path
         logger.warning(f"  provenance: mzPROV .raw signing failed (non-fatal): {e}")
 
 
+def emit_provenance_sidecar_wiff(wiff_path, config_path, experiment_name, key_path, logger) -> None:
+    """Write an mzPROV Ed25519-signed provenance sidecar for a native SCIEX .wiff output. A
+    SCIEX acquisition is an opaque proprietary *bundle* (.wiff + .wiff.scan + .wiff2 + …) with
+    no safe injection point, so — like a Thermo .raw — this is ALWAYS a JSON sidecar (regardless
+    of the run's embed preference) and the attestation is an opaque whole-BUNDLE content hash
+    (sensitive to any byte change in any member, plus member add/remove/rename). Uses mzprov's
+    ``sign_wiff_output``. Import-guarded (covers both a missing ``mzprov`` and an older ``mzprov``
+    without .wiff support): any failure is logged as a warning and never fails the run."""
+    try:
+        from mzprov.sign import sign_wiff_output
+    except ImportError:
+        logger.warning(
+            "  provenance: `mzprov` (with .wiff support) not available — skipping .wiff "
+            "sidecar (pip install/upgrade the mzprov python implementation to enable)"
+        )
+        return
+    try:
+        from imspy_simulation import __version__ as _sim_version
+    except Exception:
+        _sim_version = "unknown"
+    try:
+        out = sign_wiff_output(
+            wiff_path=wiff_path,
+            config_path=config_path,
+            experiment_name=experiment_name,
+            tool_name="TimSim",
+            tool_version=_sim_version,
+            private_key_path=key_path,
+        )
+        logger.info(f"  provenance: mzPROV .wiff sidecar -> {out}")
+    except Exception as e:
+        logger.warning(f"  provenance: mzPROV .wiff signing failed (non-fatal): {e}")
+
+
+def provenance_config_path(config, source_config_path, save_path, name, logger) -> str:
+    """Path of the config file the mzPROV attestation hashes (``config_hash``).
+
+    The user's TOML alone does not bind an external SCIEX template *profile*: the profile
+    (``sciex_profile``, see jobs/sciex_characterize.py) is a separate JSON whose CONTENT decides
+    the MS level / isolation window / seed of every authored block, so two .wiff bundles built
+    from different profiles (e.g. the index-paired vs the base-peak-aligned characterization of
+    the same template) would otherwise share one ``config_hash``. When a profile is in play,
+    materialize an *effective* config next to the output that carries the resolved profile path
+    AND the sha256 of its bytes, and sign against that. mzPROV copies the signed config next to
+    the sidecar, so the effective config ships with the artifact and re-verifies offline.
+    Without a profile the source config is passed through untouched (byte-identical hashes for
+    every existing Bruker / Thermo / heuristic-SCIEX cohort)."""
+    if not getattr(config, 'sciex_profile', None):
+        return source_config_path
+    import hashlib
+    profile = Path(config.sciex_profile).resolve()
+    if not profile.is_file():
+        raise FileNotFoundError(f"sciex_profile does not exist: {profile}")
+    digest = hashlib.sha256(profile.read_bytes()).hexdigest()
+    raw = load_toml_config(source_config_path)
+    # Flatten sections so the resolved keys are unambiguous top-level scalars (the loader
+    # ignores section names anyway); drop None values (not representable in TOML).
+    flat, _ = translate_legacy_config(raw)
+    flat = {k: v for k, v in flat.items() if v is not None}
+    flat['sciex_profile'] = str(profile)
+    flat['sciex_profile_sha256'] = digest
+    out = Path(save_path) / f"{name}.effective-config.toml"
+    with open(out, 'w') as f:
+        f.write(f"# Effective TimSim config used for mzPROV signing (source: {source_config_path}).\n")
+        f.write("# sciex_profile_sha256 binds the SCIEX template profile by CONTENT, not just by path.\n")
+        toml.dump(flat, f)
+    logger.info(f"  provenance: effective config (binds sciex_profile by sha256) -> {out}")
+    return str(out)
+
+
 # ----------------------------------------------------------------------
 # Main Execution
 # ----------------------------------------------------------------------
@@ -2065,6 +2135,20 @@ def main():
             f"{n_auth} blocks authored, {n_clear} cleared"
             + (f", {n_verb} kept verbatim (real signal)" if n_verb else "")
         )
+        # mzPROV provenance: sign the authored native .wiff bundle (self-disclosure that
+        # this is TimSim-simulated data). Like a .raw, always a JSON sidecar with an opaque
+        # whole-BUNDLE content hash — the spectra live in the sibling .wiff.scan, so the hash
+        # covers every bundle member, not just the .wiff anchor.
+        if config.emit_provenance:
+            emit_provenance_sidecar_wiff(
+                wiff_path=out_wiff,
+                config_path=provenance_config_path(
+                    config, cli_args.config, save_path, name, logger
+                ),
+                experiment_name=name,
+                key_path=config.provenance_key_path,
+                logger=logger,
+            )
     elif is_sciex_instrument(instrument):
         # SCIEX ZenoTOF SWATH: render the synthesized DIA frames to open mzML (the
         # proprietary .wiff.scan spectra are not authored). mzML is readable by
