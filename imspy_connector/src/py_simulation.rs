@@ -202,6 +202,12 @@ pub struct PyTimsTofSyntheticsPrecursorFrameBuilder {
 
 #[pymethods]
 impl PyTimsTofSyntheticsPrecursorFrameBuilder {
+
+    /// Seed the m/z jitter so a run's noise is reproducible. Without it the jitter comes from
+    /// `thread_rng` and the written spectra depend on thread scheduling.
+    pub fn set_noise_seed(&mut self, seed: u64) {
+        self.inner.set_noise_seed(seed);
+    }
     #[new]
     pub fn new(db_path: &str) -> Self {
         let path = std::path::Path::new(db_path);
@@ -238,6 +244,12 @@ pub struct PyTimsTofSyntheticsFrameBuilderDIA {
 
 #[pymethods]
 impl PyTimsTofSyntheticsFrameBuilderDIA {
+
+    /// Seed the m/z jitter so a run's noise is reproducible. Without it the jitter comes from
+    /// `thread_rng` and the written spectra depend on thread scheduling.
+    pub fn set_noise_seed(&mut self, seed: u64) {
+        self.inner.set_noise_seed(seed);
+    }
     #[new]
     #[pyo3(signature = (db_path, with_annotations, num_threads, isotope_config=None, projection_mode=None, target_p=0.999, frame_step_size=0.001, scan_step_size=0.0001, n_steps=1000, remove_epsilon=1e-4))]
     pub fn new(
@@ -337,6 +349,12 @@ pub struct PyTimsTofSyntheticsFrameBuilderDDA {
 
 #[pymethods]
 impl PyTimsTofSyntheticsFrameBuilderDDA {
+
+    /// Seed the m/z jitter so a run's noise is reproducible. Without it the jitter comes from
+    /// `thread_rng` and the written spectra depend on thread scheduling.
+    pub fn set_noise_seed(&mut self, seed: u64) {
+        self.inner.set_noise_seed(seed);
+    }
     #[new]
     #[pyo3(signature = (db_path, with_annotations, num_threads, isotope_config=None))]
     pub fn new(
@@ -425,6 +443,12 @@ pub struct PyTimsTofLazyFrameBuilderDIA {
 
 #[pymethods]
 impl PyTimsTofLazyFrameBuilderDIA {
+
+    /// Seed the m/z jitter so a run's noise is reproducible. Without it the jitter comes from
+    /// `thread_rng` and the written spectra depend on thread scheduling.
+    pub fn set_noise_seed(&mut self, seed: u64) {
+        self.inner.set_noise_seed(seed);
+    }
     #[new]
     #[pyo3(signature = (db_path, num_threads=4, projection_mode=None, target_p=0.999, frame_step_size=0.001, scan_step_size=0.0001, n_steps=1000, remove_epsilon=1e-4))]
     pub fn new(

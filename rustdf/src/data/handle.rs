@@ -528,6 +528,30 @@ impl BrukerFormulaConverter {
         })
     }
 
+    /// True only when substituting this converter for the Bruker SDK cannot change a single
+    /// output value, which is the only condition under which it is safe to swap in.
+    ///
+    /// Two things have to hold for **every** frame in the run:
+    ///   * its `MzCalibration` row is `ModelType` 1 — the only m/z model this converter reproduces
+    ///     bit-exactly. ModelType 2 shares the C0/C1/C2 curve but omits the proprietary C8..C14
+    ///     fine correction, landing ~2 ppm away; measured on a real ModelType-2 run that moves
+    ///     **11.5 % of arbitrary m/z values into a neighbouring TOF bin**, which would change the
+    ///     `(scan, tof)` dedup and therefore the bytes written to `analysis.tdf_bin`.
+    ///   * it resolves to a real calibration row. Frames with NULL `T1`/`T2`, a missing `Frames`
+    ///     row, or a link to an unsupported calibration row silently fall back to the default
+    ///     calibration in `mz_for`/`im_for`, and the SDK does no such thing.
+    ///
+    /// Callers that cannot use a non-exact converter must fall back to the SDK, serially.
+    pub fn is_sdk_exact(&self) -> bool {
+        if self.frames.is_empty() {
+            return false;
+        }
+        self.frames.values().all(|f| {
+            self.mz_rows.get(&f.mz_id).map(|r| r.model_type == 1).unwrap_or(false)
+                && self.im_rows.contains_key(&f.tims_id)
+        })
+    }
+
     /// Spread (max - min, in degC) of `Frames.T1` and `Frames.T2` across the run.
     ///
     /// A near-zero spread means per-frame and fixed-frame calibration agree; a
@@ -666,8 +690,11 @@ pub struct TimsLazyLoder {
     pub index_converter: TimsIndexConverter,
 }
 
-impl TimsData for TimsLazyLoder {
-    fn get_frame(&self, frame_id: u32) -> TimsFrame {
+impl TimsLazyLoder {
+    /// Same as [`TimsData::get_frame`] but converts tof/scan with an explicit converter instead of
+    /// `self.index_converter`. Parallel readers use this to bypass the Bruker SDK, whose
+    /// `tims_index_to_mz` is not safe to call concurrently on one handle.
+    pub fn get_frame_with_converter(&self, frame_id: u32, conv: &dyn IndexConverter) -> TimsFrame {
         let frame_index = (frame_id - 1) as usize;
 
         // turns out, there can be empty frames in the data, check for that, if so, return an empty frame
@@ -783,10 +810,8 @@ impl TimsData for TimsLazyLoder {
                 let intensity_dbl = intensities_.iter().map(|&x| x as f64).collect::<Vec<f64>>();
                 let tof_i32 = tof_indices_.iter().map(|&x| x as i32).collect::<Vec<i32>>();
 
-                let mz = self.index_converter.tof_to_mz(frame_id, &tof_indices_);
-                let inv_mobility = self
-                    .index_converter
-                    .scan_to_inverse_mobility(frame_id, &scan);
+                let mz = conv.tof_to_mz(frame_id, &tof_indices_);
+                let inv_mobility = conv.scan_to_inverse_mobility(frame_id, &scan);
 
                 let ms_type_raw = self.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
                 let ms_type = match ms_type_raw {
@@ -823,10 +848,8 @@ impl TimsData for TimsLazyLoder {
                 let tof_i32 = tof.iter().map(|&x| x as i32).collect();
                 let scan = flatten_scan_values(&scan, true);
 
-                let mz = self.index_converter.tof_to_mz(frame_id, &tof);
-                let inv_mobility = self
-                    .index_converter
-                    .scan_to_inverse_mobility(frame_id, &scan);
+                let mz = conv.tof_to_mz(frame_id, &tof);
+                let inv_mobility = conv.scan_to_inverse_mobility(frame_id, &scan);
 
                 let ms_type_raw = self.raw_data_layout.frame_meta_data[frame_index].ms_ms_type;
 
@@ -855,6 +878,12 @@ impl TimsData for TimsLazyLoder {
                 panic!("TimsCompressionType is not 1 or 2.")
             }
         }
+    }
+}
+
+impl TimsData for TimsLazyLoder {
+    fn get_frame(&self, frame_id: u32) -> TimsFrame {
+        self.get_frame_with_converter(frame_id, &self.index_converter)
     }
 
     fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame {
@@ -956,8 +985,11 @@ pub struct TimsInMemoryLoader {
     compressed_data: Vec<u8>,
 }
 
-impl TimsData for TimsInMemoryLoader {
-    fn get_frame(&self, frame_id: u32) -> TimsFrame {
+impl TimsInMemoryLoader {
+    /// Same as [`TimsData::get_frame`] but converts tof/scan with an explicit converter instead of
+    /// `self.index_converter`. Parallel readers use this to bypass the Bruker SDK, whose
+    /// `tims_index_to_mz` is not safe to call concurrently on one handle.
+    pub fn get_frame_with_converter(&self, frame_id: u32, conv: &dyn IndexConverter) -> TimsFrame {
         let raw_frame = self.get_raw_frame(frame_id);
 
         let raw_frame = match raw_frame.ms_type {
@@ -973,10 +1005,8 @@ impl TimsData for TimsInMemoryLoader {
         let tof_i32 = raw_frame.tof.iter().map(|&x| x as i32).collect();
         let scan = flatten_scan_values(&raw_frame.scan, true);
 
-        let mz = self.index_converter.tof_to_mz(frame_id, &raw_frame.tof);
-        let inverse_mobility = self
-            .index_converter
-            .scan_to_inverse_mobility(frame_id, &scan);
+        let mz = conv.tof_to_mz(frame_id, &raw_frame.tof);
+        let inverse_mobility = conv.scan_to_inverse_mobility(frame_id, &scan);
 
         let ims_frame = ImsFrame::new(
             raw_frame.retention_time,
@@ -992,6 +1022,12 @@ impl TimsData for TimsInMemoryLoader {
             tof: tof_i32,
             ims_frame,
         }
+    }
+}
+
+impl TimsData for TimsInMemoryLoader {
+    fn get_frame(&self, frame_id: u32) -> TimsFrame {
+        self.get_frame_with_converter(frame_id, &self.index_converter)
     }
 
     fn get_raw_frame(&self, frame_id: u32) -> RawTimsFrame {
@@ -1405,6 +1441,57 @@ impl TimsDataLoader {
             TimsDataLoader::InMemory(loader) => &loader.index_converter,
             TimsDataLoader::Lazy(loader) => &loader.index_converter,
         }
+    }
+
+    /// `get_frame` with an explicit index converter (see [`TimsLazyLoder::get_frame_with_converter`]).
+    pub fn get_frame_with_converter(&self, frame_id: u32, conv: &dyn IndexConverter) -> TimsFrame {
+        match self {
+            TimsDataLoader::InMemory(loader) => loader.get_frame_with_converter(frame_id, conv),
+            TimsDataLoader::Lazy(loader) => loader.get_frame_with_converter(frame_id, conv),
+        }
+    }
+
+    /// Path of the `.d` folder this loader reads from.
+    pub fn raw_data_path(&self) -> &str {
+        match self {
+            TimsDataLoader::InMemory(loader) => &loader.raw_data_layout.raw_data_path,
+            TimsDataLoader::Lazy(loader) => &loader.raw_data_layout.raw_data_path,
+        }
+    }
+
+    /// The loader's own index converter, if it is safe to use from several threads — i.e.
+    /// everything except the Bruker SDK wrapper, whose `tims_index_to_mz` must not be called
+    /// concurrently on one handle.
+    pub fn sync_index_converter(&self) -> Option<&(dyn IndexConverter + Sync)> {
+        let converter = match self {
+            TimsDataLoader::InMemory(loader) => &loader.index_converter,
+            TimsDataLoader::Lazy(loader) => &loader.index_converter,
+        };
+        match converter {
+            TimsIndexConverter::BrukerLib(_) => None,
+            TimsIndexConverter::Simple(c) => Some(c),
+            TimsIndexConverter::Calibrated(c) => Some(c),
+            TimsIndexConverter::Lookup(c) => Some(c),
+            TimsIndexConverter::BrukerFormula(c) => Some(c),
+        }
+    }
+
+    /// A converter that is safe to use from many threads at once, for readers that want to
+    /// run in parallel while the dataset itself was opened with the Bruker SDK.
+    ///
+    /// Returns `None` when the loader's own converter is already thread-safe (anything but
+    /// `BrukerLib`), or when the file carries no calibration tables the SDK-free
+    /// [`BrukerFormulaConverter`] could evaluate — callers must then serialise their reads.
+    pub fn sdk_free_converter(&self) -> Option<TimsIndexConverter> {
+        if !self.uses_bruker_sdk() {
+            return None;
+        }
+        BrukerFormulaConverter::from_d_folder(self.raw_data_path(), 1)
+            .ok()
+            // Only substitute when the result is indistinguishable from the SDK's; otherwise the
+            // caller has to stay on the SDK and serialise. See `is_sdk_exact`.
+            .filter(|c| c.is_sdk_exact())
+            .map(TimsIndexConverter::BrukerFormula)
     }
 
     /// Check if the Bruker SDK is being used for index conversion.

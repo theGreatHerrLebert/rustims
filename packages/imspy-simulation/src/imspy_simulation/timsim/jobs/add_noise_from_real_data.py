@@ -44,6 +44,8 @@ def add_real_data_noise_to_frames(
         num_fragment_frames: int = 5,
         acquisition_mode: str = 'DIA',
         pasef_meta: Optional[pd.DataFrame] = None,
+        noise_seed: Optional[int] = None,
+        num_threads: int = 4,
 ) -> List[TimsFrame]:
     """Add noise to frame.
 
@@ -102,6 +104,25 @@ def add_real_data_noise_to_frames(
         d = acquisition_builder.frames_to_window_groups
         window_group_dict = dict(zip(d['frame'], d['window_group']))
         fragment_frames = set(window_group_dict.keys())
+        handle = acquisition_builder.tdf_writer.helper_handle
+
+        # Fast path (imspy-connector >= 0.4.3): sample + add for the whole batch in Rust, in parallel,
+        # with per-frame seeded RNG streams. Falls back to the serial per-frame loop below on older
+        # connectors, which behaves identically apart from being unseeded.
+        if noise_seed is not None and hasattr(handle, "overlay_reference_noise"):
+            groups = [int(window_group_dict[f.frame_id]) if f.frame_id in fragment_frames else None
+                      for f in frames]
+            return handle.overlay_reference_noise(
+                frames, groups,
+                num_precursor_frames=num_precursor_frames,
+                num_fragment_frames=num_fragment_frames,
+                max_intensity_precursor=intensity_max_precursor,
+                max_intensity_fragment=intensity_max_fragment,
+                take_precursor=precursor_sample_fraction,
+                take_fragment=fragment_sample_fraction,
+                seed=noise_seed,
+                num_threads=num_threads,
+            )
 
         for frame in frames:
             if frame.frame_id in fragment_frames:

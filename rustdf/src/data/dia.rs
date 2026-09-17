@@ -634,7 +634,7 @@ impl TimsDatasetDIA {
         let mut sampled_frames: Vec<TimsFrame> =
             self.collect_typed_noise_samples(&pool, num_frames, max_intensity,
                                              take_probability, &mut rng,
-                                             |meta| meta.id as u32);
+                                             |meta| meta.id as u32, None);
         Self::accumulate_or_typed_empty(&mut sampled_frames, target_type)
     }
 
@@ -661,7 +661,7 @@ impl TimsDatasetDIA {
         let mut sampled_frames: Vec<TimsFrame> =
             self.collect_typed_noise_samples(&pool, num_frames, max_intensity,
                                              take_probability, &mut rng,
-                                             |&fid| fid);
+                                             |&fid| fid, None);
         Self::accumulate_or_typed_empty(&mut sampled_frames, target_type)
     }
 
@@ -676,6 +676,7 @@ impl TimsDatasetDIA {
         take_probability: f64,
         rng: &mut impl rand::Rng,
         key_fn: impl Fn(&T) -> u32,
+        conv: Option<&(dyn IndexConverter + Sync)>,
     ) -> Vec<TimsFrame> {
         let mut out: Vec<TimsFrame> = Vec::with_capacity(num_frames);
         if pool.is_empty() || num_frames == 0 {
@@ -687,12 +688,17 @@ impl TimsDatasetDIA {
         while out.len() < num_frames && attempts < max_attempts {
             attempts += 1;
             let Some(candidate_meta) = pool.choose(rng) else { break };
-            let candidate = self
-                .loader
-                .get_frame(key_fn(candidate_meta))
+            let frame_id = key_fn(candidate_meta);
+            // `conv` is the SDK-free converter handed in by parallel callers (see
+            // `overlay_reference_noise`); the serial samplers read with the loader's own.
+            let raw = match conv {
+                Some(c) => self.loader.get_frame_with_converter(frame_id, c),
+                None => self.loader.get_frame(frame_id),
+            };
+            let candidate = raw
                 .filter_ranged(0.0, 2000.0, 0, 1000, 0.0, 5.0, 1.0,
                                max_intensity, 0, i32::MAX)
-                .generate_random_sample(take_probability);
+                .generate_random_sample_with_rng(take_probability, rng);
             // Skip the loader's empty-frame Default-fallback so the
             // returned noise never carries MsType::Unknown into the
             // outer simulator add.
@@ -729,6 +735,90 @@ impl TimsDatasetDIA {
     }
 
     /// All DIA window_group IDs present in the file (sorted unique).
+    /// Reference-noise overlay for a whole batch, in parallel and reproducible.
+    ///
+    /// For every simulated frame, draws `num_*_frames` random reference frames of the same kind
+    /// (precursor frames for MS1, frames of the same DIA window group for MS2), keeps a
+    /// `take_*` fraction of their peaks below `max_intensity_*`, accumulates them and adds the
+    /// result onto the simulated frame with `TimsFrame + TimsFrame` — exactly the per-frame
+    /// `sample_precursor_signal` / `sample_fragment_signal` + `frame + noise` sequence the
+    /// Python job used to run serially, but over a rayon pool and with a per-frame RNG stream
+    /// derived from `seed` and the frame id, so the result does not depend on scheduling.
+    ///
+    /// `window_groups[i]` is `Some(group)` for a fragment frame and `None` for a precursor frame.
+    pub fn overlay_reference_noise(
+        &self,
+        frames: Vec<TimsFrame>,
+        window_groups: Vec<Option<u32>>,
+        num_precursor_frames: usize,
+        num_fragment_frames: usize,
+        max_intensity_precursor: f64,
+        max_intensity_fragment: f64,
+        take_precursor: f64,
+        take_fragment: f64,
+        seed: u64,
+        num_threads: usize,
+    ) -> Vec<TimsFrame> {
+        assert_eq!(frames.len(), window_groups.len(), "frames and window_groups must align");
+        let precursor_pool: Vec<u32> = self
+            .meta_data
+            .iter()
+            .filter(|x| x.ms_ms_type == 0)
+            .map(|m| m.id as u32)
+            .collect();
+        let mut fragment_pools: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
+        for info in &self.dia_ms_ms_info {
+            fragment_pools.entry(info.window_group).or_default().push(info.frame_id);
+        }
+        // The Bruker SDK's `tims_index_to_mz` is not safe to call concurrently on one handle
+        // (same seed gave m/z that differed by ~1e-8 relative on ~8 % of peaks, run to run).
+        // Read the reference frames through the SDK-free formula converter instead; if the
+        // file carries no calibration tables, fall back to one thread so the result stays
+        // deterministic.
+        let sdk_free = self.loader.sdk_free_converter();
+        let threads = if self.loader.uses_bruker_sdk() && sdk_free.is_none() {
+            1
+        } else {
+            num_threads.max(1)
+        };
+        let conv: Option<&(dyn IndexConverter + Sync)> =
+            sdk_free.as_ref().map(|c| c as &(dyn IndexConverter + Sync));
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap();
+        pool.install(|| {
+            frames
+                .into_par_iter()
+                .zip(window_groups.into_par_iter())
+                .map(|(frame, wg)| {
+                    use rand::SeedableRng;
+                    let stream = (frame.frame_id as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                    let mut rng = rand::rngs::StdRng::seed_from_u64(seed ^ stream);
+                    let noise = match wg {
+                        Some(group) => {
+                            let ids: &[u32] = fragment_pools
+                                .get(&group)
+                                .map(|v| v.as_slice())
+                                .unwrap_or(&[]);
+                            let mut s = self.collect_typed_noise_samples(
+                                ids, num_fragment_frames, max_intensity_fragment,
+                                take_fragment, &mut rng, |&fid| fid, conv);
+                            Self::accumulate_or_typed_empty(&mut s, MsType::FragmentDia)
+                        }
+                        None => {
+                            let mut s = self.collect_typed_noise_samples(
+                                &precursor_pool, num_precursor_frames, max_intensity_precursor,
+                                take_precursor, &mut rng, |&fid| fid, conv);
+                            Self::accumulate_or_typed_empty(&mut s, MsType::Precursor)
+                        }
+                    };
+                    frame + noise
+                })
+                .collect()
+        })
+    }
+
     pub fn dia_window_groups(&self) -> Vec<u32> {
         let mut gs: Vec<u32> = self
             .dia_ms_ms_info

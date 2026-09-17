@@ -6,7 +6,7 @@ based on acquisition mode (DDA/DIA) and loading strategy (standard/lazy).
 
 from enum import Enum, auto
 from pathlib import Path
-from typing import Union
+from typing import Union, Optional
 import logging
 
 from imspy_simulation.core.protocols import FrameBuilder
@@ -34,7 +34,7 @@ class LoadingStrategy(Enum):
     LAZY = auto()
 
 
-def create_frame_builder(
+def _create_frame_builder_impl(
     db_path: Union[str, Path],
     acquisition_mode: AcquisitionMode,
     loading_strategy: LoadingStrategy = LoadingStrategy.STANDARD,
@@ -159,3 +159,19 @@ def create_frame_builder(
             )
 
     raise ValueError(f"Unknown acquisition mode: {acquisition_mode}")
+
+
+def create_frame_builder(*args, noise_seed: Optional[int] = None, **kwargs) -> FrameBuilder:
+    """Create a frame builder, optionally seeding its m/z jitter.
+
+    See :func:`_create_frame_builder_impl` for the full argument list.
+
+    Args:
+        noise_seed: Master seed for the m/z jitter. ``None`` keeps the legacy thread-local RNG,
+            where which thread builds a frame decides its noise and a run cannot be reproduced.
+            TimSim passes the run's ``sample_seed``.
+    """
+    builder = _create_frame_builder_impl(*args, **kwargs)
+    if noise_seed is not None:
+        builder.set_noise_seed(int(noise_seed))
+    return builder

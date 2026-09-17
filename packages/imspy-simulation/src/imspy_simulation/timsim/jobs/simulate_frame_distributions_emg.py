@@ -69,8 +69,8 @@ def sample_sigma_lambda_emg(sigma_lower:ArrayLike,
     # TODO use rng
     sigma_hat = np.random.beta(a=sigma_alpha, b=sigma_beta, size=n)
     lambda_hat = np.random.beta(a=lambda_alpha, b=lambda_beta, size=n)
-    sigmas = sigma_lower + sigma_hat * (sigma_upper - sigma_lower)
-    lambdas = lambda_lower + lambda_hat * (lambda_upper - lambda_lower)
+    sigmas = np.maximum(sigma_lower + sigma_hat * (sigma_upper - sigma_lower), _EMG_PARAM_FLOOR)
+    lambdas = np.maximum(lambda_lower + lambda_hat * (lambda_upper - lambda_lower), _EMG_PARAM_FLOOR)
     
     return sigmas, lambdas
 
@@ -115,10 +115,17 @@ def sample_sigma_k_emg(sigma_lower: ArrayLike,
     # TODO use rng
     sigma_hat = np.random.beta(a=sigma_alpha, b=sigma_beta, size=n)
     k_hat = np.random.beta(a=k_alpha, b=k_beta, size=n)
-    sigmas = sigma_lower + sigma_hat * (sigma_upper - sigma_lower)
-    ks = k_lower + k_hat * (k_upper - k_lower)
+    sigmas = np.maximum(sigma_lower + sigma_hat * (sigma_upper - sigma_lower), _EMG_PARAM_FLOOR)
+    ks = np.maximum(k_lower + k_hat * (k_upper - k_lower), _EMG_PARAM_FLOOR)
     
     return sigmas, ks
+
+# An EMG peak with sigma = 0 or lambda = 0 has no width or no decay, and
+# `estimate_mu_from_mode_emg` divides by their product. `np.random.beta` returns exactly 0.0 often
+# enough to matter (and `k_lower_rt` defaults to 0), which made y = inf, sailed past the `y > 0`
+# assert, and produced a NaN mu. The NaN then reached the Rust frame-occurrence search and panicked
+# a worker on a NaN comparison. Clamp both to a floor far below any physical value instead.
+_EMG_PARAM_FLOOR = 1e-12
 
 def erfcxinv(y:ArrayLike, n:int=10)->ArrayLike:
     """
@@ -131,15 +138,27 @@ def erfcxinv(y:ArrayLike, n:int=10)->ArrayLike:
     Returns:
         ArrayLike: The inverse of the scaled complementary error function at y.
     """
-    assert np.all(y > 0), "y must be positive, as erfcx only maps to positive values."
-    # assert that y is an array of np.float64 
     y = np.array(y).astype(np.float64)
+    assert np.all(np.isfinite(y) & (y > 0)), (
+        "y must be finite and positive; erfcx maps to (0, inf), and a non-finite y means a "
+        "degenerate EMG parameter (sigma or lambda at zero) reached this function."
+    )
     # start value depends on the value of y
     xn_start = np.where(y<2,1/(y*np.sqrt(np.pi)), -np.sqrt(np.log(y/2, out=np.zeros_like(y), where=y>=2)))
     xn = xn_start
-    # Newton-Raphson method
-    for i in range(n):
-        xn = xn - (erfcx(xn)-y)/(2*xn*erfcx(xn)-2/np.sqrt(np.pi))
+    # Newton-Raphson method.
+    #
+    # d/dx erfcx(x) = 2*x*erfcx(x) - 2/sqrt(pi), which tends to 0 as x -> +inf, i.e. for small y.
+    # Dividing by it there produced NaN for y below ~1.1e-8. Where the derivative underflows the
+    # start value is already the asymptote (erfcx(x) ~ 1/(x*sqrt(pi)), so x ~ 1/(y*sqrt(pi))), so
+    # keeping the current iterate is both safe and accurate: over y in [1e-8, 1e2] this agrees with
+    # the unguarded iteration to machine precision wherever that one produced a finite answer.
+    for _ in range(n):
+        f = erfcx(xn) - y
+        df = 2*xn*erfcx(xn) - 2/np.sqrt(np.pi)
+        step = np.divide(f, df, out=np.zeros_like(xn), where=np.abs(df) > 1e-12)
+        nxt = xn - step
+        xn = np.where(np.isfinite(nxt), nxt, xn)
     return xn
 
 def estimate_mu_from_mode_emg(mode: ArrayLike, sigma: ArrayLike, lambda_: ArrayLike)->ArrayLike:

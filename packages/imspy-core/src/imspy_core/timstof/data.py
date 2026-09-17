@@ -329,6 +329,42 @@ class TimsDataset(ABC):
         """
         return self.__dataset.tof_to_mz(frame_id, tof_values)
 
+    def build_compressed_frames(
+            self,
+            frame_ids: List[int],
+            mz: List[NDArray[np.float64]],
+            mobility: List[NDArray[np.float64]],
+            intensity: List[NDArray[np.float64]],
+            max_scans: int,
+            compression_level: int = 0,
+            num_threads: int = 4,
+    ) -> List[tuple]:
+        """Run the per-frame TDF writer pipeline for a batch of frames in parallel.
+
+        Converts m/z to TOF and 1/K0 to scan, merges duplicate (scan, tof) cells, interleaves into
+        the Bruker layout and zstd-compresses — all in Rust over a thread pool, so the caller only
+        has to append the results in order.
+
+        Args:
+            frame_ids: Frame id to take the calibration from, per frame.
+            mz / mobility / intensity: Per-frame peak arrays, contiguous float64.
+            max_scans: Scan count of the output layout.
+            compression_level: zstd level; 0 is libzstd's default, matching the per-frame writer.
+            num_threads: Rayon threads.
+
+        Returns:
+            One ``(num_peaks, max_intensity, summed_intensity, compressed_bytes)`` per input frame,
+            in input order. The statistics are taken after the dedup, as the Frames table records them.
+
+        Raises:
+            RuntimeError: if the dataset uses the Bruker SDK and carries no calibration tables for
+                the SDK-free converter, since the SDK cannot be called from several threads at once.
+        """
+        return self.__dataset.build_compressed_frames(
+            [int(f) for f in frame_ids], mz, mobility, intensity,
+            int(max_scans), int(compression_level), int(num_threads),
+        )
+
     def mz_to_tof(self, frame_id: int, mz_values: NDArray[np.float64]) -> NDArray[np.int32]:
         """Convert m/z values to TOF values.
 

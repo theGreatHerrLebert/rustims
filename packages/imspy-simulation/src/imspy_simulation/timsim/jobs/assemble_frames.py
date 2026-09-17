@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import Optional
 import logging
+import time
 
 import pandas as pd
 from tqdm import tqdm
@@ -41,6 +42,7 @@ def assemble_frames(
         quad_transmission_min_probability: float = 0.5,
         quad_transmission_max_isotopes: int = 10,
         superimpose_on_reference: bool = False,
+        noise_seed: Optional[int] = None,
 ) -> None:
     """Assemble frames from frame ids and write them to the database.
 
@@ -76,6 +78,8 @@ def assemble_frames(
             consider for transmission (default 10).
         superimpose_on_reference: If True, superimpose simulated signals on top
             of the full, unmodified reference frames (DIA only).
+        noise_seed: Master seed for the reference-noise sampler (DIA fast path); None keeps the
+            legacy unseeded per-frame sampling.
 
     Returns:
         None, writes frames to disk and metadata to database.
@@ -114,6 +118,7 @@ def assemble_frames(
         quad_isotope_transmission_mode=quad_isotope_transmission_mode,
         quad_transmission_min_probability=quad_transmission_min_probability,
         quad_transmission_max_isotopes=quad_transmission_max_isotopes,
+        noise_seed=noise_seed,
     )
 
     logger.info("Signal noise settings:")
@@ -123,12 +128,17 @@ def assemble_frames(
     logger.info(f'Fragment m/z noise: {mz_noise_fragment}')
     logger.info(f'Fragment noise PPM: {fragment_noise_ppm}')
 
+    # per-phase wall clock inside the batch loop (build = parallel Rust, noise + write = main thread)
+    t_build = t_noise = t_write = 0.0
+    n_written = 0
+
     # go over all frames in batches
     for b in tqdm(range(num_batches), total=num_batches, desc='frame assembly', ncols=100):
         start_index = b * batch_size
         stop_index = (b + 1) * batch_size
         ids = frame_ids[start_index:stop_index]
 
+        t0 = time.perf_counter()
         built_frames = frame_builder.build_frames(
             ids,
             mz_noise_precursor=mz_noise_precursor,
@@ -139,6 +149,7 @@ def assemble_frames(
             num_threads=num_threads,
             fragment=fragment,
         )
+        t1 = time.perf_counter()
 
         if superimpose_on_reference:
             built_frames = superimpose_reference_frames(
@@ -157,14 +168,32 @@ def assemble_frames(
                 num_fragment_frames=num_fragment_frames,
                 acquisition_mode=acquisition_builder.acquisition_mode.mode,
                 pasef_meta=pasef_meta,
+                noise_seed=noise_seed,
+                num_threads=num_threads,
             )
+        t2 = time.perf_counter()
 
-        for frame in built_frames:
-            if acquisition_builder.acquisition_mode.mode == 'DDA':
-                acquisition_builder.tdf_writer.write_frame(frame, scan_mode=8)
-            else:
-                acquisition_builder.tdf_writer.write_frame(frame, scan_mode=9)
+        scan_mode = 8 if acquisition_builder.acquisition_mode.mode == 'DDA' else 9
+        acquisition_builder.tdf_writer.write_frames(
+            built_frames, scan_mode=scan_mode, num_threads=num_threads)
+        t3 = time.perf_counter()
 
+        t_build += t1 - t0
+        t_noise += t2 - t1
+        t_write += t3 - t2
+        n_written += len(built_frames)
+
+    timings = {
+        'frames': n_written,
+        'batches': num_batches,
+        'build_s': round(t_build, 2),
+        'noise_s': round(t_noise, 2),
+        'write_s': round(t_write, 2),
+    }
+    logger.info(
+        f"frame assembly phases: build {t_build:.1f} s | noise/superimpose {t_noise:.1f} s | "
+        f"convert+compress+write {t_write:.1f} s  ({n_written} frames, {num_batches} batches)"
+    )
     logger.info('Writing frame meta data to database ...')
 
     # write frame meta data to database
@@ -216,3 +245,5 @@ def assemble_frames(
             acquisition_builder.synthetics_handle.get_table('pasef_meta'),
             id_mapping=id_mapping
         )
+
+    return timings

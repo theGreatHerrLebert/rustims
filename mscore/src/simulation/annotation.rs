@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
 use itertools::{izip, multizip};
 use rand::distributions::{Uniform, Distribution};
-use rand::rngs::ThreadRng;
+use rand::Rng;
 use statrs::distribution::Normal;
 use crate::data::spectrum::{MsType, ToResolution, Vectorized};
 use crate::data::peptide::FragmentType;
@@ -148,7 +148,12 @@ impl MzSpectrumAnnotated {
 
     pub fn add_mz_noise_uniform(&self, ppm: f64, right_drag: bool) -> Self {
         let mut rng = rand::thread_rng();
-        self.add_mz_noise(ppm, &mut rng, |rng, mz, ppm| {
+        self.add_mz_noise_uniform_with_rng(ppm, right_drag, &mut rng)
+    }
+
+    /// Reproducible counterpart of `add_mz_noise_uniform`; see `MzSpectrum`.
+    pub fn add_mz_noise_uniform_with_rng<R: Rng>(&self, ppm: f64, right_drag: bool, rng: &mut R) -> Self {
+        self.add_mz_noise(ppm, rng, |rng, mz, ppm| {
 
             let ppm_mz = match right_drag {
                 true => mz * ppm / 1e6 / 2.0,
@@ -166,16 +171,21 @@ impl MzSpectrumAnnotated {
 
     pub fn add_mz_noise_normal(&self, ppm: f64) -> Self {
         let mut rng = rand::thread_rng();
-        self.add_mz_noise(ppm, &mut rng, |rng, mz, ppm| {
+        self.add_mz_noise_normal_with_rng(ppm, &mut rng)
+    }
+
+    /// Reproducible counterpart of `add_mz_noise_normal`; see `MzSpectrum`.
+    pub fn add_mz_noise_normal_with_rng<R: Rng>(&self, ppm: f64, rng: &mut R) -> Self {
+        self.add_mz_noise(ppm, rng, |rng, mz, ppm| {
             let ppm_mz = mz * ppm / 1e6;
             let dist = Normal::new(mz, ppm_mz / 3.0).unwrap(); // 3 sigma ? good enough?
             dist.sample(rng)
         })
     }
 
-    fn add_mz_noise<F>(&self, ppm: f64, rng: &mut ThreadRng, noise_fn: F) -> Self
+    fn add_mz_noise<R: Rng, F>(&self, ppm: f64, rng: &mut R, noise_fn: F) -> Self
         where
-            F: Fn(&mut ThreadRng, f64, f64) -> f64,
+            F: Fn(&mut R, f64, f64) -> f64,
     {
         let mz: Vec<f64> = self.mz.iter().map(|&mz_value| noise_fn(rng, mz_value, ppm)).collect();
         let spectrum = MzSpectrumAnnotated { mz, intensity: self.intensity.clone(), annotations: self.annotations.clone()};

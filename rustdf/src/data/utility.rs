@@ -51,7 +51,7 @@ pub fn zstd_compress(decompressed_data: &[u8], compression_level: i32) -> io::Re
 /// frame data straight into the encoder, producing negative/garbage TOF deltas
 /// that vendor readers (e.g. DiaNN) reject. Mirroring the Python preprocessing
 /// here keeps the two writers byte-for-byte identical.
-fn sort_dedup_scan_tof(
+pub fn sort_dedup_scan_tof(
     scans: &[u32],
     tofs: &[u32],
     intensities: &[u32],
@@ -374,4 +374,98 @@ pub fn merge_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
     }
     out.push(cur);
     out
+}
+
+/// One frame's worth of writer output: the statistics the TDF `Frames` row needs, plus the
+/// zstd-compressed payload ready to append to `analysis.tdf_bin`.
+pub struct CompressedFrame {
+    pub num_peaks: u32,
+    pub max_intensity: u32,
+    pub summed_intensity: u64,
+    pub data: Vec<u8>,
+}
+
+/// The whole per-frame TDF writer pipeline — m/z → TOF and 1/K0 → scan conversion, `(scan, tof)`
+/// dedup, interleave into the Bruker layout, zstd — for a batch of frames, over a rayon pool.
+///
+/// This used to run one frame at a time in Python because the conversion went through the Bruker
+/// SDK, which is not safe to call concurrently on one handle. Given a `Sync` converter (the SDK-free
+/// `BrukerFormulaConverter` reproduces the SDK's integer output exactly in both of these directions)
+/// the whole pipeline is per-frame independent, so only the final append has to stay ordered.
+///
+/// `mz`, `mobility` and `intensity` are parallel slices, one entry per frame, matching `frame_ids`.
+/// Results come back in input order.
+pub fn build_compressed_frames(
+    converter: &(dyn crate::data::handle::IndexConverter + Sync),
+    frame_ids: &[u32],
+    mz: &[&[f64]],
+    mobility: &[&[f64]],
+    intensity: &[&[f64]],
+    max_scans: u32,
+    compression_level: i32,
+    num_threads: usize,
+) -> Result<Vec<CompressedFrame>, String> {
+    if frame_ids.len() != mz.len() || frame_ids.len() != mobility.len() || frame_ids.len() != intensity.len() {
+        return Err(format!(
+            "frame_ids ({}), mz ({}), mobility ({}) and intensity ({}) must have the same length",
+            frame_ids.len(), mz.len(), mobility.len(), intensity.len()
+        ));
+    }
+    // Per frame the three arrays index each other in `sort_dedup_scan_tof`, so a ragged triplet
+    // would be an out-of-bounds panic in Rust rather than an error the caller can handle.
+    for i in 0..frame_ids.len() {
+        if mz[i].len() != mobility[i].len() || mz[i].len() != intensity[i].len() {
+            return Err(format!(
+                "frame {} (id {}): mz ({}), mobility ({}) and intensity ({}) must have the same length",
+                i, frame_ids[i], mz[i].len(), mobility[i].len(), intensity[i].len()
+            ));
+        }
+    }
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(num_threads.max(1))
+        .build()
+        .map_err(|e| format!("could not build the writer thread pool: {e}"))?;
+
+    pool.install(|| {
+        (0..frame_ids.len())
+            .into_par_iter()
+            .map(|i| {
+                let frame_id = frame_ids[i];
+                let mz_values: Vec<f64> = mz[i].to_vec();
+                let im_values: Vec<f64> = mobility[i].to_vec();
+
+                let tof = converter.mz_to_tof(frame_id, &mz_values);
+                let scan = converter.inverse_mobility_to_scan(frame_id, &im_values);
+                let raw_intensity: Vec<u32> = intensity[i].iter().map(|&x| x as u32).collect();
+
+                // m/z → TOF is not injective, so several peaks can land on one cell; sum them and
+                // sort by (scan, tof), which is the order the encoder's delta coding needs.
+                let (scan, tof, intensity) = sort_dedup_scan_tof(&scan, &tof, &raw_intensity);
+
+                let num_peaks = intensity.len() as u32;
+                let max_intensity = intensity.iter().copied().max().unwrap_or(0);
+                let summed_intensity: u64 = intensity.iter().map(|&x| x as u64).sum();
+
+                let mut tof_delta = tof.clone();
+                modify_tofs(&mut tof_delta, &scan);
+                let peak_cnts = get_peak_cnts(max_scans, &scan);
+                let interleaved: Vec<u32> = tof_delta
+                    .iter()
+                    .zip(intensity.iter())
+                    .flat_map(|(t, i)| [*t, *i])
+                    .collect();
+                let real_data = get_realdata(&peak_cnts, &interleaved);
+
+                // `zstd::bulk::compress` (ZSTD_compress) writes the decompressed size into the
+                // frame header; `encode_all` does not, and readers that use the simple API —
+                // including the Python `zstd` module every existing .d was written with — refuse
+                // a frame without it. Keep the header shape the format already has.
+                let data = zstd::bulk::compress(real_data.as_slice(), compression_level)
+                    .map_err(|e| format!("frame id {frame_id}: zstd compression failed: {e}"))?;
+
+                Ok(CompressedFrame { num_peaks, max_intensity, summed_intensity, data })
+            })
+            .collect()
+    })
 }

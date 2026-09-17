@@ -683,14 +683,24 @@ impl TimsDatasetDDA {
             None => pasef_info.iter().collect(),
         };
 
-        // Note: The Bruker SDK is NOT thread-safe, so we must use sequential iteration
-        // when the SDK is being used for index conversion.
-        let uses_bruker_sdk = self.loader.uses_bruker_sdk();
+        // The Bruker SDK's index conversion is not safe to call concurrently on one handle, but
+        // the SDK-free formula converter evaluates the very calibration curves the file carries
+        // (matched the SDK to 3e-11 Th / 1 ULP on the reference data) and *is* `Sync`. So in SDK
+        // mode we read through that instead of dropping to a single thread; only a file without
+        // usable calibration tables still forces the serial path.
+        let sdk_free = self.loader.sdk_free_converter();
+        let conv: Option<&(dyn IndexConverter + Sync)> =
+            sdk_free.as_ref().map(|c| c as &(dyn IndexConverter + Sync));
+        let read_frame = |frame_id: u32| match conv {
+            Some(c) => self.loader.get_frame_with_converter(frame_id, c),
+            None => self.loader.get_frame(frame_id),
+        };
+        let force_serial = self.loader.uses_bruker_sdk() && conv.is_none();
 
         // Helper closure to process a single PASEF fragment
         let process_fragment = |pasef_info: &PasefMsMsMeta| -> PASEFDDAFragment {
             // get the frame
-            let frame = self.loader.get_frame(pasef_info.frame_id as u32);
+            let frame = read_frame(pasef_info.frame_id as u32);
 
             // get five percent of the scan range
             let scan_margin = (pasef_info.scan_num_end - pasef_info.scan_num_begin) / 20;
@@ -718,8 +728,8 @@ impl TimsDatasetDDA {
             }
         };
 
-        if uses_bruker_sdk {
-            // Sequential processing when using Bruker SDK (not thread-safe)
+        if force_serial {
+            // No thread-safe converter available: fall back to one thread.
             filtered_pasef_info.iter().map(|info| process_fragment(info)).collect()
         } else {
             // Parallel processing when using simple index converter (thread-safe)
@@ -783,9 +793,19 @@ impl TimsDatasetDDA {
         }
 
         // Step 4: Build fragment data with aggregation (merge frames for same precursor)
-        // Note: The Bruker SDK is NOT thread-safe, so we must use sequential iteration
-        // when the SDK is being used for index conversion.
-        let uses_bruker_sdk = self.loader.uses_bruker_sdk();
+        // The Bruker SDK's index conversion is not safe to call concurrently on one handle, but
+        // the SDK-free formula converter evaluates the very calibration curves the file carries
+        // (matched the SDK to 3e-11 Th / 1 ULP on the reference data) and *is* `Sync`. So in SDK
+        // mode we read through that instead of dropping to a single thread; only a file without
+        // usable calibration tables still forces the serial path.
+        let sdk_free = self.loader.sdk_free_converter();
+        let conv: Option<&(dyn IndexConverter + Sync)> =
+            sdk_free.as_ref().map(|c| c as &(dyn IndexConverter + Sync));
+        let read_frame = |frame_id: u32| match conv {
+            Some(c) => self.loader.get_frame_with_converter(frame_id, c),
+            None => self.loader.get_frame(frame_id),
+        };
+        let force_serial = self.loader.uses_bruker_sdk() && conv.is_none();
 
         // Helper closure to process a single precursor
         let process_precursor = |(precursor_id, pasef_infos): (&i64, &Vec<&PasefMsMsMeta>)| -> Option<PASEFFragmentData> {
@@ -807,7 +827,7 @@ impl TimsDatasetDDA {
 
             for pasef_info in pasef_infos {
                 // Get the frame and filter by scan range
-                let frame = self.loader.get_frame(pasef_info.frame_id as u32);
+                let frame = read_frame(pasef_info.frame_id as u32);
 
                 // Get five percent of the scan range for margin
                 let scan_margin = (pasef_info.scan_num_end - pasef_info.scan_num_begin) / 20;
@@ -860,8 +880,8 @@ impl TimsDatasetDDA {
             })
         };
 
-        let fragment_data: Vec<PASEFFragmentData> = if uses_bruker_sdk {
-            // Sequential processing when using Bruker SDK (not thread-safe)
+        let fragment_data: Vec<PASEFFragmentData> = if force_serial {
+            // No thread-safe converter available: fall back to one thread.
             pasef_by_precursor
                 .iter()
                 .filter_map(process_precursor)

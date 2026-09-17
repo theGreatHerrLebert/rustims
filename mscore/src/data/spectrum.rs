@@ -9,7 +9,7 @@ use serde::{Serialize, Deserialize};
 extern crate rand;
 
 use rand::distributions::{Uniform, Distribution};
-use rand::rngs::ThreadRng;
+use rand::Rng;
 use statrs::distribution::Normal;
 
 /// Represents a vectorized mass spectrum.
@@ -296,7 +296,14 @@ impl MzSpectrum {
 
     pub fn add_mz_noise_uniform(&self, ppm: f64, right_drag: bool) -> Self {
         let mut rng = rand::thread_rng();
-        self.add_mz_noise(ppm, &mut rng, |rng, mz, ppm| {
+        self.add_mz_noise_uniform_with_rng(ppm, right_drag, &mut rng)
+    }
+
+    /// Same as `add_mz_noise_uniform`, but drawing from a caller-supplied RNG so the jitter is
+    /// reproducible. `thread_rng` makes the written spectrum depend on which thread happened to
+    /// run it; a shifted m/z can cross a TOF bin boundary and change the writer's dedup.
+    pub fn add_mz_noise_uniform_with_rng<R: Rng>(&self, ppm: f64, right_drag: bool, rng: &mut R) -> Self {
+        self.add_mz_noise(ppm, rng, |rng, mz, ppm| {
 
             let ppm_mz = match right_drag {
                 true => mz * ppm / 1e6 / 2.0,
@@ -314,16 +321,21 @@ impl MzSpectrum {
 
     pub fn add_mz_noise_normal(&self, ppm: f64) -> Self {
         let mut rng = rand::thread_rng();
-        self.add_mz_noise(ppm, &mut rng, |rng, mz, ppm| {
+        self.add_mz_noise_normal_with_rng(ppm, &mut rng)
+    }
+
+    /// Reproducible counterpart of `add_mz_noise_normal`; see `add_mz_noise_uniform_with_rng`.
+    pub fn add_mz_noise_normal_with_rng<R: Rng>(&self, ppm: f64, rng: &mut R) -> Self {
+        self.add_mz_noise(ppm, rng, |rng, mz, ppm| {
             let ppm_mz = mz * ppm / 1e6;
             let dist = Normal::new(mz, ppm_mz / 3.0).unwrap();
             dist.sample(rng)
         })
     }
 
-    fn add_mz_noise<F>(&self, ppm: f64, rng: &mut ThreadRng, noise_fn: F) -> Self
+    fn add_mz_noise<R: Rng, F>(&self, ppm: f64, rng: &mut R, noise_fn: F) -> Self
         where
-            F: Fn(&mut ThreadRng, f64, f64) -> f64,
+            F: Fn(&mut R, f64, f64) -> f64,
     {
         let mz: Vec<f64> = self.mz.iter().map(|&mz_value| noise_fn(rng, mz_value, ppm)).collect();
         // Clone intensity Arc (O(1)) and wrap new mz in Arc
@@ -704,4 +716,54 @@ impl MzSpectrumVectorized {
 pub struct IndexedMzSpectrumVectorized {
     pub index: Vec<i32>,
     pub mz_vector: MzSpectrumVectorized,
+}
+#[cfg(test)]
+mod mz_noise_seeded_tests {
+    use super::*;
+    use crate::simulation::noise_rng::noise_rng;
+
+    fn spectrum() -> MzSpectrum {
+        MzSpectrum::new(
+            vec![300.1234, 450.5678, 700.9012, 1100.3456],
+            vec![1000.0, 2500.0, 700.0, 150.0],
+        )
+    }
+
+    #[test]
+    fn seeded_uniform_jitter_is_reproducible() {
+        let s = spectrum();
+        let a = s.add_mz_noise_uniform_with_rng(6.5, false, &mut noise_rng(41, &[7]));
+        let b = s.add_mz_noise_uniform_with_rng(6.5, false, &mut noise_rng(41, &[7]));
+        assert_eq!(a.mz, b.mz);
+        assert_eq!(a.intensity, b.intensity);
+    }
+
+    #[test]
+    fn seeded_normal_jitter_is_reproducible() {
+        let s = spectrum();
+        let a = s.add_mz_noise_normal_with_rng(6.5, &mut noise_rng(41, &[7]));
+        let b = s.add_mz_noise_normal_with_rng(6.5, &mut noise_rng(41, &[7]));
+        assert_eq!(a.mz, b.mz);
+    }
+
+    #[test]
+    fn a_different_frame_key_gives_different_jitter() {
+        let s = spectrum();
+        let a = s.add_mz_noise_normal_with_rng(6.5, &mut noise_rng(41, &[7]));
+        let b = s.add_mz_noise_normal_with_rng(6.5, &mut noise_rng(41, &[8]));
+        assert_ne!(a.mz, b.mz, "frames must not share a noise stream");
+    }
+
+    #[test]
+    fn the_jitter_stays_within_the_requested_ppm() {
+        let s = spectrum();
+        let ppm = 6.5;
+        let out = s.add_mz_noise_uniform_with_rng(ppm, false, &mut noise_rng(41, &[1]));
+        assert_eq!(out.mz.len(), s.mz.len());
+        for (before, after) in s.mz.iter().zip(out.mz.iter()) {
+            // to_resolution(6) rounds to 1e-6, so allow that on top of the ppm window.
+            let window = before * ppm / 1e6 + 1e-6;
+            assert!((after - before).abs() <= window, "{before} -> {after} exceeds {ppm} ppm");
+        }
+    }
 }

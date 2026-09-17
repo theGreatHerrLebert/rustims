@@ -4,6 +4,7 @@
 //! memory-efficient alternatives to their non-lazy counterparts that only load
 //! peptide/ion data for the frames being built rather than loading everything upfront.
 
+use mscore::simulation::noise_rng::noise_rng;
 use mscore::data::peptide::PeptideProductIonSeriesCollection;
 use mscore::data::spectrum::{IndexedMzSpectrum, MsType, MzSpectrum};
 use mscore::timstof::collision::{TimsTofCollisionEnergy, TimsTofCollisionEnergyDIA};
@@ -51,9 +52,17 @@ pub struct TimsTofLazyFrameBuilderDIA {
     pub num_threads: usize,
     /// Source for occurrence/abundance distributions (legacy columns or projector)
     pub source: DistributionSource,
+    /// Master seed for the simulation's noise. 0 keeps the legacy `thread_rng` behaviour
+    /// for API users that never set it; TimSim sets it from the run's `sample_seed`.
+    pub noise_seed: u64,
 }
 
 impl TimsTofLazyFrameBuilderDIA {
+
+    /// Set the master seed for the m/z jitter, making a run's noise reproducible.
+    pub fn set_noise_seed(&mut self, seed: u64) {
+        self.noise_seed = seed;
+    }
     /// Create a new lazy frame builder.
     ///
     /// Only loads static metadata (frames, scans, transmission settings).
@@ -96,6 +105,7 @@ impl TimsTofLazyFrameBuilderDIA {
         let fragmentation_settings = handle.get_collision_energy_dia();
 
         Ok(Self {
+            noise_seed: 0,
             db_path: path.to_str().unwrap().to_string(),
             frames,
             scans,
@@ -295,6 +305,9 @@ impl TimsTofLazyFrameBuilderDIA {
         frame_to_abundances: &BTreeMap<u32, (Vec<u32>, Vec<f32>)>,
         peptide_to_events: &BTreeMap<u32, f32>,
     ) -> TimsFrame {
+        // One RNG per frame, keyed by the master seed and the frame id, so the m/z jitter
+        // does not depend on which thread builds the frame. See mscore::simulation::noise_rng.
+        let mut rng = noise_rng(self.noise_seed, &[frame_id as u64]);
         let ms_type = MsType::Precursor;
         let rt = *self.frame_to_rt.get(&frame_id).unwrap_or(&0.0) as f64;
 
@@ -328,9 +341,9 @@ impl TimsTofLazyFrameBuilderDIA {
 
                     let mz_spectrum = if mz_noise_precursor {
                         if uniform {
-                            scaled_spec.add_mz_noise_uniform(precursor_noise_ppm, right_drag)
+                            scaled_spec.add_mz_noise_uniform_with_rng(precursor_noise_ppm, right_drag, &mut rng)
                         } else {
-                            scaled_spec.add_mz_noise_normal(precursor_noise_ppm)
+                            scaled_spec.add_mz_noise_normal_with_rng(precursor_noise_ppm, &mut rng)
                         }
                     } else {
                         scaled_spec
@@ -385,6 +398,9 @@ impl TimsTofLazyFrameBuilderDIA {
         peptide_to_events: &BTreeMap<u32, f32>,
         fragment_ions_map: &Option<BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>>,
     ) -> TimsFrame {
+        // One RNG per frame, keyed by the master seed and the frame id, so the m/z jitter
+        // does not depend on which thread builds the frame. See mscore::simulation::noise_rng.
+        let mut rng = noise_rng(self.noise_seed, &[frame_id as u64]);
         let ms_type = MsType::FragmentDia;
         let rt = *self.frame_to_rt.get(&frame_id).unwrap_or(&0.0) as f64;
 
@@ -478,9 +494,9 @@ impl TimsTofLazyFrameBuilderDIA {
 
                         let mz_spectrum = if mz_noise_fragment {
                             if uniform {
-                                scaled_spec.add_mz_noise_uniform(fragment_noise_ppm, right_drag)
+                                scaled_spec.add_mz_noise_uniform_with_rng(fragment_noise_ppm, right_drag, &mut rng)
                             } else {
-                                scaled_spec.add_mz_noise_normal(fragment_noise_ppm)
+                                scaled_spec.add_mz_noise_normal_with_rng(fragment_noise_ppm, &mut rng)
                             }
                         } else {
                             scaled_spec

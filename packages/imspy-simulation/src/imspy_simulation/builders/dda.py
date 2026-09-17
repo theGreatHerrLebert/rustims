@@ -110,6 +110,15 @@ class DDAFrameBuilder:
             )
             self._with_annotations = with_annotations
 
+    def set_noise_seed(self, seed: int) -> None:
+        """Seed the m/z jitter so this builder's noise is reproducible.
+
+        Without it the jitter is drawn from a thread-local RNG, so which thread builds a frame
+        decides its noise — and a shifted m/z can cross a TOF bin boundary, changing the peaks
+        that get written.
+        """
+        self._py_ptr.set_noise_seed(int(seed) & 0xFFFFFFFFFFFFFFFF)
+
     @property
     def _ptr(self):
         """Get the underlying PyO3 pointer."""
