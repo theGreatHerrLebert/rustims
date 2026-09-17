@@ -51,7 +51,7 @@
 <a href=#51 id=51 data-nosnippet>51</a>/// frame data straight into the encoder, producing negative/garbage TOF deltas
 <a href=#52 id=52 data-nosnippet>52</a>/// that vendor readers (e.g. DiaNN) reject. Mirroring the Python preprocessing
 <a href=#53 id=53 data-nosnippet>53</a>/// here keeps the two writers byte-for-byte identical.
-<a href=#54 id=54 data-nosnippet>54</a></span><span class="kw">fn </span>sort_dedup_scan_tof(
+<a href=#54 id=54 data-nosnippet>54</a></span><span class="kw">pub fn </span>sort_dedup_scan_tof(
 <a href=#55 id=55 data-nosnippet>55</a>    scans: <span class="kw-2">&amp;</span>[u32],
 <a href=#56 id=56 data-nosnippet>56</a>    tofs: <span class="kw-2">&amp;</span>[u32],
 <a href=#57 id=57 data-nosnippet>57</a>    intensities: <span class="kw-2">&amp;</span>[u32],
@@ -375,4 +375,98 @@
 <a href=#375 id=375 data-nosnippet>375</a>    out.push(cur);
 <a href=#376 id=376 data-nosnippet>376</a>    out
 <a href=#377 id=377 data-nosnippet>377</a>}
+<a href=#378 id=378 data-nosnippet>378</a>
+<a href=#379 id=379 data-nosnippet>379</a><span class="doccomment">/// One frame's worth of writer output: the statistics the TDF `Frames` row needs, plus the
+<a href=#380 id=380 data-nosnippet>380</a>/// zstd-compressed payload ready to append to `analysis.tdf_bin`.
+<a href=#381 id=381 data-nosnippet>381</a></span><span class="kw">pub struct </span>CompressedFrame {
+<a href=#382 id=382 data-nosnippet>382</a>    <span class="kw">pub </span>num_peaks: u32,
+<a href=#383 id=383 data-nosnippet>383</a>    <span class="kw">pub </span>max_intensity: u32,
+<a href=#384 id=384 data-nosnippet>384</a>    <span class="kw">pub </span>summed_intensity: u64,
+<a href=#385 id=385 data-nosnippet>385</a>    <span class="kw">pub </span>data: Vec&lt;u8&gt;,
+<a href=#386 id=386 data-nosnippet>386</a>}
+<a href=#387 id=387 data-nosnippet>387</a>
+<a href=#388 id=388 data-nosnippet>388</a><span class="doccomment">/// The whole per-frame TDF writer pipeline — m/z → TOF and 1/K0 → scan conversion, `(scan, tof)`
+<a href=#389 id=389 data-nosnippet>389</a>/// dedup, interleave into the Bruker layout, zstd — for a batch of frames, over a rayon pool.
+<a href=#390 id=390 data-nosnippet>390</a>///
+<a href=#391 id=391 data-nosnippet>391</a>/// This used to run one frame at a time in Python because the conversion went through the Bruker
+<a href=#392 id=392 data-nosnippet>392</a>/// SDK, which is not safe to call concurrently on one handle. Given a `Sync` converter (the SDK-free
+<a href=#393 id=393 data-nosnippet>393</a>/// `BrukerFormulaConverter` reproduces the SDK's integer output exactly in both of these directions)
+<a href=#394 id=394 data-nosnippet>394</a>/// the whole pipeline is per-frame independent, so only the final append has to stay ordered.
+<a href=#395 id=395 data-nosnippet>395</a>///
+<a href=#396 id=396 data-nosnippet>396</a>/// `mz`, `mobility` and `intensity` are parallel slices, one entry per frame, matching `frame_ids`.
+<a href=#397 id=397 data-nosnippet>397</a>/// Results come back in input order.
+<a href=#398 id=398 data-nosnippet>398</a></span><span class="kw">pub fn </span>build_compressed_frames(
+<a href=#399 id=399 data-nosnippet>399</a>    converter: <span class="kw-2">&amp;</span>(<span class="kw">dyn </span><span class="kw">crate</span>::data::handle::IndexConverter + Sync),
+<a href=#400 id=400 data-nosnippet>400</a>    frame_ids: <span class="kw-2">&amp;</span>[u32],
+<a href=#401 id=401 data-nosnippet>401</a>    mz: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>[f64]],
+<a href=#402 id=402 data-nosnippet>402</a>    mobility: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>[f64]],
+<a href=#403 id=403 data-nosnippet>403</a>    intensity: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>[f64]],
+<a href=#404 id=404 data-nosnippet>404</a>    max_scans: u32,
+<a href=#405 id=405 data-nosnippet>405</a>    compression_level: i32,
+<a href=#406 id=406 data-nosnippet>406</a>    num_threads: usize,
+<a href=#407 id=407 data-nosnippet>407</a>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;CompressedFrame&gt;, String&gt; {
+<a href=#408 id=408 data-nosnippet>408</a>    <span class="kw">if </span>frame_ids.len() != mz.len() || frame_ids.len() != mobility.len() || frame_ids.len() != intensity.len() {
+<a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
+<a href=#410 id=410 data-nosnippet>410</a>            <span class="string">"frame_ids ({}), mz ({}), mobility ({}) and intensity ({}) must have the same length"</span>,
+<a href=#411 id=411 data-nosnippet>411</a>            frame_ids.len(), mz.len(), mobility.len(), intensity.len()
+<a href=#412 id=412 data-nosnippet>412</a>        ));
+<a href=#413 id=413 data-nosnippet>413</a>    }
+<a href=#414 id=414 data-nosnippet>414</a>    <span class="comment">// Per frame the three arrays index each other in `sort_dedup_scan_tof`, so a ragged triplet
+<a href=#415 id=415 data-nosnippet>415</a>    // would be an out-of-bounds panic in Rust rather than an error the caller can handle.
+<a href=#416 id=416 data-nosnippet>416</a>    </span><span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..frame_ids.len() {
+<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">if </span>mz[i].len() != mobility[i].len() || mz[i].len() != intensity[i].len() {
+<a href=#418 id=418 data-nosnippet>418</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">format!</span>(
+<a href=#419 id=419 data-nosnippet>419</a>                <span class="string">"frame {} (id {}): mz ({}), mobility ({}) and intensity ({}) must have the same length"</span>,
+<a href=#420 id=420 data-nosnippet>420</a>                i, frame_ids[i], mz[i].len(), mobility[i].len(), intensity[i].len()
+<a href=#421 id=421 data-nosnippet>421</a>            ));
+<a href=#422 id=422 data-nosnippet>422</a>        }
+<a href=#423 id=423 data-nosnippet>423</a>    }
+<a href=#424 id=424 data-nosnippet>424</a>
+<a href=#425 id=425 data-nosnippet>425</a>    <span class="kw">let </span>pool = rayon::ThreadPoolBuilder::new()
+<a href=#426 id=426 data-nosnippet>426</a>        .num_threads(num_threads.max(<span class="number">1</span>))
+<a href=#427 id=427 data-nosnippet>427</a>        .build()
+<a href=#428 id=428 data-nosnippet>428</a>        .map_err(|e| <span class="macro">format!</span>(<span class="string">"could not build the writer thread pool: {e}"</span>))<span class="question-mark">?</span>;
+<a href=#429 id=429 data-nosnippet>429</a>
+<a href=#430 id=430 data-nosnippet>430</a>    pool.install(|| {
+<a href=#431 id=431 data-nosnippet>431</a>        (<span class="number">0</span>..frame_ids.len())
+<a href=#432 id=432 data-nosnippet>432</a>            .into_par_iter()
+<a href=#433 id=433 data-nosnippet>433</a>            .map(|i| {
+<a href=#434 id=434 data-nosnippet>434</a>                <span class="kw">let </span>frame_id = frame_ids[i];
+<a href=#435 id=435 data-nosnippet>435</a>                <span class="kw">let </span>mz_values: Vec&lt;f64&gt; = mz[i].to_vec();
+<a href=#436 id=436 data-nosnippet>436</a>                <span class="kw">let </span>im_values: Vec&lt;f64&gt; = mobility[i].to_vec();
+<a href=#437 id=437 data-nosnippet>437</a>
+<a href=#438 id=438 data-nosnippet>438</a>                <span class="kw">let </span>tof = converter.mz_to_tof(frame_id, <span class="kw-2">&amp;</span>mz_values);
+<a href=#439 id=439 data-nosnippet>439</a>                <span class="kw">let </span>scan = converter.inverse_mobility_to_scan(frame_id, <span class="kw-2">&amp;</span>im_values);
+<a href=#440 id=440 data-nosnippet>440</a>                <span class="kw">let </span>raw_intensity: Vec&lt;u32&gt; = intensity[i].iter().map(|<span class="kw-2">&amp;</span>x| x <span class="kw">as </span>u32).collect();
+<a href=#441 id=441 data-nosnippet>441</a>
+<a href=#442 id=442 data-nosnippet>442</a>                <span class="comment">// m/z → TOF is not injective, so several peaks can land on one cell; sum them and
+<a href=#443 id=443 data-nosnippet>443</a>                // sort by (scan, tof), which is the order the encoder's delta coding needs.
+<a href=#444 id=444 data-nosnippet>444</a>                </span><span class="kw">let </span>(scan, tof, intensity) = sort_dedup_scan_tof(<span class="kw-2">&amp;</span>scan, <span class="kw-2">&amp;</span>tof, <span class="kw-2">&amp;</span>raw_intensity);
+<a href=#445 id=445 data-nosnippet>445</a>
+<a href=#446 id=446 data-nosnippet>446</a>                <span class="kw">let </span>num_peaks = intensity.len() <span class="kw">as </span>u32;
+<a href=#447 id=447 data-nosnippet>447</a>                <span class="kw">let </span>max_intensity = intensity.iter().copied().max().unwrap_or(<span class="number">0</span>);
+<a href=#448 id=448 data-nosnippet>448</a>                <span class="kw">let </span>summed_intensity: u64 = intensity.iter().map(|<span class="kw-2">&amp;</span>x| x <span class="kw">as </span>u64).sum();
+<a href=#449 id=449 data-nosnippet>449</a>
+<a href=#450 id=450 data-nosnippet>450</a>                <span class="kw">let </span><span class="kw-2">mut </span>tof_delta = tof.clone();
+<a href=#451 id=451 data-nosnippet>451</a>                modify_tofs(<span class="kw-2">&amp;mut </span>tof_delta, <span class="kw-2">&amp;</span>scan);
+<a href=#452 id=452 data-nosnippet>452</a>                <span class="kw">let </span>peak_cnts = get_peak_cnts(max_scans, <span class="kw-2">&amp;</span>scan);
+<a href=#453 id=453 data-nosnippet>453</a>                <span class="kw">let </span>interleaved: Vec&lt;u32&gt; = tof_delta
+<a href=#454 id=454 data-nosnippet>454</a>                    .iter()
+<a href=#455 id=455 data-nosnippet>455</a>                    .zip(intensity.iter())
+<a href=#456 id=456 data-nosnippet>456</a>                    .flat_map(|(t, i)| [<span class="kw-2">*</span>t, <span class="kw-2">*</span>i])
+<a href=#457 id=457 data-nosnippet>457</a>                    .collect();
+<a href=#458 id=458 data-nosnippet>458</a>                <span class="kw">let </span>real_data = get_realdata(<span class="kw-2">&amp;</span>peak_cnts, <span class="kw-2">&amp;</span>interleaved);
+<a href=#459 id=459 data-nosnippet>459</a>
+<a href=#460 id=460 data-nosnippet>460</a>                <span class="comment">// `zstd::bulk::compress` (ZSTD_compress) writes the decompressed size into the
+<a href=#461 id=461 data-nosnippet>461</a>                // frame header; `encode_all` does not, and readers that use the simple API —
+<a href=#462 id=462 data-nosnippet>462</a>                // including the Python `zstd` module every existing .d was written with — refuse
+<a href=#463 id=463 data-nosnippet>463</a>                // a frame without it. Keep the header shape the format already has.
+<a href=#464 id=464 data-nosnippet>464</a>                </span><span class="kw">let </span>data = zstd::bulk::compress(real_data.as_slice(), compression_level)
+<a href=#465 id=465 data-nosnippet>465</a>                    .map_err(|e| <span class="macro">format!</span>(<span class="string">"frame id {frame_id}: zstd compression failed: {e}"</span>))<span class="question-mark">?</span>;
+<a href=#466 id=466 data-nosnippet>466</a>
+<a href=#467 id=467 data-nosnippet>467</a>                <span class="prelude-val">Ok</span>(CompressedFrame { num_peaks, max_intensity, summed_intensity, data })
+<a href=#468 id=468 data-nosnippet>468</a>            })
+<a href=#469 id=469 data-nosnippet>469</a>            .collect()
+<a href=#470 id=470 data-nosnippet>470</a>    })
+<a href=#471 id=471 data-nosnippet>471</a>}
 </code></pre></div></section></main></body></html>

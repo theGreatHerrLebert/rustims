@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["annotation","simulation"]};
+window.SIDEBAR_ITEMS = {"mod":["annotation","noise_rng","simulation"]};
