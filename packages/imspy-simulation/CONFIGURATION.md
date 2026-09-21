@@ -274,7 +274,7 @@ A signing error logs a warning and never fails the run. Check a file with
 |-----|------|---------|-------------|
 | `emit_provenance` | bool | `true` | Emit the signed provenance record. |
 | `provenance_embed` | bool | `true` | Embed the envelope into the output (`.d` provenance table / mzML `fileContent`). `false` writes a sibling `<name>.provenance.json` sidecar. (Vendor `.raw` always falls back to a sidecar.) |
-| `provenance_key_path` | str | _none_ | Signing key path. `none` = default `~/.config/timsim/keys/` (auto-generated). |
+| `provenance_key_path` | str | _none_ | Signing key path. `none` = mzprov's default, `~/.config/mzprov/keys/` (auto-generated); an existing key at the older `~/.config/timsim/keys/` is used in place. |
 
 ## `[logging]`
 

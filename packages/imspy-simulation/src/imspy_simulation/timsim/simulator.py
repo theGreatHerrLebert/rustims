@@ -524,7 +524,7 @@ def get_default_settings() -> dict:
         # `<name>.provenance.json` sidecar instead. (A vendor .raw can't be embedded; that
         # path would fall back to a sidecar.)
         'provenance_embed': True,
-        'provenance_key_path': None,      # None = default ~/.config/timsim/keys/ (auto-gen)
+        'provenance_key_path': None,      # None = mzprov's default key (auto-gen; an existing ~/.config/timsim/keys/ key is kept)
 
         # SCIEX ZenoTOF SWATH build-from-.wiff (instrument=sciex_zenotof; template_path = .wiff).
         # The .wiff method has no per-scan timing, so the SWATH schedule is synthesized from
