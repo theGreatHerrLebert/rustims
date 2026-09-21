@@ -22,6 +22,7 @@ dependencies = [
     "zstd>=1.5",
     "matplotlib>=3.5",
     "imspy-search>=0.4.1",
+    "mzprov>=0.1.1",  # signs every output (emit_provenance, on by default)
 ]
 
 [project.optional-dependencies]

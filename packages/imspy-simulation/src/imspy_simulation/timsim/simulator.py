@@ -515,8 +515,8 @@ def get_default_settings() -> dict:
         # data", binds the output to the config + a signing key). Emitted for ALL four
         # vendors: Bruker .d (structural canonicalization), SCIEX/Waters mzML (mzML content
         # canonicalization), and Thermo .raw (opaque whole-file content hash, sidecar-only —
-        # a vendor binary can't be embedded). Requires the optional `mzprov` package
-        # (with .raw support); import-guarded.
+        # a vendor binary can't be embedded). Signed with `mzprov`, a dependency; a signing
+        # error is logged and never fails the run.
         'emit_provenance': True,
         # True (default): EMBED the signed envelope INTO the output itself — the .d's
         # analysis.tdf (a provenance table) or the mzML's fileContent — so provenance
@@ -1238,22 +1238,15 @@ def emit_provenance_sidecar(d_path, db_path, config_path, experiment_name,
                             embed, key_path, logger) -> None:
     """Write an mzPROV Ed25519-signed provenance sidecar for a Bruker .d output —
     tamper-evident self-disclosure that this is TimSim-simulated data, bound to the
-    config and a signing key. Import-guarded: a missing `mzprov` package or any signing
-    error is logged as a warning and never fails the run. mzprov v0 canonicalizes
-    .d/mzML only (not vendor .raw), so callers gate this to the Bruker path."""
-    try:
-        from mzprov.sign import sign_simulation_output
-    except ImportError:
-        logger.warning(
-            "  provenance: `mzprov` not installed — skipping sidecar "
-            "(pip install the mzprov python implementation to enable)"
-        )
-        return
+    config and a signing key. Any signing error is logged as a warning and never fails
+    the run."""
     try:
         from imspy_simulation import __version__ as _sim_version
     except Exception:
         _sim_version = "unknown"
     try:
+        from mzprov.sign import sign_simulation_output
+
         gt = db_path if (db_path and os.path.exists(db_path)) else None
         out = sign_simulation_output(
             d_path=d_path,
@@ -1277,21 +1270,14 @@ def emit_provenance_sidecar_mzml(mzml_path, config_path, experiment_name,
     simulated data, bound to the config + a signing key. Uses mzprov's first-class mzML
     signer (``sign_mzml_output``), which canonicalizes the mzML content (config + mzML
     content hash; note v0 does not bind the ground-truth DB the way the .d path does).
-    Import-guarded: a missing ``mzprov`` package or any signing error is logged as a
-    warning and never fails the run."""
-    try:
-        from mzprov.sign import sign_mzml_output
-    except ImportError:
-        logger.warning(
-            "  provenance: `mzprov` not installed — skipping mzML sidecar "
-            "(pip install the mzprov python implementation to enable)"
-        )
-        return
+    Any signing error is logged as a warning and never fails the run."""
     try:
         from imspy_simulation import __version__ as _sim_version
     except Exception:
         _sim_version = "unknown"
     try:
+        from mzprov.sign import sign_mzml_output
+
         out = sign_mzml_output(
             mzml_path=mzml_path,
             config_path=config_path,
@@ -1312,21 +1298,14 @@ def emit_provenance_sidecar_raw(raw_path, config_path, experiment_name, key_path
     .raw is an opaque proprietary binary with no safe injection point, so this is ALWAYS a
     JSON sidecar (regardless of the run's embed preference) and the attestation is an opaque
     whole-file content hash (sensitive to any byte change). Uses mzprov's ``sign_raw_output``.
-    Import-guarded (covers both a missing ``mzprov`` and an older ``mzprov`` without raw
-    support): any failure is logged as a warning and never fails the run."""
-    try:
-        from mzprov.sign import sign_raw_output
-    except ImportError:
-        logger.warning(
-            "  provenance: `mzprov` (with .raw support) not available — skipping .raw "
-            "sidecar (pip install/upgrade the mzprov python implementation to enable)"
-        )
-        return
+    Any signing error is logged as a warning and never fails the run."""
     try:
         from imspy_simulation import __version__ as _sim_version
     except Exception:
         _sim_version = "unknown"
     try:
+        from mzprov.sign import sign_raw_output
+
         out = sign_raw_output(
             raw_path=raw_path,
             config_path=config_path,

@@ -265,8 +265,10 @@ Used only when `acquisition_type = DDA`.
 ## `[provenance]` — mzPROV self-disclosure
 
 TimSim emits an Ed25519-signed provenance record declaring the output is
-simulated and binding it to the config + signing key. Requires the optional
-`mzprov` package; import-guarded (a missing package logs a warning, never fails).
+simulated and binding it to the config + signing key, using
+[mzprov](https://github.com/mzprov/mzprov) (installed with imspy-simulation).
+A signing error logs a warning and never fails the run. Check a file with
+`mzprov verify <output>`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
