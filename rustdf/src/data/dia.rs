@@ -9,7 +9,6 @@ use crate::data::meta::{
 use mscore::data::spectrum::MsType;
 use mscore::timstof::frame::{RawTimsFrame, TimsFrame};
 use mscore::timstof::slice::TimsSlice;
-use rand::prelude::IteratorRandom;
 use rayon::iter::IntoParallelRefIterator;
 use crate::cluster::peak::{build_frame_bin_view, build_tof_rt_grid_full, expand_many_im_peaks_along_rt, FrameBinView, ImPeak1D, RtExpandParams, RtFrames, TofRtGrid};
 use crate::cluster::utility::{TofScale};

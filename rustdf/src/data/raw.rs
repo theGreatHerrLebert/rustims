@@ -266,7 +266,7 @@ impl BrukerTimsDataLibrary {
                 return Err("tims_extract_centroided_spectrum_for_frame_v2 returned 0".into());
             }
         }
-        if let Some((mz, intens)) = unsafe { EXTRACT_BUF_DATA.take() } {
+        if let Some((mz, intens)) = unsafe { std::ptr::replace(std::ptr::addr_of_mut!(EXTRACT_BUF_DATA), None) } {
             result_mz = mz;
             result_int = intens;
         }
@@ -301,7 +301,7 @@ impl BrukerTimsDataLibrary {
                 return Err("tims_read_pasef_msms_for_frame_v2 returned 0".into());
             }
         }
-        let out = unsafe { PASEF_BUF_DATA.take() }.unwrap_or_default();
+        let out = unsafe { std::ptr::replace(std::ptr::addr_of_mut!(PASEF_BUF_DATA), None) }.unwrap_or_default();
         Ok(out)
     }
 }
