@@ -21,12 +21,21 @@ class TestGaussianMixtureModel:
         return np.vstack([cluster1, cluster2, cluster3]).astype(np.float32)
 
     @pytest.fixture
-    def gmm(self):
-        """Create a GMM for testing."""
+    def gmm(self, sample_data):
+        """Create a GMM for testing.
+
+        Means start at data points under a fixed seed. Unseeded N(0, 1) starts
+        let all three components fall into one cluster in about 4% of runs,
+        which failed test_fit intermittently in CI.
+        """
+        import torch
         from imspy_predictors.mixture import GaussianMixtureModel, TORCH_AVAILABLE
+        torch.manual_seed(0)
+        np.random.seed(0)
         return GaussianMixtureModel(
             num_components=3,
             data_dim=2,
+            data=sample_data,
             backend='torch',
         )
 

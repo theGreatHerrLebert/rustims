@@ -265,14 +265,16 @@ Used only when `acquisition_type = DDA`.
 ## `[provenance]` — mzPROV self-disclosure
 
 TimSim emits an Ed25519-signed provenance record declaring the output is
-simulated and binding it to the config + signing key. Requires the optional
-`mzprov` package; import-guarded (a missing package logs a warning, never fails).
+simulated and binding it to the config + signing key, using
+[mzprov](https://github.com/mzprov/mzprov) (installed with imspy-simulation).
+A signing error logs a warning and never fails the run. Check a file with
+`mzprov verify <output>`.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `emit_provenance` | bool | `true` | Emit the signed provenance record. |
 | `provenance_embed` | bool | `true` | Embed the envelope into the output (`.d` provenance table / mzML `fileContent`). `false` writes a sibling `<name>.provenance.json` sidecar. (Vendor `.raw` always falls back to a sidecar.) |
-| `provenance_key_path` | str | _none_ | Signing key path. `none` = default `~/.config/timsim/keys/` (auto-generated). |
+| `provenance_key_path` | str | _none_ | Signing key path. `none` = mzprov's default, `~/.config/mzprov/keys/` (auto-generated); an existing key at the older `~/.config/timsim/keys/` is used in place. |
 
 ## `[logging]`
 
