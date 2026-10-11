@@ -1,0 +1,579 @@
+# Stress test (VM plan v3 section 4). Frozen bounds: 1.5% absolute, 0.5 pp delta, 1% nominal.
+# Generated from a template; edit values only through a new claim id (see evident.yaml).
+claims:
+- id: vm.baseline.fdp-bound.diann
+  title: True precursor FDP of DIA-NN 2.5.1 at 1% is at most 1.5% on every baseline TimSim run
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs: &id001
+    corpus: vm-sim-baseline jitter 50k/125k/250k x 3 seeds
+    n: 9
+    class: synthetic
+  outputs:
+    fdp_max:
+      unit: fraction
+      description: Maximum true FDP over the 9 baseline runs, reported with false and accepted counts.
+  pinned_versions: &id002
+    rustims: 85260d52
+    timsim-ground-truth: imspy-simulation 0.4.5 @ 85260d52
+    DIA-NN: 2.5.1
+  claim: On each of the nine baseline TimSim runs, the true FDP of DIA-NN 2.5.1 at run-level Q.Value <=
+    0.01 is at most 0.015. A pass supports 'FDP <= 1.5%', not nominal 1% control.
+  gist:
+    what: On every baseline simulated run, DIA-NN's true error rate at its 1% cutoff stays at or below
+      1.5%.
+    why: This is the upper bound the stress settings are checked against.
+    wrong_if: Any baseline run has true FDP above 1.5%.
+  tolerances:
+  - metric: fdp
+    op: <=
+    value: 0.015
+    output: fdp_max
+    prose: max over 9 baseline runs of true FDP <= 0.015
+  evidence:
+    oracle: &id003
+    - timsim-ground-truth
+    - DIA-NN
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.baseline.fdp-bound.diann
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+- id: vm.baseline.fdp-nominal.diann
+  title: Mean true precursor FDP of DIA-NN 2.5.1 at 1% is at most 1% over baseline TimSim runs
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs: *id001
+  outputs:
+    fdp_mean:
+      unit: fraction
+      description: Mean true FDP over the 9 baseline runs.
+  pinned_versions: *id002
+  claim: The mean true FDP over the nine baseline runs at run-level Q.Value <= 0.01 is at most 0.010.
+    Per-complexity means and the spread across seeds are reported.
+  gist:
+    what: On average over the simulated runs, DIA-NN's 1% cutoff delivers at most 1% true false discoveries.
+    why: Nominal control is a separate, stronger claim than the 1.5% bound.
+    wrong_if: The mean true FDP over the nine baseline runs is above 1%.
+  tolerances:
+  - metric: fdp
+    op: <=
+    value: 0.01
+    output: fdp_mean
+    prose: mean over 9 baseline runs of true FDP <= 0.010
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.baseline.fdp-nominal.diann
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+  - A mean can hide one complexity that is above 1%. Read the per-complexity values.
+- id: vm.mass-accuracy.fdp-bound.diann
+  title: True DIA-NN FDP stays at most 1.5% under mass-accuracy stress
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs: &id004
+    corpus: 'vm-stress mass-accuracy: matched complexity x 3 shared seeds per setting'
+    n: 3
+    class: synthetic
+  outputs:
+    fdp_max:
+      unit: fraction
+      description: Max true FDP over all settings x seeds of this row.
+  pinned_versions: *id002
+  claim: Stress row 'mass-accuracy' (MS1/MS2 m/z error (offset, sigma, tails)). Settings are listed in
+    evident/vm/stress_settings.yaml, and that file is committed from the section-3 discrepancy results
+    before any stress FDP is computed. At every tested setting and seed, true FDP at run-level Q.Value
+    <= 0.01 is at most 0.015.
+  gist:
+    what: Under plausible mass-accuracy mismatch, DIA-NN's true error rate at 1% stays at or below 1.5%.
+    why: It shows whether the paper's error-rate conclusions depend on this property being simulated exactly.
+    wrong_if: Any mass-accuracy stress run has true FDP above 1.5%.
+  tolerances:
+  - metric: fdp
+    op: <=
+    value: 0.015
+    output: fdp_max
+    prose: max over mass-accuracy settings x seeds of true FDP <= 0.015
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.mass-accuracy.fdp-bound.diann
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+- id: vm.mass-accuracy.fdp-delta.diann
+  title: True DIA-NN FDP moves at most 0.5 pp under mass-accuracy stress
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs: *id004
+  outputs:
+    fdp_delta_max:
+      unit: fraction
+      description: Max over settings of the absolute paired mean FDP change from baseline.
+  pinned_versions: *id002
+  claim: Stress row 'mass-accuracy' (MS1/MS2 m/z error (offset, sigma, tails)). Settings are listed in
+    evident/vm/stress_settings.yaml, and that file is committed from the section-3 discrepancy results
+    before any stress FDP is computed. For each setting, |mean over seeds of FDP(stress) - mean over the
+    same seeds of FDP(baseline at matched complexity)| is at most 0.005.
+  gist:
+    what: Plausible mass-accuracy mismatch changes DIA-NN's true error rate by at most half a percentage
+      point.
+    why: It separates stability from the absolute bound. An error rate can be stable and still inflated.
+    wrong_if: Any mass-accuracy setting moves mean true FDP by more than 0.5 percentage points.
+  tolerances:
+  - metric: absolute_error
+    op: <=
+    value: 0.005
+    output: fdp_delta_max
+    prose: max over mass-accuracy settings of |mean FDP(stress) - mean FDP(baseline)| <= 0.005
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.mass-accuracy.fdp-delta.diann
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+- id: vm.rt-peakshape.fdp-bound.diann
+  title: True DIA-NN FDP stays at most 1.5% under rt-peakshape stress
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs: &id005
+    corpus: 'vm-stress rt-peakshape: matched complexity x 3 shared seeds per setting'
+    n: 3
+    class: synthetic
+  outputs:
+    fdp_max:
+      unit: fraction
+      description: Max true FDP over all settings x seeds of this row.
+  pinned_versions: *id002
+  claim: Stress row 'rt-peakshape' (chromatographic peak width and skew). Settings are listed in evident/vm/stress_settings.yaml,
+    and that file is committed from the section-3 discrepancy results before any stress FDP is computed.
+    At every tested setting and seed, true FDP at run-level Q.Value <= 0.01 is at most 0.015.
+  gist:
+    what: Under plausible rt-peakshape mismatch, DIA-NN's true error rate at 1% stays at or below 1.5%.
+    why: It shows whether the paper's error-rate conclusions depend on this property being simulated exactly.
+    wrong_if: Any rt-peakshape stress run has true FDP above 1.5%.
+  tolerances:
+  - metric: fdp
+    op: <=
+    value: 0.015
+    output: fdp_max
+    prose: max over rt-peakshape settings x seeds of true FDP <= 0.015
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.rt-peakshape.fdp-bound.diann
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+- id: vm.rt-peakshape.fdp-delta.diann
+  title: True DIA-NN FDP moves at most 0.5 pp under rt-peakshape stress
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs: *id005
+  outputs:
+    fdp_delta_max:
+      unit: fraction
+      description: Max over settings of the absolute paired mean FDP change from baseline.
+  pinned_versions: *id002
+  claim: Stress row 'rt-peakshape' (chromatographic peak width and skew). Settings are listed in evident/vm/stress_settings.yaml,
+    and that file is committed from the section-3 discrepancy results before any stress FDP is computed.
+    For each setting, |mean over seeds of FDP(stress) - mean over the same seeds of FDP(baseline at matched
+    complexity)| is at most 0.005.
+  gist:
+    what: Plausible rt-peakshape mismatch changes DIA-NN's true error rate by at most half a percentage
+      point.
+    why: It separates stability from the absolute bound. An error rate can be stable and still inflated.
+    wrong_if: Any rt-peakshape setting moves mean true FDP by more than 0.5 percentage points.
+  tolerances:
+  - metric: absolute_error
+    op: <=
+    value: 0.005
+    output: fdp_delta_max
+    prose: max over rt-peakshape settings of |mean FDP(stress) - mean FDP(baseline)| <= 0.005
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.rt-peakshape.fdp-delta.diann
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+- id: vm.fragmentation.fdp-bound.diann
+  title: True DIA-NN FDP stays at most 1.5% under fragmentation stress
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs: &id006
+    corpus: 'vm-stress fragmentation: matched complexity x 3 shared seeds per setting'
+    n: 3
+    class: synthetic
+  outputs:
+    fdp_max:
+      unit: fraction
+      description: Max true FDP over all settings x seeds of this row.
+  pinned_versions: *id002
+  claim: Stress row 'fragmentation' (fragment-intensity fidelity). Settings are listed in evident/vm/stress_settings.yaml,
+    and that file is committed from the section-3 discrepancy results before any stress FDP is computed.
+    At every tested setting and seed, true FDP at run-level Q.Value <= 0.01 is at most 0.015.
+  gist:
+    what: Under plausible fragmentation mismatch, DIA-NN's true error rate at 1% stays at or below 1.5%.
+    why: It shows whether the paper's error-rate conclusions depend on this property being simulated exactly.
+    wrong_if: Any fragmentation stress run has true FDP above 1.5%.
+  tolerances:
+  - metric: fdp
+    op: <=
+    value: 0.015
+    output: fdp_max
+    prose: max over fragmentation settings x seeds of true FDP <= 0.015
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.fragmentation.fdp-bound.diann
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+- id: vm.fragmentation.fdp-delta.diann
+  title: True DIA-NN FDP moves at most 0.5 pp under fragmentation stress
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs: *id006
+  outputs:
+    fdp_delta_max:
+      unit: fraction
+      description: Max over settings of the absolute paired mean FDP change from baseline.
+  pinned_versions: *id002
+  claim: Stress row 'fragmentation' (fragment-intensity fidelity). Settings are listed in evident/vm/stress_settings.yaml,
+    and that file is committed from the section-3 discrepancy results before any stress FDP is computed.
+    For each setting, |mean over seeds of FDP(stress) - mean over the same seeds of FDP(baseline at matched
+    complexity)| is at most 0.005.
+  gist:
+    what: Plausible fragmentation mismatch changes DIA-NN's true error rate by at most half a percentage
+      point.
+    why: It separates stability from the absolute bound. An error rate can be stable and still inflated.
+    wrong_if: Any fragmentation setting moves mean true FDP by more than 0.5 percentage points.
+  tolerances:
+  - metric: absolute_error
+    op: <=
+    value: 0.005
+    output: fdp_delta_max
+    prose: max over fragmentation settings of |mean FDP(stress) - mean FDP(baseline)| <= 0.005
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.fragmentation.fdp-delta.diann
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+- id: vm.predictor-swap.fdp-bound.diann
+  title: True DIA-NN FDP stays at most 1.5% under predictor-swap stress
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs: &id007
+    corpus: 'vm-stress predictor-swap: matched complexity x 3 shared seeds per setting'
+    n: 3
+    class: synthetic
+  outputs:
+    fdp_max:
+      unit: fraction
+      description: Max true FDP over all settings x seeds of this row.
+  pinned_versions: *id002
+  claim: Stress row 'predictor-swap' (simulator RT/CCS/fragment predictors replaced by KOINA models independent
+    of the search predictor). Settings are listed in evident/vm/stress_settings.yaml, and that file is
+    committed from the section-3 discrepancy results before any stress FDP is computed. At every tested
+    setting and seed, true FDP at run-level Q.Value <= 0.01 is at most 0.015.
+  gist:
+    what: Under plausible predictor-swap mismatch, DIA-NN's true error rate at 1% stays at or below 1.5%.
+    why: It shows whether the paper's error-rate conclusions depend on this property being simulated exactly.
+    wrong_if: Any predictor-swap stress run has true FDP above 1.5%.
+  tolerances:
+  - metric: fdp
+    op: <=
+    value: 0.015
+    output: fdp_max
+    prose: max over predictor-swap settings x seeds of true FDP <= 0.015
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.predictor-swap.fdp-bound.diann
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+- id: vm.predictor-swap.fdp-delta.diann
+  title: True DIA-NN FDP moves at most 0.5 pp under predictor-swap stress
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs: *id007
+  outputs:
+    fdp_delta_max:
+      unit: fraction
+      description: Max over settings of the absolute paired mean FDP change from baseline.
+  pinned_versions: *id002
+  claim: Stress row 'predictor-swap' (simulator RT/CCS/fragment predictors replaced by KOINA models independent
+    of the search predictor). Settings are listed in evident/vm/stress_settings.yaml, and that file is
+    committed from the section-3 discrepancy results before any stress FDP is computed. For each setting,
+    |mean over seeds of FDP(stress) - mean over the same seeds of FDP(baseline at matched complexity)|
+    is at most 0.005.
+  gist:
+    what: Plausible predictor-swap mismatch changes DIA-NN's true error rate by at most half a percentage
+      point.
+    why: It separates stability from the absolute bound. An error rate can be stable and still inflated.
+    wrong_if: Any predictor-swap setting moves mean true FDP by more than 0.5 percentage points.
+  tolerances:
+  - metric: absolute_error
+    op: <=
+    value: 0.005
+    output: fdp_delta_max
+    prose: max over predictor-swap settings of |mean FDP(stress) - mean FDP(baseline)| <= 0.005
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.predictor-swap.fdp-delta.diann
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+- id: vm.joint.fdp-bound.diann
+  title: True DIA-NN FDP stays at most 1.5% under joint stress
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs: &id008
+    corpus: 'vm-stress joint: matched complexity x 3 shared seeds per setting'
+    n: 3
+    class: synthetic
+  outputs:
+    fdp_max:
+      unit: fraction
+      description: Max true FDP over all settings x seeds of this row.
+  pinned_versions: *id002
+  claim: 'Stress row ''joint'' (joint settings: peak width x cycle time, abundance x m/z noise). Settings
+    are listed in evident/vm/stress_settings.yaml, and that file is committed from the section-3 discrepancy
+    results before any stress FDP is computed. At every tested setting and seed, true FDP at run-level
+    Q.Value <= 0.01 is at most 0.015.'
+  gist:
+    what: Under plausible joint mismatch, DIA-NN's true error rate at 1% stays at or below 1.5%.
+    why: It shows whether the paper's error-rate conclusions depend on this property being simulated exactly.
+    wrong_if: Any joint stress run has true FDP above 1.5%.
+  tolerances:
+  - metric: fdp
+    op: <=
+    value: 0.015
+    output: fdp_max
+    prose: max over joint settings x seeds of true FDP <= 0.015
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.joint.fdp-bound.diann
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+- id: vm.joint.fdp-delta.diann
+  title: True DIA-NN FDP moves at most 0.5 pp under joint stress
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs: *id008
+  outputs:
+    fdp_delta_max:
+      unit: fraction
+      description: Max over settings of the absolute paired mean FDP change from baseline.
+  pinned_versions: *id002
+  claim: 'Stress row ''joint'' (joint settings: peak width x cycle time, abundance x m/z noise). Settings
+    are listed in evident/vm/stress_settings.yaml, and that file is committed from the section-3 discrepancy
+    results before any stress FDP is computed. For each setting, |mean over seeds of FDP(stress) - mean
+    over the same seeds of FDP(baseline at matched complexity)| is at most 0.005.'
+  gist:
+    what: Plausible joint mismatch changes DIA-NN's true error rate by at most half a percentage point.
+    why: It separates stability from the absolute bound. An error rate can be stable and still inflated.
+    wrong_if: Any joint setting moves mean true FDP by more than 0.5 percentage points.
+  tolerances:
+  - metric: absolute_error
+    op: <=
+    value: 0.005
+    output: fdp_delta_max
+    prose: max over joint settings of |mean FDP(stress) - mean FDP(baseline)| <= 0.005
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.joint.fdp-delta.diann
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.

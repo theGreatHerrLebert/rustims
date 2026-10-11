@@ -1,0 +1,39 @@
+version: 0.1
+project: rustims
+
+# Internal EVIDENT manifest for the TimSim validity matrix (MCP revision).
+# Internal check only: nothing here goes into the manuscript, SI, Zenodo
+# deposit or response letter.
+#
+# Pre-registration: every numeric bound, band and decision rule in claims/
+# was committed before any FDP result (real or simulated) was inspected.
+# Later commits may fill last_verified and pin corpora, but must not change
+# a tolerance value, op, output or estimand. A changed rule is a new claim
+# id, and the frozen one stays and is reported.
+#
+# Validate with evident/workflow/validate_manifest.py from the EVIDENT repo.
+
+vocabularies:
+  subsystem:
+    - timsim.fdp
+    - timsim.entrapment
+    - timsim.stress
+    - timsim.protocol
+  oracle:
+    - timsim-ground-truth
+    - DIA-NN
+    - FDRBench
+  capability:
+    - fdp-measurement-under-simulation
+    - entrapment-estimator-check
+    - sim-real-transfer
+  tolerance_metric:
+    - fdp
+    - signed_difference
+  input_class:
+    - real-run
+
+include:
+  - claims/protocol.yaml
+  - claims/entrapment.yaml
+  - claims/stress.yaml

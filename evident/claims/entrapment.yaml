@@ -1,0 +1,391 @@
+# Entrapment on simulated and real data (VM plan v3 section 5).
+# Framework: Wen et al., Nat Methods 2025, doi:10.1038/s41592-025-02719-x.
+# Tool: FDRBench 1.1.1. Paired shuffled peptide-level entrapment, r = 1,
+# C-term fixed, I->L, seed 2026. One entrapment shuffle this round.
+# FDP values are fractions (0.01 = 1%).
+
+claims:
+  - id: entrap.sim.estimator-bias.diann
+    title: FDRBench paired and combined entrapment estimates do not underestimate true FDP on TimSim runs
+    kind: measurement
+    subsystem: timsim.entrapment
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - validation
+    capabilities:
+      - entrapment-estimator-check
+    inputs:
+      corpus: vm-sim-baseline jitter 50k/125k/250k x 3 seeds (seeds 4100+), LS_10 layout
+      n: 9
+      class: synthetic
+    outputs:
+      paired_bias_mean:
+        unit: fraction
+        description: Mean over the 9 runs of (paired upper estimate - true FDP) on the identical accepted target+entrapment set.
+      combined_bias_mean:
+        unit: fraction
+        description: Mean over the 9 runs of (combined upper estimate - true FDP) on the same set.
+      bracket_frequency:
+        unit: fraction
+        description: Fraction of runs with lower <= true FDP <= paired upper. Reported only, no tolerance.
+    pinned_versions:
+      rustims: 85260d52
+      timsim-ground-truth: imspy-simulation 0.4.5 @ 85260d52
+      DIA-NN: "2.5.1"
+      FDRBench: "1.1.1"
+    claim: >
+      On the nine baseline TimSim runs searched against the paired-entrapment
+      library (primary estimand, vm.protocol.estimand), the mean over runs of
+      (paired estimate - true FDP) and of (combined estimate - true FDP) is
+      at least -0.0025. On average the upper-bound estimators do not
+      underestimate true FDP by more than 0.25 percentage points. True FDP
+      follows vm.protocol.truth-rule on exactly the set FDRBench evaluates.
+    gist:
+      what: On simulated runs, where the truth is known, the entrapment upper-bound estimates are on average not below the true error rate.
+      why: Simulation is the only place an entrapment estimator can be checked against the truth before trusting it on real data.
+      wrong_if: Either mean (estimate minus true FDP) is below -0.25 percentage points.
+    tolerances:
+      - metric: signed_difference
+        op: ">="
+        value: -0.0025
+        output: paired_bias_mean
+        prose: mean over 9 runs of (FDRBench paired FDP - true FDP) >= -0.0025.
+      - metric: signed_difference
+        op: ">="
+        value: -0.0025
+        output: combined_bias_mean
+        prose: mean over 9 runs of (FDRBench combined FDP - true FDP) >= -0.0025.
+    evidence:
+      oracle:
+        - timsim-ground-truth
+        - DIA-NN
+        - FDRBench
+      command: python evident/vm/vm_truth_fdp.py --mode estimator-bias
+      artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+    provenance: automatic
+    last_verified:
+      commit: null
+      date: null
+      value: null
+    assumptions:
+      - The bounds hold in expectation under the entrapment assumptions, not
+        per run. That is why the claim is on the mean and bracket frequency is
+        only reported.
+      - One entrapment shuffle. Variation across shuffles is not covered.
+      - Per-complexity means are reported but carry no tolerance.
+    failure_modes:
+      - Nine runs from three complexities are not exchangeable draws. A
+        complexity-dependent bias can cancel in the mean, so the
+        per-complexity values must be read.
+      - Simulated peptides satisfy the entrapment assumption by construction,
+        so a pass here does not show the assumption holds on real data.
+
+  - id: entrap.sim.search-space-shift.diann
+    title: Adding entrapment to the library does not shift true target-only FDP on TimSim runs
+    kind: measurement
+    subsystem: timsim.entrapment
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - validation
+    capabilities:
+      - entrapment-estimator-check
+    inputs:
+      corpus: vm-sim-baseline jitter 50k/125k/250k x 3 seeds
+      n: 9
+      class: synthetic
+    outputs:
+      target_fdp_shift_mean_abs:
+        unit: fraction
+        description: Mean over runs of |true FDP among accepted original targets (entrapment search) - true FDP among accepted targets (plain search)|.
+      target_count_ratio:
+        unit: ratio
+        description: Accepted original targets in the entrapment search over the plain search, plus turnover. Reported only.
+    pinned_versions:
+      rustims: 85260d52
+      timsim-ground-truth: imspy-simulation 0.4.5 @ 85260d52
+      DIA-NN: "2.5.1"
+    claim: >
+      For each of the nine baseline TimSim runs, true FDP restricted to
+      accepted original-target precursors is computed in the entrapment
+      search and in the plain search. The mean absolute difference over runs
+      is at most 0.0025.
+    gist:
+      what: Doubling the search space with entrapment peptides barely changes the true error rate among real-target hits.
+      why: Entrapment only measures the original search if adding entrapment does not change the search itself.
+      wrong_if: The mean absolute target-only FDP shift is above 0.25 percentage points.
+    tolerances:
+      - metric: absolute_error
+        op: "<="
+        value: 0.0025
+        output: target_fdp_shift_mean_abs
+        prose: mean over 9 runs of |FDP_T(entrap) - FDP_T(plain)| <= 0.0025.
+    evidence:
+      oracle:
+        - timsim-ground-truth
+        - DIA-NN
+      command: python evident/vm/vm_truth_fdp.py --mode search-space-shift
+      artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+    provenance: automatic
+    last_verified:
+      commit: null
+      date: null
+      value: null
+    assumptions:
+      - The plain library is built from the I->L FASTA with the same digest
+        and predictor settings as the entrapment library.
+    failure_modes:
+      - Each run has a different decoy set in each search, so part of the
+        shift is decoy-sampling noise rather than search-space size.
+
+  - id: entrap.sim-vs-real.diann
+    title: Entrapment-estimated FDP on matched TimSim runs lies within 0.5 pp of the same estimate on real 10 ng runs
+    kind: measurement
+    subsystem: timsim.entrapment
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - validation
+    capabilities:
+      - sim-real-transfer
+    inputs:
+      corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12
+      n: 6
+      class: real-run
+    outputs:
+      paired_abs_diff:
+        unit: fraction
+        description: "|mean paired FDP over matched sim seeds - mean paired FDP over the 3 real runs|."
+      combined_abs_diff:
+        unit: fraction
+        description: "|mean combined FDP over matched sim seeds - mean combined FDP over the 3 real runs|."
+    pinned_versions:
+      rustims: 85260d52
+      DIA-NN: "2.5.1"
+      FDRBench: "1.1.1"
+    claim: >
+      With the complexity chosen by vm.protocol.matched-complexity, the mean
+      FDRBench paired estimate over the three matched sim seeds differs from
+      the mean over the three real 10 ng runs by at most 0.005. The same
+      holds for the combined estimate. This is agreement of a diagnostic, not
+      equality of true FDP, because estimator bias can differ between
+      domains. The diagnostic is read as agreeing if this claim or
+      entrap.sim-vs-real.verdict-agree.diann holds. A divergence is reported
+      as a finding.
+    gist:
+      what: The entrapment error-rate estimate on simulated runs matches the same estimate on comparable real runs to within half a percentage point.
+      why: This compares sim and real at the level of the paper's conclusion (error rates), not only at the level of features.
+      wrong_if: Either mean estimate differs between sim and real by more than 0.5 percentage points.
+    tolerances:
+      - metric: absolute_error
+        op: "<="
+        value: 0.005
+        output: paired_abs_diff
+        prose: "|mean_sim(paired) - mean_real(paired)| <= 0.005"
+      - metric: absolute_error
+        op: "<="
+        value: 0.005
+        output: combined_abs_diff
+        prose: "|mean_sim(combined) - mean_real(combined)| <= 0.005"
+    evidence:
+      oracle:
+        - DIA-NN
+        - FDRBench
+      command: python evident/vm/vm_truth_fdp.py --mode sim-vs-real
+      artifact: TIMSIM-REVISION/searches/vm/recipe-v1/{real10,sim}/
+    provenance: automatic
+    last_verified:
+      commit: null
+      date: null
+      value: null
+    assumptions:
+      - The real runs and the sims share window layout (59 x 12 Th), gradient
+        (7202 s), library, search flags and FDRBench call.
+      - The baseline sims have no background overlay, so they are cleaner than
+        real data in background-only regions.
+    failure_modes:
+      - Three runs per side is a weak sample, and the band is not a
+        statistical equivalence test.
+      - Agreement can come from two different biases cancelling.
+
+  - id: entrap.sim-vs-real.verdict-agree.diann
+    title: Sim and real 10 ng runs get the same Wen et al. entrapment verdict class
+    kind: measurement
+    subsystem: timsim.entrapment
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - validation
+    capabilities:
+      - sim-real-transfer
+    inputs:
+      corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12
+      n: 6
+      class: real-run
+    outputs:
+      class_agreement:
+        unit: bool
+        description: 1 if the modal per-run verdict class on matched sims equals the modal class on real runs, else 0.
+    pinned_versions:
+      rustims: 85260d52
+      DIA-NN: "2.5.1"
+      FDRBench: "1.1.1"
+    claim: >
+      The per-run verdict class (valid if paired <= 0.01, invalid if lower
+      > 0.01, otherwise inconclusive) is computed for each matched sim run
+      and each real run. The modal class is the same on both sides; a tie
+      within a side counts as inconclusive. Agreement on inconclusive is
+      recorded as no positive transfer evidence.
+    gist:
+      what: Simulated and real runs land in the same entrapment verdict class.
+      why: This is the coarser fallback when the numeric estimates differ.
+      wrong_if: The modal verdict class differs between sim and real.
+    tolerances:
+      - metric: pass_rate
+        op: ">="
+        value: 1
+        output: class_agreement
+        prose: modal verdict class on matched sims == modal verdict class on real 10 ng runs.
+    evidence:
+      oracle:
+        - DIA-NN
+        - FDRBench
+      command: python evident/vm/vm_truth_fdp.py --mode verdict
+      artifact: evident/vm/results/entrap_verdicts.json
+    provenance: automatic
+    last_verified:
+      commit: null
+      date: null
+      value: null
+    assumptions:
+      - The class rule follows Wen et al. 2025 with the paired estimator as the
+        upper bound.
+    failure_modes:
+      - Inconclusive on both sides passes formally but carries no transfer
+        evidence. It must be reported as such.
+
+  - id: entrap.verdict.diann.real10
+    title: DIA-NN 2.5.1 entrapment verdict at 1% precursor level on real 10 ng runs
+    kind: measurement
+    subsystem: timsim.entrapment
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - validation
+    inputs:
+      corpus: PXD029836 10 ng LS10/LS11/LS12
+      n: 3
+      class: real-run
+    outputs:
+      paired_upper_max:
+        unit: fraction
+        description: Maximum over runs of the FDRBench paired estimate at run-level Q.Value <= 0.01.
+      lower_bound_max:
+        unit: fraction
+        description: Maximum over runs of the FDRBench lower-bound estimate at the same threshold.
+    pinned_versions:
+      rustims: 85260d52
+      DIA-NN: "2.5.1"
+      FDRBench: "1.1.1"
+    claim: >
+      Derived verdict. Every run is valid if paired_upper_max <= 0.01 (both
+      tolerances pass). Some run is invalid if lower_bound_max > 0.01 (second
+      tolerance fails). Otherwise the result is inconclusive. Per-run classes
+      and numeric bounds are always reported. This is an empirical
+      classification, not a confidence statement.
+    gist:
+      what: Whether DIA-NN's 1% precursor cutoff is shown valid, shown invalid, or left open by entrapment on real 10 ng runs.
+      why: It is the real-data anchor that the simulated verdict is compared with.
+      wrong_if: The paired upper estimate exceeds 1% in any run. Invalid if the lower bound also exceeds 1%.
+    tolerances:
+      - metric: fdp
+        op: "<="
+        value: 0.01
+        output: paired_upper_max
+        prose: max over real runs of FDRBench paired FDP <= 0.01 (valid).
+      - metric: fdp
+        op: "<="
+        value: 0.01
+        output: lower_bound_max
+        prose: max over real runs of FDRBench lower-bound FDP <= 0.01 (not invalid).
+    evidence:
+      oracle:
+        - DIA-NN
+        - FDRBench
+      command: python evident/vm/vm_truth_fdp.py --mode verdict --side real10
+      artifact: TIMSIM-REVISION/searches/vm/recipe-v1/real10/
+    provenance: automatic
+    last_verified:
+      commit: null
+      date: null
+      value: null
+    assumptions:
+      - Shuffled entrapment peptides are not present in the real HeLa sample.
+    failure_modes:
+      - Background-only real signal can match an entrapment peptide, and that
+        cannot be told apart from a false discovery.
+
+  - id: entrap.verdict.diann.sim-matched
+    title: DIA-NN 2.5.1 entrapment verdict at 1% precursor level on matched TimSim runs
+    kind: measurement
+    subsystem: timsim.entrapment
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - validation
+    inputs:
+      corpus: matched-complexity sims (3 seeds)
+      n: 3
+      class: synthetic
+    outputs:
+      paired_upper_max:
+        unit: fraction
+        description: Maximum over matched sim runs of the FDRBench paired estimate at run-level Q.Value <= 0.01.
+      lower_bound_max:
+        unit: fraction
+        description: Maximum over matched sim runs of the FDRBench lower-bound estimate.
+    pinned_versions:
+      rustims: 85260d52
+      DIA-NN: "2.5.1"
+      FDRBench: "1.1.1"
+    claim: >
+      Same derived verdict rule as entrap.verdict.diann.real10, applied to the
+      three matched-complexity sim runs.
+    gist:
+      what: The same entrapment verdict as on real data, computed on the matched simulated runs.
+      why: It is the sim side of the verdict comparison.
+      wrong_if: The paired upper estimate exceeds 1% in any matched sim run.
+    tolerances:
+      - metric: fdp
+        op: "<="
+        value: 0.01
+        output: paired_upper_max
+        prose: max over matched sim runs of FDRBench paired FDP <= 0.01 (valid).
+      - metric: fdp
+        op: "<="
+        value: 0.01
+        output: lower_bound_max
+        prose: max over matched sim runs of FDRBench lower-bound FDP <= 0.01 (not invalid).
+    evidence:
+      oracle:
+        - DIA-NN
+        - FDRBench
+      command: python evident/vm/vm_truth_fdp.py --mode verdict --side sim
+      artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+    provenance: automatic
+    last_verified:
+      commit: null
+      date: null
+      value: null
+    assumptions:
+      - Same as entrap.sim.estimator-bias.diann.
+    failure_modes:
+      - Same as entrap.verdict.diann.real10, except background matches cannot
+        occur because there is no overlay.

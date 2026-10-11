@@ -1,0 +1,127 @@
+claims:
+  - id: vm.protocol.preregistration
+    title: Validity-matrix bounds and decision rules are frozen before any FDP result is inspected
+    kind: policy
+    subsystem: timsim.protocol
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - validation
+    claim: >
+      Every numeric bound, band, decision rule, matching rule and estimand in
+      this manifest was committed before any false-discovery-proportion result
+      (truth-derived or entrapment-estimated, simulated or real) was opened.
+      Downstream FDP is never used to revise a tolerance, a plausible region
+      or a matching rule. A revised rule gets a new claim id and the frozen
+      one is still reported.
+    evidence:
+      oracle:
+        - timsim-ground-truth
+      command: git log --format='%H %cI' -- evident/claims
+      artifact: the first commit touching evident/claims (branch evident/vm-preregistration)
+    assumptions:
+      - Real 10 ng FDRBench outputs (MOGON job 764353) existed on disk at the
+        time of the commit but had not been opened. Only job markers and row
+        counts had been seen.
+      - The simulated searches (job 764357) had not started at the time of
+        the commit.
+    failure_modes:
+      - A local commit timestamp is self-attested. Pushing the branch gives an
+        independent timestamp.
+      - Analysis scripts are written after the freeze. They must implement the
+        frozen rules verbatim, and any deviation must be recorded as a new claim.
+
+  - id: vm.protocol.estimand
+    title: Primary FDP estimand is precursor-level, per run, MBR off, run-level Q.Value at most 0.01
+    kind: policy
+    subsystem: timsim.protocol
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - validation
+    claim: >
+      Primary estimand. Each run is searched separately with DIA-NN 2.5.1:
+      MBR off, no reanalyse, fixed 15 ppm MS1/MS2 mass accuracy, predicted
+      in-silico library built once and shared by real and simulated runs.
+      The accepted set is every target or entrapment precursor (modified
+      sequence + charge) with run-level Q.Value <= 0.01. Engine decoys are
+      excluded. FDP = false / accepted on that set. The stripped-sequence +
+      charge variant (the manuscript default) is reported alongside as a
+      secondary estimand and never replaces the primary one.
+    evidence:
+      oracle:
+        - DIA-NN
+      command: SUBMISSION/revision/vm-work/mogon/vm_real10.sbatch; vm_simsearch.sbatch
+      artifact: TIMSIM-REVISION/searches/vm/recipe-v1/
+    assumptions:
+      - Run-level Q.Value is DIA-NN's precursor q-value within one run. Global
+        and protein q-values are not used.
+      - Sequences are compared after I->L normalisation and after mapping
+        DIA-NN (UniMod:n) and TimSim [UNIMOD:n] tokens to one form.
+    failure_modes:
+      - The manuscript's MBR / global workflow can give a different FDP. It is
+        a separate secondary analysis with matched cohort sizes and is not
+        covered by these claims.
+
+  - id: vm.protocol.truth-rule
+    title: Simulated-truth rule for a false discovery
+    kind: policy
+    subsystem: timsim.protocol
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - validation
+    claim: >
+      On simulated runs an accepted precursor is false if it is an entrapment
+      precursor, or if it is a target whose (modified sequence, charge) is
+      not among the ions simulated in that run's synthetic_data.db. This is
+      presence-based truth. Correct-peak assignment (reported apex RT and IM
+      within tolerance of the simulated apex) is reported separately as a
+      secondary rule and does not change these claims.
+    evidence:
+      oracle:
+        - timsim-ground-truth
+      command: python evident/vm/vm_truth_fdp.py
+      artifact: TIMSIM-REVISION/searches/vm/sim-baseline/<run>/out/**/synthetic_data.db
+    assumptions:
+      - The baseline sims have no reference-signal overlay (6.5 ppm m/z jitter
+        only), so every simulated signal comes from a known ion.
+      - Entrapment peptides cannot be simulated. They are shuffled sequences
+        checked against the target database by FDRBench -check, and the sample
+        is digested from target proteins only.
+    failure_modes:
+      - Presence-based truth counts a correct sequence at a wrong peak as
+        true, so it can understate FDP. The secondary peak rule bounds this.
+
+  - id: vm.protocol.matched-complexity
+    title: Rule for choosing the simulated complexity matched to real 10 ng
+    kind: policy
+    subsystem: timsim.protocol
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - validation
+    claim: >
+      The matched simulated complexity is the one among 50k, 125k and 250k
+      peptides whose median number of accepted target precursors (primary
+      estimand, plain library) is nearest on a log scale to the median over
+      the three real 10 ng runs (LS10, LS11, LS12). Ties go to the higher
+      complexity. Counts are read from the plain-library searches only, and
+      the selection is made and recorded before entrapment FDP or truth FDP
+      is computed for any simulated run.
+    evidence:
+      oracle:
+        - DIA-NN
+      command: python evident/vm/vm_match_complexity.py
+      artifact: evident/vm/matched_complexity.json
+    assumptions:
+      - Identification depth is a usable proxy for signal complexity at a fixed
+        window scheme and gradient.
+    failure_modes:
+      - If none of the three complexities lands within a factor of 1.5 of the
+        real median, the match is reported as poor and the sim-vs-real claim
+        is read with that caveat. No new complexity is added to chase the match.
