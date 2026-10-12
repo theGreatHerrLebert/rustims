@@ -1,6 +1,6 @@
 # TimSim validity matrix: internal claims
 
-Internal check for the MCP revision (MCPRO-D-26-00416). Not for the manuscript, SI, Zenodo or the response letter.
+Internal check of TimSim's validity. Not part of any publication or data deposit.
 
 Plan: `SUBMISSION/revision/VM_EVIDENT_PLAN.md` (v3, two Codex rounds). Step-0 audit: `VM_AUDIT_STEP0.md`.
 
@@ -25,7 +25,7 @@ to real data even if the simulation is easier or harder than real, as long as we
 | `claims/entrapment.yaml` | estimator bias vs truth on sims, search-space shift, sim-vs-real band and verdict agreement, verdicts on real and sim |
 | `claims/discrepancy.yaml` | per feature: sim-vs-real distance ≤ 3× the largest real replicate distance, at the matched complexity |
 | `claims/direction.yaml` | transfer rule; per-feature easier/harder classification against the real replicate range |
-| `claims/marginals.yaml` | Reviewer 2 views (i) all MS1 ions from raw and (ii) identified precursors: RT, IM, m/z marginals, ratio ≤ 3 |
+| `claims/marginals.yaml` | Views (i) all MS1 ions from raw and (ii) identified precursors: RT, IM, m/z marginals, ratio ≤ 3 |
 | `claims/scores.yaml` | DIA-NN q-value distribution; FragPipe score marginals (hyperscore, SpectralSim, RTScore, IMScore, expectation, q); FragPipe direction incl. Percolator target/decoy AUC |
 | `claims/protein.yaml` | protein-level entrapment (FDRBench protein DB, PG.Q.Value ≤ 0.01): estimator bias, verdicts, sim vs real |
 | `claims/stress.yaml` | baseline 1.5% bound and 1% nominal, plus per stress row a 1.5% bound and a 0.5 pp paired delta |
@@ -43,7 +43,7 @@ to real data even if the simulation is easier or harder than real, as long as we
 - `evident/vm/stress_settings.yaml`, the stress settings. It will be committed from the section-3 results before any stress FDP is computed.
 - Analysis scripts under `evident/vm/`. They implement the frozen rules and must not change them.
 
-## Reviewer 2 views without a claim
+## Views without a claim
 
 - View (iii), the simulated ions themselves from `synthetic_data.db`, is plotted next to (i) and (ii). It has no tolerance:
   it differs from identified ions by design.

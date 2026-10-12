@@ -1,4 +1,4 @@
-# Reviewer 2: scores and q-value distributions from different software, sim vs real.
+# Scores and q-value distributions from different software, sim vs real.
 # Pre-registered 2026-10-12 before any of these data were produced.
 claims:
 - id: vm.scores.qvalue.diann
@@ -28,7 +28,7 @@ claims:
     replicate distance.
   gist:
     what: "The simulated DIA-NN q-values (its confidence in each match) are distributed like real ones, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
+    why: "Scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -81,7 +81,7 @@ claims:
     distance.
   gist:
     what: "The simulated FragPipe match scores (hyperscore) are distributed like real ones, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
+    why: "Scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -132,7 +132,7 @@ claims:
     distance.
   gist:
     what: "The simulated FragPipe agreement between predicted and observed fragment patterns are distributed like real ones, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
+    why: "Scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -183,7 +183,7 @@ claims:
     distance.
   gist:
     what: "The simulated FragPipe retention-time agreement scores are distributed like real ones, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
+    why: "Scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -234,7 +234,7 @@ claims:
     distance.
   gist:
     what: "The simulated FragPipe ion-mobility agreement scores are distributed like real ones, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
+    why: "Scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -285,7 +285,7 @@ claims:
     replicate distance.
   gist:
     what: "The simulated FragPipe expectation values (chance of a random match) are distributed like real ones, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
+    why: "Scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -336,7 +336,7 @@ claims:
     distance.
   gist:
     what: "The simulated FragPipe q-values (its confidence in each match) are distributed like real ones, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
+    why: "Scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio

@@ -1,4 +1,4 @@
-# Reviewer 2 views (i) all ions and (ii) identified ions: RT, IM and m/z marginals.
+# Views (i) all ions and (ii) identified ions: RT, IM and m/z marginals.
 # Pre-registered 2026-10-12 before any of these data were produced.
 claims:
 - id: vm.marginal.rt.identified.diann
@@ -24,11 +24,11 @@ claims:
     rustims: 85260d52
     DIA-NN: 2.5.1
   claim: Marginal distribution of retention time, min over precursors accepted at run-level Q.Value <=
-    0.01 (reviewer view ii, sim and real). The median sim-vs-real 1-Wasserstein distance is at most 3
+    0.01 (view ii, sim and real). The median sim-vs-real 1-Wasserstein distance is at most 3
     times the largest real-vs-real replicate distance.
   gist:
     what: "The retention times of identified peptides are spread in the simulation like in real data, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; this answers it for the peptides the search finds."
+    why: "It shows which simulated properties match real data, for the peptides the search finds."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -74,12 +74,12 @@ claims:
     rustims: 85260d52
     timsim-ground-truth: imspy-core 0.4.4 @ 85260d52
   claim: Intensity-weighted marginal of retention time, min over all MS1 peaks read from the raw .d with
-    imspy (reviewer view i), on fixed bins (RT 0.25 min, 1/K0 0.005, m/z 2 Th), every MS1 frame. W1 is
+    imspy (view i), on fixed bins (RT 0.25 min, 1/K0 0.005, m/z 2 Th), every MS1 frame. W1 is
     taken on the binned distributions. The median sim-vs-real 1-Wasserstein distance is at most 3 times
     the largest real-vs-real replicate distance.
   gist:
     what: "The retention times of all precursor signal in the raw files are spread in the simulation like in real data, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; this answers it for all signal, identified or not."
+    why: "It shows which simulated properties match real data, for all signal, identified or not."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -127,11 +127,11 @@ claims:
       description: median sim-real W1 / max real-real W1 for identified-precursor im.
   pinned_versions: *id001
   claim: Marginal distribution of ion mobility 1/K0 over precursors accepted at run-level Q.Value <= 0.01
-    (reviewer view ii, sim and real). The median sim-vs-real 1-Wasserstein distance is at most 3 times
+    (view ii, sim and real). The median sim-vs-real 1-Wasserstein distance is at most 3 times
     the largest real-vs-real replicate distance.
   gist:
     what: "The ion mobilities of identified peptides are spread in the simulation like in real data, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; this answers it for the peptides the search finds."
+    why: "It shows which simulated properties match real data, for the peptides the search finds."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -177,12 +177,12 @@ claims:
     rustims: 85260d52
     timsim-ground-truth: imspy-core 0.4.4 @ 85260d52
   claim: Intensity-weighted marginal of ion mobility 1/K0 over all MS1 peaks read from the raw .d with
-    imspy (reviewer view i), on fixed bins (RT 0.25 min, 1/K0 0.005, m/z 2 Th), every MS1 frame. W1 is
+    imspy (view i), on fixed bins (RT 0.25 min, 1/K0 0.005, m/z 2 Th), every MS1 frame. W1 is
     taken on the binned distributions. The median sim-vs-real 1-Wasserstein distance is at most 3 times
     the largest real-vs-real replicate distance.
   gist:
     what: "The ion mobilities of all precursor signal in the raw files are spread in the simulation like in real data, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; this answers it for all signal, identified or not."
+    why: "It shows which simulated properties match real data, for all signal, identified or not."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -230,11 +230,11 @@ claims:
       description: median sim-real W1 / max real-real W1 for identified-precursor mz.
   pinned_versions: *id001
   claim: Marginal distribution of precursor m/z over precursors accepted at run-level Q.Value <= 0.01
-    (reviewer view ii, sim and real). The median sim-vs-real 1-Wasserstein distance is at most 3 times
+    (view ii, sim and real). The median sim-vs-real 1-Wasserstein distance is at most 3 times
     the largest real-vs-real replicate distance.
   gist:
     what: "The m/z values of identified peptides are spread in the simulation like in real data, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; this answers it for the peptides the search finds."
+    why: "It shows which simulated properties match real data, for the peptides the search finds."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -280,12 +280,12 @@ claims:
     rustims: 85260d52
     timsim-ground-truth: imspy-core 0.4.4 @ 85260d52
   claim: Intensity-weighted marginal of precursor m/z over all MS1 peaks read from the raw .d with imspy
-    (reviewer view i), on fixed bins (RT 0.25 min, 1/K0 0.005, m/z 2 Th), every MS1 frame. W1 is taken
+    (view i), on fixed bins (RT 0.25 min, 1/K0 0.005, m/z 2 Th), every MS1 frame. W1 is taken
     on the binned distributions. The median sim-vs-real 1-Wasserstein distance is at most 3 times the
     largest real-vs-real replicate distance.
   gist:
     what: "The m/z values of all precursor signal in the raw files are spread in the simulation like in real data, about as closely as two real repeat runs match."
-    why: "A reviewer asked which simulated properties match real data; this answers it for all signal, identified or not."
+    why: "It shows which simulated properties match real data, for all signal, identified or not."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio

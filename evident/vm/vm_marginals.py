@@ -1,4 +1,4 @@
-"""claims/marginals.yaml: RT, IM and m/z marginals, reviewer view (ii) identified and view (i) all MS1 ions.
+"""claims/marginals.yaml: RT, IM and m/z marginals, view (ii) identified and view (i) all MS1 ions.
 
 View (iii), the simulated ions, is carried into the output for the figure and has no claim.
 """

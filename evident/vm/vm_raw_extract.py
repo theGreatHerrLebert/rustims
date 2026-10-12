@@ -1,4 +1,4 @@
-"""Reviewer 2 views (i) and (iii): binned marginals from raw MS1 signal and from the simulated ions.
+"""Views (i) and (iii): binned marginals from raw MS1 signal and from the simulated ions.
 
 (i)   every MS1 frame of a .d, read with imspy (Bruker SDK calibration). Intensity-weighted histograms of
       RT, 1/K0 and m/z, plus a peak-count histogram of log10 intensity. No identification is involved.

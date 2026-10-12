@@ -1,4 +1,4 @@
-# Reviewer 2: FDR levels. Protein-level entrapment.
+# FDR levels: protein-level entrapment.
 # Pre-registered 2026-10-12 before any of these data were produced.
 claims:
 - id: vm.protocol.protein-estimand
@@ -111,7 +111,7 @@ claims:
     bound.'
   gist:
     what: "On real 10 ng runs, entrapment shows whether DIA-NN's 1% protein cutoff holds, fails, or cannot be decided."
-    why: "A reviewer noted that error control happens at several levels and the level can change the answer."
+    why: "Error control happens at several levels, and the level can change the answer."
     wrong_if: The combined estimate exceeds 1% in any run. Invalid if the lower bound also exceeds 1%.
   tolerances:
   - metric: fdp
@@ -220,7 +220,7 @@ claims:
     modal verdict class is the same (class reported in results; the tolerance is the band).'
   gist:
     what: "The protein-level entrapment estimate comes out about the same on simulated and real runs."
-    why: "It compares simulation and reality on protein error rates, the level the reviewer flagged."
+    why: "It compares simulation and reality on protein error rates, where peptide-level control can hide failures."
     wrong_if: The means differ by more than 0.5 percentage points.
   tolerances:
   - metric: absolute_error

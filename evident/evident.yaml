@@ -1,9 +1,8 @@
 version: 0.1
 project: rustims
 
-# Internal EVIDENT manifest for the TimSim validity matrix (MCP revision).
-# Internal check only: nothing here goes into the manuscript, SI, Zenodo
-# deposit or response letter.
+# Internal EVIDENT manifest for the TimSim validity matrix.
+# Internal check only: nothing here goes into a publication or data deposit.
 #
 # Pre-registration: every numeric bound, band and decision rule in claims/
 # was committed before any FDP result (real or simulated) was inspected.
