@@ -93,3 +93,14 @@ amendments:
       predicted with U replaced by C, for the RT prediction only; the simulated sequence is unchanged. All
       peptides stay in the replay, so the pairing with the baseline is intact. The count is recorded in
       prepare.json (n_peptides_selenocysteine_as_c). Any other unmappable residue or modification still fails.
+  - id: 2
+    date: 2026-10-12
+    before_any_stress_data: true   # replays 765126 ran; no stress search or FDP exists
+    found_by: the frozen --verify guard ("replay ions has ids the prepared DB lacks") failed 8 of 12 replays
+    change: >
+      TimSim sets ion_id from the reloaded table's row index, so a from_existing replay renumbers ions where the
+      baseline ids have gaps. --verify now matches ions on (peptide_id, charge), which is unique and carried
+      over unchanged, and fails if that key is not unique; peptides still match on peptide_id. The tolerances
+      and the kept-share rule are unchanged. The 12 existing replays are not re-simulated: all 12 (including the
+      4 that passed) are re-verified with this code (VERIFY_ONLY=1, same log guards), and their done.flags
+      are rewritten with this commit. The truth-FDP code never used ion_id.

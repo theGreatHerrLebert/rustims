@@ -122,13 +122,27 @@ def read_back(db: Path, src: Path, expect: dict) -> None:
                 raise SystemExit(f"guard: {db} {table}.{col} differs from the baseline")
 
 
+def read_keyed(db: Path, table: str, key: tuple, col: str) -> dict:
+    with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as c:
+        rows = c.execute(f"select {', '.join(key)}, {col} from {table}").fetchall()
+    out = {r[:-1]: r[-1] for r in rows}
+    if len(out) != len(rows):
+        raise SystemExit(f"guard: {db} {table} key {key} is not unique")
+    return out
+
+
+# A replay renumbers ion_id (TimSim sets it from the reloaded frame's index), so ions are matched on
+# (peptide_id, charge); peptide_id is carried over unchanged.
+REPLAY_KEYS = (("peptides", ("peptide_id",), "retention_time_gru_predictor"),
+               ("ions", ("peptide_id", "charge"), "inv_mobility_gru_predictor"))
+
+
 def verify_replay(replay_db: Path, prepared: Path, out: Path) -> None:
     """Replay truth DB vs prepared DB: same apex values on every row the replay kept."""
     prep_db = prepared / "synthetic_data.db"
     res = {"replay_db": str(replay_db), "prepared": str(prepared)}
-    for table, id_col, col in (("peptides", "peptide_id", "retention_time_gru_predictor"),
-                               ("ions", "ion_id", "inv_mobility_gru_predictor")):
-        want, got = read_column(prep_db, table, id_col, col), read_column(replay_db, table, id_col, col)
+    for table, key, col in REPLAY_KEYS:
+        want, got = read_keyed(prep_db, table, key, col), read_keyed(replay_db, table, key, col)
         if set(got) - set(want):
             raise SystemExit(f"guard: replay {table} has ids the prepared DB lacks")
         common = sorted(got)

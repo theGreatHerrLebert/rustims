@@ -60,6 +60,13 @@ SID=$(sed -n "$(( T + 1 ))p" $OUT/queue.txt); [ -n "$SID" ] || fail "no queue li
 D=$OUT/$SID
 PREP=$(X $PY -c "import json;print(json.load(open('$D/plan.json'))['existing_path'])") || fail "plan $SID"
 [ -s "$(dirname $PREP)/prepare.json" ] && [ -s "$PREP/synthetic_data.db" ] || fail "not prepared $SID"
+# VERIFY_ONLY=1 re-runs the log guards and --verify on an existing replay (amendment 2); it never re-simulates
+if [ "${VERIFY_ONLY:-0}" = 1 ]; then
+  [ -s $D/timsim.log ] || fail "no replay to verify in $SID"
+  rm -f "$D/done.flag" "$D/failed.flag" "$D/verify.json"
+  echo "VM_STRESS_START $SID verify-only $(date -u +%FT%TZ) host=$(hostname)"
+  START=$(date +%s); RC=0
+else
 if [ -f $D/done.flag ]; then
   [ "$(cat $D/done.flag)" = "$FROZEN" ] && [ -s $D/verify.json ] && { echo "skip $SID"; exit 0; }
   fail "stale done.flag in $SID"
@@ -70,6 +77,7 @@ echo "VM_STRESS_START $SID $(date -u +%FT%TZ) host=$(hostname)"
 START=$(date +%s)
 X $M/timsim-env/bin/timsim $D/config.toml > $D/timsim.log 2>&1
 RC=$?
+fi
 # guard: the replay must have loaded the prepared DB and must not have re-predicted RT/IM or added jitter
 grep -q "Loading Existing Simulation" $D/timsim.log || { RC=90; echo "guard: no from_existing load"; }
 grep -q -E "Applying (RT|ion mobility|intensity) variation|Re-scaling retention times|Simulating Ion Mobilities" \

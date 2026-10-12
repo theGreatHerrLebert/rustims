@@ -334,10 +334,10 @@ def _stress_base_db(src: Path) -> None:
         c.executemany("insert into peptides values (?,?,?,?,?,?)",
                       [(2, "AC[UNIMOD:4]K", 5, 2.0, 0.1, 20.0), (1, "[UNIMOD:1]M[UNIMOD:35]K", 5, 2.0, 0.1, 10.0),
                        (3, "PEPK", 5, 2.0, 0.1, 30.0)])
-        c.execute("create table ions (ion_id integer, sequence text, charge integer, relative_abundance real, "
-                  "inv_mobility_gru_predictor real, inv_mobility_gru_predictor_std real)")
-        c.executemany("insert into ions values (?,?,?,?,?,?)",
-                      [(1, "a", 2, 1.0, 0.9, 0.01), (2, "b", 2, 1.0, 1.0, 0.01), (3, "c", 2, 1.0, 1.1, 0.01)])
+        c.execute("create table ions (ion_id integer, peptide_id integer, sequence text, charge integer, "
+                  "relative_abundance real, inv_mobility_gru_predictor real, inv_mobility_gru_predictor_std real)")
+        c.executemany("insert into ions values (?,?,?,?,?,?,?)",
+                      [(1, 1, "a", 2, 1.0, 0.9, 0.01), (2, 2, "b", 2, 1.0, 1.0, 0.01), (3, 3, "c", 2, 1.0, 1.1, 0.01)])
         c.execute("create table scans (scan integer, mobility real)")
         c.executemany("insert into scans values (?,?)", [(1, 0.6), (2, 1.6)])
         for t in ("proteins", "dia_ms_ms_info", "dia_ms_ms_windows"):
@@ -382,6 +382,9 @@ def test_stress_prepare_rewrites_only_its_columns(tmp_path, monkeypatch):
     replay.write_bytes((prepared / "synthetic_data.db").read_bytes())
     monkeypatch.setattr(sys, "argv", ["x", "--verify", str(replay), "--prepared", str(prepared), "--out",
                                       str(tmp_path / "verify.json")])
+    sp.main()
+    with sqlite3.connect(replay) as c:  # a replay renumbers ion_id; matching is on (peptide_id, charge)
+        c.execute("update ions set ion_id = ion_id + 1000")
     sp.main()
     with sqlite3.connect(replay) as c:
         c.execute("update peptides set retention_time_gru_predictor = 42.0")
