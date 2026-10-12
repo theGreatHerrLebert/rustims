@@ -405,10 +405,10 @@ claims:
       unit: fraction
       description: Max true FDP over all settings x seeds of this row.
   pinned_versions: *id002
-  claim: Stress row 'predictor-swap' (simulator RT/CCS/fragment predictors replaced by KOINA models independent
-    of the search predictor). Settings are listed in evident/vm/stress_settings.yaml, and that file is
+  claim: Stress row 'predictor-swap' (simulated RT replaced by Chronologer, simulated IM apex redrawn from the
+    CCS predictor's per-ion std; paired from_existing replays of the baseline). Settings are listed in evident/vm/stress_settings.yaml, and that file is
     committed from the section-3 discrepancy results before any stress FDP is computed. At every tested
-    setting and seed, true FDP at run-level Q.Value <= 0.01 is at most 0.015.
+    setting (rt-chronologer, im-std, joint; replay-control is reported only) and seed, true FDP at run-level Q.Value <= 0.01 is at most 0.015.
   gist:
     what: Under plausible predictor-swap mismatch, DIA-NN's true error rate at 1% stays at or below 1.5%.
     why: It shows whether the paper's error-rate conclusions depend on this property being simulated exactly.
@@ -421,8 +421,8 @@ claims:
     prose: max over predictor-swap settings x seeds of true FDP <= 0.015
   evidence:
     oracle: *id003
-    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.predictor-swap.fdp-bound.diann
-    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.predictor-swap.fdp-bound.diann --stress-recipe TIMSIM-REVISION/searches/vm/recipe-v1-stress --stress-root TIMSIM-REVISION/searches/vm/sim-stress
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1-stress/sim/
   provenance: automatic
   last_verified:
     commit: null
@@ -451,9 +451,10 @@ claims:
       unit: fraction
       description: Max over settings of the absolute paired mean FDP change from baseline.
   pinned_versions: *id002
-  claim: Stress row 'predictor-swap' (simulator RT/CCS/fragment predictors replaced by KOINA models independent
-    of the search predictor). Settings are listed in evident/vm/stress_settings.yaml, and that file is
-    committed from the section-3 discrepancy results before any stress FDP is computed. For each setting,
+  claim: Stress row 'predictor-swap' (simulated RT replaced by Chronologer, simulated IM apex redrawn from the
+    CCS predictor's per-ion std; paired from_existing replays of the baseline). Settings are listed in evident/vm/stress_settings.yaml, and that file is
+    committed from the section-3 discrepancy results before any stress FDP is computed. For each setting
+    (rt-chronologer, im-std, joint; replay-control is reported only),
     |mean over seeds of FDP(stress) - mean over the same seeds of FDP(baseline at matched complexity)|
     is at most 0.005.
   gist:
@@ -469,8 +470,8 @@ claims:
     prose: max over predictor-swap settings of |mean FDP(stress) - mean FDP(baseline)| <= 0.005
   evidence:
     oracle: *id003
-    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.predictor-swap.fdp-delta.diann
-    artifact: TIMSIM-REVISION/searches/vm/recipe-v1/sim/
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.predictor-swap.fdp-delta.diann --stress-recipe TIMSIM-REVISION/searches/vm/recipe-v1-stress --stress-root TIMSIM-REVISION/searches/vm/sim-stress
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1-stress/sim/
   provenance: automatic
   last_verified:
     commit: null

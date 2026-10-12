@@ -7,7 +7,8 @@ Modes map to claims:
   sim-vs-real         entrap.sim-vs-real.diann
   baseline            vm.baseline.fdp-{bound,nominal}.diann
   all                 everything above, then the band-or-class diagnostic decision
-  stress              only --claim vm.baseline.*, which routes to baseline; stress rows are not frozen yet
+  stress              --claim vm.baseline.* routes to baseline; --claim vm.predictor-swap.* runs the frozen
+                      predictor-swap row (evident/vm/stress_settings.yaml) on --stress-recipe / --stress-root
 
 Writes results/<mode>.json and a last_verified sidecar for typed-trust.
 Any missing, non-finite or inconsistent input stops the run instead of shrinking an aggregate.
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 import numpy as np
@@ -194,6 +196,77 @@ def baseline(c: Ctx) -> dict:
     }
 
 
+STRESS_SEEDS = ("jitter-250k-r1", "jitter-250k-r2", "jitter-250k-r3")
+STRESS_SETTINGS = ("rt-chronologer", "im-std", "joint")  # claim scope; replay-control is reported only
+REPLAY_CONTROL = "replay-control"
+_DIANN_LOG = {"rt_window_min": r"RT window set to ([0-9.eE+-]+)", "im_window": r"IM window set to ([0-9.eE+-]+)",
+              "ms1_acc_ppm": r"Recommended MS1 mass accuracy setting: ([0-9.eE+-]+)"}
+
+
+def diann_windows(stdout: Path) -> dict:
+    """Last value DIA-NN logged for each calibration window; NaN when it logged none."""
+    txt = stdout.read_text(errors="replace") if stdout.exists() else ""
+    out = {}
+    for k, pat in _DIANN_LOG.items():
+        hits = re.findall(pat, txt)
+        out[k] = float(hits[-1]) if hits else float("nan")
+    return out
+
+
+def truth_fdp_row(c: Ctx, report_dir: Path, sim_dir: Path) -> dict:
+    acc = accepted_from_report(report_dir / "plain" / "report.parquet")
+    ent = is_entrapment(acc["stripped"], c.pairs, acc["protein"])
+    if ent.any():
+        raise ValueError(f"{report_dir}: entrapment precursors in a plain-library search")
+    truth_mod, truth_stripped = read_truth(find_truth_db(sim_dir))
+    lab = label_false(acc, truth_mod, truth_stripped, ent)
+    false = lab["false_mod"]
+    form = false & ~lab["false_stripped"]  # sequence simulated at that charge, modification state wrong
+    no_ox = {(k.replace("{35}", ""), z) for k, z in truth_mod}
+    met_ox = form & np.fromiter(((k.replace("{35}", ""), z) in no_ox for k, z in zip(lab["mod"], lab["charge"])),
+                                bool, len(lab))
+    share = (lambda m: float(m.sum() / false.sum()) if false.any() else float("nan"))
+    return {"accepted": len(lab), "false": int(false.sum()), "fdp": fdp(false), "fdp_stripped": fdp_stripped(lab),
+            "mod_form_share_of_false": share(form), "met_ox_share_of_false": share(met_ox),
+            **diann_windows(report_dir / "plain" / "diann.stdout")}
+
+
+def stress(c: Ctx, stress_recipe: Path, stress_root: Path) -> dict:
+    """vm.predictor-swap.fdp-{bound,delta}.diann: paired by baseline seed, delta against the baseline sims."""
+    m = c.matched()
+    if sorted(m["matched_runs"]) != list(STRESS_SEEDS):
+        raise SystemExit(f"matched runs {m['matched_runs']} are not the stress baselines {STRESS_SEEDS}")
+    for s in (REPLAY_CONTROL, *STRESS_SETTINGS):
+        for rid in STRESS_SEEDS:
+            if not (stress_root / f"{rid}-{s}" / "verify.json").exists():
+                raise SystemExit(f"{rid}-{s}: no verify.json, the replay was not checked against its prepared DB")
+    base = {rid: truth_fdp_row(c, c.recipe / "sim" / rid, c.sim_root / rid) for rid in STRESS_SEEDS}
+    rows = {s: {rid: truth_fdp_row(c, stress_recipe / "sim" / f"{rid}-{s}", stress_root / f"{rid}-{s}")
+                for rid in STRESS_SEEDS} for s in (REPLAY_CONTROL, *STRESS_SETTINGS)}
+
+    def mean_fdp(d: dict) -> float:
+        return mean_strict([finite(r["fdp"], "stress FDP") for r in d.values()], "FDP")
+
+    b = mean_fdp(base)
+    per_setting = {s: {"fdp_mean": mean_fdp(rows[s]), "delta_vs_baseline": mean_fdp(rows[s]) - b,
+                       "delta_vs_replay_control": mean_fdp(rows[s]) - mean_fdp(rows[REPLAY_CONTROL]),
+                       "accepted_mean": float(np.mean([r["accepted"] for r in rows[s].values()]))}
+                   for s in (REPLAY_CONTROL, *STRESS_SETTINGS)}
+    paired = {s: {rid: {"minus_baseline": rows[s][rid]["fdp"] - base[rid]["fdp"],
+                        "minus_replay_control": rows[s][rid]["fdp"] - rows[REPLAY_CONTROL][rid]["fdp"]}
+                  for rid in STRESS_SEEDS} for s in (REPLAY_CONTROL, *STRESS_SETTINGS)}
+    return {
+        "baseline": base, "per_seed": rows, "per_seed_differences": paired, "per_setting": per_setting,
+        "baseline_fdp_mean": b,
+        "values": {
+            "vm.predictor-swap.fdp-bound.diann": {"fdp_max": max(rows[s][rid]["fdp"] for s in STRESS_SETTINGS
+                                                               for rid in STRESS_SEEDS)},
+            "vm.predictor-swap.fdp-delta.diann": {"fdp_delta_max": max(abs(per_setting[s]["delta_vs_baseline"])
+                                                                     for s in STRESS_SETTINGS)},
+        },
+    }
+
+
 def diagnostic(results: dict) -> dict:
     """entrap.sim-vs-real.diann: the diagnostic agrees if the 0.5 pp band holds or the classes agree."""
     band = all(v <= 0.005 for v in results["sim-vs-real"]["values"]["entrap.sim-vs-real.diann"].values())
@@ -215,13 +288,24 @@ def main() -> None:
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--side", help="accepted for the claim commands; verdict always computes both sides")
     ap.add_argument("--claim", help="stress mode: claim id")
+    ap.add_argument("--stress-recipe", type=Path, help="stress mode: searches/vm/recipe-v1-stress")
+    ap.add_argument("--stress-root", type=Path, help="stress mode: searches/vm/sim-stress")
     a = ap.parse_args()
     modes = list(MODES) if a.mode == "all" else [a.mode]
-    if a.mode == "stress":
-        if not (a.claim or "").startswith("vm.baseline."):
-            raise SystemExit("stress settings are not frozen yet (evident/vm/stress_settings.yaml)")
-        modes = ["baseline"]
     c = Ctx(a.recipe, a.sim_root, a.out)
+    if a.mode == "stress":
+        claim = a.claim or ""
+        if claim.startswith("vm.predictor-swap."):
+            if not (a.stress_recipe and a.stress_root):
+                raise SystemExit("--stress-recipe and --stress-root are required for the predictor-swap row")
+            res = stress(c, a.stress_recipe, a.stress_root)
+            dump(res, a.out / "results" / "stress-predictor-swap.json")
+            write_sidecar(a.out, res["values"], REPORT_ONLY)
+            print("stress", json.dumps(res["values"]), json.dumps(res["per_setting"]))
+            return
+        if not claim.startswith("vm.baseline."):
+            raise SystemExit(f"no frozen stress settings for {claim!r}")
+        modes = ["baseline"]
     if a.mode == "all":
         c.matched()  # fail before any FDP is computed
     results = {}

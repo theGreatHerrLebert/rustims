@@ -1,0 +1,84 @@
+# Stress settings for the predictor-swap row (claims/stress.yaml: vm.predictor-swap.fdp-{bound,delta}.diann).
+# Frozen before any stress simulation ran and before any stress FDP exists.
+# Motivation (section-3 results): DIA-NN needs an RT window of 15.7 min on the sims vs 8.4 min on real 10 ng,
+# and an IM window of 0.109 vs 0.038. The baseline sims had no replicate jitter (the variation knobs act only
+# under from_existing). The simulated RT and IM apexes come from TimSim's own predictors, which is one
+# candidate source of these gaps; the windows alone do not establish it.
+# Question (narrow): does DIA-NN's true FDP on the matched sims change when (a) the RT apexes come from an
+# independent predictor (Chronologer) and (b) the IM apexes are perturbed by the CCS predictor's own per-ion
+# uncertainty? (b) is a perturbation around the same predictor, not an independent IM model.
+
+row: predictor-swap
+complexity: 250000            # the matched complexity (vm.protocol.matched-complexity)
+seeds:                        # the baseline 250k sims; comparisons are paired by seed, checked against each plan.json
+  jitter-250k-r1: 4101
+  jitter-250k-r2: 4102
+  jitter-250k-r3: 4103
+construction: >
+  Each stress sim is a from_existing replay (rustims 85260d52) of its baseline 250k sim. The replay reloads
+  peptides, ions (charges, precursor isotope spectra, abundances), proteins and peak widths (rt_sigma,
+  rt_lambda, inv_mobility_gru_predictor_std) from a copy of the baseline DB in which only the columns named
+  below are rewritten. It then regenerates frame and scan distributions from the apex columns, re-predicts
+  fragment intensities with the same local model, and re-draws the assembly noise (6.5 ppm m/z jitter); that it
+  reproduces the baseline's draw is not assumed. Moving an apex can change which DIA window and collision energy an ion meets, so
+  fragmentation follows the apex; that is part of the intervention. rt_variation_std,
+  ion_mobility_variation_std and intensity_variation_std are removed from the config, and re_scale_rt,
+  rt_model, ccs_model, phospho_mode and proteome_mix are set off explicitly, so the replay adds no jitter and
+  re-predicts no apex. replay-control measures what the replay itself changes.
+
+models:
+  rt: >
+    Chronologer, run offline from the upstream searlelab/chronologer package (v0.2.0, commit e518130) with
+    its bundled base checkpoint Chronologer_20220601193755.pt (sha256 1a500c246b49a1a2...b6c0b3), no
+    fine-tuning. No Koina. Modifications map as [UNIMOD:4]->C[+57.02], [UNIMOD:35]->M[+15.99] and
+    a leading [UNIMOD:1]->N-terminal [+42.01]. Predictions (hydrophobicity index) are mapped to the gradient with the same
+    min-max rescaling TimSim applies to Koina RT output (0 .. gradient length, s).
+  im: >
+    TimSim's own local CCS predictor (unchanged mean). Each ion's apex 1/K0 is redrawn once as
+    N(inv_mobility_gru_predictor, inv_mobility_gru_predictor_std), using the per-ion std already stored in
+    the baseline DB (the predictor's uncertainty, rescaled by TimSim to mean 0.009). Draws use numpy
+    default_rng(seed + 7) per seed and are clipped to the instrument IM range.
+    inv_mobility_gru_predictor_std itself (the per-ion IM peak width) is left unchanged in every setting.
+    No external CCS model (IM2Deep, AlphaPeptDeep) is used: through TimSim they return no per-ion std
+    (TimSim substitutes a flat 2% of 1/K0), so a swap would change the apex and the peak-width model at once.
+  dependencies: PyTorch only (Chronologer, TimSim CCS); no TensorFlow (DeepLC/IM2Deep) in any environment.
+
+settings:
+  replay-control:
+    rewrite: none           # the unmodified replay; reported without tolerance (see below)
+  rt-chronologer:
+    peptides.retention_time_gru_predictor: Chronologer
+  im-std:
+    ions.inv_mobility_gru_predictor: redrawn from the predictor std
+  joint:
+    peptides.retention_time_gru_predictor: Chronologer
+    ions.inv_mobility_gru_predictor: redrawn from the predictor std
+
+guards:
+  - Prepare (vm_stress_prepare.py) fails on empty/duplicate ids, non-finite or non-positive values, an
+    invalid IM range, constant or missing Chronologer output, an unmappable modification, a seed that differs
+    from the one above, a median change of 0, or a read-back of the prepared DB that differs from the intended
+    values or changes any other checked column.
+  - Replay configs (make_vmstress.py) fail unless sample_seed and complexity match the baseline plan.
+  - After each replay, vm_stress_prepare.py --verify fails unless the replay's own truth DB keeps >= 99% of
+    the prepared rows and carries the prepared apex values on them. A replay without this check is not used.
+  - Each done.flag records the freeze commit; a flag from another commit is not reused.
+  - There is no minimum-effect criterion. Effect sizes (absolute, and relative to the per-row peak width) and
+    the IM clipping share are reported in prepare.json.
+  - True FDP uses the plain-library search, the primary estimand and vm.protocol.truth-rule, the same as the baseline.
+
+claim_scope: >
+  vm.predictor-swap.fdp-bound and fdp-delta are evaluated over rt-chronologer, im-std and joint only. Their
+  delta is against the baseline sims, as pre-registered in claims/stress.yaml.
+
+reported_without_tolerance:
+  - real-10ng accepted-precursor depth is taken from the baseline analysis (analysis-v1) for comparison.
+  - replay-control FDP minus baseline FDP, per seed. A replay re-draws TimSim's assembly noise (m/z jitter),
+    so this is the change a replay causes with nothing rewritten. Each setting's FDP minus replay-control
+    FDP is also reported.
+  - in-sample fit of TimSim-local RT and Chronologer RT to real LS10 (cubic calibration fitted and scored on
+    the same 5000 precursors, 1.4826*MAD), descriptive only
+  - identified-precursor depth per setting against real 10 ng
+  - DIA-NN RT and IM windows per setting
+  - share of false hits that are modification-form confusions (sequence simulated at that charge, modification
+    state wrong), and the part of those that differ only in Met oxidation

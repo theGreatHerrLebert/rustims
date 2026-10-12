@@ -258,3 +258,144 @@ def test_protein_truth_and_estimates(tree):
     assert res["sim"][0]["true_fdp"] == pytest.approx(2 / 3)
     assert res["values"]["entrap.protein.sim.estimator-bias.diann"]["combined_bias_mean"] == pytest.approx(0)
     assert res["modal_class"]["real10"] == "invalid"
+
+
+
+def _ions_db(db: Path, ions) -> None:
+    db.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db) as c:
+        c.execute("create table ions (sequence text, charge integer)")
+        c.executemany("insert into ions values (?, ?)", ions)
+
+
+def test_predictor_swap_stress(tree, tmp_path):
+    """Seeds differ in truth; rt-chronologer moves FDP up on r1 and down on r2, im-std adds a Met-ox confusion."""
+    recipe, sim_root, out = tree
+    _run("vm_match_complexity.py", "--recipe", recipe, "--out", out / "matched_complexity.json")
+    srec, sroot = tmp_path / "recipe-v1-stress", tmp_path / "sim-stress"
+    seeds = ("jitter-250k-r1", "jitter-250k-r2", "jitter-250k-r3")
+    rows4 = [("PEPTIDEK", "PEPTIDEK", 2, 0.001), ("AC(UniMod:4)DEFGHK", "ACDEFGHK", 2, 0.002),
+             ("(UniMod:1)M(UniMod:35)ILNQSTR", "MILNQSTR", 3, 0.003), ("KLMNLLR", "KLMNLLR", 2, 0.004)]
+    unox = ("(UniMod:1)MILNQSTR", "MILNQSTR", 3, 0.003)       # simulated only as M(ox): Met-ox confusion
+    vvv = ("VVVYAAAK", "VVVYAAAK", 2, 0.002)
+    # r2's truth also contains KLMNLLR, so the shared rows are 1/4 false on r1/r3 and 0/4 on r2.
+    truth = {"jitter-250k-r1": SIM_IONS, "jitter-250k-r2": SIM_IONS + [("KLMNLLR", 2)], "jitter-250k-r3": SIM_IONS}
+    for rid in seeds:
+        (recipe / "sim" / rid / "plain" / "diann.stdout").write_text("RT window set to 15.7\nIM window set to 0.109\n")
+        db = sim_root / rid / "out" / "x" / "synthetic_data.db"
+        db.unlink()
+        _ions_db(db, truth[rid])
+        for st in ("replay-control", "rt-chronologer", "im-std", "joint"):
+            rows = list(rows4)
+            if st == "im-std":
+                rows += [vvv, unox]
+            if st == "rt-chronologer" and rid == "jitter-250k-r1":
+                rows += [("NEVERSIMK", "NEVERSIMK", 2, 0.005)]        # up: 2/5
+            if st == "rt-chronologer" and rid == "jitter-250k-r2":
+                rows += [vvv]                                         # flat: 0/5 vs baseline 0/4
+            if st == "rt-chronologer" and rid == "jitter-250k-r3":
+                rows += [vvv]                                         # down: 1/5 vs baseline 1/4
+            _report(srec / "sim" / f"{rid}-{st}" / "plain" / "report.parquet", rows)
+            (srec / "sim" / f"{rid}-{st}" / "plain" / "diann.stdout").write_text("RT window set to 9.1\nRT window set to 8.0\n")
+            _ions_db(sroot / f"{rid}-{st}" / "out" / "x" / "synthetic_data.db", truth[rid])
+    args = ["--mode", "stress", "--claim", "vm.predictor-swap.fdp-delta.diann", "--recipe", recipe, "--sim-root",
+            sim_root, "--out", out, "--stress-recipe", srec, "--stress-root", sroot]
+    with pytest.raises(subprocess.CalledProcessError):  # no verify.json yet
+        _run("vm_truth_fdp.py", *args)
+    for rid in seeds:
+        for st in ("replay-control", "rt-chronologer", "im-std", "joint"):
+            (sroot / f"{rid}-{st}" / "verify.json").write_text("{}")
+    _run("vm_truth_fdp.py", *args)
+    res = json.loads((out / "results" / "stress-predictor-swap.json").read_text())
+    assert [res["baseline"][r]["fdp"] for r in seeds] == pytest.approx([0.25, 0.0, 0.25])
+    d = res["per_seed_differences"]["rt-chronologer"]
+    assert d["jitter-250k-r1"]["minus_baseline"] == pytest.approx(0.4 - 0.25)
+    assert d["jitter-250k-r2"]["minus_baseline"] == pytest.approx(0.0)
+    assert d["jitter-250k-r3"]["minus_baseline"] == pytest.approx(0.2 - 0.25)
+    assert res["per_setting"]["rt-chronologer"]["delta_vs_baseline"] == pytest.approx((0.15 + 0 - 0.05) / 3)
+    # im-std: r1/r3 2/6 false, r2 1/6 false (KLMNLLR simulated there); baseline mean 1/6.
+    im = res["per_setting"]["im-std"]
+    assert im["fdp_mean"] == pytest.approx((2 / 6 + 1 / 6 + 2 / 6) / 3)
+    assert res["per_setting"]["replay-control"]["delta_vs_baseline"] == pytest.approx(0)
+    assert res["values"]["vm.predictor-swap.fdp-delta.diann"]["fdp_delta_max"] == pytest.approx(
+        (2 / 6 + 1 / 6 + 2 / 6) / 3 - 1 / 6)
+    assert res["values"]["vm.predictor-swap.fdp-bound.diann"]["fdp_max"] == pytest.approx(0.4)
+    r = res["per_seed"]["im-std"]["jitter-250k-r2"]
+    assert r["mod_form_share_of_false"] == pytest.approx(1.0) and r["met_ox_share_of_false"] == pytest.approx(1.0)
+    assert res["per_seed"]["rt-chronologer"]["jitter-250k-r1"]["met_ox_share_of_false"] == pytest.approx(0)
+    assert r["rt_window_min"] == 8.0 and res["baseline"]["jitter-250k-r1"]["rt_window_min"] == 15.7
+    assert "vm.predictor-swap.fdp-bound.diann" in json.loads((out / "last_verified.json").read_text())
+
+
+def _stress_base_db(src: Path) -> None:
+    with sqlite3.connect(src) as c:
+        c.execute("create table peptides (peptide_id integer, sequence text, events integer, rt_sigma real, "
+                  "rt_lambda real, retention_time_gru_predictor real)")
+        c.executemany("insert into peptides values (?,?,?,?,?,?)",
+                      [(2, "AC[UNIMOD:4]K", 5, 2.0, 0.1, 20.0), (1, "[UNIMOD:1]M[UNIMOD:35]K", 5, 2.0, 0.1, 10.0),
+                       (3, "PEPK", 5, 2.0, 0.1, 30.0)])
+        c.execute("create table ions (ion_id integer, sequence text, charge integer, relative_abundance real, "
+                  "inv_mobility_gru_predictor real, inv_mobility_gru_predictor_std real)")
+        c.executemany("insert into ions values (?,?,?,?,?,?)",
+                      [(1, "a", 2, 1.0, 0.9, 0.01), (2, "b", 2, 1.0, 1.0, 0.01), (3, "c", 2, 1.0, 1.1, 0.01)])
+        c.execute("create table scans (scan integer, mobility real)")
+        c.executemany("insert into scans values (?,?)", [(1, 0.6), (2, 1.6)])
+        for t in ("proteins", "dia_ms_ms_info", "dia_ms_ms_windows"):
+            c.execute(f"create table {t} (x integer)")
+
+
+def test_stress_prepare_rewrites_only_its_columns(tmp_path, monkeypatch):
+    import numpy as np
+    import vm_stress_prepare as sp
+
+    src = tmp_path / "base.db"
+    _stress_base_db(src)
+    seen = []
+    monkeypatch.setattr(sp, "chronologer_hi", lambda seqs, model: seen.extend(seqs) or np.array([3.0, 1.0, 2.0]))
+    argv = ["x", "--baseline-db", str(src), "--gradient", "100", "--seed", "4101", "--chronologer-model", "m.pt",
+            "--out", str(tmp_path / "p")]
+    monkeypatch.setattr(sys, "argv", argv + ["--expect-seed", "4102"])
+    with pytest.raises(SystemExit):
+        sp.main()
+    monkeypatch.setattr(sys, "argv", argv + ["--expect-seed", "4101"])
+    sp.main()
+    assert sp.to_chronologer(seen[0]) == "[+42.01057]M[+15.99491]K"  # ordered by peptide_id
+
+    def col(setting, q):
+        with sqlite3.connect(tmp_path / "p" / setting / "synthetic_data.db") as c:
+            return [r[0] for r in c.execute(q)]
+    rt_q = "select retention_time_gru_predictor from peptides order by peptide_id"
+    im_q = "select inv_mobility_gru_predictor from ions order by ion_id"
+    assert col("replay-control", rt_q) == [10.0, 20.0, 30.0] and col("replay-control", im_q) == [0.9, 1.0, 1.1]
+    assert col("rt-chronologer", rt_q) == [100.0, 0.0, 50.0] and col("rt-chronologer", im_q) == [0.9, 1.0, 1.1]
+    assert col("im-std", rt_q) == [10.0, 20.0, 30.0] and col("im-std", im_q) != [0.9, 1.0, 1.1]
+    assert col("joint", rt_q) == [100.0, 0.0, 50.0] and col("joint", im_q) == col("im-std", im_q)
+    rep = json.loads((tmp_path / "p" / "prepare.json").read_text())
+    assert rep["settings"]["rt-chronologer"]["rt"]["median_abs_change_over_width"] == pytest.approx(20.0 / 2.0)
+    with pytest.raises(ValueError):
+        sp.to_chronologer("PEPS[UNIMOD:21]K")
+
+    # verify: a replay that kept the prepared values passes, one that re-predicted RT fails
+    prepared = tmp_path / "p" / "joint"
+    replay = tmp_path / "replay.db"
+    replay.write_bytes((prepared / "synthetic_data.db").read_bytes())
+    monkeypatch.setattr(sys, "argv", ["x", "--verify", str(replay), "--prepared", str(prepared), "--out",
+                                      str(tmp_path / "verify.json")])
+    sp.main()
+    with sqlite3.connect(replay) as c:
+        c.execute("update peptides set retention_time_gru_predictor = 42.0")
+    with pytest.raises(SystemExit):
+        sp.main()
+
+
+def test_stress_prepare_rejects_constant_predictions(tmp_path, monkeypatch):
+    import numpy as np
+    import vm_stress_prepare as sp
+
+    src = tmp_path / "base.db"
+    _stress_base_db(src)
+    monkeypatch.setattr(sp, "chronologer_hi", lambda seqs, model: np.ones(len(seqs)))
+    monkeypatch.setattr(sys, "argv", ["x", "--baseline-db", str(src), "--gradient", "100", "--seed", "1",
+                                      "--chronologer-model", "m.pt", "--out", str(tmp_path / "p")])
+    with pytest.raises(ValueError):
+        sp.main()
