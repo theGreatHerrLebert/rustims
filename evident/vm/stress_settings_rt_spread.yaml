@@ -75,3 +75,19 @@ reported_without_tolerance:
 not_in_scope:
   - peak widths (rt-peakshape row) and the RT predictor (predictor-swap row)
   - gradient length; every sim and real run here is a 7202 s acquisition
+
+amendments:
+  - id: 1
+    date: 2026-10-13
+    before_any_rt_spread_data: true   # prep 766285 failed in its guard; no rt-spread replay or FDP exists.
+                                      # The predictor-swap searches (765287) finished but their FDP is unopened.
+    found_by: the frozen guard "at most 1% of adjacent distinct old RTs merge" (new tie share 0.4969 on r1)
+    cause: >
+      DIA-NN reports RT on a ~0.17 s grid. In LS10, 58,961 accepted modified peptides carry 23,852 distinct
+      median RTs, so the frozen linear quantile of the raw sample has plateaus that merge distinct sim RTs.
+    change: >
+      Q_real is linear interpolation through the distinct real RT values at their mid-point empirical CDF
+      ((cumulative count - count/2) / n). It is strictly increasing, so distinct sim RTs stay distinct except where
+      F_sim lies beyond the outermost knots (held at the real minimum or maximum). The target distribution, the
+      real sample, F_sim and every guard (including the 1% cap) are unchanged. The grid spacing is far below the
+      RT peak widths.

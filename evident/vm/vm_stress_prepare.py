@@ -122,10 +122,17 @@ def real_rt_sample(report: Path) -> np.ndarray:
 
 
 def spread_map(rt_old: np.ndarray, real_rt: np.ndarray) -> np.ndarray:
-    """new = Q_real(F_sim(old)): mid-rank empirical CDF of the sim apexes, linear-interpolated real quantiles."""
+    """new = Q_real(F_sim(old)), F_sim the mid-rank empirical CDF of the sim apexes.
+
+    Amendment 1 (stress_settings_rt_spread.yaml): DIA-NN reports RT on a ~0.17 s grid, so the real sample repeats
+    values. Q_real is linear interpolation through its distinct values at their mid-point CDF, which is strictly
+    increasing; only F_sim beyond the outermost knots is held at the real minimum or maximum.
+    """
     import pandas as pd
     f = (pd.Series(rt_old).rank(method="average").to_numpy() - 0.5) / len(rt_old)
-    return np.quantile(real_rt, f)
+    x, n = np.unique(real_rt, return_counts=True)
+    p = (np.cumsum(n) - n / 2) / n.sum()
+    return np.interp(f, p, x)
 
 
 def order_preserved(old: np.ndarray, new: np.ndarray) -> bool:

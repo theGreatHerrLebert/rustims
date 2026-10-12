@@ -447,8 +447,10 @@ def test_stress_prepare_rt_spread(tmp_path, monkeypatch):
     with sqlite3.connect(db) as c:
         rt = [r[0] for r in c.execute("select retention_time_gru_predictor from peptides order by peptide_id")]
         im = [r[0] for r in c.execute("select inv_mobility_gru_predictor from ions order by ion_id")]
-    # real RT (s): A median 2 min, B 4, C 5, D 6 -> [120, 240, 300, 360]; sim mid-ranks 1/6, 3/6, 5/6
-    assert rt == pytest.approx(list(np.quantile([120.0, 240.0, 300.0, 360.0], [1 / 6, 0.5, 5 / 6])))
+    # real RT (s): A median 2 min, B 4, C 5, D 6 -> knots [120, 240, 300, 360] at mid-point CDF 1/8 .. 7/8;
+    # sim mid-ranks 1/6, 3/6, 5/6
+    assert rt == pytest.approx(list(np.interp([1 / 6, 0.5, 5 / 6], [0.125, 0.375, 0.625, 0.875],
+                                              [120.0, 240.0, 300.0, 360.0])))
     assert rt == sorted(rt) and im == [0.9, 1.0, 1.1]
     rep = json.loads((tmp_path / "p" / "prepare.json").read_text())
     assert rep["row"] == "rt-spread" and rep["n_real_precursors"] == 4 and list(rep["settings"]) == ["rt-spread"]
@@ -463,7 +465,12 @@ def test_stress_prepare_rt_spread(tmp_path, monkeypatch):
     new = sp.spread_map(old, np.array([0.0, 10.0, 20.0, 30.0]))
     assert new[0] == new[2] and new[1] < new[3] < new[0] and sp.order_preserved(old, new)
     assert not sp.order_preserved(old, new[::-1])
-    flat = sp.spread_map(np.array([1.0, 2.0, 3.0, 4.0]), np.array([5.0, 5.0, 5.0, 5.0]))   # plateau merges all
+    # a real sample on a grid (repeated values) no longer merges distinct sim RTs (amendment 1)
+    grid = np.repeat(60.0 + 0.2 * np.arange(500), 3)     # 500 grid points, each value repeated
+    sim = np.linspace(0.0, 1.0, 1000)
+    assert sp.new_tie_share(sim, sp.spread_map(sim, grid)) < 0.01
+    assert sp.new_tie_share(sim, np.quantile(grid, (np.arange(1000) + 0.5) / 1000)) > 0.1   # the frozen rule did
+    flat = sp.spread_map(np.array([1.0, 2.0, 3.0, 4.0]), np.array([5.0, 5.0, 5.0, 5.0]))   # one value merges all
     assert sp.order_preserved(np.array([1.0, 2.0, 3.0, 4.0]), flat)
     assert sp.new_tie_share(np.array([1.0, 2.0, 3.0, 4.0]), flat) == 1.0
     # verify rejects a NaN apex in the replay
