@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from vm_common import Q_MAX, check_cohort, complexity_of, dump, mod_key
+from vm_common import Q_MAX, check_cohort, complexity_of, dump, mod_key, write_sidecar
 
 SUBSAMPLE_REPS = 20
 MAD_K = 3.0
@@ -164,6 +164,7 @@ def main() -> None:
         res["by_complexity"][str(c)] = {"all": compare(real, sim, a.seed), "shared": shared_panel(real, sim)}
     dump(res, a.out / "results" / "discrepancy.json")
     m = res["by_complexity"][str(matched["matched_complexity"])]["all"]
+    write_sidecar(a.out, {f"vm.discrepancy.{k}.diann": {"ratio": v.get("ratio", float("nan"))} for k, v in m.items()})
     print("observable  sim-real/real-real  (matched complexity)")
     for k, v in m.items():
         r = v.get("ratio")

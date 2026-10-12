@@ -5,6 +5,7 @@ Implements the frozen rules in evident/claims/protocol.yaml. Change a rule only 
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 import re
 import sqlite3
@@ -14,6 +15,8 @@ import numpy as np
 import pandas as pd
 
 Q_MAX = 0.01  # vm.protocol.estimand: run-level Q.Value <= 0.01
+RUSTIMS_UNDER_TEST = "85260d52"
+INF_SENTINEL = 1e12  # JSON has no infinity; a ratio over a zero denominator must still fail
 
 _MOD = re.compile(r"[\(\[]UN[IL]MOD:(\d+)[\)\]]", re.IGNORECASE)  # UnLMod: I->L applied to a whole string
 _LEFTOVER = re.compile(r"[\(\)\[\]]")
@@ -217,3 +220,22 @@ def dump(obj, path: Path) -> None:
     """Strict JSON: NaN and infinity become null."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_clean(obj), indent=2, sort_keys=True, allow_nan=False) + "\n")
+
+
+def write_sidecar(out: Path, values: dict, report_only: set[str] = frozenset()) -> None:
+    """{claim_id: {commit, date, values}} for typed-trust --last-verified-sidecar.
+
+    Report-only outputs are dropped. NaN is left out, so its criterion stays not assessed. Infinity is
+    written as INF_SENTINEL so it fails.
+    """
+    p = out / "last_verified.json"
+    side = json.loads(p.read_text()) if p.exists() else {}
+    today = dt.date.today().isoformat()
+    for cid, v in values.items():
+        vals = {}
+        for k, x in v.items():
+            if k in report_only or x is None or np.isnan(x):
+                continue
+            vals[k] = INF_SENTINEL if np.isinf(x) else float(x)
+        side[cid] = {"commit": RUSTIMS_UNDER_TEST, "date": today, "values": vals}
+    dump(side, p)

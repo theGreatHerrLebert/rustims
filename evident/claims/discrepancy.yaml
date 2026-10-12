@@ -1,0 +1,749 @@
+# Section-3 discrepancy (VM plan v3). Frozen margin: sim-real distance <= 3x max real-real replicate distance.
+# Generated from a template. Change values only through a new claim id (see evident.yaml).
+claims:
+- id: vm.discrepancy.ms1_ppm.diann
+  title: Sim-vs-real distance for ms1_ppm is within 3x the real replicate distance
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: 'median over 9 sim-real run pairs of the 1-Wasserstein distance (equal-count subsampled,
+        20 reps) / max over 3 real-real pairs. Observable: MS1 apex m/z delta, ppm (Th / m/z).'
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: 'Matrix row: mass accuracy. For MS1 apex m/z delta, ppm (Th / m/z), among precursors accepted
+    at run-level Q.Value <= 0.01 (all-IDs view) at the matched complexity (vm.protocol.matched-complexity),
+    the median sim-vs-real 1-Wasserstein distance (equal-count subsampled, 20 reps) is at most 3 times
+    the largest real-vs-real replicate distance. A ratio above 3 is a flagged mismatch that becomes a
+    stress-test candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond
+    3 MAD) are reported but carry no tolerance.'
+  gist:
+    what: The simulated ms1_ppm distribution differs from real about as much as real replicates differ
+      from each other.
+    why: This says which simulated properties are close enough to real data and which need a stress test.
+    wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real distance / max real-real distance <= 3 (all-IDs view, matched complexity)
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_discrepancy.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/discrepancy.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - DIA-NN is the common assay. Distances are conditional on identification, which favours easy precursors
+    on both sides.
+  - Three real runs from one batch give a small, possibly optimistic replicate distance. The ratio is
+    read with that in mind.
+  - The 3x margin is set before any discrepancy value was seen. Downstream relevance is judged by the
+    stress test, not here.
+  failure_modes:
+  - Mass deltas are truncated by the fixed 15 ppm search tolerance, so tails beyond it are invisible.
+  - RT/IM residuals are measured after DIA-NN alignment and calibration, which can absorb a systematic
+    mismatch.
+  - A 0/0 ratio is reported as not assessed. A zero replicate distance with any sim distance fails.
+- id: vm.discrepancy.fr_ppm.diann
+  title: Sim-vs-real distance for fr_ppm is within 3x the real replicate distance
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: 'median over 9 sim-real run pairs of the 1-Wasserstein distance (equal-count subsampled,
+        20 reps) / max over 3 real-real pairs. Observable: best fragment m/z delta, ppm.'
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: 'Matrix row: mass accuracy. For best fragment m/z delta, ppm, among precursors accepted at run-level
+    Q.Value <= 0.01 (all-IDs view) at the matched complexity (vm.protocol.matched-complexity), the median
+    sim-vs-real 1-Wasserstein distance (equal-count subsampled, 20 reps) is at most 3 times the largest
+    real-vs-real replicate distance. A ratio above 3 is a flagged mismatch that becomes a stress-test
+    candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond 3 MAD) are
+    reported but carry no tolerance.'
+  gist:
+    what: The simulated fr_ppm distribution differs from real about as much as real replicates differ
+      from each other.
+    why: This says which simulated properties are close enough to real data and which need a stress test.
+    wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real distance / max real-real distance <= 3 (all-IDs view, matched complexity)
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_discrepancy.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/discrepancy.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - DIA-NN is the common assay. Distances are conditional on identification, which favours easy precursors
+    on both sides.
+  - Three real runs from one batch give a small, possibly optimistic replicate distance. The ratio is
+    read with that in mind.
+  - The 3x margin is set before any discrepancy value was seen. Downstream relevance is judged by the
+    stress test, not here.
+  failure_modes:
+  - Mass deltas are truncated by the fixed 15 ppm search tolerance, so tails beyond it are invisible.
+  - RT/IM residuals are measured after DIA-NN alignment and calibration, which can absorb a systematic
+    mismatch.
+  - A 0/0 ratio is reported as not assessed. A zero replicate distance with any sim distance fails.
+- id: vm.discrepancy.fwhm.diann
+  title: Sim-vs-real distance for fwhm is within 3x the real replicate distance
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: 'median over 9 sim-real run pairs of the 1-Wasserstein distance (equal-count subsampled,
+        20 reps) / max over 3 real-real pairs. Observable: elution peak FWHM, min.'
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: 'Matrix row: RT / peak shape. For elution peak FWHM, min, among precursors accepted at run-level
+    Q.Value <= 0.01 (all-IDs view) at the matched complexity (vm.protocol.matched-complexity), the median
+    sim-vs-real 1-Wasserstein distance (equal-count subsampled, 20 reps) is at most 3 times the largest
+    real-vs-real replicate distance. A ratio above 3 is a flagged mismatch that becomes a stress-test
+    candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond 3 MAD) are
+    reported but carry no tolerance.'
+  gist:
+    what: The simulated fwhm distribution differs from real about as much as real replicates differ from
+      each other.
+    why: This says which simulated properties are close enough to real data and which need a stress test.
+    wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real distance / max real-real distance <= 3 (all-IDs view, matched complexity)
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_discrepancy.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/discrepancy.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - DIA-NN is the common assay. Distances are conditional on identification, which favours easy precursors
+    on both sides.
+  - Three real runs from one batch give a small, possibly optimistic replicate distance. The ratio is
+    read with that in mind.
+  - The 3x margin is set before any discrepancy value was seen. Downstream relevance is judged by the
+    stress test, not here.
+  failure_modes:
+  - Mass deltas are truncated by the fixed 15 ppm search tolerance, so tails beyond it are invisible.
+  - RT/IM residuals are measured after DIA-NN alignment and calibration, which can absorb a systematic
+    mismatch.
+  - A 0/0 ratio is reported as not assessed. A zero replicate distance with any sim distance fails.
+- id: vm.discrepancy.rt_width.diann
+  title: Sim-vs-real distance for rt_width is within 3x the real replicate distance
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: 'median over 9 sim-real run pairs of the 1-Wasserstein distance (equal-count subsampled,
+        20 reps) / max over 3 real-real pairs. Observable: RT.Stop - RT.Start, min.'
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: 'Matrix row: RT / peak shape. For RT.Stop - RT.Start, min, among precursors accepted at run-level
+    Q.Value <= 0.01 (all-IDs view) at the matched complexity (vm.protocol.matched-complexity), the median
+    sim-vs-real 1-Wasserstein distance (equal-count subsampled, 20 reps) is at most 3 times the largest
+    real-vs-real replicate distance. A ratio above 3 is a flagged mismatch that becomes a stress-test
+    candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond 3 MAD) are
+    reported but carry no tolerance.'
+  gist:
+    what: The simulated rt_width distribution differs from real about as much as real replicates differ
+      from each other.
+    why: This says which simulated properties are close enough to real data and which need a stress test.
+    wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real distance / max real-real distance <= 3 (all-IDs view, matched complexity)
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_discrepancy.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/discrepancy.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - DIA-NN is the common assay. Distances are conditional on identification, which favours easy precursors
+    on both sides.
+  - Three real runs from one batch give a small, possibly optimistic replicate distance. The ratio is
+    read with that in mind.
+  - The 3x margin is set before any discrepancy value was seen. Downstream relevance is judged by the
+    stress test, not here.
+  failure_modes:
+  - Mass deltas are truncated by the fixed 15 ppm search tolerance, so tails beyond it are invisible.
+  - RT/IM residuals are measured after DIA-NN alignment and calibration, which can absorb a systematic
+    mismatch.
+  - A 0/0 ratio is reported as not assessed. A zero replicate distance with any sim distance fails.
+- id: vm.discrepancy.rt_resid.diann
+  title: Sim-vs-real distance for rt_resid is within 3x the real replicate distance
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: 'median over 9 sim-real run pairs of the 1-Wasserstein distance (equal-count subsampled,
+        20 reps) / max over 3 real-real pairs. Observable: RT - Predicted.RT after DIA-NN alignment, min.'
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: 'Matrix row: RT / peak shape. For RT - Predicted.RT after DIA-NN alignment, min, among precursors
+    accepted at run-level Q.Value <= 0.01 (all-IDs view) at the matched complexity (vm.protocol.matched-complexity),
+    the median sim-vs-real 1-Wasserstein distance (equal-count subsampled, 20 reps) is at most 3 times
+    the largest real-vs-real replicate distance. A ratio above 3 is a flagged mismatch that becomes a
+    stress-test candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond
+    3 MAD) are reported but carry no tolerance.'
+  gist:
+    what: The simulated rt_resid distribution differs from real about as much as real replicates differ
+      from each other.
+    why: This says which simulated properties are close enough to real data and which need a stress test.
+    wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real distance / max real-real distance <= 3 (all-IDs view, matched complexity)
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_discrepancy.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/discrepancy.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - DIA-NN is the common assay. Distances are conditional on identification, which favours easy precursors
+    on both sides.
+  - Three real runs from one batch give a small, possibly optimistic replicate distance. The ratio is
+    read with that in mind.
+  - The 3x margin is set before any discrepancy value was seen. Downstream relevance is judged by the
+    stress test, not here.
+  failure_modes:
+  - Mass deltas are truncated by the fixed 15 ppm search tolerance, so tails beyond it are invisible.
+  - RT/IM residuals are measured after DIA-NN alignment and calibration, which can absorb a systematic
+    mismatch.
+  - A 0/0 ratio is reported as not assessed. A zero replicate distance with any sim distance fails.
+- id: vm.discrepancy.im_resid.diann
+  title: Sim-vs-real distance for im_resid is within 3x the real replicate distance
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: 'median over 9 sim-real run pairs of the 1-Wasserstein distance (equal-count subsampled,
+        20 reps) / max over 3 real-real pairs. Observable: IM - Predicted.IM after DIA-NN calibration,
+        1/K0.'
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: 'Matrix row: ion mobility. For IM - Predicted.IM after DIA-NN calibration, 1/K0, among precursors
+    accepted at run-level Q.Value <= 0.01 (all-IDs view) at the matched complexity (vm.protocol.matched-complexity),
+    the median sim-vs-real 1-Wasserstein distance (equal-count subsampled, 20 reps) is at most 3 times
+    the largest real-vs-real replicate distance. A ratio above 3 is a flagged mismatch that becomes a
+    stress-test candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond
+    3 MAD) are reported but carry no tolerance.'
+  gist:
+    what: The simulated im_resid distribution differs from real about as much as real replicates differ
+      from each other.
+    why: This says which simulated properties are close enough to real data and which need a stress test.
+    wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real distance / max real-real distance <= 3 (all-IDs view, matched complexity)
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_discrepancy.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/discrepancy.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - DIA-NN is the common assay. Distances are conditional on identification, which favours easy precursors
+    on both sides.
+  - Three real runs from one batch give a small, possibly optimistic replicate distance. The ratio is
+    read with that in mind.
+  - The 3x margin is set before any discrepancy value was seen. Downstream relevance is judged by the
+    stress test, not here.
+  failure_modes:
+  - Mass deltas are truncated by the fixed 15 ppm search tolerance, so tails beyond it are invisible.
+  - RT/IM residuals are measured after DIA-NN alignment and calibration, which can absorb a systematic
+    mismatch.
+  - A 0/0 ratio is reported as not assessed. A zero replicate distance with any sim distance fails.
+- id: vm.discrepancy.log10_ms1_area.diann
+  title: Sim-vs-real distance for log10_ms1_area is within 3x the real replicate distance
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: 'median over 9 sim-real run pairs of the 1-Wasserstein distance (equal-count subsampled,
+        20 reps) / max over 3 real-real pairs. Observable: log10 Ms1.Area.'
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: 'Matrix row: abundance. For log10 Ms1.Area, among precursors accepted at run-level Q.Value <=
+    0.01 (all-IDs view) at the matched complexity (vm.protocol.matched-complexity), the median sim-vs-real
+    1-Wasserstein distance (equal-count subsampled, 20 reps) is at most 3 times the largest real-vs-real
+    replicate distance. A ratio above 3 is a flagged mismatch that becomes a stress-test candidate. The
+    shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond 3 MAD) are reported but
+    carry no tolerance.'
+  gist:
+    what: The simulated log10_ms1_area distribution differs from real about as much as real replicates
+      differ from each other.
+    why: This says which simulated properties are close enough to real data and which need a stress test.
+    wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real distance / max real-real distance <= 3 (all-IDs view, matched complexity)
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_discrepancy.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/discrepancy.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - DIA-NN is the common assay. Distances are conditional on identification, which favours easy precursors
+    on both sides.
+  - Three real runs from one batch give a small, possibly optimistic replicate distance. The ratio is
+    read with that in mind.
+  - The 3x margin is set before any discrepancy value was seen. Downstream relevance is judged by the
+    stress test, not here.
+  failure_modes:
+  - Mass deltas are truncated by the fixed 15 ppm search tolerance, so tails beyond it are invisible.
+  - RT/IM residuals are measured after DIA-NN alignment and calibration, which can absorb a systematic
+    mismatch.
+  - A 0/0 ratio is reported as not assessed. A zero replicate distance with any sim distance fails.
+- id: vm.discrepancy.evidence.diann
+  title: Sim-vs-real distance for evidence is within 3x the real replicate distance
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: 'median over 9 sim-real run pairs of the 1-Wasserstein distance (equal-count subsampled,
+        20 reps) / max over 3 real-real pairs. Observable: DIA-NN Evidence (chromatographic, not spectral).'
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: 'Matrix row: fragmentation (chromatographic evidence). For DIA-NN Evidence (chromatographic,
+    not spectral), among precursors accepted at run-level Q.Value <= 0.01 (all-IDs view) at the matched
+    complexity (vm.protocol.matched-complexity), the median sim-vs-real 1-Wasserstein distance (equal-count
+    subsampled, 20 reps) is at most 3 times the largest real-vs-real replicate distance. A ratio above
+    3 is a flagged mismatch that becomes a stress-test candidate. The shared-precursor view and the tail
+    summaries (q05/q50/q95, fraction beyond 3 MAD) are reported but carry no tolerance.'
+  gist:
+    what: The simulated evidence distribution differs from real about as much as real replicates differ
+      from each other.
+    why: This says which simulated properties are close enough to real data and which need a stress test.
+    wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real distance / max real-real distance <= 3 (all-IDs view, matched complexity)
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_discrepancy.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/discrepancy.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - DIA-NN is the common assay. Distances are conditional on identification, which favours easy precursors
+    on both sides.
+  - Three real runs from one batch give a small, possibly optimistic replicate distance. The ratio is
+    read with that in mind.
+  - The 3x margin is set before any discrepancy value was seen. Downstream relevance is judged by the
+    stress test, not here.
+  failure_modes:
+  - Mass deltas are truncated by the fixed 15 ppm search tolerance, so tails beyond it are invisible.
+  - RT/IM residuals are measured after DIA-NN alignment and calibration, which can absorb a systematic
+    mismatch.
+  - A 0/0 ratio is reported as not assessed. A zero replicate distance with any sim distance fails.
+- id: vm.discrepancy.ms1_profile_corr.diann
+  title: Sim-vs-real distance for ms1_profile_corr is within 3x the real replicate distance
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: 'median over 9 sim-real run pairs of the 1-Wasserstein distance (equal-count subsampled,
+        20 reps) / max over 3 real-real pairs. Observable: MS1-MS2 elution agreement (not isotopes).'
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: 'Matrix row: RT / peak shape (MS1-MS2 elution agreement). For MS1-MS2 elution agreement (not
+    isotopes), among precursors accepted at run-level Q.Value <= 0.01 (all-IDs view) at the matched complexity
+    (vm.protocol.matched-complexity), the median sim-vs-real 1-Wasserstein distance (equal-count subsampled,
+    20 reps) is at most 3 times the largest real-vs-real replicate distance. A ratio above 3 is a flagged
+    mismatch that becomes a stress-test candidate. The shared-precursor view and the tail summaries (q05/q50/q95,
+    fraction beyond 3 MAD) are reported but carry no tolerance.'
+  gist:
+    what: The simulated ms1_profile_corr distribution differs from real about as much as real replicates
+      differ from each other.
+    why: This says which simulated properties are close enough to real data and which need a stress test.
+    wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real distance / max real-real distance <= 3 (all-IDs view, matched complexity)
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_discrepancy.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/discrepancy.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - DIA-NN is the common assay. Distances are conditional on identification, which favours easy precursors
+    on both sides.
+  - Three real runs from one batch give a small, possibly optimistic replicate distance. The ratio is
+    read with that in mind.
+  - The 3x margin is set before any discrepancy value was seen. Downstream relevance is judged by the
+    stress test, not here.
+  failure_modes:
+  - Mass deltas are truncated by the fixed 15 ppm search tolerance, so tails beyond it are invisible.
+  - RT/IM residuals are measured after DIA-NN alignment and calibration, which can absorb a systematic
+    mismatch.
+  - A 0/0 ratio is reported as not assessed. A zero replicate distance with any sim distance fails.
+- id: vm.discrepancy.mass_evidence.diann
+  title: Sim-vs-real distance for mass_evidence is within 3x the real replicate distance
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: 'median over 9 sim-real run pairs of the 1-Wasserstein distance (equal-count subsampled,
+        20 reps) / max over 3 real-real pairs. Observable: DIA-NN Mass.Evidence.'
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: 'Matrix row: mass accuracy. For DIA-NN Mass.Evidence, among precursors accepted at run-level
+    Q.Value <= 0.01 (all-IDs view) at the matched complexity (vm.protocol.matched-complexity), the median
+    sim-vs-real 1-Wasserstein distance (equal-count subsampled, 20 reps) is at most 3 times the largest
+    real-vs-real replicate distance. A ratio above 3 is a flagged mismatch that becomes a stress-test
+    candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond 3 MAD) are
+    reported but carry no tolerance.'
+  gist:
+    what: The simulated mass_evidence distribution differs from real about as much as real replicates
+      differ from each other.
+    why: This says which simulated properties are close enough to real data and which need a stress test.
+    wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real distance / max real-real distance <= 3 (all-IDs view, matched complexity)
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_discrepancy.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/discrepancy.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - DIA-NN is the common assay. Distances are conditional on identification, which favours easy precursors
+    on both sides.
+  - Three real runs from one batch give a small, possibly optimistic replicate distance. The ratio is
+    read with that in mind.
+  - The 3x margin is set before any discrepancy value was seen. Downstream relevance is judged by the
+    stress test, not here.
+  failure_modes:
+  - Mass deltas are truncated by the fixed 15 ppm search tolerance, so tails beyond it are invisible.
+  - RT/IM residuals are measured after DIA-NN alignment and calibration, which can absorb a systematic
+    mismatch.
+  - A 0/0 ratio is reported as not assessed. A zero replicate distance with any sim distance fails.
+- id: vm.discrepancy.pep.diann
+  title: Sim-vs-real distance for pep is within 3x the real replicate distance
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: 'median over 9 sim-real run pairs of the 1-Wasserstein distance (equal-count subsampled,
+        20 reps) / max over 3 real-real pairs. Observable: DIA-NN posterior error probability (score marginal).'
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: 'Matrix row: fragmentation (score marginal). For DIA-NN posterior error probability (score marginal),
+    among precursors accepted at run-level Q.Value <= 0.01 (all-IDs view) at the matched complexity (vm.protocol.matched-complexity),
+    the median sim-vs-real 1-Wasserstein distance (equal-count subsampled, 20 reps) is at most 3 times
+    the largest real-vs-real replicate distance. A ratio above 3 is a flagged mismatch that becomes a
+    stress-test candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond
+    3 MAD) are reported but carry no tolerance.'
+  gist:
+    what: The simulated pep distribution differs from real about as much as real replicates differ from
+      each other.
+    why: This says which simulated properties are close enough to real data and which need a stress test.
+    wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real distance / max real-real distance <= 3 (all-IDs view, matched complexity)
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_discrepancy.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/discrepancy.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - DIA-NN is the common assay. Distances are conditional on identification, which favours easy precursors
+    on both sides.
+  - Three real runs from one batch give a small, possibly optimistic replicate distance. The ratio is
+    read with that in mind.
+  - The 3x margin is set before any discrepancy value was seen. Downstream relevance is judged by the
+    stress test, not here.
+  failure_modes:
+  - Mass deltas are truncated by the fixed 15 ppm search tolerance, so tails beyond it are invisible.
+  - RT/IM residuals are measured after DIA-NN alignment and calibration, which can absorb a systematic
+    mismatch.
+  - A 0/0 ratio is reported as not assessed. A zero replicate distance with any sim distance fails.
+- id: vm.discrepancy.charge.diann
+  title: Sim-vs-real distance for charge is within 3x the real replicate distance
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: 'median over 9 sim-real run pairs of the total variation distance / max over 3 real-real
+        pairs. Observable: charge-state fractions, TVD within fixed m/z bins weighted by pooled-real bin
+        share.'
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: 'Matrix row: charge. For charge-state fractions, TVD within fixed m/z bins weighted by pooled-real
+    bin share, among precursors accepted at run-level Q.Value <= 0.01 (all-IDs view) at the matched complexity
+    (vm.protocol.matched-complexity), the median sim-vs-real total variation distance is at most 3 times
+    the largest real-vs-real replicate distance. A ratio above 3 is a flagged mismatch that becomes a
+    stress-test candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond
+    3 MAD) are reported but carry no tolerance.'
+  gist:
+    what: The simulated charge distribution differs from real about as much as real replicates differ
+      from each other.
+    why: This says which simulated properties are close enough to real data and which need a stress test.
+    wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real distance / max real-real distance <= 3 (all-IDs view, matched complexity)
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_discrepancy.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/discrepancy.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - DIA-NN is the common assay. Distances are conditional on identification, which favours easy precursors
+    on both sides.
+  - Three real runs from one batch give a small, possibly optimistic replicate distance. The ratio is
+    read with that in mind.
+  - The 3x margin is set before any discrepancy value was seen. Downstream relevance is judged by the
+    stress test, not here.
+  failure_modes:
+  - Mass deltas are truncated by the fixed 15 ppm search tolerance, so tails beyond it are invisible.
+  - RT/IM residuals are measured after DIA-NN alignment and calibration, which can absorb a systematic
+    mismatch.
+  - A 0/0 ratio is reported as not assessed. A zero replicate distance with any sim distance fails.

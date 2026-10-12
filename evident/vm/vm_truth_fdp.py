@@ -16,7 +16,6 @@ Any missing, non-finite or inconsistent input stops the run instead of shrinking
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import json
 from pathlib import Path
 
@@ -24,10 +23,8 @@ import numpy as np
 import pandas as pd
 
 from vm_common import (Q_MAX, accepted_from_report, check_cohort, complexity_of, dump, fdp_stripped, fdrbench_at_threshold,
-                       find_truth_db, finite, is_entrapment, label_false, modal, read_pairs, read_truth, verdict)
-
-RUSTIMS_UNDER_TEST = "85260d52"
-
+                       find_truth_db, finite, is_entrapment, label_false, modal, read_pairs, read_truth, verdict,
+                       write_sidecar)
 
 class Ctx:
     def __init__(self, recipe: Path, sim_root: Path, out: Path):
@@ -210,17 +207,6 @@ MODES = {"estimator-bias": estimator_bias, "search-space-shift": search_space_sh
 REPORT_ONLY = {"bracket_frequency", "target_count_ratio"}
 
 
-def write_sidecar(out: Path, values: dict) -> None:
-    """{claim_id: {commit, date, values}} for typed-trust --last-verified-sidecar. Report-only outputs dropped."""
-    p = out / "last_verified.json"
-    side = json.loads(p.read_text()) if p.exists() else {}
-    today = dt.date.today().isoformat()
-    for cid, v in values.items():
-        side[cid] = {"commit": RUSTIMS_UNDER_TEST, "date": today,
-                     "values": {k: x for k, x in v.items() if k not in REPORT_ONLY}}
-    dump(side, p)
-
-
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=[*MODES, "all", "stress"], required=True)
@@ -242,7 +228,7 @@ def main() -> None:
     for mode in modes:
         results[mode] = MODES[mode](c)
         dump(results[mode], a.out / "results" / f"{mode}.json")
-        write_sidecar(a.out, results[mode]["values"])
+        write_sidecar(a.out, results[mode]["values"], REPORT_ONLY)
         print(mode, json.dumps(results[mode]["values"]))
     if a.mode == "all":
         d = diagnostic(results)

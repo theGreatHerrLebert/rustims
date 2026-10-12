@@ -19,6 +19,7 @@ vocabularies:
     - timsim.entrapment
     - timsim.stress
     - timsim.protocol
+    - timsim.discrepancy
   oracle:
     - timsim-ground-truth
     - DIA-NN
@@ -30,6 +31,7 @@ vocabularies:
   tolerance_metric:
     - fdp
     - signed_difference
+    - discrepancy_ratio
   input_class:
     - real-run
 
@@ -37,3 +39,4 @@ include:
   - claims/protocol.yaml
   - claims/entrapment.yaml
   - claims/stress.yaml
+  - claims/discrepancy.yaml
