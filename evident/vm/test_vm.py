@@ -192,3 +192,26 @@ def test_stripped_estimand_counts_each_backbone_once():
     lab = pd.DataFrame({"stripped": ["A", "A", "A", "B"], "charge": [2, 2, 2, 2],
                         "false_stripped": [False, False, False, True]})
     assert fdp_stripped(lab) == 0.5
+
+
+def test_direction_classify_and_end_to_end(tmp_path):
+    from vm_direction import FEATURES, classify
+    assert classify(1.0, [2, 3, 4], "lower") == "easier"
+    assert classify(5.0, [2, 3, 4], "lower") == "harder"
+    assert classify(5.0, [2, 3, 4], "higher") == "easier"
+    assert classify(3.0, [2, 3, 4], "higher") == "comparable"
+    runs = ["LS10", "LS11", "LS12", "s1", "s2", "s3"]
+    tails = {r: {"q05": -1.0, "q50": 1.0, "q95": 1.0} for r in runs}
+    for r in ("LS10", "LS11", "LS12"):
+        tails[r] = {"q05": -2.0 - 0.1 * runs.index(r), "q50": 1.0 + 0.1 * runs.index(r), "q95": 2.0}
+    view = {f: {"tails": tails} for f in FEATURES}
+    (tmp_path / "results").mkdir()
+    (tmp_path / "results" / "discrepancy.json").write_text(json.dumps({"by_complexity": {"50000": {"all": view}}}))
+    (tmp_path / "matched_complexity.json").write_text(json.dumps({"matched_complexity": 50000, "matched_runs": ["s1", "s2", "s3"]}))
+    _run("vm_direction.py", "--out", tmp_path)
+    d = json.loads((tmp_path / "results" / "direction.json").read_text())
+    # sim spread 2.0 < real [4.0, 4.2]: easier on 4 spread features; sim q50 1.0 within [1.0, 1.2]: comparable;
+    # sim q95 1.0 < real 2.0 with lower easier: pep easier.
+    assert d["n_easier"] == 5 and d["n_harder"] == 0
+    side = json.loads((tmp_path / "last_verified.json").read_text())
+    assert side["vm.direction.sim-not-harder.diann"]["values"] == {"n_harder": 0.0}

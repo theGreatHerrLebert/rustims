@@ -40,3 +40,4 @@ include:
   - claims/entrapment.yaml
   - claims/stress.yaml
   - claims/discrepancy.yaml
+  - claims/direction.yaml

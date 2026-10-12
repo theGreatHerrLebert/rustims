@@ -1,0 +1,147 @@
+# Direction of the sim-real gap (added 2026-10-12, before any stage A result was read).
+# Rationale: identical distributions are sufficient, not necessary. A conclusion transfers in one
+# direction when the simulation is consistently easier, or consistently harder, than real data.
+
+claims:
+  - id: vm.protocol.transfer-direction
+    title: Rule for which FDP conclusions transfer, given the direction of the sim-real gap
+    kind: policy
+    subsystem: timsim.protocol
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - understanding
+    claim: >
+      The discrepancy claims (vm.discrepancy.*) describe the size of the gap and are not a validity gate.
+      Transfer is judged by direction. (a) If the sim is not harder than real on any direction feature
+      (vm.direction.sim-not-harder.diann passes), a failure of FDP control seen on sim is read as
+      transferring to real data: the tool fails even on data at most as hard. A pass on sim is not read
+      as transferring. (b) If the sim is not easier on any feature (vm.direction.sim-not-easier.diann
+      passes), a pass on sim transfers and a failure does not. (c) Mixed directions: neither transfers
+      by this argument, and the stress tests (vm.<row>.fdp-*) are the only evidence.
+    evidence:
+      oracle:
+        - DIA-NN
+      command: python evident/vm/vm_direction.py
+      artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/direction.json
+    assumptions:
+      - Harder data (wider peaks, larger mass and RT/IM error, weaker evidence scores) does not lower a
+        tool's FDP. That is plausible but not guaranteed, because FDP control depends on whether false
+        target matches behave like decoys, not on difficulty as such. The stress tests check it.
+    failure_modes:
+      - The features cover what DIA-NN reports. Difficulty the report does not show, such as interference
+        from unmodelled chemical background, is outside the rule. The no-overlay baseline makes the sim
+        easier there, and that is stated as a limitation, not measured.
+
+  - id: vm.direction.sim-not-harder.diann
+    title: TimSim is not harder than real 10 ng data on any direction feature
+    kind: measurement
+    subsystem: timsim.discrepancy
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - understanding
+    capabilities:
+      - sim-real-transfer
+    inputs:
+      corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+      n: 6
+      class: real-run
+    outputs:
+      n_harder:
+        unit: count
+        description: Number of direction features on which the sim is classed harder than real.
+      n_easier:
+        unit: count
+        description: Number classed easier. Reported only.
+    pinned_versions:
+      rustims: 85260d52
+      DIA-NN: "2.5.1"
+    claim: >
+      For each of the 10 direction features, the per-run statistic is computed on the accepted precursors
+      (all-IDs view): spread q95 - q05 for ms1_ppm, fr_ppm, rt_resid and im_resid (lower is easier);
+      median for fwhm and rt_width (lower is easier) and for evidence, ms1_profile_corr and mass_evidence
+      (higher is easier); q95 for pep (lower is easier). The sim value is the median over the matched
+      seeds. The feature is easier if the sim value lies beyond the [min, max] range of the three real
+      runs on the easier side, harder if beyond it on the harder side, and comparable otherwise. The claim
+      is n_harder = 0.
+    gist:
+      what: On none of the DIA-NN features is the simulated data harder than the real data.
+      why: If the sim is never harder, error-control failures found on sim are real problems, not simulation artefacts.
+      wrong_if: Any direction feature puts the sim outside the real replicate range on the harder side.
+    tolerances:
+      - metric: absolute_error
+        op: "<="
+        value: 0
+        output: n_harder
+        prose: number of features with the sim beyond the real range on the harder side == 0
+    evidence:
+      oracle:
+        - DIA-NN
+      command: python evident/vm/vm_direction.py
+      artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/direction.json
+    provenance: automatic
+    last_verified:
+      commit: null
+      date: null
+      value: null
+    assumptions:
+      - log10 Ms1.Area is left out because the simulated intensity scale is not anchored to the real one.
+        Charge is left out because it has no difficulty direction.
+      - Peak width counts narrower as easier (less co-elution), although very narrow peaks sampled by few
+        cycles can be harder to score.
+    failure_modes:
+      - Three real runs give a narrow range, so many features may come out easier or harder on small
+        differences. The size of each gap is in vm.discrepancy.*.
+
+  - id: vm.direction.sim-not-easier.diann
+    title: TimSim is not easier than real 10 ng data on any direction feature
+    kind: measurement
+    subsystem: timsim.discrepancy
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - understanding
+    capabilities:
+      - sim-real-transfer
+    inputs:
+      corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+      n: 6
+      class: real-run
+    outputs:
+      n_easier:
+        unit: count
+        description: Number of direction features on which the sim is classed easier than real.
+    pinned_versions:
+      rustims: 85260d52
+      DIA-NN: "2.5.1"
+    claim: >
+      Same features, statistics and classification as vm.direction.sim-not-harder.diann. The claim is
+      n_easier = 0.
+    gist:
+      what: On none of the DIA-NN features is the simulated data easier than the real data.
+      why: If the sim is never easier, error control shown on sim also holds for real data.
+      wrong_if: Any direction feature puts the sim outside the real replicate range on the easier side.
+    tolerances:
+      - metric: absolute_error
+        op: "<="
+        value: 0
+        output: n_easier
+        prose: number of features with the sim beyond the real range on the easier side == 0
+    evidence:
+      oracle:
+        - DIA-NN
+      command: python evident/vm/vm_direction.py
+      artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/direction.json
+    provenance: automatic
+    last_verified:
+      commit: null
+      date: null
+      value: null
+    assumptions:
+      - Same as vm.direction.sim-not-harder.diann.
+    failure_modes:
+      - Same as vm.direction.sim-not-harder.diann.
