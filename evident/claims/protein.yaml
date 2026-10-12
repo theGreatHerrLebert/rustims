@@ -23,6 +23,9 @@ claims:
     - FDRBench
     command: SUBMISSION/revision/vm-work/mogon/vm_protein.sbatch
     artifact: TIMSIM-REVISION/searches/vm/recipe-v1-protein/
+  gist:
+    what: "Protein-level error rates are measured with a separate protein-level entrapment search, with settings fixed in advance."
+    why: "Protein-level error control can fail where peptide-level control holds, so it needs its own fixed method."
   assumptions:
   - Run-level PG.Q.Value is DIA-NN's per-run protein-group q-value.
   failure_modes:
@@ -55,10 +58,8 @@ claims:
   claim: Mean over the nine sims of (FDRBench protein combined estimate - true protein-group FDP) at PG.Q.Value
     <= 0.01 is at least -0.0025.
   gist:
-    what: At protein level, the entrapment upper estimate is on average not below the true error rate
-      on simulated runs.
-    why: Wen et al. found protein-level control is where DIA tools fail most, so the estimator must be
-      checked there too.
+    what: "At protein level, on simulated runs, the entrapment method does not on average underestimate the real error rate."
+    why: "Wen et al. found DIA tools fail most at protein level, so the method must be checked there too."
     wrong_if: Mean (combined minus true) is below -0.25 percentage points.
   tolerances:
   - metric: signed_difference
@@ -109,9 +110,8 @@ claims:
     The claim holds every run valid (combined_max <= 0.01). The second tolerance is the ''not invalid''
     bound.'
   gist:
-    what: Whether DIA-NN's 1% protein-group cutoff is shown valid, invalid or left open by entrapment
-      on real10.
-    why: Reviewer 2 noted that FDR is controlled at several levels and the level changes results.
+    what: "On real 10 ng runs, entrapment shows whether DIA-NN's 1% protein cutoff holds, fails, or cannot be decided."
+    why: "A reviewer noted that error control happens at several levels and the level can change the answer."
     wrong_if: The combined estimate exceeds 1% in any run. Invalid if the lower bound also exceeds 1%.
   tolerances:
   - metric: fdp
@@ -166,9 +166,8 @@ claims:
     The claim holds every run valid (combined_max <= 0.01). The second tolerance is the ''not invalid''
     bound.'
   gist:
-    what: Whether DIA-NN's 1% protein-group cutoff is shown valid, invalid or left open by entrapment
-      on sim-matched.
-    why: Reviewer 2 noted that FDR is controlled at several levels and the level changes results.
+    what: "The same protein-level check of DIA-NN's 1% cutoff, done on the simulated runs matched to the real ones."
+    why: "This is the simulated side of the protein-level comparison."
     wrong_if: The combined estimate exceeds 1% in any run. Invalid if the lower bound also exceeds 1%.
   tolerances:
   - metric: fdp
@@ -220,9 +219,8 @@ claims:
   claim: '|mean combined estimate over matched sims - mean over the real 10 ng runs| <= 0.005, or the
     modal verdict class is the same (class reported in results; the tolerance is the band).'
   gist:
-    what: The protein-level entrapment estimate agrees between simulated and real runs to within half
-      a percentage point.
-    why: This compares sim and real on the error rate itself, at the level reviewers flagged.
+    what: "The protein-level entrapment estimate comes out about the same on simulated and real runs."
+    why: "It compares simulation and reality on protein error rates, the level the reviewer flagged."
     wrong_if: The means differ by more than 0.5 percentage points.
   tolerances:
   - metric: absolute_error

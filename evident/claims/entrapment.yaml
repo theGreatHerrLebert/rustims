@@ -43,8 +43,8 @@ claims:
       underestimate true FDP by more than 0.25 percentage points. True FDP
       follows vm.protocol.truth-rule on exactly the set FDRBench evaluates.
     gist:
-      what: On simulated runs, where the truth is known, the entrapment upper-bound estimates are on average not below the true error rate.
-      why: Simulation is the only place an entrapment estimator can be checked against the truth before trusting it on real data.
+      what: "On simulated runs, where we know which hits are wrong, the entrapment method does not underestimate DIA-NN's real error rate."
+      why: "Only simulation can check the entrapment method against the truth before it is relied on for real data."
       wrong_if: Either mean (estimate minus true FDP) is below -0.25 percentage points.
     tolerances:
       - metric: signed_difference
@@ -114,8 +114,8 @@ claims:
       search and in the plain search. The mean absolute difference over runs
       is at most 0.0025.
     gist:
-      what: Doubling the search space with entrapment peptides barely changes the true error rate among real-target hits.
-      why: Entrapment only measures the original search if adding entrapment does not change the search itself.
+      what: "Adding the extra 'entrapment' peptides to the search barely changes how many of the normal hits are wrong."
+      why: "Entrapment only tells us about the normal search if adding the extra peptides does not change that search."
       wrong_if: The mean absolute target-only FDP shift is above 0.25 percentage points.
     tolerances:
       - metric: absolute_error
@@ -177,8 +177,8 @@ claims:
       entrap.sim-vs-real.verdict-agree.diann holds. A divergence is reported
       as a finding.
     gist:
-      what: The entrapment error-rate estimate on simulated runs matches the same estimate on comparable real runs to within half a percentage point.
-      why: This compares sim and real at the level of the paper's conclusion (error rates), not only at the level of features.
+      what: "The entrapment error estimate comes out about the same on simulated runs and on comparable real runs."
+      why: "This compares simulation and reality on the paper's actual conclusion, error rates, not just on data features."
       wrong_if: Either mean estimate differs between sim and real by more than 0.5 percentage points.
     tolerances:
       - metric: absolute_error
@@ -242,8 +242,8 @@ claims:
       within a side counts as inconclusive. Agreement on inconclusive is
       recorded as no positive transfer evidence.
     gist:
-      what: Simulated and real runs land in the same entrapment verdict class.
-      why: This is the coarser fallback when the numeric estimates differ.
+      what: "Simulated and real runs get the same overall entrapment verdict: error rate fine, too high, or unclear."
+      why: "A rougher check for when the numbers themselves do not agree."
       wrong_if: The modal verdict class differs between sim and real.
     tolerances:
       - metric: pass_rate
@@ -300,8 +300,8 @@ claims:
       and numeric bounds are always reported. This is an empirical
       classification, not a confidence statement.
     gist:
-      what: Whether DIA-NN's 1% precursor cutoff is shown valid, shown invalid, or left open by entrapment on real 10 ng runs.
-      why: It is the real-data anchor that the simulated verdict is compared with.
+      what: "On real 10 ng runs, entrapment shows whether DIA-NN's 1% error cutoff holds, fails, or cannot be decided."
+      why: "This is the real-data reference that the simulated verdict is compared with."
       wrong_if: The paired upper estimate exceeds 1% in any run. Invalid if the lower bound also exceeds 1%.
     tolerances:
       - metric: fdp
@@ -359,8 +359,8 @@ claims:
       Same derived verdict rule as entrap.verdict.diann.real10, applied to the
       three matched-complexity sim runs.
     gist:
-      what: The same entrapment verdict as on real data, computed on the matched simulated runs.
-      why: It is the sim side of the verdict comparison.
+      what: "The same check of DIA-NN's 1% error cutoff, done on the simulated runs matched to the real ones."
+      why: "This is the simulated side of that comparison."
       wrong_if: The paired upper estimate exceeds 1% in any matched sim run.
     tolerances:
       - metric: fdp

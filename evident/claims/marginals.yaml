@@ -27,9 +27,8 @@ claims:
     0.01 (reviewer view ii, sim and real). The median sim-vs-real 1-Wasserstein distance is at most 3
     times the largest real-vs-real replicate distance.
   gist:
-    what: The simulated identified-precursor rt distribution differs from real about as much as real replicates
-      do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The retention times of identified peptides are spread in the simulation like in real data, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; this answers it for the peptides the search finds."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -79,9 +78,8 @@ claims:
     taken on the binned distributions. The median sim-vs-real 1-Wasserstein distance is at most 3 times
     the largest real-vs-real replicate distance.
   gist:
-    what: The simulated all-ion MS1 rt distribution differs from real about as much as real replicates
-      do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The retention times of all precursor signal in the raw files are spread in the simulation like in real data, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; this answers it for all signal, identified or not."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -132,9 +130,8 @@ claims:
     (reviewer view ii, sim and real). The median sim-vs-real 1-Wasserstein distance is at most 3 times
     the largest real-vs-real replicate distance.
   gist:
-    what: The simulated identified-precursor im distribution differs from real about as much as real replicates
-      do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The ion mobilities of identified peptides are spread in the simulation like in real data, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; this answers it for the peptides the search finds."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -184,9 +181,8 @@ claims:
     taken on the binned distributions. The median sim-vs-real 1-Wasserstein distance is at most 3 times
     the largest real-vs-real replicate distance.
   gist:
-    what: The simulated all-ion MS1 im distribution differs from real about as much as real replicates
-      do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The ion mobilities of all precursor signal in the raw files are spread in the simulation like in real data, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; this answers it for all signal, identified or not."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -237,9 +233,8 @@ claims:
     (reviewer view ii, sim and real). The median sim-vs-real 1-Wasserstein distance is at most 3 times
     the largest real-vs-real replicate distance.
   gist:
-    what: The simulated identified-precursor mz distribution differs from real about as much as real replicates
-      do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The m/z values of identified peptides are spread in the simulation like in real data, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; this answers it for the peptides the search finds."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -289,9 +284,8 @@ claims:
     on the binned distributions. The median sim-vs-real 1-Wasserstein distance is at most 3 times the
     largest real-vs-real replicate distance.
   gist:
-    what: The simulated all-ion MS1 mz distribution differs from real about as much as real replicates
-      do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The m/z values of all precursor signal in the raw files are spread in the simulation like in real data, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; this answers it for all signal, identified or not."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio

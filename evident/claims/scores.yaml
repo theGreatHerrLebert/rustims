@@ -27,9 +27,8 @@ claims:
     to Q.Value 0.05). The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real
     replicate distance.
   gist:
-    what: The simulated DIA-NN log10 q-value distribution differs from real about as much as real replicates
-      do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The simulated DIA-NN q-values (its confidence in each match) are distributed like real ones, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -81,9 +80,8 @@ claims:
     The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real replicate
     distance.
   gist:
-    what: The simulated FragPipe hyperscore distribution differs from real about as much as real replicates
-      do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The simulated FragPipe match scores (hyperscore) are distributed like real ones, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -133,9 +131,8 @@ claims:
     1%). The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real replicate
     distance.
   gist:
-    what: The simulated FragPipe spectral_sim distribution differs from real about as much as real replicates
-      do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The simulated FragPipe agreement between predicted and observed fragment patterns are distributed like real ones, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -185,9 +182,8 @@ claims:
     The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real replicate
     distance.
   gist:
-    what: The simulated FragPipe rt_score distribution differs from real about as much as real replicates
-      do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The simulated FragPipe retention-time agreement scores are distributed like real ones, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -237,9 +233,8 @@ claims:
     The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real replicate
     distance.
   gist:
-    what: The simulated FragPipe im_score distribution differs from real about as much as real replicates
-      do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The simulated FragPipe ion-mobility agreement scores are distributed like real ones, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -289,9 +284,8 @@ claims:
     at 1%). The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real
     replicate distance.
   gist:
-    what: The simulated FragPipe log10_expectation distribution differs from real about as much as real
-      replicates do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The simulated FragPipe expectation values (chance of a random match) are distributed like real ones, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -341,9 +335,8 @@ claims:
     The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real replicate
     distance.
   gist:
-    what: The simulated FragPipe log10_qvalue distribution differs from real about as much as real replicates
-      do.
-    why: Reviewer 2 asked which simulated characteristics match experimental data and which do not.
+    what: "The simulated FragPipe q-values (its confidence in each match) are distributed like real ones, about as closely as two real repeat runs match."
+    why: "A reviewer asked which simulated properties match real data; scores show whether search tools see the simulation as realistic."
     wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -396,9 +389,8 @@ claims:
     or harder if the sim lies outside the [min, max] range of the three real runs on that side, and comparable
     otherwise. The claim is n_harder = 0.'
   gist:
-    what: On no fragpipe score feature is the simulated data harder than real.
-    why: It extends the direction rule from DIA-NN features to the scores a second engine uses to separate
-      true from false.
+    what: "On every FragPipe score signal, the simulated runs are no harder to search than the real runs."
+    why: "This checks the 'not harder' rule with a second search engine, not only DIA-NN."
     wrong_if: Any feature puts the sim outside the real range on the harder side.
   tolerances:
   - metric: absolute_error
@@ -448,9 +440,8 @@ claims:
     or harder if the sim lies outside the [min, max] range of the three real runs on that side, and comparable
     otherwise. The claim is n_easier = 0.'
   gist:
-    what: On no fragpipe score feature is the simulated data easier than real.
-    why: It extends the direction rule from DIA-NN features to the scores a second engine uses to separate
-      true from false.
+    what: "On every FragPipe score signal, the simulated runs are no easier to search than the real runs."
+    why: "This checks the 'not easier' rule with a second search engine, not only DIA-NN."
     wrong_if: Any feature puts the sim outside the real range on the easier side.
   tolerances:
   - metric: absolute_error

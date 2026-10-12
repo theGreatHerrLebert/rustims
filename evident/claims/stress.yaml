@@ -27,9 +27,8 @@ claims:
   claim: On each of the nine baseline TimSim runs, the true FDP of DIA-NN 2.5.1 at run-level Q.Value <=
     0.01 is at most 0.015. A pass supports 'FDP <= 1.5%', not nominal 1% control.
   gist:
-    what: On every baseline simulated run, DIA-NN's true error rate at its 1% cutoff stays at or below
-      1.5%.
-    why: This is the upper bound the stress settings are checked against.
+    what: "On every standard simulated run, at most 1.5% of the peptide ions DIA-NN accepts at its 1% cutoff are wrong."
+    why: "This is the ceiling the deliberately altered simulations are checked against."
     wrong_if: Any baseline run has true FDP above 1.5%.
   tolerances:
   - metric: fdp
@@ -74,8 +73,8 @@ claims:
   claim: The mean true FDP over the nine baseline runs at run-level Q.Value <= 0.01 is at most 0.010.
     Per-complexity means and the spread across seeds are reported.
   gist:
-    what: On average over the simulated runs, DIA-NN's 1% cutoff delivers at most 1% true false discoveries.
-    why: Nominal control is a separate, stronger claim than the 1.5% bound.
+    what: "On average over the standard simulated runs, at most 1% of the peptide ions DIA-NN accepts at its 1% cutoff are wrong, so the cutoff keeps its promise."
+    why: "Keeping the 1% promise is a stricter test than staying under 1.5%."
     wrong_if: The mean true FDP over the nine baseline runs is above 1%.
   tolerances:
   - metric: fdp
@@ -124,8 +123,8 @@ claims:
     before any stress FDP is computed. At every tested setting and seed, true FDP at run-level Q.Value
     <= 0.01 is at most 0.015.
   gist:
-    what: Under plausible mass-accuracy mismatch, DIA-NN's true error rate at 1% stays at or below 1.5%.
-    why: It shows whether the paper's error-rate conclusions depend on this property being simulated exactly.
+    what: "Even when the simulated mass errors are made realistically worse, at most 1.5% of the peptide ions DIA-NN accepts at its 1% cutoff are wrong."
+    why: "It shows whether the paper's error-rate conclusions survive TimSim getting this property somewhat wrong."
     wrong_if: Any mass-accuracy stress run has true FDP above 1.5%.
   tolerances:
   - metric: fdp
@@ -170,9 +169,8 @@ claims:
     before any stress FDP is computed. For each setting, |mean over seeds of FDP(stress) - mean over the
     same seeds of FDP(baseline at matched complexity)| is at most 0.005.
   gist:
-    what: Plausible mass-accuracy mismatch changes DIA-NN's true error rate by at most half a percentage
-      point.
-    why: It separates stability from the absolute bound. An error rate can be stable and still inflated.
+    what: "When the simulated mass errors are made realistically worse, DIA-NN's share of wrong peptide ions changes by at most half a percentage point."
+    why: "This tests stability; an error rate can stay put and still be too high, so it is checked apart from the 1.5% ceiling."
     wrong_if: Any mass-accuracy setting moves mean true FDP by more than 0.5 percentage points.
   tolerances:
   - metric: absolute_error
@@ -219,8 +217,8 @@ claims:
     and that file is committed from the section-3 discrepancy results before any stress FDP is computed.
     At every tested setting and seed, true FDP at run-level Q.Value <= 0.01 is at most 0.015.
   gist:
-    what: Under plausible rt-peakshape mismatch, DIA-NN's true error rate at 1% stays at or below 1.5%.
-    why: It shows whether the paper's error-rate conclusions depend on this property being simulated exactly.
+    what: "Even when the simulated chromatographic peaks are made wider or more skewed, at most 1.5% of the peptide ions DIA-NN accepts at its 1% cutoff are wrong."
+    why: "It shows whether the paper's error-rate conclusions survive TimSim getting this property somewhat wrong."
     wrong_if: Any rt-peakshape stress run has true FDP above 1.5%.
   tolerances:
   - metric: fdp
@@ -265,9 +263,8 @@ claims:
     For each setting, |mean over seeds of FDP(stress) - mean over the same seeds of FDP(baseline at matched
     complexity)| is at most 0.005.
   gist:
-    what: Plausible rt-peakshape mismatch changes DIA-NN's true error rate by at most half a percentage
-      point.
-    why: It separates stability from the absolute bound. An error rate can be stable and still inflated.
+    what: "When the simulated chromatographic peaks are made wider or more skewed, DIA-NN's share of wrong peptide ions changes by at most half a percentage point."
+    why: "This tests stability; an error rate can stay put and still be too high, so it is checked apart from the 1.5% ceiling."
     wrong_if: Any rt-peakshape setting moves mean true FDP by more than 0.5 percentage points.
   tolerances:
   - metric: absolute_error
@@ -314,8 +311,8 @@ claims:
     and that file is committed from the section-3 discrepancy results before any stress FDP is computed.
     At every tested setting and seed, true FDP at run-level Q.Value <= 0.01 is at most 0.015.
   gist:
-    what: Under plausible fragmentation mismatch, DIA-NN's true error rate at 1% stays at or below 1.5%.
-    why: It shows whether the paper's error-rate conclusions depend on this property being simulated exactly.
+    what: "Even when the simulated fragment patterns are made less accurate, at most 1.5% of the peptide ions DIA-NN accepts at its 1% cutoff are wrong."
+    why: "It shows whether the paper's error-rate conclusions survive TimSim getting this property somewhat wrong."
     wrong_if: Any fragmentation stress run has true FDP above 1.5%.
   tolerances:
   - metric: fdp
@@ -360,9 +357,8 @@ claims:
     For each setting, |mean over seeds of FDP(stress) - mean over the same seeds of FDP(baseline at matched
     complexity)| is at most 0.005.
   gist:
-    what: Plausible fragmentation mismatch changes DIA-NN's true error rate by at most half a percentage
-      point.
-    why: It separates stability from the absolute bound. An error rate can be stable and still inflated.
+    what: "When the simulated fragment patterns are made less accurate, DIA-NN's share of wrong peptide ions changes by at most half a percentage point."
+    why: "This tests stability; an error rate can stay put and still be too high, so it is checked apart from the 1.5% ceiling."
     wrong_if: Any fragmentation setting moves mean true FDP by more than 0.5 percentage points.
   tolerances:
   - metric: absolute_error
@@ -410,8 +406,8 @@ claims:
     committed from the section-3 discrepancy results before any stress FDP is computed. At every tested
     setting (rt-chronologer, im-std, joint; replay-control is reported only) and seed, true FDP at run-level Q.Value <= 0.01 is at most 0.015.
   gist:
-    what: Under plausible predictor-swap mismatch, DIA-NN's true error rate at 1% stays at or below 1.5%.
-    why: It shows whether the paper's error-rate conclusions depend on this property being simulated exactly.
+    what: "Even when simulated retention times come from another prediction model (Chronologer) and ion mobilities are shifted by their predicted uncertainty, at most 1.5% of the peptide ions DIA-NN accepts at its 1% cutoff are wrong."
+    why: "It shows whether the paper's error-rate conclusions survive TimSim getting this property somewhat wrong."
     wrong_if: Any predictor-swap stress run has true FDP above 1.5%.
   tolerances:
   - metric: fdp
@@ -458,9 +454,8 @@ claims:
     |mean over seeds of FDP(stress) - mean over the same seeds of FDP(baseline at matched complexity)|
     is at most 0.005.
   gist:
-    what: Plausible predictor-swap mismatch changes DIA-NN's true error rate by at most half a percentage
-      point.
-    why: It separates stability from the absolute bound. An error rate can be stable and still inflated.
+    what: "When simulated retention times come from another prediction model (Chronologer) and ion mobilities are shifted by their predicted uncertainty, DIA-NN's share of wrong peptide ions changes by at most half a percentage point."
+    why: "This tests stability; an error rate can stay put and still be too high, so it is checked apart from the 1.5% ceiling."
     wrong_if: Any predictor-swap setting moves mean true FDP by more than 0.5 percentage points.
   tolerances:
   - metric: absolute_error
@@ -508,8 +503,8 @@ claims:
     results before any stress FDP is computed. At every tested setting and seed, true FDP at run-level
     Q.Value <= 0.01 is at most 0.015.'
   gist:
-    what: Under plausible joint mismatch, DIA-NN's true error rate at 1% stays at or below 1.5%.
-    why: It shows whether the paper's error-rate conclusions depend on this property being simulated exactly.
+    what: "Even when several of these changes are made together, at most 1.5% of the peptide ions DIA-NN accepts at its 1% cutoff are wrong."
+    why: "It shows whether the paper's error-rate conclusions survive TimSim getting this property somewhat wrong."
     wrong_if: Any joint stress run has true FDP above 1.5%.
   tolerances:
   - metric: fdp
@@ -554,8 +549,8 @@ claims:
     results before any stress FDP is computed. For each setting, |mean over seeds of FDP(stress) - mean
     over the same seeds of FDP(baseline at matched complexity)| is at most 0.005.'
   gist:
-    what: Plausible joint mismatch changes DIA-NN's true error rate by at most half a percentage point.
-    why: It separates stability from the absolute bound. An error rate can be stable and still inflated.
+    what: "When several of these changes are made together, DIA-NN's share of wrong peptide ions changes by at most half a percentage point."
+    why: "This tests stability; an error rate can stay put and still be too high, so it is checked apart from the 1.5% ceiling."
     wrong_if: Any joint setting moves mean true FDP by more than 0.5 percentage points.
   tolerances:
   - metric: absolute_error

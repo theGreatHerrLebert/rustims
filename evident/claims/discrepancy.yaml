@@ -31,9 +31,8 @@ claims:
     stress-test candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond
     3 MAD) are reported but carry no tolerance.'
   gist:
-    what: The simulated ms1_ppm distribution differs from real about as much as real replicates differ
-      from each other.
-    why: This says which simulated properties are close enough to real data and which need a stress test.
+    what: "The simulated precursor mass error is about as close to real data as two real repeat runs are to each other."
+    why: "Mass error is how search tools rule out wrong matches, so a mismatch can make the simulation easier or harder than real data."
     wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -93,9 +92,8 @@ claims:
     candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond 3 MAD) are
     reported but carry no tolerance.'
   gist:
-    what: The simulated fr_ppm distribution differs from real about as much as real replicates differ
-      from each other.
-    why: This says which simulated properties are close enough to real data and which need a stress test.
+    what: "The simulated fragment mass error is about as close to real data as two real repeat runs are to each other."
+    why: "Fragment mass error decides which fragments count as matched, so it shapes how easy identification is."
     wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -155,9 +153,8 @@ claims:
     candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond 3 MAD) are
     reported but carry no tolerance.'
   gist:
-    what: The simulated fwhm distribution differs from real about as much as real replicates differ from
-      each other.
-    why: This says which simulated properties are close enough to real data and which need a stress test.
+    what: "The simulated chromatographic peak width is about as close to real data as two real repeat runs are to each other."
+    why: "Peak width sets how much peptides overlap in time, which drives how often their signals get confused."
     wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -217,9 +214,8 @@ claims:
     candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond 3 MAD) are
     reported but carry no tolerance.'
   gist:
-    what: The simulated rt_width distribution differs from real about as much as real replicates differ
-      from each other.
-    why: This says which simulated properties are close enough to real data and which need a stress test.
+    what: "The simulated elution window (peak start to end) is about as close to real data as two real repeat runs are to each other."
+    why: "How long peptides elute sets how much overlapping signal a search tool has to pull apart."
     wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -279,9 +275,8 @@ claims:
     stress-test candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond
     3 MAD) are reported but carry no tolerance.'
   gist:
-    what: The simulated rt_resid distribution differs from real about as much as real replicates differ
-      from each other.
-    why: This says which simulated properties are close enough to real data and which need a stress test.
+    what: "The simulated scatter of retention time around DIA-NN's prediction is about as close to real data as two real repeat runs are to each other."
+    why: "Search tools use predicted retention time to filter candidates; more or less scatter changes how hard that is."
     wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -342,9 +337,8 @@ claims:
     stress-test candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond
     3 MAD) are reported but carry no tolerance.'
   gist:
-    what: The simulated im_resid distribution differs from real about as much as real replicates differ
-      from each other.
-    why: This says which simulated properties are close enough to real data and which need a stress test.
+    what: "The simulated scatter of ion mobility around DIA-NN's prediction is about as close to real data as two real repeat runs are to each other."
+    why: "Ion mobility is a second filter for candidates; its scatter changes how much it helps."
     wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -404,9 +398,8 @@ claims:
     shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond 3 MAD) are reported but
     carry no tolerance.'
   gist:
-    what: The simulated log10_ms1_area distribution differs from real about as much as real replicates
-      differ from each other.
-    why: This says which simulated properties are close enough to real data and which need a stress test.
+    what: "The simulated precursor signal intensity is about as close to real data as two real repeat runs are to each other."
+    why: "Signal strength decides how many peptides are detectable and how noisy the weak ones are."
     wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -466,9 +459,8 @@ claims:
     3 is a flagged mismatch that becomes a stress-test candidate. The shared-precursor view and the tail
     summaries (q05/q50/q95, fraction beyond 3 MAD) are reported but carry no tolerance.'
   gist:
-    what: The simulated evidence distribution differs from real about as much as real replicates differ
-      from each other.
-    why: This says which simulated properties are close enough to real data and which need a stress test.
+    what: "The simulated DIA-NN evidence score (how well fragment traces elute together) is about as close to real data as two real repeat runs are to each other."
+    why: "It is one of the main signals DIA-NN uses to tell true from false matches."
     wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -528,9 +520,8 @@ claims:
     mismatch that becomes a stress-test candidate. The shared-precursor view and the tail summaries (q05/q50/q95,
     fraction beyond 3 MAD) are reported but carry no tolerance.'
   gist:
-    what: The simulated ms1_profile_corr distribution differs from real about as much as real replicates
-      differ from each other.
-    why: This says which simulated properties are close enough to real data and which need a stress test.
+    what: "The simulated agreement between precursor and fragment elution profiles is about as close to real data as two real repeat runs are to each other."
+    why: "DIA-NN favours matches whose precursor and fragments rise and fall together."
     wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -590,9 +581,8 @@ claims:
     candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond 3 MAD) are
     reported but carry no tolerance.'
   gist:
-    what: The simulated mass_evidence distribution differs from real about as much as real replicates
-      differ from each other.
-    why: This says which simulated properties are close enough to real data and which need a stress test.
+    what: "The simulated DIA-NN mass-accuracy score is about as close to real data as two real repeat runs are to each other."
+    why: "It sums up how well the masses fit, a key signal for rejecting wrong matches."
     wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -652,9 +642,8 @@ claims:
     stress-test candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond
     3 MAD) are reported but carry no tolerance.'
   gist:
-    what: The simulated pep distribution differs from real about as much as real replicates differ from
-      each other.
-    why: This says which simulated properties are close enough to real data and which need a stress test.
+    what: "The simulated DIA-NN error probabilities for accepted matches is about as close to real data as two real repeat runs are to each other."
+    why: "This is DIA-NN's own confidence; if it differs, the simulation is easier or harder to score than real data."
     wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
   tolerances:
   - metric: discrepancy_ratio
@@ -715,9 +704,8 @@ claims:
     stress-test candidate. The shared-precursor view and the tail summaries (q05/q50/q95, fraction beyond
     3 MAD) are reported but carry no tolerance.'
   gist:
-    what: The simulated charge distribution differs from real about as much as real replicates differ
-      from each other.
-    why: This says which simulated properties are close enough to real data and which need a stress test.
+    what: "The simulated mix of precursor charge states is about as close to real data as two real repeat runs are to each other."
+    why: "Charge state changes which peptides are seen and how they fragment."
     wrong_if: The sim-vs-real distance is more than 3 times the largest real-vs-real replicate distance.
   tolerances:
   - metric: discrepancy_ratio

@@ -20,6 +20,9 @@ claims:
         - timsim-ground-truth
       command: git log --format='%H %cI' -- evident/claims
       artifact: the first commit touching evident/claims (branch evident/vm-preregistration)
+    gist:
+      what: "Every pass/fail threshold and rule was fixed and committed before any error-rate result was looked at."
+      why: "This keeps thresholds from being tuned after the fact to make results pass."
     assumptions:
       - Real 10 ng FDRBench outputs (MOGON job 764353) existed on disk at the
         time of the commit but had not been opened. Only job markers and row
@@ -55,6 +58,9 @@ claims:
         - DIA-NN
       command: SUBMISSION/revision/vm-work/mogon/vm_real10.sbatch; vm_simsearch.sbatch
       artifact: TIMSIM-REVISION/searches/vm/recipe-v1/
+    gist:
+      what: "The error rate is counted per run and per peptide ion at DIA-NN's 1% cutoff, with fixed search settings shared by real and simulated runs."
+      why: "Real and simulated numbers then mean the same thing, and every other claim uses this one definition."
     assumptions:
       - Run-level Q.Value is DIA-NN's precursor q-value within one run. Global
         and protein q-values are not used.
@@ -86,6 +92,9 @@ claims:
         - timsim-ground-truth
       command: python evident/vm/vm_truth_fdp.py
       artifact: TIMSIM-REVISION/searches/vm/sim-baseline/<run>/out/**/synthetic_data.db
+    gist:
+      what: "On simulated runs, an accepted hit counts as wrong if that peptide ion was never simulated in that run."
+      why: "This defines what 'true error rate' means in every simulation claim."
     assumptions:
       - The baseline sims have no reference-signal overlay (6.5 ppm m/z jitter
         only), so every simulated signal comes from a known ion.
@@ -118,6 +127,9 @@ claims:
         - DIA-NN
       command: python evident/vm/vm_match_complexity.py
       artifact: evident/vm/matched_complexity.json
+    gist:
+      what: "Of the three simulation sizes, the one whose identification count is closest to the real runs is the one compared with real data."
+      why: "Comparing against a simulation of very different size would bias every sim-vs-real comparison."
     assumptions:
       - Identification depth is a usable proxy for signal complexity at a fixed
         window scheme and gradient.

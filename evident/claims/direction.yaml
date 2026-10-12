@@ -25,6 +25,9 @@ claims:
         - DIA-NN
       command: python evident/vm/vm_direction.py
       artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/direction.json
+    gist:
+      what: "Whether a result on simulated data carries over to real data is decided by whether the simulation is harder or easier than real data, not by how far apart the two are."
+      why: "It stops a simulation that is easier than reality from vouching for error rates on real data."
     assumptions:
       - Harder data (wider peaks, larger mass and RT/IM error, weaker evidence scores) does not lower a
         tool's FDP. That is plausible but not guaranteed, because FDP control depends on whether false
@@ -68,8 +71,8 @@ claims:
       runs on the easier side, harder if beyond it on the harder side, and comparable otherwise. The claim
       is n_harder = 0.
     gist:
-      what: On none of the DIA-NN features is the simulated data harder than the real data.
-      why: If the sim is never harder, error-control failures found on sim are real problems, not simulation artefacts.
+      what: "On every measured quality signal (mass error, peak width, scores and so on), the simulated runs are no harder for DIA-NN than the real runs."
+      why: "If the simulation is never harder, an error-control failure seen in it would also happen on real data."
       wrong_if: Any direction feature puts the sim outside the real replicate range on the harder side.
     tolerances:
       - metric: absolute_error
@@ -122,8 +125,8 @@ claims:
       Same features, statistics and classification as vm.direction.sim-not-harder.diann. The claim is
       n_easier = 0.
     gist:
-      what: On none of the DIA-NN features is the simulated data easier than the real data.
-      why: If the sim is never easier, error control shown on sim also holds for real data.
+      what: "On every measured quality signal, the simulated runs are no easier for DIA-NN than the real runs."
+      why: "If the simulation is never easier, error control that works in it can be trusted on real data too."
       wrong_if: Any direction feature puts the sim outside the real replicate range on the easier side.
     tolerances:
       - metric: absolute_error
