@@ -24,7 +24,8 @@ diann() { apptainer exec --bind /lustre $E/diann.sif $M/primitives/external/dian
 SEARCH=(--threads $T --verbose 1 --qvalue 0.05 --mass-acc 15 --mass-acc-ms1 15 --no-prot-inf)
 LIB_PLAIN=$(ls $W/lib/plain*.speclib | head -1); LIB_ENTRAP=$(ls $W/lib/entrap*.speclib | head -1)
 [ -s "$LIB_PLAIN" ] && [ -s "$LIB_ENTRAP" ] || fail lib_missing
-echo "VM_SIMSEARCH_START $(date -u +%FT%TZ)"; cat $W/lib/SHA256SUMS
+QF=$OUT/${QUEUE:-queue.txt}; [ -s "$QF" ] || fail "no queue $QF"
+echo "VM_SIMSEARCH_START $(date -u +%FT%TZ) queue=$QF"; cat $W/lib/SHA256SUMS
 while read -r RID; do
   D=$OUT/$RID; [ -f $D/done.flag ] || { echo "skip $RID (sim not done)"; continue; }
   IN=$(find $D/out -maxdepth 2 -name "*.d" -type d | head -1); [ -n "$IN" ] || fail "no .d $RID"
@@ -45,5 +46,5 @@ pd.DataFrame({"run": d["Run"], "peptide": d["Stripped.Sequence"].str.replace("I"
 PY
   java -Xmx8G -jar $JAR -i $O/fdrbench_in.tsv -fold 1 -pep $W/entrap/human_entrap_pep.txt \
     -level precursor -o $O/fdp_precursor.csv -score 'score:0' > $O/fdrbench_fdp.log 2>&1 || fail "fdp $RID"
-done < $OUT/queue.txt
+done < "$QF"                                                    # rt-spread: QUEUE=queue-rt-spread.txt
 echo "VM_SIMSEARCH_DONE $(date -u +%FT%TZ)"

@@ -1,4 +1,5 @@
-"""Build and verify the from_existing inputs for the predictor-swap stress row (evident/vm/stress_settings.yaml).
+"""Build and verify the from_existing inputs for the predictor-swap and rt-spread stress rows
+(evident/vm/stress_settings.yaml, evident/vm/stress_settings_rt_spread.yaml).
 
 prepare (default): for one baseline sim, writes <out>/<setting>/synthetic_data.db holding only the tables a
   from_existing replay reads (peptides, ions, proteins, dia_ms_ms_info, dia_ms_ms_windows), with the RT and/or
@@ -19,6 +20,9 @@ from pathlib import Path
 import numpy as np
 
 SETTINGS = {"replay-control": (False, False), "rt-chronologer": (True, False), "im-std": (False, True), "joint": (True, True)}
+RT_SPREAD = "rt-spread"
+MIN_REAL_RT = 10_000        # distinct modified peptides in the real sample
+MAX_NEW_TIES = 0.01         # share of distinct old RTs the map may merge into one value
 KEEP = ("peptides", "ions", "proteins", "dia_ms_ms_info", "dia_ms_ms_windows")
 UNIMOD_TO_CHRONOLOGER = {"[UNIMOD:4]": "[+57.02146]", "[UNIMOD:35]": "[+15.99491]"}
 IM_SEED_OFFSET = 7
@@ -101,6 +105,43 @@ def change_stats(old: np.ndarray, new: np.ndarray, width: np.ndarray) -> dict:
             "p95_abs_change": float(np.quantile(d, 0.95)), "median_abs_change_over_width": float(np.median(d / width))}
 
 
+def real_rt_sample(report: Path) -> np.ndarray:
+    """RT (s) of the real run's accepted targets (Q.Value <= 0.01, Decoy == 0), median per Modified.Sequence.
+
+    One value per modified peptide (charge states pooled), matching the peptide-level apex it is mapped onto.
+    """
+    import pandas as pd
+    d = pd.read_parquet(report, columns=["Modified.Sequence", "RT", "Q.Value", "Decoy"])
+    d = d[(d["Decoy"] == 0) & (d["Q.Value"] <= 0.01)]
+    if d["Modified.Sequence"].isna().any() or not np.all(np.isfinite(d["RT"].to_numpy(float))):
+        raise SystemExit("guard: accepted real rows with a missing sequence or non-finite RT")
+    rt = d.groupby("Modified.Sequence")["RT"].median().to_numpy(float) * 60.0
+    if len(rt) < MIN_REAL_RT:
+        raise SystemExit(f"guard: real RT sample has {len(rt)} modified peptides, fewer than {MIN_REAL_RT}")
+    return rt
+
+
+def spread_map(rt_old: np.ndarray, real_rt: np.ndarray) -> np.ndarray:
+    """new = Q_real(F_sim(old)): mid-rank empirical CDF of the sim apexes, linear-interpolated real quantiles."""
+    import pandas as pd
+    f = (pd.Series(rt_old).rank(method="average").to_numpy() - 0.5) / len(rt_old)
+    return np.quantile(real_rt, f)
+
+
+def order_preserved(old: np.ndarray, new: np.ndarray) -> bool:
+    """new is non-decreasing in old, and tied old values share one new value."""
+    o = np.lexsort((new, old))
+    same = np.diff(old[o]) == 0
+    return bool(np.all(np.diff(new[o]) >= 0) and np.all(np.diff(new[o])[same] == 0))
+
+
+def new_tie_share(old: np.ndarray, new: np.ndarray) -> float:
+    """Share of adjacent distinct old RTs that the map sends to one value (plateaus in the real sample)."""
+    o = np.argsort(old, kind="stable")
+    distinct = np.diff(old[o]) != 0
+    return float(np.mean(np.diff(new[o])[distinct] == 0)) if distinct.any() else 0.0
+
+
 def read_column(db: Path, table: str, id_col: str, col: str) -> dict:
     with sqlite3.connect(f"file:{db}?mode=ro", uri=True) as c:
         return dict(c.execute(f"select {id_col}, {col} from {table}").fetchall())
@@ -145,6 +186,9 @@ def verify_replay(replay_db: Path, prepared: Path, out: Path) -> None:
         want, got = read_keyed(prep_db, table, key, col), read_keyed(replay_db, table, key, col)
         if set(got) - set(want):
             raise SystemExit(f"guard: replay {table} has ids the prepared DB lacks")
+        vals = np.asarray([*got.values(), *want.values()], float)
+        if not np.all(np.isfinite(vals)):
+            raise SystemExit(f"guard: non-finite {col} in the replay or prepared DB")
         common = sorted(got)
         diff = np.abs(np.asarray([got[i] for i in common], float) - np.asarray([want[i] for i in common], float))
         res[col] = {"n_prepared": len(want), "n_replay": len(got), "kept_share": len(got) / len(want),
@@ -162,6 +206,8 @@ def main() -> None:
     ap.add_argument("--seed", type=int, help="the baseline sample_seed")
     ap.add_argument("--expect-seed", type=int, help="the seed stress_settings.yaml pairs with this baseline")
     ap.add_argument("--chronologer-model", type=Path)
+    ap.add_argument("--row", choices=["predictor-swap", RT_SPREAD], default="predictor-swap")
+    ap.add_argument("--real-report", type=Path, help="rt-spread: real LS10 plain report.parquet")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--verify", type=Path, help="replay synthetic_data.db to check against --prepared")
     ap.add_argument("--prepared", type=Path)
@@ -191,6 +237,8 @@ def main() -> None:
     if np.any(im_std <= 0) or np.any(rt_sigma <= 0) or im_lo is None or not im_lo < im_hi:
         raise SystemExit("guard: non-positive widths or invalid IM range")
 
+    if a.row == RT_SPREAD:
+        return prepare_rt_spread(a, pep_id, rt_old, rt_sigma, ion_id, im_old)
     hi = chronologer_hi([r[1] for r in pep], a.chronologer_model)
     n_sec = sum("U" in re.sub(r"\[UNIMOD:\d+\]", "", r[1]) for r in pep)
     rt_new = min_max(hi, 0.0, a.gradient)
@@ -228,6 +276,52 @@ def main() -> None:
         report["settings"][name] = stats
     (a.out / "prepare.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=1))
+
+def _sha256(p: Path) -> str:
+    import hashlib
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+def _near_edge(rt: np.ndarray, sigma: np.ndarray, gradient: float) -> float:
+    return float(np.mean((rt - 3 * sigma < 0) | (rt + 3 * sigma > gradient)))
+
+
+def prepare_rt_spread(a, pep_id: list, rt_old: np.ndarray, rt_sigma: np.ndarray, ion_id: list,
+                      im_old: np.ndarray) -> None:
+    """stress_settings_rt_spread.yaml: RT apexes keep their order and take the real run's spread."""
+    real = real_rt_sample(a.real_report)
+    rt_new = spread_map(rt_old, real)
+    _finite(rt_new, "rt-spread RT")
+    ties = new_tie_share(rt_old, rt_new)
+    if not order_preserved(rt_old, rt_new) or ties > MAX_NEW_TIES:
+        raise SystemExit(f"guard: rt-spread map does not preserve the RT order (new tie share {ties:.4f})")
+    if rt_new.min() < 0 or rt_new.max() > a.gradient:
+        raise SystemExit(f"guard: rt-spread RT outside [0, {a.gradient}]")
+    a.out.mkdir(parents=True, exist_ok=True)
+    db = a.out / RT_SPREAD / "synthetic_data.db"
+    slim_copy(a.baseline_db, db)
+    with sqlite3.connect(db) as c:
+        c.executemany("update peptides set retention_time_gru_predictor = ? where peptide_id = ?",
+                      zip(rt_new.tolist(), pep_id))
+        c.commit()
+    stats = {"rt": change_stats(rt_old, rt_new, rt_sigma)}
+    if not stats["rt"]["median_abs_change"] > 0:
+        raise SystemExit("guard: rt-spread rewrite changed nothing")
+    read_back(db, a.baseline_db, {("peptides", "retention_time_gru_predictor"): (pep_id, rt_new),
+                                  ("ions", "inv_mobility_gru_predictor"): (ion_id, im_old)})
+    q = (0.05, 0.5, 0.95)
+    report = {"row": RT_SPREAD, "baseline_db": str(a.baseline_db), "real_report": str(a.real_report),
+              "seed": a.seed, "gradient_s": a.gradient, "n_peptides": len(pep_id), "n_real_precursors": len(real),
+              "rt_quantiles_s": {"real": np.quantile(real, q).tolist(), "sim_before": np.quantile(rt_old, q).tolist(),
+                                 "sim_after": np.quantile(rt_new, q).tolist()},
+              "new_tie_share": ties, "real_report_sha256": _sha256(a.real_report),
+              # descriptive: peaks whose apex sits within 3 sigma of either end of the acquisition
+              "near_boundary_share": {"before": _near_edge(rt_old, rt_sigma, a.gradient),
+                                      "after": _near_edge(rt_new, rt_sigma, a.gradient)},
+              "settings": {RT_SPREAD: stats}}
+    (a.out / "prepare.json").write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps(report, indent=1))
+
 
 if __name__ == "__main__":
     main()

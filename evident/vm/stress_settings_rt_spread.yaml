@@ -1,0 +1,77 @@
+# Stress settings for the rt-spread row (claims/stress.yaml: vm.rt-spread.fdp-{bound,delta}.diann).
+# Frozen before any rt-spread simulation ran and before the predictor-swap stress FDP was opened.
+# Motivation: in the raw MS1 signal, 90% of intensity elutes over 9-111 min in real LS10 but 47-99 min in the
+# 250k sims (both 7202 s acquisitions). TimSim min-max scales RT apexes onto the full acquisition and the RT
+# predictor's output is bunched in the middle, so the sims pack peptides into about half the elution time.
+# DIA-NN needs an RT window of 15.7 min on the sims vs 8.4 min on real. With that window, RT may no longer
+# separate oxidised from unoxidised forms; Met-ox form confusions are about 70% of the false hits.
+# Counterpoint, descriptive only: the earlier (deposited) TimSim HeLa sims had near-uniform RT over 60 min and
+# show the same Met-ox failure mode, so spread alone may not be the cause. This row tests it.
+# Question (narrow): does DIA-NN's true FDP on the matched sims change when the simulated RT apexes keep their
+# order but take the real run's spread?
+
+row: rt-spread
+complexity: 250000            # the matched complexity (vm.protocol.matched-complexity)
+seeds:                        # the baseline 250k sims, the same pairing as predictor-swap
+  jitter-250k-r1: 4101
+  jitter-250k-r2: 4102
+  jitter-250k-r3: 4103
+construction: >
+  The same from_existing replay as the predictor-swap row (stress_settings.yaml, construction and amendment 2),
+  from a slim copy of each baseline DB in which only peptides.retention_time_gru_predictor is rewritten. Peak
+  widths (rt_sigma, rt_lambda), IM apexes and every other column are the baseline's.
+
+map: >
+  Per seed, new = Q_real(F_sim(old)). F_sim is the mid-rank empirical CDF of the baseline peptides' apex RT
+  ((average rank - 0.5) / n; ties share a rank). Q_real is the empirical quantile function (numpy linear
+  interpolation) of the real sample: DIA-NN RT x 60 (s) over target precursors in the real LS10 plain-library
+  report (recipe-v1/real10/LS10/plain/report.parquet, sha256 cb22c214104f6ca7...be2e0147) with Q.Value <= 0.01,
+  Decoy == 0, one value per Modified.Sequence (median RT; charge states pooled, matching the peptide-level apex).
+  LS10 is the TimSim reference run of these sims. The map is monotone. Distinct sim RTs can only merge where the
+  real sample has repeated values; that share is capped (guards) and reported.
+  What this tests: the spread of identified modified peptides, not the raw MS1 intensity spread that motivated
+  the row, and not matched identified RTs after the search. rt_sigma and rt_lambda are unchanged, so peak
+  separation relative to width, local occupancy and DIA-NN's RT calibration all move with the map; those are
+  mechanisms of this intervention. An FDP change would not by itself establish the Met-ox explanation.
+
+settings:
+  rt-spread:
+    peptides.retention_time_gru_predictor: quantile-mapped onto the real LS10 RT spread
+control: >
+  replay-control from the predictor-swap row (same seeds, baseline inputs, replay configuration and search
+  recipe; verified and flagged at 7f9ce212). The rt-spread replays run in the same timsim environment
+  (timsim-env.freeze.txt sha256 bd04f116a1fe2e40...bc89107c0, checked by the job). The formal delta is against the
+  baseline sims, so it includes the replay's own effect; rt-spread minus replay-control isolates the rewrite.
+
+guards:
+  - Every predictor-swap guard applies (prepare validation and read-back, seed pairing, config checks, the log
+    guards, --verify on peptide_id and (peptide_id, charge), done.flag holding the freeze commit).
+  - The real report and the timsim environment match the sha256 values above.
+  - The real sample has at least 10,000 modified peptides; any accepted row with a missing sequence or a
+    non-finite RT fails the run.
+  - The map preserves the order (new is non-decreasing in old, tied old values share one new value), and at most
+    1% of adjacent distinct old RTs merge into one value.
+  - The IM apexes of the prepared DB are read back and must equal the baseline's.
+  - --verify fails on any non-finite apex; the analysis uses a replay only with its done.flag and a verify.json
+    holding both apex checks.
+  - Every new RT lies in [0, gradient length]; the median change is not 0.
+  - There is no minimum-effect criterion.
+  - True FDP uses the plain-library search, the primary estimand and vm.protocol.truth-rule, as for the baseline.
+
+claim_scope: >
+  vm.rt-spread.fdp-bound and fdp-delta are evaluated over the rt-spread setting only. Their delta is against
+  the baseline sims, as for every stress row.
+
+reported_without_tolerance:
+  - rt-spread FDP minus replay-control FDP, per seed
+  - DIA-NN RT and IM windows
+  - accepted-precursor depth, against real 10 ng from the baseline analysis
+  - share of false hits that are modification-form confusions, and the part that differ only in Met oxidation
+  - 5/50/95% RT quantiles of real, sim before and sim after the map (prepare.json), and of the accepted
+    precursors after the search, per run
+  - share of peaks whose apex lies within 3 sigma of either end of the acquisition, before and after the map
+    (prepare.json); peptides and ions kept by the replay (verify.json). No clipping or padding rule is added.
+
+not_in_scope:
+  - peak widths (rt-peakshape row) and the RT predictor (predictor-swap row)
+  - gradient length; every sim and real run here is a 7202 s acquisition

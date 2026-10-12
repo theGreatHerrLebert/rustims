@@ -198,6 +198,8 @@ def baseline(c: Ctx) -> dict:
 
 STRESS_SEEDS = ("jitter-250k-r1", "jitter-250k-r2", "jitter-250k-r3")
 STRESS_SETTINGS = ("rt-chronologer", "im-std", "joint")  # claim scope; replay-control is reported only
+# Claim scope per row. rt-spread reuses predictor-swap's replay-control replays (stress_settings_rt_spread.yaml).
+STRESS_ROWS = {"predictor-swap": STRESS_SETTINGS, "rt-spread": ("rt-spread",)}
 REPLAY_CONTROL = "replay-control"
 _DIANN_LOG = {"rt_window_min": r"RT window set to ([0-9.eE+-]+)", "im_window": r"IM window set to ([0-9.eE+-]+)",
               "ms1_acc_ppm": r"Recommended MS1 mass accuracy setting: ([0-9.eE+-]+)"}
@@ -211,6 +213,27 @@ def diann_windows(stdout: Path) -> dict:
         hits = re.findall(pat, txt)
         out[k] = float(hits[-1]) if hits else float("nan")
     return out
+
+
+def identified_rt_quantiles(report: Path) -> list:
+    """5/50/95% RT (min) of accepted target precursors; NaN when the report has no RT column."""
+    d = pd.read_parquet(report)
+    if "RT" not in d.columns:
+        return [float("nan")] * 3
+    if "Decoy" in d.columns:
+        d = d[d["Decoy"] == 0]
+    rt = d.loc[d["Q.Value"] <= 0.01, "RT"].to_numpy(float)
+    return np.quantile(rt, [0.05, 0.5, 0.95]).tolist() if len(rt) else [float("nan")] * 3
+
+
+def replay_checked(run_dir: Path) -> None:
+    """A replay counts only with done.flag and a --verify result naming both apex columns."""
+    v = run_dir / "verify.json"
+    if not (run_dir / "done.flag").exists() or not v.exists():
+        raise SystemExit(f"{run_dir.name}: no done.flag or verify.json, the replay was not checked")
+    keys = set(json.loads(v.read_text()))
+    if not {"retention_time_gru_predictor", "inv_mobility_gru_predictor"} <= keys:
+        raise SystemExit(f"{run_dir.name}: verify.json lacks the apex checks")
 
 
 def truth_fdp_row(c: Ctx, report_dir: Path, sim_dir: Path) -> dict:
@@ -228,21 +251,22 @@ def truth_fdp_row(c: Ctx, report_dir: Path, sim_dir: Path) -> dict:
     share = (lambda m: float(m.sum() / false.sum()) if false.any() else float("nan"))
     return {"accepted": len(lab), "false": int(false.sum()), "fdp": fdp(false), "fdp_stripped": fdp_stripped(lab),
             "mod_form_share_of_false": share(form), "met_ox_share_of_false": share(met_ox),
+            "identified_rt_q05_q50_q95_min": identified_rt_quantiles(report_dir / "plain" / "report.parquet"),
             **diann_windows(report_dir / "plain" / "diann.stdout")}
 
 
-def stress(c: Ctx, stress_recipe: Path, stress_root: Path) -> dict:
-    """vm.predictor-swap.fdp-{bound,delta}.diann: paired by baseline seed, delta against the baseline sims."""
+def stress(c: Ctx, stress_recipe: Path, stress_root: Path, row: str = "predictor-swap") -> dict:
+    """vm.<row>.fdp-{bound,delta}.diann: paired by baseline seed, delta against the baseline sims."""
+    settings = STRESS_ROWS[row]
     m = c.matched()
     if sorted(m["matched_runs"]) != list(STRESS_SEEDS):
         raise SystemExit(f"matched runs {m['matched_runs']} are not the stress baselines {STRESS_SEEDS}")
-    for s in (REPLAY_CONTROL, *STRESS_SETTINGS):
+    for s in (REPLAY_CONTROL, *settings):
         for rid in STRESS_SEEDS:
-            if not (stress_root / f"{rid}-{s}" / "verify.json").exists():
-                raise SystemExit(f"{rid}-{s}: no verify.json, the replay was not checked against its prepared DB")
+            replay_checked(stress_root / f"{rid}-{s}")
     base = {rid: truth_fdp_row(c, c.recipe / "sim" / rid, c.sim_root / rid) for rid in STRESS_SEEDS}
     rows = {s: {rid: truth_fdp_row(c, stress_recipe / "sim" / f"{rid}-{s}", stress_root / f"{rid}-{s}")
-                for rid in STRESS_SEEDS} for s in (REPLAY_CONTROL, *STRESS_SETTINGS)}
+                for rid in STRESS_SEEDS} for s in (REPLAY_CONTROL, *settings)}
 
     def mean_fdp(d: dict) -> float:
         return mean_strict([finite(r["fdp"], "stress FDP") for r in d.values()], "FDP")
@@ -251,18 +275,18 @@ def stress(c: Ctx, stress_recipe: Path, stress_root: Path) -> dict:
     per_setting = {s: {"fdp_mean": mean_fdp(rows[s]), "delta_vs_baseline": mean_fdp(rows[s]) - b,
                        "delta_vs_replay_control": mean_fdp(rows[s]) - mean_fdp(rows[REPLAY_CONTROL]),
                        "accepted_mean": float(np.mean([r["accepted"] for r in rows[s].values()]))}
-                   for s in (REPLAY_CONTROL, *STRESS_SETTINGS)}
+                   for s in (REPLAY_CONTROL, *settings)}
     paired = {s: {rid: {"minus_baseline": rows[s][rid]["fdp"] - base[rid]["fdp"],
                         "minus_replay_control": rows[s][rid]["fdp"] - rows[REPLAY_CONTROL][rid]["fdp"]}
-                  for rid in STRESS_SEEDS} for s in (REPLAY_CONTROL, *STRESS_SETTINGS)}
+                  for rid in STRESS_SEEDS} for s in (REPLAY_CONTROL, *settings)}
     return {
-        "baseline": base, "per_seed": rows, "per_seed_differences": paired, "per_setting": per_setting,
+        "row": row, "baseline": base, "per_seed": rows, "per_seed_differences": paired, "per_setting": per_setting,
         "baseline_fdp_mean": b,
         "values": {
-            "vm.predictor-swap.fdp-bound.diann": {"fdp_max": max(rows[s][rid]["fdp"] for s in STRESS_SETTINGS
+            f"vm.{row}.fdp-bound.diann": {"fdp_max": max(rows[s][rid]["fdp"] for s in settings
                                                                for rid in STRESS_SEEDS)},
-            "vm.predictor-swap.fdp-delta.diann": {"fdp_delta_max": max(abs(per_setting[s]["delta_vs_baseline"])
-                                                                     for s in STRESS_SETTINGS)},
+            f"vm.{row}.fdp-delta.diann": {"fdp_delta_max": max(abs(per_setting[s]["delta_vs_baseline"])
+                                                                     for s in settings)},
         },
     }
 
@@ -295,11 +319,12 @@ def main() -> None:
     c = Ctx(a.recipe, a.sim_root, a.out)
     if a.mode == "stress":
         claim = a.claim or ""
-        if claim.startswith("vm.predictor-swap."):
+        row = next((r for r in STRESS_ROWS if claim.startswith(f"vm.{r}.")), None)
+        if row:
             if not (a.stress_recipe and a.stress_root):
-                raise SystemExit("--stress-recipe and --stress-root are required for the predictor-swap row")
-            res = stress(c, a.stress_recipe, a.stress_root)
-            dump(res, a.out / "results" / "stress-predictor-swap.json")
+                raise SystemExit(f"--stress-recipe and --stress-root are required for the {row} row")
+            res = stress(c, a.stress_recipe, a.stress_root, row)
+            dump(res, a.out / "results" / f"stress-{row}.json")
             write_sidecar(a.out, res["values"], REPORT_ONLY)
             print("stress", json.dumps(res["values"]), json.dumps(res["per_setting"]))
             return

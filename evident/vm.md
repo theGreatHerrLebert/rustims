@@ -40,7 +40,8 @@ to real data even if the simulation is easier or harder than real, as long as we
 
 ## Not yet frozen
 
-- `evident/vm/stress_settings.yaml`, the stress settings. It will be committed from the section-3 results before any stress FDP is computed.
+- `evident/vm/stress_settings.yaml`, the predictor-swap stress settings, committed before any stress FDP was computed.
+- `evident/vm/stress_settings_rt_spread.yaml`, the rt-spread row (sim RT apexes quantile-mapped onto the real RT spread), committed before its replays ran and before the predictor-swap stress FDP was opened.
 - Analysis scripts under `evident/vm/`. They implement the frozen rules and must not change them.
 
 ## Views without a claim

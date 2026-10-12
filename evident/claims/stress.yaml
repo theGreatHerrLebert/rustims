@@ -417,7 +417,7 @@ claims:
     prose: max over predictor-swap settings x seeds of true FDP <= 0.015
   evidence:
     oracle: *id003
-    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.predictor-swap.fdp-bound.diann --stress-recipe TIMSIM-REVISION/searches/vm/recipe-v1-stress --stress-root TIMSIM-REVISION/searches/vm/sim-stress
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.predictor-swap.fdp-bound.diann --recipe TIMSIM-REVISION/searches/vm/recipe-v1 --sim-root TIMSIM-REVISION/searches/vm/sim-baseline --out TIMSIM-REVISION/searches/vm/analysis-v1 --stress-recipe TIMSIM-REVISION/searches/vm/recipe-v1-stress --stress-root TIMSIM-REVISION/searches/vm/sim-stress
     artifact: TIMSIM-REVISION/searches/vm/recipe-v1-stress/sim/
   provenance: automatic
   last_verified:
@@ -465,7 +465,7 @@ claims:
     prose: max over predictor-swap settings of |mean FDP(stress) - mean FDP(baseline)| <= 0.005
   evidence:
     oracle: *id003
-    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.predictor-swap.fdp-delta.diann --stress-recipe TIMSIM-REVISION/searches/vm/recipe-v1-stress --stress-root TIMSIM-REVISION/searches/vm/sim-stress
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.predictor-swap.fdp-delta.diann --recipe TIMSIM-REVISION/searches/vm/recipe-v1 --sim-root TIMSIM-REVISION/searches/vm/sim-baseline --out TIMSIM-REVISION/searches/vm/analysis-v1 --stress-recipe TIMSIM-REVISION/searches/vm/recipe-v1-stress --stress-root TIMSIM-REVISION/searches/vm/sim-stress
     artifact: TIMSIM-REVISION/searches/vm/recipe-v1-stress/sim/
   provenance: automatic
   last_verified:
@@ -475,6 +475,108 @@ claims:
   assumptions:
   - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
   - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+- id: vm.rt-spread.fdp-bound.diann
+  title: True DIA-NN FDP stays at most 1.5% under rt-spread stress
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs:
+    corpus: 'vm-stress rt-spread: matched complexity x 3 shared seeds'
+    n: 3
+    class: synthetic
+  outputs:
+    fdp_max:
+      unit: fraction
+      description: Max true FDP over all settings x seeds of this row.
+  pinned_versions: *id002
+  claim: Stress row 'rt-spread' (simulated RT apexes keep their order and are quantile-mapped onto the RT spread of the
+    real LS10 run's accepted precursors; paired from_existing replays of the baseline). Settings are listed in
+    evident/vm/stress_settings_rt_spread.yaml, committed before any rt-spread replay ran and before the
+    rt-spread stress FDP was opened. At the rt-spread setting and every seed, true FDP at run-level
+    Q.Value <= 0.01 is at most 0.015.
+  gist:
+    what: "Even when simulated retention times keep their order but are spread like those of the real run, at most 1.5% of the peptide ions DIA-NN accepts at its 1% cutoff are wrong."
+    why: "It shows whether the paper's error-rate conclusions survive TimSim getting this property somewhat wrong."
+    wrong_if: Any rt-spread stress run has true FDP above 1.5%.
+  tolerances:
+  - metric: fdp
+    op: <=
+    value: 0.015
+    output: fdp_max
+    prose: max over rt-spread settings x seeds of true FDP <= 0.015
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.rt-spread.fdp-bound.diann --recipe TIMSIM-REVISION/searches/vm/recipe-v1 --sim-root TIMSIM-REVISION/searches/vm/sim-baseline --out TIMSIM-REVISION/searches/vm/analysis-v1 --stress-recipe TIMSIM-REVISION/searches/vm/recipe-v1-stress --stress-root TIMSIM-REVISION/searches/vm/sim-stress
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1-stress/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  - The replay control is the predictor-swap row's replay-control (same seeds and replay code).
+  failure_modes:
+  - Holds at the tested settings only. Nothing is interpolated between settings.
+  - A stable but inflated FDP is reported as inflated. Stability does not imply control.
+- id: vm.rt-spread.fdp-delta.diann
+  title: True DIA-NN FDP moves at most 0.5 pp under rt-spread stress
+  kind: measurement
+  subsystem: timsim.stress
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - fdp-measurement-under-simulation
+  inputs:
+    corpus: 'vm-stress rt-spread: matched complexity x 3 shared seeds'
+    n: 3
+    class: synthetic
+  outputs:
+    fdp_delta_max:
+      unit: fraction
+      description: Max over settings of the absolute paired mean FDP change from baseline.
+  pinned_versions: *id002
+  claim: Stress row 'rt-spread' (simulated RT apexes keep their order and are quantile-mapped onto the RT spread of the
+    real LS10 run's accepted precursors; paired from_existing replays of the baseline). Settings are listed in
+    evident/vm/stress_settings_rt_spread.yaml, committed before any rt-spread replay ran and before the
+    rt-spread stress FDP was opened. |mean over seeds of FDP(rt-spread) - mean over the same seeds of
+    FDP(baseline at matched complexity)| is at most 0.005.
+  gist:
+    what: "When simulated retention times keep their order but are spread like those of the real run, DIA-NN's share of wrong peptide ions changes by at most half a percentage point."
+    why: "This tests stability; an error rate can stay put and still be too high, so it is checked apart from the 1.5% ceiling."
+    wrong_if: Any rt-spread setting moves mean true FDP by more than 0.5 percentage points.
+  tolerances:
+  - metric: absolute_error
+    op: <=
+    value: 0.005
+    output: fdp_delta_max
+    prose: max over rt-spread settings of |mean FDP(stress) - mean FDP(baseline)| <= 0.005
+  evidence:
+    oracle: *id003
+    command: python evident/vm/vm_truth_fdp.py --mode stress --claim vm.rt-spread.fdp-delta.diann --recipe TIMSIM-REVISION/searches/vm/recipe-v1 --sim-root TIMSIM-REVISION/searches/vm/sim-baseline --out TIMSIM-REVISION/searches/vm/analysis-v1 --stress-recipe TIMSIM-REVISION/searches/vm/recipe-v1-stress --stress-root TIMSIM-REVISION/searches/vm/sim-stress
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1-stress/sim/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Truth FDP uses the plain-library search, the primary estimand (vm.protocol.estimand) and vm.protocol.truth-rule.
+  - Seeds are shared between baseline and stress settings, so comparisons are paired.
+  - The replay control is the predictor-swap row's replay-control (same seeds and replay code).
   failure_modes:
   - Holds at the tested settings only. Nothing is interpolated between settings.
   - A stable but inflated FDP is reported as inflated. Stability does not imply control.

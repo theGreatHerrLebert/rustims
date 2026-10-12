@@ -268,6 +268,14 @@ def _ions_db(db: Path, ions) -> None:
         c.executemany("insert into ions values (?, ?)", ions)
 
 
+VERIFY_OK = json.dumps({"retention_time_gru_predictor": {}, "inv_mobility_gru_predictor": {}})
+
+
+def _checked(run_dir: Path, verify: str = VERIFY_OK) -> None:
+    (run_dir / "verify.json").write_text(verify)
+    (run_dir / "done.flag").write_text("frozen\n")
+
+
 def test_predictor_swap_stress(tree, tmp_path):
     """Seeds differ in truth; rt-chronologer moves FDP up on r1 and down on r2, im-std adds a Met-ox confusion."""
     recipe, sim_root, out = tree
@@ -304,7 +312,7 @@ def test_predictor_swap_stress(tree, tmp_path):
         _run("vm_truth_fdp.py", *args)
     for rid in seeds:
         for st in ("replay-control", "rt-chronologer", "im-std", "joint"):
-            (sroot / f"{rid}-{st}" / "verify.json").write_text("{}")
+            _checked(sroot / f"{rid}-{st}")
     _run("vm_truth_fdp.py", *args)
     res = json.loads((out / "results" / "stress-predictor-swap.json").read_text())
     assert [res["baseline"][r]["fdp"] for r in seeds] == pytest.approx([0.25, 0.0, 0.25])
@@ -325,6 +333,30 @@ def test_predictor_swap_stress(tree, tmp_path):
     assert res["per_seed"]["rt-chronologer"]["jitter-250k-r1"]["met_ox_share_of_false"] == pytest.approx(0)
     assert r["rt_window_min"] == 8.0 and res["baseline"]["jitter-250k-r1"]["rt_window_min"] == 15.7
     assert "vm.predictor-swap.fdp-bound.diann" in json.loads((out / "last_verified.json").read_text())
+
+    # rt-spread: its own setting, predictor-swap's replay-control as control
+    args = ["--mode", "stress", "--claim", "vm.rt-spread.fdp-bound.diann", "--recipe", recipe, "--sim-root",
+            sim_root, "--out", out, "--stress-recipe", srec, "--stress-root", sroot]
+    for rid in seeds:
+        rows = list(rows4) + ([("NEVERSIMK", "NEVERSIMK", 2, 0.005)] if rid == "jitter-250k-r2" else [])
+        _report(srec / "sim" / f"{rid}-rt-spread" / "plain" / "report.parquet", rows)
+        _ions_db(sroot / f"{rid}-rt-spread" / "out" / "x" / "synthetic_data.db", truth[rid])
+    with pytest.raises(subprocess.CalledProcessError):  # no verify.json yet
+        _run("vm_truth_fdp.py", *args)
+    for rid in seeds:
+        _checked(sroot / f"{rid}-rt-spread", "{}")
+    with pytest.raises(subprocess.CalledProcessError):  # an empty verify.json is not a check
+        _run("vm_truth_fdp.py", *args)
+    for rid in seeds:
+        _checked(sroot / f"{rid}-rt-spread")
+    _run("vm_truth_fdp.py", *args)
+    rs = json.loads((out / "results" / "stress-rt-spread.json").read_text())
+    assert set(rs["per_setting"]) == {"replay-control", "rt-spread"} and rs["row"] == "rt-spread"
+    assert rs["per_seed"]["rt-spread"]["jitter-250k-r2"]["fdp"] == pytest.approx(1 / 5)
+    assert rs["values"]["vm.rt-spread.fdp-bound.diann"]["fdp_max"] == pytest.approx(0.25)
+    assert rs["values"]["vm.rt-spread.fdp-delta.diann"]["fdp_delta_max"] == pytest.approx((0.25 + 0.2 + 0.25) / 3 - 1 / 6)
+    sidecar = json.loads((out / "last_verified.json").read_text())
+    assert "vm.rt-spread.fdp-bound.diann" in sidecar and "vm.predictor-swap.fdp-bound.diann" in sidecar
 
 
 def _stress_base_db(src: Path) -> None:
@@ -389,6 +421,67 @@ def test_stress_prepare_rewrites_only_its_columns(tmp_path, monkeypatch):
     with sqlite3.connect(replay) as c:
         c.execute("update peptides set retention_time_gru_predictor = 42.0")
     with pytest.raises(SystemExit):
+        sp.main()
+
+
+def test_stress_prepare_rt_spread(tmp_path, monkeypatch):
+    """rt-spread rewrites only peptide RT, keeps the order, takes the real spread, and survives --verify."""
+    import numpy as np
+    import pandas as pd
+    import vm_stress_prepare as sp
+
+    src = tmp_path / "base.db"
+    _stress_base_db(src)
+    real = tmp_path / "LS10.parquet"
+    pd.DataFrame({"Modified.Sequence": ["A", "A", "B", "C", "D", "E"], "RT": [1.0, 3.0, 4.0, 5.0, 6.0, 99.0],
+                  "Q.Value": [0.001] * 5 + [0.5], "Decoy": [0] * 6}).to_parquet(real)
+    argv = ["x", "--row", "rt-spread", "--baseline-db", str(src), "--gradient", "600", "--seed", "1",
+            "--real-report", str(real), "--out", str(tmp_path / "p")]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit):                     # 4 real precursors < MIN_REAL_RT
+        sp.main()
+    monkeypatch.setattr(sp, "MIN_REAL_RT", 4)
+    monkeypatch.setattr(sp, "chronologer_hi", lambda *a: (_ for _ in ()).throw(AssertionError("no Chronologer")))
+    sp.main()
+    db = tmp_path / "p" / "rt-spread" / "synthetic_data.db"
+    with sqlite3.connect(db) as c:
+        rt = [r[0] for r in c.execute("select retention_time_gru_predictor from peptides order by peptide_id")]
+        im = [r[0] for r in c.execute("select inv_mobility_gru_predictor from ions order by ion_id")]
+    # real RT (s): A median 2 min, B 4, C 5, D 6 -> [120, 240, 300, 360]; sim mid-ranks 1/6, 3/6, 5/6
+    assert rt == pytest.approx(list(np.quantile([120.0, 240.0, 300.0, 360.0], [1 / 6, 0.5, 5 / 6])))
+    assert rt == sorted(rt) and im == [0.9, 1.0, 1.1]
+    rep = json.loads((tmp_path / "p" / "prepare.json").read_text())
+    assert rep["row"] == "rt-spread" and rep["n_real_precursors"] == 4 and list(rep["settings"]) == ["rt-spread"]
+    assert rep["new_tie_share"] == 0 and len(rep["real_report_sha256"]) == 64
+    replay = tmp_path / "replay.db"
+    replay.write_bytes(db.read_bytes())
+    monkeypatch.setattr(sys, "argv", ["x", "--verify", str(replay), "--prepared", str(db.parent), "--out",
+                                      str(tmp_path / "verify.json")])
+    sp.main()
+    # the map: ties share a value, the order holds, a reversal is caught
+    old = np.array([3.0, 1.0, 3.0, 2.0])
+    new = sp.spread_map(old, np.array([0.0, 10.0, 20.0, 30.0]))
+    assert new[0] == new[2] and new[1] < new[3] < new[0] and sp.order_preserved(old, new)
+    assert not sp.order_preserved(old, new[::-1])
+    flat = sp.spread_map(np.array([1.0, 2.0, 3.0, 4.0]), np.array([5.0, 5.0, 5.0, 5.0]))   # plateau merges all
+    assert sp.order_preserved(np.array([1.0, 2.0, 3.0, 4.0]), flat)
+    assert sp.new_tie_share(np.array([1.0, 2.0, 3.0, 4.0]), flat) == 1.0
+    # verify rejects a NaN apex in the replay
+    with sqlite3.connect(replay) as c:
+        c.execute("update peptides set retention_time_gru_predictor = NULL where peptide_id = 1")
+    with pytest.raises(SystemExit, match="non-finite"):
+        sp.main()
+    # a missing real RT fails loudly instead of being skipped
+    pd.DataFrame({"Modified.Sequence": ["A", "B", "C", "D"], "RT": [1.0, None, 3.0, 4.0],
+                  "Q.Value": [0.001] * 4, "Decoy": [0] * 4}).to_parquet(real)
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit, match="non-finite"):
+        sp.main()
+    real.unlink()
+    pd.DataFrame({"Modified.Sequence": ["A", "A", "B", "C", "D"], "RT": [1.0, 3.0, 4.0, 5.0, 6.0],
+                  "Q.Value": [0.001] * 5, "Decoy": [0] * 5}).to_parquet(real)
+    monkeypatch.setattr(sys, "argv", argv[:6] + ["10"] + argv[7:])     # gradient 10 s: mapped RT outside it
+    with pytest.raises(SystemExit, match="outside"):
         sp.main()
 
 

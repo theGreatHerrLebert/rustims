@@ -8,11 +8,14 @@
 #SBATCH --job-name=vm-stress
 #SBATCH --mail-type=END,FAIL
 #SBATCH --output=/lustre/project/ki-proanagi/dateschn/TIMSIM-REVISION-M3/logs/vm-stress-%x-%A_%a.log
-# Predictor-swap stress row (rustims evident/vm/stress_settings.yaml, frozen at $FROZEN).
+# Stress rows predictor-swap (evident/vm/stress_settings.yaml) and rt-spread (stress_settings_rt_spread.yaml),
+# frozen at $FROZEN.
 # Deployed from rustims evident/vm/ to $EV with COMMIT and SHA256SUMS; every file is checked before use.
 #   STAGE=prep : slim + rewritten DBs for the three 250k baseline seeds, replay configs, descriptive RT fit.
 #                Markers VM_STRESS_PREP_DONE / VM_STRESS_FAIL prep <step>.
-#   STAGE=sim  : array 0-11, one from_existing replay per task (queue.txt line = task id).
+#   STAGE=prep-rt-spread : rt-spread DBs (RT apexes quantile-mapped onto real LS10) and queue-rt-spread.txt.
+#   STAGE=sim  : one from_existing replay per array task (line of $OUT/${QUEUE:-queue.txt} = task id + 1);
+#                predictor-swap array 0-11, rt-spread array 0-2 with QUEUE=queue-rt-spread.txt.
 #                Markers VM_STRESS_RUN <id> rc=... / VM_STRESS_FAIL sim <id>.
 set -uo pipefail
 module purge; module load tools/Apptainer/1.3.4-GCCcore-13.3.0
@@ -20,14 +23,14 @@ M=/lustre/project/ki-proanagi/dateschn/TIMSIM-REVISION-M3
 R=$M/TIMSIM-REVISION/searches/vm
 BASE=$R/sim-baseline
 OUT=$R/sim-stress
-EV=$M/evident-vm
+EV=${EV:-$M/evident-vm}         # each freeze deploys to its own directory; rt-spread: EV=$M/evident-vm-<commit>
 CHR=$EV/chronologer-e518130
 CHR_MODEL=$CHR/models/Chronologer_20220601193755.pt
 CHR_SHA=1a500c246b49a1a23643bce7f2df86d5a107359bf0ec34365531c73431b6c0b3
 X() { apptainer exec --nv --bind /lustre --env IMSPY_CACHE_DIR=$M/imspy-models,PYTHONPATH=$CHR/src:$EV \
         $M/containers/py312-bookworm.sif "$@"; }
 PY=$M/timsim-env/bin/python
-: "${STAGE:?STAGE=prep|sim}"; : "${FROZEN:?FROZEN=<commit that froze stress_settings.yaml>}"
+: "${STAGE:?STAGE=prep|prep-rt-spread|sim}"; : "${FROZEN:?FROZEN=<commit that froze stress_settings.yaml>}"
 fail() { echo "VM_STRESS_FAIL $STAGE $1 $(date -u +%FT%TZ)"; exit 1; }
 [ "$(cat $EV/COMMIT)" = "$FROZEN" ] || fail "evident-vm is at $(cat $EV/COMMIT), not $FROZEN"
 (cd $EV && sha256sum --quiet -c SHA256SUMS) || fail deployed_files_changed
@@ -54,9 +57,34 @@ if [ "$STAGE" = prep ]; then
   exit 0
 fi
 
+if [ "$STAGE" = prep-rt-spread ]; then
+  REAL=$R/recipe-v1/real10/LS10/plain/report.parquet
+  [ -s $REAL ] || fail "no real LS10 report"
+  mkdir -p $OUT/prepared-rt-spread
+  # pinned in stress_settings_rt_spread.yaml: the real sample and the replay environment
+  echo "cb22c214104f6ca76c72c456522cbf951115a8b139a8a935d08cc0d5be2e0147  $REAL" | sha256sum -c - || fail real_report_sha
+  echo "bd04f116a1fe2e402a17f308a31b00bb1f9721141613375a191fb35bc89107c0  $M/timsim-env.freeze.txt" | sha256sum -c - \
+    || fail timsim_env_changed
+  for RID in jitter-250k-r1 jitter-250k-r2 jitter-250k-r3; do
+    [ -f $BASE/$RID/done.flag ] || fail "baseline $RID not done"
+    DB=$(one_db $BASE/$RID/out) || fail "not exactly one db for $RID"
+    read -r SEED GRAD < <(X $PY -c "import json;p=json.load(open('$BASE/$RID/plan.json'));print(p['seed'],p['gradient_s'])")
+    [ -n "${SEED:-}" ] && [ -n "${GRAD:-}" ] || fail "plan $RID"
+    X $PY $EV/vm_stress_prepare.py --row rt-spread --baseline-db "$DB" --gradient "$GRAD" --seed "$SEED" \
+      --expect-seed $((4100 + ${RID##*-r})) --real-report $REAL --out $OUT/prepared-rt-spread/$RID \
+      > $OUT/prepared-rt-spread-$RID.log 2>&1 || fail "prepare rt-spread $RID"
+    echo "PREPARED rt-spread $RID seed=$SEED $(date -u +%FT%TZ)"
+  done
+  X $PY $EV/make_vmstress.py --row rt-spread || fail make_configs_rt_spread
+  [ "$(wc -l < $OUT/queue-rt-spread.txt)" -eq 3 ] || fail queue_length_rt_spread
+  echo "VM_STRESS_PREP_DONE rt-spread $(date -u +%FT%TZ)"
+  exit 0
+fi
+
 [ "$STAGE" = sim ] || fail "unknown STAGE"
-T=${SLURM_ARRAY_TASK_ID:?array task id}; [ "$T" -ge 0 ] && [ "$T" -lt 12 ] || fail "task $T out of range"
-SID=$(sed -n "$(( T + 1 ))p" $OUT/queue.txt); [ -n "$SID" ] || fail "no queue line $T"
+QF=$OUT/${QUEUE:-queue.txt}; [ -s "$QF" ] || fail "no queue $QF"
+T=${SLURM_ARRAY_TASK_ID:?array task id}; [ "$T" -ge 0 ] && [ "$T" -lt "$(wc -l < $QF)" ] || fail "task $T out of range"
+SID=$(sed -n "$(( T + 1 ))p" $QF); [ -n "$SID" ] || fail "no queue line $T"
 D=$OUT/$SID
 PREP=$(X $PY -c "import json;print(json.load(open('$D/plan.json'))['existing_path'])") || fail "plan $SID"
 [ -s "$(dirname $PREP)/prepare.json" ] && [ -s "$PREP/synthetic_data.db" ] || fail "not prepared $SID"
