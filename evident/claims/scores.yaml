@@ -1,4 +1,4 @@
-# Scores and q-value distributions from different software, sim vs real.
+# Search-engine score distributions (DIA-NN, FragPipe), sim vs real.
 # Pre-registered 2026-10-12 before any of these data were produced.
 claims:
 - id: vm.scores.qvalue.diann
