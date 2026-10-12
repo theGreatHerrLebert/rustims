@@ -82,3 +82,14 @@ reported_without_tolerance:
   - DIA-NN RT and IM windows per setting
   - share of false hits that are modification-form confusions (sequence simulated at that charge, modification
     state wrong), and the part of those that differ only in Met oxidation
+
+amendments:
+  - id: 1
+    date: 2026-10-12
+    before_any_stress_data: true   # prep job 765098 failed in vm_stress_prepare.py; no replay or FDP exists
+    found_by: the frozen guard "an unmappable residue/modification fails the run" (KeyError 'U' in Chronologer)
+    change: >
+      Chronologer has no selenocysteine token. Peptides containing U (4-8 of ~151k per baseline seed) are
+      predicted with U replaced by C, for the RT prediction only; the simulated sequence is unchanged. All
+      peptides stay in the replay, so the pairing with the baseline is intact. The count is recorded in
+      prepare.json (n_peptides_selenocysteine_as_c). Any other unmappable residue or modification still fails.

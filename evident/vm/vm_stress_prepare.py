@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -31,7 +32,8 @@ def to_chronologer(seq: str) -> str:
         out = out.replace(k, v)
     if "UNIMOD" in out:
         raise ValueError(f"unmappable modification for Chronologer: {seq}")
-    return out
+    # Amendment 1 (stress_settings.yaml): Chronologer has no selenocysteine token; predict U as C.
+    return out.replace("U", "C")
 
 
 def chronologer_hi(seqs: list[str], model_file: Path, batch: int = 2048) -> np.ndarray:
@@ -176,6 +178,7 @@ def main() -> None:
         raise SystemExit("guard: non-positive widths or invalid IM range")
 
     hi = chronologer_hi([r[1] for r in pep], a.chronologer_model)
+    n_sec = sum("U" in re.sub(r"\[UNIMOD:\d+\]", "", r[1]) for r in pep)
     rt_new = min_max(hi, 0.0, a.gradient)
     rng = np.random.default_rng(a.seed + IM_SEED_OFFSET)
     im_draw = rng.normal(im_old, im_std)
@@ -183,7 +186,7 @@ def main() -> None:
 
     report = {"baseline_db": str(a.baseline_db), "seed": a.seed, "gradient_s": a.gradient,
               "im_range": [im_lo, im_hi], "im_clipped_share": float(np.mean(im_draw != im_new)),
-              "n_peptides": len(pep_id), "n_ions": len(ion_id),
+              "n_peptides": len(pep_id), "n_ions": len(ion_id), "n_peptides_selenocysteine_as_c": int(n_sec),
               "rt_spearman_local_vs_chronologer": float(np.corrcoef(np.argsort(np.argsort(rt_old)),
                                                                     np.argsort(np.argsort(rt_new)))[0, 1]),
               "im_std_mean": float(im_std.mean()), "settings": {}}

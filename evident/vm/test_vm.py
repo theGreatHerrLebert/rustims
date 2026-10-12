@@ -374,6 +374,7 @@ def test_stress_prepare_rewrites_only_its_columns(tmp_path, monkeypatch):
     assert rep["settings"]["rt-chronologer"]["rt"]["median_abs_change_over_width"] == pytest.approx(20.0 / 2.0)
     with pytest.raises(ValueError):
         sp.to_chronologer("PEPS[UNIMOD:21]K")
+    assert sp.to_chronologer("[UNIMOD:1]GUC[UNIMOD:4]K") == "[+42.01057]GCC[+57.02146]K"  # amendment 1
 
     # verify: a replay that kept the prepared values passes, one that re-predicted RT fails
     prepared = tmp_path / "p" / "joint"
