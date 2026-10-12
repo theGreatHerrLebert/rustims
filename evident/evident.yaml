@@ -24,6 +24,7 @@ vocabularies:
     - timsim-ground-truth
     - DIA-NN
     - FDRBench
+    - FragPipe
   capability:
     - fdp-measurement-under-simulation
     - entrapment-estimator-check
@@ -41,3 +42,6 @@ include:
   - claims/stress.yaml
   - claims/discrepancy.yaml
   - claims/direction.yaml
+  - claims/marginals.yaml
+  - claims/scores.yaml
+  - claims/protein.yaml

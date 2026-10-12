@@ -1,0 +1,247 @@
+# Reviewer 2: FDR levels. Protein-level entrapment.
+# Pre-registered 2026-10-12 before any of these data were produced.
+claims:
+- id: vm.protocol.protein-estimand
+  title: Protein-level estimand and truth rule
+  kind: policy
+  subsystem: timsim.protocol
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  claim: Protein-level entrapment uses an FDRBench protein-level shuffled entrapment database (fold 1,
+    -I2L -diann -uniprot -fix_nc c -check, seed 2026) built from the same FASTA. A predicted DIA-NN 2.5.1
+    library is made from it with the shared digest settings. Each run is searched separately with the
+    shared flags but with protein inference on (no --no-prot-inf). The accepted set is protein groups
+    (Protein.Group) with run-level PG.Q.Value <= 0.01, engine decoys excluded. FDRBench -level protein
+    -pick first gives lower and combined estimates; paired is not used at protein level. On sims a protein
+    group is false if none of its accessions is a target protein with at least one simulated ion in synthetic_data.db,
+    so groups made only of entrapments count as false.
+  evidence:
+    oracle:
+    - FDRBench
+    command: SUBMISSION/revision/vm-work/mogon/vm_protein.sbatch
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1-protein/
+  assumptions:
+  - Run-level PG.Q.Value is DIA-NN's per-run protein-group q-value.
+  failure_modes:
+  - Protein grouping differs between the plain and the doubled database, so group counts are not comparable
+    to the precursor-level searches.
+- id: entrap.protein.sim.estimator-bias.diann
+  title: Protein-level combined entrapment estimate does not underestimate true FDP on TimSim
+  kind: measurement
+  subsystem: timsim.entrapment
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - entrapment-estimator-check
+  inputs:
+    corpus: vm-sim-baseline jitter 50k/125k/250k x 3 seeds
+    n: 9
+    class: synthetic
+  outputs:
+    combined_bias_mean:
+      unit: fraction
+      description: mean over 9 runs of combined - true protein-group FDP
+  pinned_versions: &id001
+    rustims: 85260d52
+    timsim-ground-truth: imspy-simulation 0.4.5 @ 85260d52
+    DIA-NN: 2.5.1
+    FDRBench: 1.1.1
+  claim: Mean over the nine sims of (FDRBench protein combined estimate - true protein-group FDP) at PG.Q.Value
+    <= 0.01 is at least -0.0025.
+  gist:
+    what: At protein level, the entrapment upper estimate is on average not below the true error rate
+      on simulated runs.
+    why: Wen et al. found protein-level control is where DIA tools fail most, so the estimator must be
+      checked there too.
+    wrong_if: Mean (combined minus true) is below -0.25 percentage points.
+  tolerances:
+  - metric: signed_difference
+    op: '>='
+    value: -0.0025
+    output: combined_bias_mean
+    prose: mean(combined - true) >= -0.0025
+  evidence:
+    oracle:
+    - DIA-NN
+    - FDRBench
+    - timsim-ground-truth
+    command: python evident/vm/vm_protein.py
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1-protein/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Estimand and truth per vm.protocol.protein-estimand.
+  failure_modes:
+  - Protein-level FDP has fewer discoveries than precursor level, so seed-to-seed spread is larger.
+- id: entrap.protein.verdict.diann.real10
+  title: DIA-NN protein-level entrapment verdict at 1% on real10
+  kind: measurement
+  subsystem: timsim.entrapment
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - entrapment-estimator-check
+  inputs:
+    corpus: PXD029836 10 ng LS10/LS11/LS12
+    n: 3
+    class: real-run
+  outputs:
+    combined_upper_max:
+      unit: fraction
+      description: max over runs of the combined estimate
+    lower_bound_max:
+      unit: fraction
+      description: max over runs of the lower bound
+  pinned_versions: *id001
+  claim: 'Derived verdict per run: valid if combined <= 0.01, invalid if lower > 0.01, otherwise inconclusive.
+    The claim holds every run valid (combined_max <= 0.01). The second tolerance is the ''not invalid''
+    bound.'
+  gist:
+    what: Whether DIA-NN's 1% protein-group cutoff is shown valid, invalid or left open by entrapment
+      on real10.
+    why: Reviewer 2 noted that FDR is controlled at several levels and the level changes results.
+    wrong_if: The combined estimate exceeds 1% in any run. Invalid if the lower bound also exceeds 1%.
+  tolerances:
+  - metric: fdp
+    op: <=
+    value: 0.01
+    output: combined_upper_max
+    prose: max combined <= 0.01 (valid)
+  - metric: fdp
+    op: <=
+    value: 0.01
+    output: lower_bound_max
+    prose: max lower <= 0.01 (not invalid)
+  evidence:
+    oracle:
+    - DIA-NN
+    - FDRBench
+    command: python evident/vm/vm_protein.py
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1-protein/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Estimand and truth per vm.protocol.protein-estimand.
+  failure_modes:
+  - Protein-level FDP has fewer discoveries than precursor level, so seed-to-seed spread is larger.
+- id: entrap.protein.verdict.diann.sim-matched
+  title: DIA-NN protein-level entrapment verdict at 1% on sim-matched
+  kind: measurement
+  subsystem: timsim.entrapment
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - entrapment-estimator-check
+  inputs:
+    corpus: matched-complexity sims (3 seeds)
+    n: 3
+    class: synthetic
+  outputs:
+    combined_upper_max:
+      unit: fraction
+      description: max over runs of the combined estimate
+    lower_bound_max:
+      unit: fraction
+      description: max over runs of the lower bound
+  pinned_versions: *id001
+  claim: 'Derived verdict per run: valid if combined <= 0.01, invalid if lower > 0.01, otherwise inconclusive.
+    The claim holds every run valid (combined_max <= 0.01). The second tolerance is the ''not invalid''
+    bound.'
+  gist:
+    what: Whether DIA-NN's 1% protein-group cutoff is shown valid, invalid or left open by entrapment
+      on sim-matched.
+    why: Reviewer 2 noted that FDR is controlled at several levels and the level changes results.
+    wrong_if: The combined estimate exceeds 1% in any run. Invalid if the lower bound also exceeds 1%.
+  tolerances:
+  - metric: fdp
+    op: <=
+    value: 0.01
+    output: combined_upper_max
+    prose: max combined <= 0.01 (valid)
+  - metric: fdp
+    op: <=
+    value: 0.01
+    output: lower_bound_max
+    prose: max lower <= 0.01 (not invalid)
+  evidence:
+    oracle:
+    - DIA-NN
+    - FDRBench
+    - timsim-ground-truth
+    command: python evident/vm/vm_protein.py
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1-protein/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Estimand and truth per vm.protocol.protein-estimand.
+  failure_modes:
+  - Protein-level FDP has fewer discoveries than precursor level, so seed-to-seed spread is larger.
+- id: entrap.protein.sim-vs-real.diann
+  title: Protein-level entrapment estimate on matched sims within 0.5 pp of real
+  kind: measurement
+  subsystem: timsim.entrapment
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - entrapment-estimator-check
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12
+    n: 6
+    class: real-run
+  outputs:
+    combined_abs_diff:
+      unit: fraction
+      description: '|mean_sim(combined) - mean_real(combined)|'
+  pinned_versions: *id001
+  claim: '|mean combined estimate over matched sims - mean over the real 10 ng runs| <= 0.005, or the
+    modal verdict class is the same (class reported in results; the tolerance is the band).'
+  gist:
+    what: The protein-level entrapment estimate agrees between simulated and real runs to within half
+      a percentage point.
+    why: This compares sim and real on the error rate itself, at the level reviewers flagged.
+    wrong_if: The means differ by more than 0.5 percentage points.
+  tolerances:
+  - metric: absolute_error
+    op: <=
+    value: 0.005
+    output: combined_abs_diff
+    prose: '|mean_sim - mean_real| <= 0.005'
+  evidence:
+    oracle:
+    - DIA-NN
+    - FDRBench
+    command: python evident/vm/vm_protein.py
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1-protein/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Estimand and truth per vm.protocol.protein-estimand.
+  failure_modes:
+  - Protein-level FDP has fewer discoveries than precursor level, so seed-to-seed spread is larger.
