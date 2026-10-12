@@ -215,3 +215,46 @@ def test_direction_classify_and_end_to_end(tmp_path):
     assert d["n_easier"] == 5 and d["n_harder"] == 0
     side = json.loads((tmp_path / "last_verified.json").read_text())
     assert side["vm.direction.sim-not-harder.diann"]["values"] == {"n_harder": 0.0}
+
+
+def test_w1_binned_and_auc():
+    import numpy as np
+    from vm_marginals import w1_binned
+    from vm_scores import auc
+    e = np.arange(0, 11.0)
+    a = np.zeros(10); a[2] = 1
+    b = np.zeros(10); b[5] = 1
+    assert w1_binned(a, b, e) == pytest.approx(3.0)
+    assert w1_binned(a, a * 7, e) == 0
+    assert auc(np.array([3.0, 4.0]), np.array([1.0, 2.0])) == 1.0
+    assert auc(np.array([1.0]), np.array([1.0])) == 0.5
+
+
+def test_protein_truth_and_estimates(tree):
+    recipe, sim_root, out = tree
+    prot = recipe.parent / "recipe-v1-protein"
+    out.mkdir(exist_ok=True)
+    (out / "matched_complexity.json").write_text(json.dumps({"matched_runs": SIM_RUNS[-3:]}))
+    # Peptides in the fixture DB carry no protein; give them P1 so P1 is the simulated protein.
+    for run in SIM_RUNS:
+        db = next((sim_root / run / "out").rglob("synthetic_data.db"))
+        with sqlite3.connect(db) as c:
+            c.execute("alter table ions add column peptide_id integer")
+            c.execute("update ions set peptide_id = rowid")
+            c.execute("create table peptides (peptide_id integer, protein text)")
+            c.executemany("insert into peptides values (?, ?)", [(i, "sp|P1|X_HUMAN desc") for i in range(1, 5)])
+    groups = [("P1", 0.001, 1, 0), ("P9", 0.002, 2, 0), ("P1_p_target", 0.003, 2, 1), ("P2", 0.5, 3, 1)]
+    for side, runs in (("real10", ["LS10", "LS11", "LS12"]), ("sim", SIM_RUNS)):
+        for run in runs:
+            d = prot / side / run
+            d.mkdir(parents=True)
+            pd.DataFrame([{"protein": g, "q_value": q, "n_t": t, "n_p": p, "lower_bound_fdp": p / (t + p),
+                           "combined_fdp": 2 * p / (t + p)} for g, q, t, p in groups]).to_csv(d / "fdp_protein.csv", index=False)
+            pd.DataFrame({"Protein.Group": ["P1", "P9"], "Modified.Sequence": ["PEPTIDEK", "KLMNLLR"],
+                          "Precursor.Charge": [2, 2], "Q.Value": [0.001, 0.001], "Decoy": [0, 0]}).to_parquet(d / "report.parquet")
+    _run("vm_protein.py", "--recipe", recipe, "--protein", prot, "--sim-root", sim_root, "--out", out)
+    res = json.loads((out / "results" / "protein.json").read_text())
+    # 3 accepted groups: P1 true, P9 not simulated, entrapment-only false -> true FDP 2/3; combined 2/3.
+    assert res["sim"][0]["true_fdp"] == pytest.approx(2 / 3)
+    assert res["values"]["entrap.protein.sim.estimator-bias.diann"]["combined_bias_mean"] == pytest.approx(0)
+    assert res["modal_class"]["real10"] == "invalid"
