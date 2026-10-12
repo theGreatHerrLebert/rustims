@@ -50,7 +50,9 @@ def main() -> None:
     seqs = d["Modified.Sequence"].map(to_unimod).tolist()
     obs = d["RT"].to_numpy() * 60.0
 
-    local = DeepChromatographyApex(model=load_deep_retention_time_predictor(),
+    # the baseline sims ran without the chronologer package, so TimSim fell back to the transformer (timsim.log);
+    # with Chronologer on PYTHONPATH the no-arg loader would return Chronologer instead
+    local = DeepChromatographyApex(model=load_deep_retention_time_predictor(backend="transformer"),
                                    tokenizer=load_tokenizer_from_resources(tokenizer_name="tokenizer-ptm"))
     pl = local.simulate_separation_times_pandas(pd.DataFrame({"sequence": seqs, "decoy": False}), gradient_length=7202)
     pred = {"timsim_local": pl.filter(like="retention_time").iloc[:, 0].to_numpy(float),
