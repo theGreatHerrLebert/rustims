@@ -503,3 +503,40 @@ def test_stress_prepare_rejects_constant_predictions(tmp_path, monkeypatch):
                                       "--chronologer-model", "m.pt", "--out", str(tmp_path / "p")])
     with pytest.raises(ValueError):
         sp.main()
+
+
+def test_diagnose_classes_and_twins(tree):
+    """vm_diagnose (reported only): error classes, Met-ox twin, depth recall, q-curve coverage."""
+    recipe, sim_root, out = tree
+    ions = [("PEPTIDEK", 2, 400.0, 1e5), ("AC[UNIMOD:4]DEFGHK", 2, 500.0, 1e3), ("MLLNQSTR", 3, 330.0, 1e4),
+            ("VVVYAAAK", 2, 440.0, 1e2), ("GGGGKR", 2, 290.0, 1e1)]
+    rows = [("PEPTIDEK", "PEPTIDEK", 2, 0.001, 30.0), ("AC(UniMod:4)DEFGHK", "ACDEFGHK", 2, 0.002, 40.0),
+            ("M(UniMod:35)ILNQSTR", "MILNQSTR", 3, 0.003, 50.05), ("MILNQSTR", "MILNQSTR", 3, 0.004, 50.0),
+            ("KLMNLLR", "KLMNLLR", 2, 0.005, 60.0), ("PEPTIDEK", "PEPTIDEK", 3, 0.006, 30.0),
+            ("VVVYAAAK", "VVVYAAAK", 2, 0.015, 70.0)]
+    for run in SIM_RUNS:
+        db = sim_root / run / "out" / "x" / "synthetic_data.db"
+        db.unlink()
+        with sqlite3.connect(db) as c:
+            c.execute("create table peptides (peptide_id integer, events real, retention_time_gru_predictor real)")
+            c.execute("create table ions (peptide_id integer, sequence text, charge integer, mz real, "
+                      "relative_abundance real, inv_mobility_gru_predictor real)")
+            for i, (s, z, mz, ev) in enumerate(ions):
+                rt = {"PEPTIDEK": 30, "MLLNQSTR": 50}.get(s, 20) * 60.0 + 1000  # seconds; keep max > 300
+                c.execute("insert into peptides values (?, ?, ?)", (i, ev, rt))
+                c.execute("insert into ions values (?, ?, ?, ?, 1.0, 0.9)", (i, s, z, mz))
+        p = recipe / "sim" / run / "plain" / "report.parquet"
+        pd.DataFrame({"Modified.Sequence": [r[0] for r in rows], "Stripped.Sequence": [r[1] for r in rows],
+                      "Precursor.Charge": [r[2] for r in rows], "Q.Value": [r[3] for r in rows],
+                      "RT": [r[4] for r in rows], "IM": 0.9, "Precursor.Mz": 450.0, "Protein.Ids": "P",
+                      "Decoy": 0}).to_parquet(p)
+    _run("vm_diagnose.py", "--recipe", recipe, "--sim-root", sim_root, "--out", out, "--search-q", "0.02")
+    r = json.loads((out / "results" / "diagnose.json").read_text())["sim"]["jitter-250k-r1"]
+    assert r["class_counts"] == {"true": 3, "form-met-ox": 1, "seq-never-simulated": 1, "seq-other-charge": 1}
+    assert r["met_ox"]["twin_also_accepted"] == 1.0 and r["met_ox"]["same_peak_share_0p1min"] == 1.0
+    assert r["met_ox"]["true_m_containing_with_false_ox_twin"] == 1.0
+    assert r["depth"]["simulated"] == 5 and r["depth"]["accepted_true"] == 3
+    assert r["never_simulated"]["by_class"] == {"seq-never-simulated": 1, "seq-other-charge": 1}
+    curve = {c["q"]: c for c in r["q_curve"]}
+    # A 2% search cut: the 5% point is marked not covered rather than undercounted.
+    assert curve[0.01]["accepted"] == 6 and curve[0.02]["accepted"] == 7 and not curve[0.05]["covered"]
