@@ -1,0 +1,169 @@
+# RETIRED 2026-10-13: not in the active manifest (evident/evident.yaml). Frozen text unchanged;
+# results stay reported. See evident/retired/RETIRED.md.
+# FDR levels: protein-level entrapment.
+# Pre-registered 2026-10-12 before any of these data were produced.
+claims:
+- id: entrap.protein.verdict.diann.real10
+  title: DIA-NN protein-level entrapment verdict at 1% on real10
+  kind: measurement
+  subsystem: timsim.entrapment
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - entrapment-estimator-check
+  inputs:
+    corpus: PXD029836 10 ng LS10/LS11/LS12
+    n: 3
+    class: real-run
+  outputs:
+    combined_upper_max:
+      unit: fraction
+      description: max over runs of the combined estimate
+    lower_bound_max:
+      unit: fraction
+      description: max over runs of the lower bound
+  pinned_versions: &id001
+    rustims: 85260d52
+    timsim-ground-truth: imspy-simulation 0.4.5 @ 85260d52
+    DIA-NN: 2.5.1
+    FDRBench: 1.1.1
+  claim: 'Derived verdict per run: valid if combined <= 0.01, invalid if lower > 0.01, otherwise inconclusive.
+    The claim holds every run valid (combined_max <= 0.01). The second tolerance is the ''not invalid''
+    bound.'
+  gist:
+    what: "On real 10 ng runs, entrapment shows whether DIA-NN's 1% protein cutoff holds, fails, or cannot be decided."
+    why: "Error control happens at several levels, and the level can change the answer."
+    wrong_if: The combined estimate exceeds 1% in any run. Invalid if the lower bound also exceeds 1%.
+  tolerances:
+  - metric: fdp
+    op: <=
+    value: 0.01
+    output: combined_upper_max
+    prose: max combined <= 0.01 (valid)
+  - metric: fdp
+    op: <=
+    value: 0.01
+    output: lower_bound_max
+    prose: max lower <= 0.01 (not invalid)
+  evidence:
+    oracle:
+    - DIA-NN
+    - FDRBench
+    command: python evident/vm/vm_protein.py
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1-protein/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Estimand and truth per vm.protocol.protein-estimand.
+  failure_modes:
+  - Protein-level FDP has fewer discoveries than precursor level, so seed-to-seed spread is larger.
+- id: entrap.protein.verdict.diann.sim-matched
+  title: DIA-NN protein-level entrapment verdict at 1% on sim-matched
+  kind: measurement
+  subsystem: timsim.entrapment
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - entrapment-estimator-check
+  inputs:
+    corpus: matched-complexity sims (3 seeds)
+    n: 3
+    class: synthetic
+  outputs:
+    combined_upper_max:
+      unit: fraction
+      description: max over runs of the combined estimate
+    lower_bound_max:
+      unit: fraction
+      description: max over runs of the lower bound
+  pinned_versions: *id001
+  claim: 'Derived verdict per run: valid if combined <= 0.01, invalid if lower > 0.01, otherwise inconclusive.
+    The claim holds every run valid (combined_max <= 0.01). The second tolerance is the ''not invalid''
+    bound.'
+  gist:
+    what: "The same protein-level check of DIA-NN's 1% cutoff, done on the simulated runs matched to the real ones."
+    why: "This is the simulated side of the protein-level comparison."
+    wrong_if: The combined estimate exceeds 1% in any run. Invalid if the lower bound also exceeds 1%.
+  tolerances:
+  - metric: fdp
+    op: <=
+    value: 0.01
+    output: combined_upper_max
+    prose: max combined <= 0.01 (valid)
+  - metric: fdp
+    op: <=
+    value: 0.01
+    output: lower_bound_max
+    prose: max lower <= 0.01 (not invalid)
+  evidence:
+    oracle:
+    - DIA-NN
+    - FDRBench
+    - timsim-ground-truth
+    command: python evident/vm/vm_protein.py
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1-protein/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Estimand and truth per vm.protocol.protein-estimand.
+  failure_modes:
+  - Protein-level FDP has fewer discoveries than precursor level, so seed-to-seed spread is larger.
+- id: entrap.protein.sim-vs-real.diann
+  title: Protein-level entrapment estimate on matched sims within 0.5 pp of real
+  kind: measurement
+  subsystem: timsim.entrapment
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - entrapment-estimator-check
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12
+    n: 6
+    class: real-run
+  outputs:
+    combined_abs_diff:
+      unit: fraction
+      description: '|mean_sim(combined) - mean_real(combined)|'
+  pinned_versions: *id001
+  claim: '|mean combined estimate over matched sims - mean over the real 10 ng runs| <= 0.005, or the
+    modal verdict class is the same (class reported in results; the tolerance is the band).'
+  gist:
+    what: "The protein-level entrapment estimate comes out about the same on simulated and real runs."
+    why: "It compares simulation and reality on protein error rates, where peptide-level control can hide failures."
+    wrong_if: The means differ by more than 0.5 percentage points.
+  tolerances:
+  - metric: absolute_error
+    op: <=
+    value: 0.005
+    output: combined_abs_diff
+    prose: '|mean_sim - mean_real| <= 0.005'
+  evidence:
+    oracle:
+    - DIA-NN
+    - FDRBench
+    command: python evident/vm/vm_protein.py
+    artifact: TIMSIM-REVISION/searches/vm/recipe-v1-protein/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Estimand and truth per vm.protocol.protein-estimand.
+  failure_modes:
+  - Protein-level FDP has fewer discoveries than precursor level, so seed-to-seed spread is larger.

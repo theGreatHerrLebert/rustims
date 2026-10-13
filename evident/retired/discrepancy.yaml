@@ -1,3 +1,5 @@
+# RETIRED 2026-10-13: not in the active manifest (evident/evident.yaml). Frozen text unchanged;
+# results stay reported. See evident/retired/RETIRED.md.
 # Section-3 discrepancy (VM plan v3). Frozen margin: sim-real distance <= 3x max real-real replicate distance.
 # Generated from a template. Change values only through a new claim id (see evident.yaml).
 claims:

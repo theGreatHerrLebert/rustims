@@ -1,0 +1,40 @@
+# RETIRED 2026-10-13: not in the active manifest (evident/evident.yaml). Frozen text unchanged;
+# results stay reported. See evident/retired/RETIRED.md.
+claims:
+  - id: vm.protocol.preregistration
+    title: Validity-matrix bounds and decision rules are frozen before any FDP result is inspected
+    kind: policy
+    subsystem: timsim.protocol
+    case: vm.md
+    source: ..
+    tier: research
+    trust_strategy:
+      - validation
+    claim: >
+      Every numeric bound, band, decision rule, matching rule and estimand in
+      this manifest was committed before any false-discovery-proportion result
+      (truth-derived or entrapment-estimated, simulated or real) was opened.
+      Downstream FDP is never used to revise a tolerance, a plausible region
+      or a matching rule. A revised rule gets a new claim id and the frozen
+      one is still reported.
+    evidence:
+      oracle:
+        - timsim-ground-truth
+      command: git log --format='%H %cI' -- evident/claims
+      artifact: the first commit touching evident/claims (branch evident/vm-preregistration)
+    gist:
+      what: "Every pass/fail threshold and rule was fixed and committed before any error-rate result was looked at."
+      why: "This keeps thresholds from being tuned after the fact to make results pass."
+      wrong_if: "Any threshold, rule or estimand changed after a related result was opened, other than through a dated amendment or a new claim id."
+    assumptions:
+      - Real 10 ng FDRBench outputs (MOGON job 764353) existed on disk at the
+        time of the commit but had not been opened. Only job markers and row
+        counts had been seen.
+      - The simulated searches (job 764357) had not started at the time of
+        the commit.
+    failure_modes:
+      - A local commit timestamp is self-attested. Pushing the branch gives an
+        independent timestamp.
+      - Analysis scripts are written after the freeze. They must implement the
+        frozen rules verbatim, and any deviation must be recorded as a new claim.
+

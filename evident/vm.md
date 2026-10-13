@@ -9,15 +9,35 @@ Plan: `SUBMISSION/revision/VM_EVIDENT_PLAN.md` (v3, two Codex rounds). Step-0 au
 Matching distributions is sufficient but not necessary. A conclusion about a search engine can transfer
 to real data even if the simulation is easier or harder than real, as long as we know which way it differs.
 
-- `vm.discrepancy.*` gives the **size** of the gap per feature. It is descriptive, not a validity gate.
-  A ratio above 3 marks a stress-test candidate.
+- The **size** of the gap per feature (discrepancy, marginals, score distributions) is reported as descriptive
+  tables. Those claims are retired (see below); a ratio above 3 still marks a stress-test candidate.
 - `vm.direction.*` gives the **direction** (easier / harder / comparable). `vm.protocol.transfer-direction`
   states which conclusions transfer: if the sim is never harder, failures transfer; if it is never easier,
   passes transfer; if mixed, only the stress tests count.
 - Entrapment (`entrap.*`) compares sim and real at the level of the error rate itself.
 - The stress tests (`vm.<row>.fdp-*`) ask whether the conclusion survives a deliberately worse simulation.
 
-## What is frozen here
+## Active claims (22, since 2026-10-13)
+
+| File | Content |
+|---|---|
+| `claims/protocol.yaml` | primary estimand, truth rule, matched-complexity rule |
+| `claims/protein.yaml` | protein-level estimand; protein-level entrapment estimator bias |
+| `claims/entrapment.yaml` | entrapment estimator bias vs truth on sims; search-space shift; sim-vs-real band and verdict agreement |
+| `claims/direction.yaml` | transfer rule; DIA-NN sim-not-harder / sim-not-easier |
+| `claims/scores.yaml` | FragPipe sim-not-harder / sim-not-easier (incl. Percolator target/decoy AUC) |
+| `claims/stress.yaml` | baseline FDP bound and nominal; stress rows mass-accuracy, predictor-swap, rt-spread (bound + delta) |
+
+## Retired claims (37)
+
+`retired/` holds the other 37 frozen claims, unchanged, and `retired/RETIRED.md` lists each with its freeze commit,
+result and reason. They are out of the active manifest so the report shows only what decides the paper text;
+their results are still computed and reported. Retired: pre-registration (now in the manifest header), all 12
+discrepancy and 6 marginal claims, 7 score-distribution claims, 2 entrapment and 3 protein side claims, and the
+never-run stress rows rt-peakshape, fragmentation and joint.
+
+## What was frozen (history)
+
 
 | File | Content |
 |---|---|

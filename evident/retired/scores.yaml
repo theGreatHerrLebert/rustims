@@ -1,0 +1,365 @@
+# RETIRED 2026-10-13: not in the active manifest (evident/evident.yaml). Frozen text unchanged;
+# results stay reported. See evident/retired/RETIRED.md.
+# Search-engine score distributions (DIA-NN, FragPipe), sim vs real.
+# Pre-registered 2026-10-12 before any of these data were produced.
+claims:
+- id: vm.scores.qvalue.diann
+  title: 'DIA-NN target q-value distribution: sim vs real'
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: matched-complexity sims (3 seeds) vs PXD029836 10 ng LS10/LS11/LS12, plain-library searches
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: median sim-real W1 / max real-real W1 for DIA-NN log10 q-value.
+  pinned_versions:
+    rustims: 85260d52
+    DIA-NN: 2.5.1
+  claim: Distribution of log10 Q.Value over target precursors in the plain-library report (reported up
+    to Q.Value 0.05). The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real
+    replicate distance.
+  gist:
+    what: "The simulated DIA-NN q-values (its confidence in each match) are distributed like real ones, about as closely as two real repeat runs match."
+    why: "Scores show whether search tools see the simulation as realistic."
+    wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real W1 / max real-real W1 <= 3
+  evidence:
+    oracle:
+    - DIA-NN
+    command: python evident/vm/vm_scores.py
+    artifact: TIMSIM-REVISION/searches/vm/analysis-v1/results/scores.json
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Matched complexity per vm.protocol.matched-complexity. Distances use equal-count subsampling (20 reps).
+  - The 3x margin is descriptive (vm.protocol.transfer-direction). Direction claims decide what transfers.
+  failure_modes:
+  - Three real runs from one batch give a small replicate distance.
+  - DIA-NN reports only precursors under its cutoff, so this is the q-value distribution of the reported
+    window, not of all candidates.
+- id: vm.scores.hyperscore.fragpipe
+  title: 'FragPipe MSFragger hyperscore distribution: sim vs real'
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: 'FragPipe 24 lowload workflow, one experiment per run: matched sims (3 seeds) vs PXD029836
+      10 ng LS10/11/12'
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: median sim-real W1 / max real-real W1 for FragPipe hyperscore.
+  pinned_versions: &id001
+    rustims: 85260d52
+    FragPipe: '24.0'
+  claim: Distribution of MSFragger hyperscore over PSMs in the per-run FragPipe psm.tsv (accepted at 1%).
+    The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real replicate
+    distance.
+  gist:
+    what: "The simulated FragPipe match scores (hyperscore) are distributed like real ones, about as closely as two real repeat runs match."
+    why: "Scores show whether search tools see the simulation as realistic."
+    wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real W1 / max real-real W1 <= 3
+  evidence:
+    oracle:
+    - FragPipe
+    command: python evident/vm/vm_scores.py
+    artifact: TIMSIM-REVISION/searches/vm/fragpipe-v1/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Matched complexity per vm.protocol.matched-complexity. Distances use equal-count subsampling (20 reps).
+  - The 3x margin is descriptive (vm.protocol.transfer-direction). Direction claims decide what transfers.
+  failure_modes:
+  - Three real runs from one batch give a small replicate distance.
+  - MSBooster uses DIA-NN's RT, IM and spectrum predictors, so its scores are not independent of the predictor
+    family the simulator's models resemble.
+- id: vm.scores.spectral_sim.fragpipe
+  title: 'FragPipe MSBooster SpectralSim distribution: sim vs real'
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: 'FragPipe 24 lowload workflow, one experiment per run: matched sims (3 seeds) vs PXD029836
+      10 ng LS10/11/12'
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: median sim-real W1 / max real-real W1 for FragPipe spectral_sim.
+  pinned_versions: *id001
+  claim: Distribution of MSBooster SpectralSim over PSMs in the per-run FragPipe psm.tsv (accepted at
+    1%). The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real replicate
+    distance.
+  gist:
+    what: "The simulated FragPipe agreement between predicted and observed fragment patterns are distributed like real ones, about as closely as two real repeat runs match."
+    why: "Scores show whether search tools see the simulation as realistic."
+    wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real W1 / max real-real W1 <= 3
+  evidence:
+    oracle:
+    - FragPipe
+    command: python evident/vm/vm_scores.py
+    artifact: TIMSIM-REVISION/searches/vm/fragpipe-v1/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Matched complexity per vm.protocol.matched-complexity. Distances use equal-count subsampling (20 reps).
+  - The 3x margin is descriptive (vm.protocol.transfer-direction). Direction claims decide what transfers.
+  failure_modes:
+  - Three real runs from one batch give a small replicate distance.
+  - MSBooster uses DIA-NN's RT, IM and spectrum predictors, so its scores are not independent of the predictor
+    family the simulator's models resemble.
+- id: vm.scores.rt_score.fragpipe
+  title: 'FragPipe MSBooster RTScore distribution: sim vs real'
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: 'FragPipe 24 lowload workflow, one experiment per run: matched sims (3 seeds) vs PXD029836
+      10 ng LS10/11/12'
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: median sim-real W1 / max real-real W1 for FragPipe rt_score.
+  pinned_versions: *id001
+  claim: Distribution of MSBooster RTScore over PSMs in the per-run FragPipe psm.tsv (accepted at 1%).
+    The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real replicate
+    distance.
+  gist:
+    what: "The simulated FragPipe retention-time agreement scores are distributed like real ones, about as closely as two real repeat runs match."
+    why: "Scores show whether search tools see the simulation as realistic."
+    wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real W1 / max real-real W1 <= 3
+  evidence:
+    oracle:
+    - FragPipe
+    command: python evident/vm/vm_scores.py
+    artifact: TIMSIM-REVISION/searches/vm/fragpipe-v1/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Matched complexity per vm.protocol.matched-complexity. Distances use equal-count subsampling (20 reps).
+  - The 3x margin is descriptive (vm.protocol.transfer-direction). Direction claims decide what transfers.
+  failure_modes:
+  - Three real runs from one batch give a small replicate distance.
+  - MSBooster uses DIA-NN's RT, IM and spectrum predictors, so its scores are not independent of the predictor
+    family the simulator's models resemble.
+- id: vm.scores.im_score.fragpipe
+  title: 'FragPipe MSBooster IMScore distribution: sim vs real'
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: 'FragPipe 24 lowload workflow, one experiment per run: matched sims (3 seeds) vs PXD029836
+      10 ng LS10/11/12'
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: median sim-real W1 / max real-real W1 for FragPipe im_score.
+  pinned_versions: *id001
+  claim: Distribution of MSBooster IMScore over PSMs in the per-run FragPipe psm.tsv (accepted at 1%).
+    The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real replicate
+    distance.
+  gist:
+    what: "The simulated FragPipe ion-mobility agreement scores are distributed like real ones, about as closely as two real repeat runs match."
+    why: "Scores show whether search tools see the simulation as realistic."
+    wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real W1 / max real-real W1 <= 3
+  evidence:
+    oracle:
+    - FragPipe
+    command: python evident/vm/vm_scores.py
+    artifact: TIMSIM-REVISION/searches/vm/fragpipe-v1/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Matched complexity per vm.protocol.matched-complexity. Distances use equal-count subsampling (20 reps).
+  - The 3x margin is descriptive (vm.protocol.transfer-direction). Direction claims decide what transfers.
+  failure_modes:
+  - Three real runs from one batch give a small replicate distance.
+  - MSBooster uses DIA-NN's RT, IM and spectrum predictors, so its scores are not independent of the predictor
+    family the simulator's models resemble.
+- id: vm.scores.log10_expectation.fragpipe
+  title: 'FragPipe log10 MSFragger expectation distribution: sim vs real'
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: 'FragPipe 24 lowload workflow, one experiment per run: matched sims (3 seeds) vs PXD029836
+      10 ng LS10/11/12'
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: median sim-real W1 / max real-real W1 for FragPipe log10_expectation.
+  pinned_versions: *id001
+  claim: Distribution of log10 MSFragger expectation over PSMs in the per-run FragPipe psm.tsv (accepted
+    at 1%). The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real
+    replicate distance.
+  gist:
+    what: "The simulated FragPipe expectation values (chance of a random match) are distributed like real ones, about as closely as two real repeat runs match."
+    why: "Scores show whether search tools see the simulation as realistic."
+    wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real W1 / max real-real W1 <= 3
+  evidence:
+    oracle:
+    - FragPipe
+    command: python evident/vm/vm_scores.py
+    artifact: TIMSIM-REVISION/searches/vm/fragpipe-v1/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Matched complexity per vm.protocol.matched-complexity. Distances use equal-count subsampling (20 reps).
+  - The 3x margin is descriptive (vm.protocol.transfer-direction). Direction claims decide what transfers.
+  failure_modes:
+  - Three real runs from one batch give a small replicate distance.
+  - MSBooster uses DIA-NN's RT, IM and spectrum predictors, so its scores are not independent of the predictor
+    family the simulator's models resemble.
+- id: vm.scores.log10_qvalue.fragpipe
+  title: 'FragPipe log10 PSM q-value distribution: sim vs real'
+  kind: measurement
+  subsystem: timsim.discrepancy
+  case: vm.md
+  source: ..
+  tier: research
+  trust_strategy:
+  - validation
+  capabilities:
+  - sim-real-transfer
+  inputs:
+    corpus: 'FragPipe 24 lowload workflow, one experiment per run: matched sims (3 seeds) vs PXD029836
+      10 ng LS10/11/12'
+    n: 6
+    class: real-run
+  outputs:
+    ratio:
+      unit: ratio
+      description: median sim-real W1 / max real-real W1 for FragPipe log10_qvalue.
+  pinned_versions: *id001
+  claim: Distribution of log10 PSM q-value over PSMs in the per-run FragPipe psm.tsv (accepted at 1%).
+    The median sim-vs-real 1-Wasserstein distance is at most 3 times the largest real-vs-real replicate
+    distance.
+  gist:
+    what: "The simulated FragPipe q-values (its confidence in each match) are distributed like real ones, about as closely as two real repeat runs match."
+    why: "Scores show whether search tools see the simulation as realistic."
+    wrong_if: The sim-vs-real distance is more than 3 times the largest replicate distance.
+  tolerances:
+  - metric: discrepancy_ratio
+    op: <=
+    value: 3
+    output: ratio
+    prose: median sim-real W1 / max real-real W1 <= 3
+  evidence:
+    oracle:
+    - FragPipe
+    command: python evident/vm/vm_scores.py
+    artifact: TIMSIM-REVISION/searches/vm/fragpipe-v1/
+  provenance: automatic
+  last_verified:
+    commit: null
+    date: null
+    value: null
+  assumptions:
+  - Matched complexity per vm.protocol.matched-complexity. Distances use equal-count subsampling (20 reps).
+  - The 3x margin is descriptive (vm.protocol.transfer-direction). Direction claims decide what transfers.
+  failure_modes:
+  - Three real runs from one batch give a small replicate distance.
+  - MSBooster uses DIA-NN's RT, IM and spectrum predictors, so its scores are not independent of the predictor
+    family the simulator's models resemble.

@@ -11,6 +11,10 @@ project: rustims
 # id, and the frozen one stays and is reported.
 #
 # Validate with evident/workflow/validate_manifest.py from the EVIDENT repo.
+#
+# 2026-10-13: 59 claims registered, 22 active, 37 retired (not deleted):
+# their frozen text is in retired/ and their results stay reported (retired/RETIRED.md).
+# Every rule and tolerance here was committed before its data were inspected.
 
 vocabularies:
   subsystem:
@@ -39,8 +43,6 @@ include:
   - claims/protocol.yaml
   - claims/entrapment.yaml
   - claims/stress.yaml
-  - claims/discrepancy.yaml
   - claims/direction.yaml
-  - claims/marginals.yaml
   - claims/scores.yaml
   - claims/protein.yaml
