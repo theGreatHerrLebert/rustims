@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -522,7 +523,7 @@ def test_diagnose_classes_and_twins(tree):
             c.execute("create table ions (peptide_id integer, sequence text, charge integer, mz real, "
                       "relative_abundance real, inv_mobility_gru_predictor real)")
             for i, (s, z, mz, ev) in enumerate(ions):
-                rt = {"PEPTIDEK": 30, "MLLNQSTR": 50}.get(s, 20) * 60.0 + 1000  # seconds; keep max > 300
+                rt = {"PEPTIDEK": 30, "MLLNQSTR": 50}.get(s, 20) * 60.0 + 1000  # seconds
                 c.execute("insert into peptides values (?, ?, ?)", (i, ev, rt))
                 c.execute("insert into ions values (?, ?, ?, ?, 1.0, 0.9)", (i, s, z, mz))
         p = recipe / "sim" / run / "plain" / "report.parquet"
@@ -533,10 +534,28 @@ def test_diagnose_classes_and_twins(tree):
     _run("vm_diagnose.py", "--recipe", recipe, "--sim-root", sim_root, "--out", out, "--search-q", "0.02")
     r = json.loads((out / "results" / "diagnose.json").read_text())["sim"]["jitter-250k-r1"]
     assert r["class_counts"] == {"true": 3, "form-met-ox": 1, "seq-never-simulated": 1, "seq-other-charge": 1}
-    assert r["met_ox"]["twin_also_accepted"] == 1.0 and r["met_ox"]["same_peak_share_0p1min"] == 1.0
-    assert r["met_ox"]["true_m_containing_with_false_ox_twin"] == 1.0
+    assert r["met_ox"]["twin_also_accepted"] == 1.0 and r["met_ox"]["same_peak_share_0p1min_of_paired"] == 1.0
+    assert r["met_ox"]["true_m_containing_with_false_met_ox_sibling"] == 1.0
+    assert r["met_ox"]["hit_rt_minus_twin_apex_min_q05_q50_q95"][1] == pytest.approx(50.05 - (50 * 60.0 + 1000) / 60)
     assert r["depth"]["simulated"] == 5 and r["depth"]["accepted_true"] == 3
     assert r["never_simulated"]["by_class"] == {"seq-never-simulated": 1, "seq-other-charge": 1}
+    assert r["depth"]["by_intensity_decile"]["d10"]["recall"] == 1.0  # PEPTIDEK/2, the most intense
     curve = {c["q"]: c for c in r["q_curve"]}
     # A 2% search cut: the 5% point is marked not covered rather than undercounted.
     assert curve[0.01]["accepted"] == 6 and curve[0.02]["accepted"] == 7 and not curve[0.05]["covered"]
+
+
+def test_diagnose_met_ox_hit_is_not_its_own_twin():
+    """Simulated only AM(ox)K: an accepted unoxidised AMK is a false hit whose twin is AM(ox)K, not itself."""
+    from vm_diagnose import classify, met_ox
+    from vm_common import label_false
+    t = pd.DataFrame({"mod": ["AM{35}K"], "charge": [2], "rt_min": [10.0], "im": [0.8], "intensity": [1.0],
+                      "stripped": ["AMK"]})
+    rep = pd.DataFrame({"mod": ["AMK"], "stripped": ["AMK"], "charge": [2], "protein": ["P"], "RT": [10.02], "IM": [0.8]})
+    tm = {("AM{35}K", 2)}
+    lab = classify(label_false(rep, tm, {("AMK", 2)}, np.zeros(1, bool)), tm)
+    assert list(lab["cls"]) == ["form-met-ox"]
+    r = met_ox(t, rep, lab)
+    assert r["twin_also_accepted"] == 0.0 and r["paired_with_accepted_twin"] == 0
+    assert r["same_peak_share_0p1min_of_paired"] is None
+    assert r["hit_rt_minus_twin_apex_min_q05_q50_q95"][1] == pytest.approx(0.02)

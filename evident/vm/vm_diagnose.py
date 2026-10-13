@@ -40,9 +40,11 @@ def read_truth_table(db: Path) -> pd.DataFrame:
         raise ValueError(f"{db}: empty truth table or missing values")
     t["mod"] = t["sequence"].map(mod_key)
     t["charge"] = t["charge"].astype(int)
-    t["rt_min"] = t["rt"] / 60.0 if t["rt"].max() > 300 else t["rt"]  # TimSim stores seconds
+    t["rt_min"] = t["rt"] / 60.0  # TimSim stores the apex in seconds
+    # I->L can merge simulated ions into one key: intensity is summed, coordinates averaged, and the spread is kept.
     t = t.groupby(["mod", "charge"], as_index=False).agg(
-        intensity=("intensity", "sum"), rt_min=("rt_min", "first"), mz=("mz", "first"), im=("im", "first"))
+        intensity=("intensity", "sum"), rt_min=("rt_min", "mean"), mz=("mz", "mean"), im=("im", "mean"),
+        n_ions=("rt_min", "size"), rt_spread_min=("rt_min", lambda x: float(x.max() - x.min())))
     t["stripped"] = t["mod"].str.replace(_ANY_MOD, "", regex=True)
     return t
 
@@ -89,9 +91,12 @@ def depth(t: pd.DataFrame, lab: pd.DataFrame) -> dict:
     hit = np.fromiter(((k, z) in true for k, z in zip(t["mod"], t["charge"])), bool, len(t))
     pos = t["intensity"] > 0
     dec = pd.Series("zero", index=t.index, dtype=object)
-    dec[pos] = pd.qcut(np.log10(t.loc[pos, "intensity"]), 10, labels=[f"d{i:02d}" for i in range(1, 11)]).astype(str)
+    if pos.any():  # deciles by rank, so ties and constant intensities still split into ten bins
+        r = t.loc[pos, "intensity"].rank(method="first").to_numpy()
+        dec[pos] = [f"d{int(i):02d}" for i in np.ceil(r / len(r) * 10).clip(1, 10)]
     rt_bin = (np.floor(t["rt_min"] / RT_BIN_MIN) * RT_BIN_MIN).astype(int)
-    return {"simulated": len(t), "simulated_zero_intensity": int((~pos).sum()), "accepted_true": int(hit.sum()),
+    return {"simulated": len(t), "merged_keys": int((t["n_ions"] > 1).sum()),
+            "merged_rt_spread_max_min": float(t["rt_spread_min"].max()), "simulated_zero_intensity": int((~pos).sum()), "accepted_true": int(hit.sum()),
             "recall": float(hit.mean()),
             "by_intensity_decile": recall_by(t, hit, dec), "by_charge": recall_by(t, hit, t["charge"]),
             "by_rt_bin_min": recall_by(t, hit, rt_bin), "by_mz": recall_by(t, hit, pd.cut(t["mz"], MZ_BINS)),
@@ -103,34 +108,50 @@ def score_medians(d: pd.DataFrame) -> dict:
 
 
 def met_ox(t: pd.DataFrame, rep: pd.DataFrame, lab: pd.DataFrame) -> dict:
-    """False Met-ox hits against their unoxidised simulated twin."""
+    """False Met-ox hits against their twin: a simulated form at the same charge that differs only in Met oxidation.
+
+    A hit can have several twins (oxidised at different positions); the twin's apex and IM are their mean, and the
+    count with more than one twin is reported. The hit itself is never its own twin (it is not simulated).
+    """
+    deox = lambda k: k.replace(OX, "")  # noqa: E731
+    twins: dict[tuple, list] = {}
+    for k, z in zip(t["mod"], t["charge"]):
+        twins.setdefault((deox(k), z), []).append((k, z))
     tt = t.set_index(["mod", "charge"])
     acc = rep.set_index(["mod", "charge"])
     m = lab[lab["cls"] == "form-met-ox"]
-    twin = list(zip(m["mod"].str.replace(OX, "", regex=False), m["charge"]))
-    hit_rt = acc.loc[list(zip(m["mod"], m["charge"])), "RT"].to_numpy(float) if len(m) else np.array([])
-    hit_im = acc.loc[list(zip(m["mod"], m["charge"])), "IM"].to_numpy(float) if len(m) else np.array([])
-    # A hit oxidised at another position than a simulated M(ox) form has no fully unoxidised twin: NaN.
-    twin_apex = tt["rt_min"].reindex(twin).to_numpy(float) if len(m) else np.array([])
-    twin_im = tt["im"].reindex(twin).to_numpy(float) if len(m) else np.array([])
-    twin_acc = np.array([k in acc.index for k in twin], bool)
-    twin_rt_obs = np.array([acc.loc[k, "RT"] if k in acc.index else np.nan for k in twin], float)
+    keys = list(zip(m["mod"], m["charge"]))
+    cand = [[c for c in twins.get((deox(k), z), []) if c != (k, z)] for k, z in keys]
+    if any(not c for c in cand):
+        raise ValueError("a form-met-ox hit without a simulated twin")
+    nan = float("nan")
+    twin_apex = np.array([tt.loc[c, "rt_min"].mean() for c in cand], float)
+    twin_im = np.array([tt.loc[c, "im"].mean() for c in cand], float)
+    twin_obs = [[x for x in c if x in acc.index] for c in cand]
+    twin_rt_obs = np.array([acc.loc[o, "RT"].mean() if o else nan for o in twin_obs], float)
+    hit_rt = acc.loc[keys, "RT"].to_numpy(float) if keys else np.array([])
+    hit_im = acc.loc[keys, "IM"].to_numpy(float) if keys else np.array([])
+    paired = np.isfinite(twin_rt_obs) & np.isfinite(hit_rt)
+    false_groups = {(deox(k), z) for k, z in keys}
     true_m = lab[(lab["cls"] == "true") & lab["stripped"].str.contains("M")]
-    false_twins = {(k.replace(OX, ""), z) for k, z in zip(m["mod"], m["charge"])}
-    q = lambda x: np.nanquantile(x, [0.05, 0.5, 0.95]).tolist() if np.isfinite(x).any() else [None] * 3  # noqa: E731
+    q = lambda x: np.quantile(x[np.isfinite(x)], [0.05, 0.5, 0.95]).tolist() if np.isfinite(x).any() else [None] * 3  # noqa: E731
     sim_ox = t["mod"].str.contains(OX, regex=False)
+    hit_ox = m["mod"].str.contains(OX, regex=False)
     return {
-        "n": len(m),
+        "n": len(m), "hit_oxidised_share": float(hit_ox.mean()) if len(m) else None,
+        "multiple_twins": int(sum(len(c) > 1 for c in cand)),
         "simulated_precursors_with_ox": int(sim_ox.sum()), "simulated_precursors": len(t),
         "accepted_share_with_ox": float(rep["mod"].str.contains(OX, regex=False).mean()),
-        "twin_also_accepted": float(twin_acc.mean()) if len(m) else None,
+        "twin_also_accepted": float(np.mean([bool(o) for o in twin_obs])) if keys else None,
         "hit_rt_minus_twin_apex_min_q05_q50_q95": q(hit_rt - twin_apex),
-        "abs_hit_rt_minus_twin_rt_min_q05_q50_q95": q(np.abs(hit_rt - twin_rt_obs)),
-        "same_peak_share_0p1min": float(np.nanmean(np.abs(hit_rt - twin_rt_obs) <= 0.1)) if twin_acc.any() else None,
         "hit_im_minus_twin_im_q05_q50_q95": q(hit_im - twin_im),
-        "true_m_containing_with_false_ox_twin": float(np.mean([k in false_twins for k in zip(true_m["mod"], true_m["charge"])]))
-        if len(true_m) else None,
-        "scores_false_met_ox": score_medians(acc.loc[list(zip(m["mod"], m["charge"]))]) if len(m) else None,
+        "paired_with_accepted_twin": int(paired.sum()),
+        "abs_hit_rt_minus_twin_rt_min_q05_q50_q95": q(np.abs(hit_rt - twin_rt_obs)),
+        "same_peak_share_0p1min_of_paired": float(np.mean(np.abs(hit_rt - twin_rt_obs)[paired] <= 0.1))
+        if paired.any() else None,
+        "true_m_containing_with_false_met_ox_sibling": float(np.mean(
+            [(deox(k), z) in false_groups for k, z in zip(true_m["mod"], true_m["charge"])])) if len(true_m) else None,
+        "scores_false_met_ox": score_medians(acc.loc[keys]) if keys else None,
         "scores_true": score_medians(acc.loc[list(zip(lab.loc[lab["cls"] == "true", "mod"],
                                                       lab.loc[lab["cls"] == "true", "charge"]))]),
     }
@@ -151,18 +172,20 @@ def never_sim(t: pd.DataFrame, rep: pd.DataFrame, lab: pd.DataFrame) -> dict:
         arr = mz_by_z.get(z, np.array([]))
         i = np.searchsorted(arr, mz)
         near = min((abs(arr[j] - mz) for j in (i - 1, i) if 0 <= j < len(arr)), default=np.inf)
-        same = by_len.get(len(s), [])
+        same = by_len.get(len(s), []) if c == "seq-never-simulated" else []
         ham = min((sum(a != b for a, b in zip(s, o)) for o in same), default=None)
         rows.append({"cls": c, "len": len(s), "nearest_same_charge_ppm": near / mz * 1e6,
                      "anagram_of_simulated": "".join(sorted(s)) in anagrams, "min_hamming_same_length": ham})
     df = pd.DataFrame(rows)
     if df.empty:
         return {"n": 0}
-    return {"n": len(df), "by_class": df["cls"].value_counts().to_dict(),
-            "within_10ppm_share": float((df["nearest_same_charge_ppm"] <= 10).mean()),
-            "nearest_ppm_q50": float(df["nearest_same_charge_ppm"].median()),
-            "anagram_share": float(df["anagram_of_simulated"].mean()),
-            "hamming_le2_share": float((df["min_hamming_same_length"].fillna(99) <= 2).mean())}
+    out = {"n": len(df), "by_class": df["cls"].value_counts().to_dict()}
+    for c, g in df.groupby("cls"):  # other-charge hits are simulated sequences: anagram and Hamming 0 by definition
+        out[c] = {"n": len(g), "within_10ppm_share": float((g["nearest_same_charge_ppm"] <= 10).mean()),
+                  "nearest_ppm_q50": float(g["nearest_same_charge_ppm"].median()),
+                  "anagram_share": float(g["anagram_of_simulated"].mean()),
+                  "hamming_le2_share": float((g["min_hamming_same_length"].fillna(99) <= 2).mean())}
+    return out
 
 
 def q_curve(report: Path, truth_mod: set, truth_stripped: set, pairs: dict, search_q: float) -> list:
@@ -187,8 +210,12 @@ def entrap_classes(recipe: Path, run: str, truth_mod: set, truth_stripped: set, 
     ent = is_entrapment(acc["stripped"], pairs, acc["protein"])
     lab = classify(label_false(acc, truth_mod, truth_stripped, ent), truth_mod)
     share = lab["cls"].value_counts(normalize=True).to_dict()
-    visible = lab["cls"].isin(["entrapment", "seq-never-simulated", "seq-other-charge"]).mean()
-    return {"accepted": len(lab), "true_fdp": float(lab["false_mod"].mean()), "sequence_error_fdp": float(visible),
+    # Shares of the accepted set per error class, beside FDRBench's estimates. The estimates are model-based, not
+    # class counts; this only shows which classes are large enough to explain the gap to the true FDP.
+    f = lambda *c: float(lab["cls"].isin(c).mean())  # noqa: E731
+    return {"accepted": len(lab), "true_fdp": float(lab["false_mod"].mean()),
+            "fdp_entrapment_or_never_simulated": f("entrapment", "seq-never-simulated"),
+            "fdp_other_charge": f("seq-other-charge"), "fdp_form": f("form-met-ox", "form-other"),
             "paired": est["paired"], "combined": est["combined"], "lower": est["lower"], "class_shares": share}
 
 

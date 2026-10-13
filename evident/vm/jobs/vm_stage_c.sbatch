@@ -20,6 +20,7 @@ fail() { echo "VM_STAGE_C_FAIL $1 $(date -u +%FT%TZ)"; exit 1; }
 cd $EV || fail code
 echo "VM_STAGE_C_START $(date -u +%FT%TZ) code=$(cat $EV/COMMIT 2>/dev/null)"
 [ -s $OUT/matched_complexity.json ] || fail "stage A missing"
+rm -f $OUT/results/diagnose.json  # a failed run must not leave an older file looking current
 $PY vm_marginals.py --recipe $R/recipe-v1 --raw $R/raw-v1 --out $OUT || fail marginals
 $PY vm_scores.py --recipe $R/recipe-v1 --fragpipe $R/fragpipe-v1 --out $OUT || fail scores
 $PY vm_protein.py --recipe $R/recipe-v1 --protein $R/recipe-v1-protein --sim-root $R/sim-baseline --out $OUT || fail protein
