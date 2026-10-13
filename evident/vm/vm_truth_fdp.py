@@ -7,8 +7,9 @@ Modes map to claims:
   sim-vs-real         entrap.sim-vs-real.diann
   baseline            vm.baseline.fdp-{bound,nominal}.diann
   all                 everything above, then the band-or-class diagnostic decision
-  stress              --claim vm.baseline.* routes to baseline; --claim vm.predictor-swap.* runs the frozen
-                      predictor-swap row (evident/vm/stress_settings.yaml) on --stress-recipe / --stress-root
+  stress              --claim vm.baseline.* routes to baseline; --claim vm.<row>.* runs that frozen stress row
+                      (predictor-swap, rt-spread, mass-accuracy; evident/vm/stress_settings*.yaml) on
+                      --stress-recipe / --stress-root
 
 Writes results/<mode>.json and a last_verified sidecar for typed-trust.
 Any missing, non-finite or inconsistent input stops the run instead of shrinking an aggregate.
@@ -19,13 +20,14 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sqlite3
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from vm_common import (Q_MAX, accepted_from_report, check_cohort, complexity_of, dump, fdp_stripped, fdrbench_at_threshold,
-                       find_truth_db, finite, is_entrapment, label_false, modal, read_pairs, read_truth, verdict,
+                       find_truth_db, finite, is_entrapment, label_false, mod_key, modal, read_pairs, read_truth, verdict,
                        write_sidecar)
 
 class Ctx:
@@ -198,9 +200,14 @@ def baseline(c: Ctx) -> dict:
 
 STRESS_SEEDS = ("jitter-250k-r1", "jitter-250k-r2", "jitter-250k-r3")
 STRESS_SETTINGS = ("rt-chronologer", "im-std", "joint")  # claim scope; replay-control is reported only
-# Claim scope per row. rt-spread reuses predictor-swap's replay-control replays (stress_settings_rt_spread.yaml).
-STRESS_ROWS = {"predictor-swap": STRESS_SETTINGS, "rt-spread": ("rt-spread",)}
+# Claim scope per row. rt-spread reuses predictor-swap's replay-control replays (stress_settings_rt_spread.yaml);
+# mass-accuracy has its own control and two settings reported without tolerance (stress_settings_mass_accuracy.yaml).
+STRESS_ROWS = {"predictor-swap": STRESS_SETTINGS, "rt-spread": ("rt-spread",),
+               "mass-accuracy": ("ms1-real", "ms2-real", "ms12-real")}
 REPLAY_CONTROL = "replay-control"
+ROW_CONTROL = {"mass-accuracy": "replay-control-ma"}
+ROW_REPORTED_ONLY = {"mass-accuracy": ("ms12-centred", "ms12-2x")}
+MZ_BIAS = ("mz_bias_ppm_ms1", "mz_bias_ppm_ms2")
 _DIANN_LOG = {"rt_window_min": r"RT window set to ([0-9.eE+-]+)", "im_window": r"IM window set to ([0-9.eE+-]+)",
               "ms1_acc_ppm": r"Recommended MS1 mass accuracy setting: ([0-9.eE+-]+)"}
 
@@ -226,14 +233,35 @@ def identified_rt_quantiles(report: Path) -> list:
     return np.quantile(rt, [0.05, 0.5, 0.95]).tolist() if len(rt) else [float("nan")] * 3
 
 
-def replay_checked(run_dir: Path) -> None:
-    """A replay counts only with done.flag and a --verify result naming both apex columns."""
+MA_BIAS_COLS = {"replay-control-ma": (), "ms1-real": ("mz_bias_ppm_ms1",), "ms2-real": ("mz_bias_ppm_ms2",),
+                "ms12-real": MZ_BIAS, "ms12-centred": MZ_BIAS, "ms12-2x": MZ_BIAS}
+
+
+def replay_checked(run_dir: Path, mass_accuracy: bool = False) -> str:
+    """A replay counts only with done.flag and a --verify result naming both apex columns. Returns done.flag's commit.
+
+    mass-accuracy replays also need: the verify result bound to this replay's truth DB, the ion-key check, exactly the
+    setting's bias columns, and (outside the control) the comparison with the same seed's replay-control-ma.
+    """
     v = run_dir / "verify.json"
     if not (run_dir / "done.flag").exists() or not v.exists():
         raise SystemExit(f"{run_dir.name}: no done.flag or verify.json, the replay was not checked")
-    keys = set(json.loads(v.read_text()))
-    if not {"retention_time_gru_predictor", "inv_mobility_gru_predictor"} <= keys:
+    res = json.loads(v.read_text())
+    if not {"retention_time_gru_predictor", "inv_mobility_gru_predictor"} <= set(res):
         raise SystemExit(f"{run_dir.name}: verify.json lacks the apex checks")
+    if mass_accuracy:
+        rid, setting = run_dir.name.split("-", 3)[:3], run_dir.name.split("-", 3)[3]
+        control = f"{'-'.join(rid)}-{ROW_CONTROL['mass-accuracy']}"
+        if Path(res.get("replay_db", "")).resolve() != find_truth_db(run_dir).resolve():
+            raise SystemExit(f"{run_dir.name}: verify.json does not name this replay's truth DB")
+        if "ion_keys" not in res:
+            raise SystemExit(f"{run_dir.name}: verify.json lacks the ion-key check")
+        want = set(MA_BIAS_COLS[setting])
+        if {k for k in MZ_BIAS if k in res} != want or not all(res[k].get("all_equal") is True for k in want):
+            raise SystemExit(f"{run_dir.name}: verify.json bias checks {sorted(set(MZ_BIAS) & set(res))} != {sorted(want)}")
+        if want and f"/{control}/" not in res["ion_keys"].get("same_as_control", ""):
+            raise SystemExit(f"{run_dir.name}: not compared with {control}")
+    return (run_dir / "done.flag").read_text().strip()
 
 
 def truth_fdp_row(c: Ctx, report_dir: Path, sim_dir: Path) -> dict:
@@ -249,46 +277,155 @@ def truth_fdp_row(c: Ctx, report_dir: Path, sim_dir: Path) -> dict:
     met_ox = form & np.fromiter(((k.replace("{35}", ""), z) in no_ox for k, z in zip(lab["mod"], lab["charge"])),
                                 bool, len(lab))
     share = (lambda m: float(m.sum() / false.sum()) if false.any() else float("nan"))
-    return {"accepted": len(lab), "false": int(false.sum()), "fdp": fdp(false), "fdp_stripped": fdp_stripped(lab),
+    # an empty accepted set has undefined FDP (NaN); rows other than mass-accuracy then stop in mean_fdp
+    return {"accepted": len(lab), "false": int(false.sum()), "fdp": fdp(false) if len(lab) else float("nan"),
+            "fdp_stripped": fdp_stripped(lab),
             "mod_form_share_of_false": share(form), "met_ox_share_of_false": share(met_ox),
             "identified_rt_q05_q50_q95_min": identified_rt_quantiles(report_dir / "plain" / "report.parquet"),
             **diann_windows(report_dir / "plain" / "diann.stdout")}
 
 
+def mass_deltas(report: Path) -> dict:
+    """DIA-NN MS1 and best-fragment m/z deltas (ppm, as vm_discrepancy.py) of accepted targets: q05/q50/q95 and the
+    90% width (numpy default linear quantile); non-finite values dropped and counted; NaN when none remain."""
+    from vm_discrepancy import OBSERVABLES
+    d = pd.read_parquet(report)
+    if "Decoy" in d.columns:
+        d = d[d["Decoy"] == 0]
+    d = d[d["Q.Value"] <= Q_MAX]
+    out = {}
+    for name in ("ms1_ppm", "fr_ppm"):
+        x = OBSERVABLES[name][0](d).to_numpy(float) if len(d) else np.array([])
+        ok = np.isfinite(x)
+        q = np.quantile(x[ok], [0.05, 0.5, 0.95]).tolist() if ok.any() else [float("nan")] * 3
+        out[name] = {"q05": q[0], "q50": q[1], "q95": q[2], "width90": q[2] - q[0], "n": int(ok.sum()),
+                     "n_nonfinite": int((~ok).sum())}
+    return out
+
+
+LOSS_EDGES = (0, 2, 4, 6, 8, 10, 15, 20, np.inf)
+
+
+def loss_by_offset(report_dir: Path, sim_dir: Path) -> dict:
+    """Descriptive: ions accepted at 1% / ions simulated, by |injected offset| (ppm) bin, per bias column."""
+    with sqlite3.connect(f"file:{find_truth_db(sim_dir)}?mode=ro", uri=True) as con:
+        cols = [r[1] for r in con.execute("pragma table_info(ions)")]
+        have = [col for col in MZ_BIAS if col in cols]
+        if not have:
+            return {}
+        ions = pd.read_sql(f"select sequence, charge, {', '.join(have)} from ions", con)
+    acc = accepted_from_report(report_dir / "plain" / "report.parquet")
+    hit = set(zip(acc["mod"], acc["charge"]))
+    found = np.fromiter(((mod_key(q), int(z)) in hit for q, z in zip(ions["sequence"], ions["charge"])), bool, len(ions))
+    out = {}
+    for col in have:
+        b = pd.cut(ions[col].abs().fillna(0.0), LOSS_EDGES, right=False)
+        g = pd.DataFrame({"bin": b, "found": found}).groupby("bin", observed=False)["found"]
+        out[col] = {str(k): {"simulated": int(n), "accepted": int(a), "share": float(a / n) if n else float("nan")}
+                    for (k, n), a in zip(g.size().items(), g.sum().to_numpy())}
+    return out
+
+
+# stress_settings_mass_accuracy.yaml, interpretation (frozen with the settings)
+MA_MIN_WIDTH = {"ms1_ppm": 4.5, "fr_ppm": 9.2}
+MA_MIN_DEPTH = 0.70
+MA_REPLAY_FDP = 0.0025
+MA_REPLAY_DEPTH = (0.95, 1.05)
+
+
+def _fin(x) -> bool:
+    return x is not None and bool(np.isfinite(x))
+
+
+def ma_interpretation(values: dict, base: dict, rows: dict, deltas: dict, control: str) -> dict:
+    """Robustness to the injected-offset construction is supported only if (0) and (a)-(c) all hold."""
+    bound = values["vm.mass-accuracy.fdp-bound.diann"]["fdp_max"]
+    delta = values["vm.mass-accuracy.fdp-delta.diann"]["fdp_delta_max"]
+    c0 = _fin(bound) and _fin(delta) and bound <= 0.015 and delta <= 0.005
+    a = {rid: {k: deltas["ms12-real"][rid][k]["width90"] for k in MA_MIN_WIDTH} for rid in STRESS_SEEDS}
+    ca = all(_fin(w[k]) and w[k] >= MA_MIN_WIDTH[k] for w in a.values() for k in MA_MIN_WIDTH)
+
+    def ratio(n, d):
+        return n / d if d else float("nan")
+    b = {s: {rid: ratio(rows[s][rid]["accepted"], base[rid]["accepted"]) for rid in STRESS_SEEDS}
+         for s in STRESS_ROWS["mass-accuracy"]}
+    cb = all(_fin(v) and v >= MA_MIN_DEPTH for d in b.values() for v in d.values())
+    c = {rid: {"fdp_diff": rows[control][rid]["fdp"] - base[rid]["fdp"],
+               "depth_ratio": ratio(rows[control][rid]["accepted"], base[rid]["accepted"])} for rid in STRESS_SEEDS}
+    cc = all(_fin(v["fdp_diff"]) and abs(v["fdp_diff"]) <= MA_REPLAY_FDP and _fin(v["depth_ratio"])
+             and MA_REPLAY_DEPTH[0] <= v["depth_ratio"] <= MA_REPLAY_DEPTH[1] for v in c.values())
+    failing = [n for n, ok in (("0 claims", c0), ("a manipulation", ca), ("b depth", cb), ("c replay", cc)) if not ok]
+    return {"claims_pass": c0, "manipulation_width90_ms12_real": a, "manipulation_holds": ca,
+            "depth_ratio": b, "depth_holds": cb, "replay_vs_baseline": c, "replay_holds": cc,
+            "conclusion": "supports robustness to this construction" if not failing
+            else "uninformative about robustness to this construction", "failing": failing}
+
+
 def stress(c: Ctx, stress_recipe: Path, stress_root: Path, row: str = "predictor-swap") -> dict:
     """vm.<row>.fdp-{bound,delta}.diann: paired by baseline seed, delta against the baseline sims."""
     settings = STRESS_ROWS[row]
+    control = ROW_CONTROL.get(row, REPLAY_CONTROL)
+    extra = ROW_REPORTED_ONLY.get(row, ())
+    ma = row == "mass-accuracy"
     m = c.matched()
     if sorted(m["matched_runs"]) != list(STRESS_SEEDS):
         raise SystemExit(f"matched runs {m['matched_runs']} are not the stress baselines {STRESS_SEEDS}")
-    for s in (REPLAY_CONTROL, *settings):
-        for rid in STRESS_SEEDS:
-            replay_checked(stress_root / f"{rid}-{s}")
+    every = (control, *settings, *extra)
+    done = {replay_checked(stress_root / f"{rid}-{s}", ma) for s in every for rid in STRESS_SEEDS}
+    if ma and len(done) != 1:
+        raise SystemExit(f"mass-accuracy replays were done at different commits: {sorted(done)}")
     base = {rid: truth_fdp_row(c, c.recipe / "sim" / rid, c.sim_root / rid) for rid in STRESS_SEEDS}
     rows = {s: {rid: truth_fdp_row(c, stress_recipe / "sim" / f"{rid}-{s}", stress_root / f"{rid}-{s}")
-                for rid in STRESS_SEEDS} for s in (REPLAY_CONTROL, *settings)}
+                for rid in STRESS_SEEDS} for s in every}
 
     def mean_fdp(d: dict) -> float:
+        if ma:  # undefined FDP propagates as NaN, so the interpretation is still reported
+            return float(np.mean([r["fdp"] for r in d.values()]))
         return mean_strict([finite(r["fdp"], "stress FDP") for r in d.values()], "FDP")
+
+    def max_defined(xs) -> float:
+        xs = list(xs)
+        return max(xs) if all(np.isfinite(xs)) else float("nan")
 
     b = mean_fdp(base)
     per_setting = {s: {"fdp_mean": mean_fdp(rows[s]), "delta_vs_baseline": mean_fdp(rows[s]) - b,
-                       "delta_vs_replay_control": mean_fdp(rows[s]) - mean_fdp(rows[REPLAY_CONTROL]),
+                       "delta_vs_replay_control": mean_fdp(rows[s]) - mean_fdp(rows[control]),
                        "accepted_mean": float(np.mean([r["accepted"] for r in rows[s].values()]))}
-                   for s in (REPLAY_CONTROL, *settings)}
+                   for s in every}
     paired = {s: {rid: {"minus_baseline": rows[s][rid]["fdp"] - base[rid]["fdp"],
-                        "minus_replay_control": rows[s][rid]["fdp"] - rows[REPLAY_CONTROL][rid]["fdp"]}
-                  for rid in STRESS_SEEDS} for s in (REPLAY_CONTROL, *settings)}
-    return {
-        "row": row, "baseline": base, "per_seed": rows, "per_seed_differences": paired, "per_setting": per_setting,
+                        "minus_replay_control": rows[s][rid]["fdp"] - rows[control][rid]["fdp"]}
+                  for rid in STRESS_SEEDS} for s in every}
+    res = {
+        "row": row, "control": control, "claim_settings": list(settings), "reported_only": list(extra),
+        "baseline": base, "per_seed": rows, "per_seed_differences": paired, "per_setting": per_setting,
         "baseline_fdp_mean": b,
         "values": {
-            f"vm.{row}.fdp-bound.diann": {"fdp_max": max(rows[s][rid]["fdp"] for s in settings
-                                                               for rid in STRESS_SEEDS)},
-            f"vm.{row}.fdp-delta.diann": {"fdp_delta_max": max(abs(per_setting[s]["delta_vs_baseline"])
-                                                                     for s in settings)},
+            f"vm.{row}.fdp-bound.diann": {"fdp_max": max_defined(rows[s][rid]["fdp"] for s in settings
+                                                                       for rid in STRESS_SEEDS)},
+            f"vm.{row}.fdp-delta.diann": {"fdp_delta_max": max_defined(abs(per_setting[s]["delta_vs_baseline"])
+                                                                             for s in settings)},
         },
     }
+    if ma:
+        rep = lambda d: d / "plain" / "report.parquet"  # noqa: E731
+        deltas = {"real": {r: mass_deltas(rep(c.recipe / "real10" / r)) for r in c.real_runs},
+                  "baseline": {rid: mass_deltas(rep(c.recipe / "sim" / rid)) for rid in STRESS_SEEDS},
+                  **{s: {rid: mass_deltas(rep(stress_recipe / "sim" / f"{rid}-{s}")) for rid in STRESS_SEEDS}
+                     for s in every}}
+        res["mass_deltas_ppm"] = deltas
+        res["loss_by_offset"] = {s: {rid: loss_by_offset(stress_recipe / "sim" / f"{rid}-{s}",
+                                                         stress_root / f"{rid}-{s}") for rid in STRESS_SEEDS}
+                                 for s in (*settings, *extra)}
+        prep = stress_root / "prepared-mass-accuracy"
+        res["done_commit"] = done.pop()
+        res["real_accepted"] = {r: len(accepted_from_report(rep(c.recipe / "real10" / r))) for r in c.real_runs}
+        res["injected"] = {rid: json.loads(p.read_text()) if (p := prep / rid / "prepare.json").exists() else "MISSING"
+                           for rid in STRESS_SEEDS}
+        res["tdf_bin_sha256"] = {rid: json.loads(p.read_text()) if p.exists() else "MISSING"
+                                 for rid in STRESS_SEEDS
+                                 for p in [stress_root / f"{rid}-{control}" / "tdf_bin_sha256.json"]}
+        res["interpretation"] = ma_interpretation(res["values"], base, rows, deltas, control)
+    return res
 
 
 def diagnostic(results: dict) -> dict:
@@ -325,6 +462,9 @@ def main() -> None:
                 raise SystemExit(f"--stress-recipe and --stress-root are required for the {row} row")
             res = stress(c, a.stress_recipe, a.stress_root, row)
             dump(res, a.out / "results" / f"stress-{row}.json")
+            undefined = [k for k, v in res["values"].items() for x in v.values() if not np.isfinite(x)]
+            if undefined:  # results and interpretation are written; the claims are not assessed
+                raise SystemExit(f"undefined claim values (an empty accepted set), not assessed: {undefined}")
             write_sidecar(a.out, res["values"], REPORT_ONLY)
             print("stress", json.dumps(res["values"]), json.dumps(res["per_setting"]))
             return

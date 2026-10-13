@@ -360,6 +360,134 @@ def test_predictor_swap_stress(tree, tmp_path):
     assert "vm.rt-spread.fdp-bound.diann" in sidecar and "vm.predictor-swap.fdp-bound.diann" in sidecar
 
 
+def _mass_report(path: Path, rows, ms1_ppm, fr_ppm) -> None:
+    """A plain report with DIA-NN m/z delta columns; delta = ppm * m/z * 1e-6 at m/z 500 (MS1) and 1000 (fragment)."""
+    _report(path, rows)
+    d = pd.read_parquet(path)
+    d["Decoy"], d["Precursor.Mz"], d["Best.Fr.Mz"] = 0, 500.0, 1000.0
+    d["Ms1.Apex.Mz.Delta"] = np.resize(np.asarray(ms1_ppm, float), len(d)) * 500e-6
+    d["Best.Fr.Mz.Delta"] = np.resize(np.asarray(fr_ppm, float), len(d)) * 1000e-6
+    d.to_parquet(path)
+
+
+def test_mass_accuracy_stress(tree, tmp_path):
+    """Claim values over ms1/ms2/ms12-real only; manipulation, depth and replay checks decide the interpretation."""
+    recipe, sim_root, out = tree
+    _run("vm_match_complexity.py", "--recipe", recipe, "--out", out / "matched_complexity.json")
+    srec, sroot = tmp_path / "recipe-v1-stress", tmp_path / "sim-stress"
+    seeds = ("jitter-250k-r1", "jitter-250k-r2", "jitter-250k-r3")
+    rows4 = [("PEPTIDEK", "PEPTIDEK", 2, 0.001), ("AC(UniMod:4)DEFGHK", "ACDEFGHK", 2, 0.002),
+             ("(UniMod:1)M(UniMod:35)ILNQSTR", "MILNQSTR", 3, 0.003), ("VVVYAAAK", "VVVYAAAK", 2, 0.004)]
+    wide = (np.linspace(-10, 5, 4), np.linspace(-15, 10, 4))     # widths 13.5 and 22.5 ppm (> 4.5 / 9.2)
+    narrow = (np.linspace(-1, 1, 4), np.linspace(-2, 2, 4))
+    for r in ("LS10", "LS11", "LS12"):
+        _mass_report(recipe / "real10" / r / "plain" / "report.parquet", rows4, *wide)
+    for rid in seeds:
+        _mass_report(recipe / "sim" / rid / "plain" / "report.parquet", rows4, *narrow)   # 0/4 false
+        db = sim_root / rid / "out" / "x" / "synthetic_data.db"
+        db.unlink()
+        _ions_db(db, SIM_IONS)
+    settings = ("replay-control-ma", "ms1-real", "ms2-real", "ms12-real", "ms12-centred", "ms12-2x")
+    bias = {"ms1-real": ("mz_bias_ppm_ms1",), "ms2-real": ("mz_bias_ppm_ms2",)}
+
+    def build(ms12_rows, ctrl_rows=rows4, ms12_deltas=wide, x2_rows=None):
+        for rid in seeds:
+            for st in settings:
+                rows = {"ms12-real": ms12_rows, "replay-control-ma": ctrl_rows,
+                        "ms12-2x": rows4[:1] + [("NEVERSIMK", "NEVERSIMK", 2, 0.005)] if x2_rows is None
+                        else x2_rows}.get(st, rows4)
+                _mass_report(srec / "sim" / f"{rid}-{st}" / "plain" / "report.parquet", rows,
+                             *(ms12_deltas if st == "ms12-real" else wide))
+                db = sroot / f"{rid}-{st}" / "out" / "x" / "synthetic_data.db"
+                if db.exists():
+                    db.unlink()
+                db.parent.mkdir(parents=True, exist_ok=True)
+                cols = () if st == "replay-control-ma" else bias.get(st, ("mz_bias_ppm_ms1", "mz_bias_ppm_ms2"))
+                with sqlite3.connect(db) as c:
+                    c.execute("create table ions (sequence text, charge integer"
+                              + "".join(f", {k} real" for k in cols) + ")")
+                    for (q, z), off in zip(SIM_IONS, (1.0, 3.0, 12.0, 25.0)):
+                        c.execute(f"insert into ions values (?, ?{', ?' * len(cols)})", (q, z, *([off] * len(cols))))
+                v = {"retention_time_gru_predictor": {}, "inv_mobility_gru_predictor": {}, "ion_keys": {"n": 4},
+                     "replay_db": str(db)}
+                if st != "replay-control-ma":
+                    v["ion_keys"]["same_as_control"] = str(sroot / f"{rid}-replay-control-ma" / "out" / "x" / "s.db")
+                    v.update({k: {"all_equal": True} for k in cols})
+                _checked(sroot / f"{rid}-{st}", json.dumps(v))
+    build(rows4)
+    args = ["--mode", "stress", "--claim", "vm.mass-accuracy.fdp-bound.diann", "--recipe", recipe, "--sim-root",
+            sim_root, "--out", out, "--stress-recipe", srec, "--stress-root", sroot]
+    _run("vm_truth_fdp.py", *args)
+    res = json.loads((out / "results" / "stress-mass-accuracy.json").read_text())
+    assert res["control"] == "replay-control-ma" and res["reported_only"] == ["ms12-centred", "ms12-2x"]
+    # ms12-2x has FDP 1/2 but is outside the claim scope
+    assert res["per_seed"]["ms12-2x"]["jitter-250k-r1"]["fdp"] == pytest.approx(0.5)
+    assert res["values"]["vm.mass-accuracy.fdp-bound.diann"]["fdp_max"] == pytest.approx(0)
+    md = res["mass_deltas_ppm"]
+    assert md["real"]["LS10"]["ms1_ppm"]["width90"] == pytest.approx(np.quantile(wide[0], .95) - np.quantile(wide[0], .05))
+    assert md["baseline"]["jitter-250k-r1"]["fr_ppm"]["q50"] == pytest.approx(0)
+    loss = res["loss_by_offset"]["ms12-real"]["jitter-250k-r1"]["mz_bias_ppm_ms1"]
+    assert loss["[20.0, inf)"] == {"simulated": 1, "accepted": 1, "share": 1.0}     # VVVYAAAK, offset 25
+    assert loss["[2.0, 4.0)"]["simulated"] == 1 and loss["[4.0, 6.0)"]["simulated"] == 0
+    assert set(res["loss_by_offset"]["ms1-real"]["jitter-250k-r1"]) == {"mz_bias_ppm_ms1"}
+    it = res["interpretation"]
+    assert it["conclusion"] == "supports robustness to this construction" and it["failing"] == []
+
+    # (a) fails when the stressed run's deltas stay narrow; (b) when ms12-real loses depth; (c) when the replay moves
+    build(rows4, ms12_deltas=narrow)
+    _run("vm_truth_fdp.py", *args)
+    it = json.loads((out / "results" / "stress-mass-accuracy.json").read_text())["interpretation"]
+    assert it["failing"] == ["a manipulation"] and it["conclusion"].startswith("uninformative")
+    build(rows4[:2], ms12_deltas=([-10.0, 5.0], [-15.0, 10.0]))
+    _run("vm_truth_fdp.py", *args)
+    it = json.loads((out / "results" / "stress-mass-accuracy.json").read_text())["interpretation"]
+    assert it["failing"] == ["b depth"] and it["depth_ratio"]["ms12-real"]["jitter-250k-r2"] == pytest.approx(0.5)
+    build(rows4, ctrl_rows=rows4 + [("NEVERSIMK", "NEVERSIMK", 2, 0.005)])
+    _run("vm_truth_fdp.py", *args)
+    it = json.loads((out / "results" / "stress-mass-accuracy.json").read_text())["interpretation"]
+    assert it["failing"] == ["c replay"] and it["replay_vs_baseline"]["jitter-250k-r3"]["fdp_diff"] == pytest.approx(0.2)
+    # (0): a claim-scope FDP above 1.5% fails the claims and therefore the interpretation
+    build(rows4 + [("KLMNLLR", "KLMNLLR", 2, 0.005)])                          # 1/5 false on ms12-real
+    _run("vm_truth_fdp.py", *args)
+    it = json.loads((out / "results" / "stress-mass-accuracy.json").read_text())["interpretation"]
+    assert it["failing"][0] == "0 claims" and not it["claims_pass"]
+    # an empty reported-only run is reported as undefined and does not block the assessment
+    build(rows4, x2_rows=[("VVVYAAAK", "VVVYAAAK", 2, 0.04)])
+    _run("vm_truth_fdp.py", *args)
+    res = json.loads((out / "results" / "stress-mass-accuracy.json").read_text())
+    assert res["per_seed"]["ms12-2x"]["jitter-250k-r1"]["fdp"] is None and res["interpretation"]["failing"] == []
+    # an empty claim-scope run: the results and interpretation are written, the claims are not assessed
+    build([("VVVYAAAK", "VVVYAAAK", 2, 0.04)])
+    with pytest.raises(subprocess.CalledProcessError):
+        _run("vm_truth_fdp.py", *args)
+    res = json.loads((out / "results" / "stress-mass-accuracy.json").read_text())
+    assert res["values"]["vm.mass-accuracy.fdp-bound.diann"]["fdp_max"] is None
+    assert {"a manipulation", "b depth"} <= set(res["interpretation"]["failing"])
+    # weak or mismatched verify evidence is not counted
+    build(rows4)
+    _run("vm_truth_fdp.py", *args)
+    f = sroot / "jitter-250k-r1-ms12-real" / "verify.json"
+    good = f.read_text()
+    for broken in ({"drop": "same_as_control"}, {"control": "jitter-250k-r2"}, {"bias": "mz_bias_ppm_ms2"},
+                   {"db": "elsewhere"}):
+        v = json.loads(good)
+        if "drop" in broken:
+            del v["ion_keys"]["same_as_control"]
+        if "control" in broken:
+            v["ion_keys"]["same_as_control"] = str(sroot / "jitter-250k-r2-replay-control-ma" / "out" / "x" / "s.db")
+        if "bias" in broken:
+            del v["mz_bias_ppm_ms2"]
+        if "db" in broken:
+            v["replay_db"] = "/elsewhere/synthetic_data.db"
+        f.write_text(json.dumps(v))
+        with pytest.raises(subprocess.CalledProcessError):
+            _run("vm_truth_fdp.py", *args)
+    f.write_text(good)
+    (sroot / "jitter-250k-r2-ms1-real" / "done.flag").write_text("othercommit\n")     # one replay at another commit
+    with pytest.raises(subprocess.CalledProcessError):
+        _run("vm_truth_fdp.py", *args)
+
+
 def _stress_base_db(src: Path) -> None:
     with sqlite3.connect(src) as c:
         c.execute("create table peptides (peptide_id integer, sequence text, events integer, rt_sigma real, "
@@ -490,6 +618,116 @@ def test_stress_prepare_rt_spread(tmp_path, monkeypatch):
                   "Q.Value": [0.001] * 5, "Decoy": [0] * 5}).to_parquet(real)
     monkeypatch.setattr(sys, "argv", argv[:6] + ["10"] + argv[7:])     # gradient 10 s: mapped RT outside it
     with pytest.raises(SystemExit, match="outside"):
+        sp.main()
+
+
+def _real_mass_report(path: Path, n: int, rng_seed: int = 0) -> pd.DataFrame:
+    r = np.random.default_rng(rng_seed)
+    d = pd.DataFrame({"Precursor.Id": [f"P{i:03d}2" for i in range(n)][::-1], "Precursor.Mz": r.uniform(400, 900, n),
+                      "Best.Fr.Mz": r.uniform(200, 1200, n), "Q.Value": 0.001, "Decoy": 0})
+    d["Ms1.Apex.Mz.Delta"] = r.normal(-3, 3, n) * d["Precursor.Mz"] * 1e-6
+    d["Best.Fr.Mz.Delta"] = r.normal(-3, 6, n) * d["Best.Fr.Mz"] * 1e-6
+    d.to_parquet(path)
+    return d
+
+
+def test_stress_prepare_mass_accuracy(tmp_path, monkeypatch):
+    """Each ion takes one donor's (MS1, fragment) ppm pair; settings add only their columns; --verify checks them."""
+    import vm_stress_prepare as sp
+
+    src = tmp_path / "base.db"
+    _stress_base_db(src)
+    real = tmp_path / "LS10.parquet"
+    d = _real_mass_report(real, 8)
+    d.loc[0, "Ms1.Apex.Mz.Delta"] = np.nan                                   # dropped and counted
+    d.loc[1, "Q.Value"] = 0.5                                                 # not accepted
+    d.to_parquet(real)
+    argv = ["x", "--row", "mass-accuracy", "--baseline-db", str(src), "--gradient", "600", "--seed", "4101",
+            "--expect-seed", "4101", "--real-report", str(real), "--out", str(tmp_path / "p")]
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit, match="donors"):                          # 6 donors < MIN_DONORS
+        sp.main()
+    monkeypatch.setattr(sp, "MIN_DONORS", 6)
+    sp.main()
+    rep = json.loads((tmp_path / "p" / "prepare.json").read_text())
+    assert rep["n_donors"] == 6 and rep["n_donors_dropped_nonfinite"] == 1 and rep["n_recipients"] == 3
+    assert list(rep["settings"]) == list(sp.MA_SETTINGS)
+    # the draw, recomputed from the frozen rule
+    ok = d[(d["Q.Value"] <= 0.01) & d["Ms1.Apex.Mz.Delta"].notna()].sort_values("Precursor.Id")
+    ms1 = (ok["Ms1.Apex.Mz.Delta"] / ok["Precursor.Mz"] * 1e6).to_numpy()
+    fr = (ok["Best.Fr.Mz.Delta"] / ok["Best.Fr.Mz"] * 1e6).to_numpy()
+    idx = np.random.default_rng(4101 + 11).integers(0, 6, size=3)
+    a = pd.read_csv(tmp_path / "p" / "assignment.tsv", sep="\t")
+    assert a["donor"].tolist() == ok["Precursor.Id"].to_numpy()[idx].tolist()
+    assert rep["assignment_sha256"] == sp._sha256(tmp_path / "p" / "assignment.tsv")
+
+    def cols(setting):
+        db = tmp_path / "p" / setting / "synthetic_data.db"
+        with sqlite3.connect(db) as c:
+            names = [r[1] for r in c.execute("pragma table_info(ions)")]
+            got = {k: [r[0] for r in c.execute(f"select {k} from ions order by peptide_id, charge")]
+                   for k in names if k.startswith("mz_bias")}
+        return got
+    assert cols("replay-control-ma") == {}
+    assert cols("ms1-real") == {"mz_bias_ppm_ms1": ms1[idx].tolist()}                 # exact
+    assert cols("ms2-real") == {"mz_bias_ppm_ms2": fr[idx].tolist()}
+    assert cols("ms12-real") == {"mz_bias_ppm_ms1": ms1[idx].tolist(), "mz_bias_ppm_ms2": fr[idx].tolist()}
+    c = cols("ms12-centred")
+    assert c["mz_bias_ppm_ms1"] == pytest.approx((ms1[idx] - np.median(ms1)).tolist())
+    assert c["mz_bias_ppm_ms2"] == pytest.approx((fr[idx] - np.median(fr)).tolist())
+    assert cols("ms12-2x")["mz_bias_ppm_ms2"] == pytest.approx((2 * fr[idx]).tolist())
+
+    # verify: control first (no columns), then a biased replay against it
+    out = tmp_path / "verify.json"
+    ctrl = tmp_path / "ctrl.db"
+    ctrl.write_bytes((tmp_path / "p" / "replay-control-ma" / "synthetic_data.db").read_bytes())
+    monkeypatch.setattr(sys, "argv", ["x", "--verify", str(ctrl), "--prepared", str(tmp_path / "p" / "replay-control-ma"),
+                                      "--out", str(out)])
+    sp.main()
+    assert json.loads(out.read_text())["ion_keys"]["n"] == 3
+    prepared = tmp_path / "p" / "ms12-real"
+    replay = tmp_path / "replay.db"
+    replay.write_bytes((prepared / "synthetic_data.db").read_bytes())
+    with sqlite3.connect(replay) as c:                                       # a replay renumbers ion_id
+        c.execute("update ions set ion_id = ion_id + 1000")
+    base_args = ["x", "--verify", str(replay), "--prepared", str(prepared), "--out", str(out)]
+    monkeypatch.setattr(sys, "argv", base_args)
+    with pytest.raises(SystemExit, match="control-replay"):                 # biased settings need the control
+        sp.main()
+    monkeypatch.setattr(sys, "argv", base_args + ["--control-replay", str(ctrl)])
+    sp.main()
+    v = json.loads(out.read_text())
+    assert v["mz_bias_ppm_ms1"]["all_equal"] and v["ion_keys"]["same_as_control"] == str(ctrl)
+    with sqlite3.connect(ctrl) as c:                                         # control kept an ion the replay lost
+        c.execute("insert into ions (ion_id, peptide_id, charge) values (9, 9, 2)")
+    with pytest.raises(SystemExit, match="sets differ"):
+        sp.main()
+    with sqlite3.connect(ctrl) as c:
+        c.execute("delete from ions where peptide_id = 9")
+    with sqlite3.connect(replay) as c:                                       # the bias did not survive
+        c.execute("update ions set mz_bias_ppm_ms2 = mz_bias_ppm_ms2 + 1 where peptide_id = 2")
+    with pytest.raises(SystemExit, match="differs from the prepared"):
+        sp.main()
+    with sqlite3.connect(replay) as c:
+        c.execute("alter table ions drop column mz_bias_ppm_ms2")
+    with pytest.raises(SystemExit, match="dropped"):
+        sp.main()
+    # a duplicate donor id fails; a baseline that already has a bias column fails
+    d2 = _real_mass_report(real, 8)
+    d2.loc[2, "Precursor.Id"] = d2.loc[3, "Precursor.Id"]
+    d2.to_parquet(real)
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit, match="twice"):
+        sp.main()
+    _real_mass_report(real, 8)
+    with sqlite3.connect(src) as c:                                          # two ions share (peptide_id, charge)
+        c.execute("insert into ions values (4, 3, 'd', 2, 1.0, 1.2, 0.01)")
+    with pytest.raises(SystemExit, match="recipients"):
+        sp.main()
+    with sqlite3.connect(src) as c:
+        c.execute("delete from ions where ion_id = 4")
+        c.execute("alter table ions add column mz_bias_ppm_ms1 REAL")
+    with pytest.raises(SystemExit, match="already"):
         sp.main()
 
 
