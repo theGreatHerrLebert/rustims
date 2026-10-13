@@ -82,8 +82,11 @@ def simulate_scan_distributions_with_variance(
     # remove rows where scan_abundance is empty
     ions = ions[ions['scan_abundance'].apply(lambda x: len(x) > 2)]
 
+    # mz_bias_ppm_ms1/ms2 (optional, stress testing): persistent m/z error per ion, read at assembly
+    optional = [c for c in ('mz_bias_ppm_ms1', 'mz_bias_ppm_ms2') if c in ions.columns]
     ions = ions[['peptide_id', 'sequence', 'charge', 'mz', 'relative_abundance', 'inv_mobility_gru_predictor',
-                 'inv_mobility_gru_predictor_std', 'simulated_spectrum', 'scan_occurrence', 'scan_abundance']]
+                 'inv_mobility_gru_predictor_std', 'simulated_spectrum', 'scan_occurrence', 'scan_abundance']
+                + optional]
 
     ion_id = ions.index
     ions.insert(0, 'ion_id', ion_id)

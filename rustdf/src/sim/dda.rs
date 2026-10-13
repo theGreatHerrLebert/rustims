@@ -90,6 +90,11 @@ impl TimsTofSyntheticsFrameBuilderDDA {
             .expect("read prediction set")
             .assert_render_compatible()
             .expect("incompatible fragment prediction set for this renderer");
+        assert!(
+            handle.read_fragment_mz_bias().expect("read fragment m/z bias").is_empty()
+                && handle.read_precursor_mz_bias().expect("read MS1 m/z bias").is_empty(),
+            "ions.mz_bias_ppm_ms1/ms2 are supported for DIA only"
+        );
         let fragment_ions_raw = handle.read_fragment_ions().unwrap();
         let transmission_settings = handle.get_transmission_dda();
 

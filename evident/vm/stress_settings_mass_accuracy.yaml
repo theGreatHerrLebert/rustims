@@ -1,0 +1,132 @@
+# Stress settings for the mass-accuracy row (claims/stress.yaml: vm.mass-accuracy.fdp-{bound,delta}.diann).
+# Frozen by the commit that adds it, before any mass-accuracy simulation runs.
+# Motivation (stage A, analysis-v1/results/discrepancy.json, 250k): the sims are far easier on mass error.
+#   DIA-NN MS1 apex delta, ppm      real LS10-12: q05 -8.1..-7.6, q50 -3.5..-3.0, q95 1.0..1.5 (90% width ~9.1)
+#                                   sims r1-r3:   q05 -0.56,      q50  0.0,       q95 0.58     (90% width ~1.1)
+#   DIA-NN best fragment delta, ppm real:         q05 -12.9..-12.1, q50 -3.5..-2.9, q95 5.8..6.2 (90% width ~18.5)
+#                                   sims:         q05 -1.6,         q50  0.0,       q95 1.6      (90% width ~3.2)
+# Likely cause (code, not measured): the baseline adds Gaussian m/z noise (precursor_noise_ppm = fragment_noise_ppm
+# = 6.5, which TimSim uses as 3 SD, so SD ~2.2 ppm) independently to every peak in every frame. DIA-NN's apex and
+# fragment m/z average over many peaks, so this noise mostly cancels. Real errors are presumably partly persistent
+# per ion across frames (calibration residuals, interference); the sims have none. That real errors persist per
+# ion is an inference, not shown here.
+# This row was chosen after stage A was known (evident/retired/RETIRED.md). The settings below are fixed before any
+# mass-accuracy data exist.
+# Question (narrow): does DIA-NN's true FDP on the matched sims change when each simulated ion carries a persistent
+# m/z offset copied from the offsets DIA-NN reports for identified precursors in the real reference run?
+# What this row is: an accepted-ID-derived, precursor-coherent offset test. It is not a model of the instrument's
+# full error distribution.
+
+row: mass-accuracy
+complexity: 250000            # the matched complexity (vm.protocol.matched-complexity)
+seeds:                        # the baseline 250k sims, the same pairing as predictor-swap and rt-spread
+  jitter-250k-r1: 4101
+  jitter-250k-r2: 4102
+  jitter-250k-r3: 4103
+
+construction: >
+  The from_existing replay of the other stress rows (stress_settings.yaml, construction and amendment 2), at a
+  TimSim commit that adds two opt-in per-ion columns, keyed by (peptide_id, charge):
+  ions.mz_bias_ppm_ms1: where MS1 frames are rendered, the ion's precursor isotope peaks are multiplied by
+  (1 + bias * 1e-6). Quadrupole isolation and everything else that reads the stored spectra keep the unshifted
+  m/z, so which ions are fragmented, and with what transmission, does not change.
+  ions.mz_bias_ppm_ms2: every fragment m/z of the ion, at every collision energy, is multiplied by
+  (1 + bias * 1e-6) after its isotope pattern is generated.
+  Both act in the eager and lazy DIA builders; the DDA builders refuse a nonzero column. Absent, NULL or 0 means no
+  change. Precursor signal that appears in MS2 frames, if any, is not shifted. The baseline runs the eager DIA
+  builder with quad_isotope_transmission_mode none (the default); the per-fragment transmission path is not used.
+  The prepared DB adds only these two columns; ions.simulated_spectrum, ions.mz and every other column are the
+  baseline's. The replay keeps the columns when it rewrites the ions table. The per-peak Gaussian noise stays as in
+  the baseline.
+
+draw: >
+  Donors: target precursors in the real LS10 plain-library report (recipe-v1/real10/LS10/plain/report.parquet,
+  the same file and sha256 as the rt-spread row) with Q.Value <= 0.01 and Decoy == 0. For each, the MS1 apex delta
+  and the best fragment delta in ppm, extracted and converted exactly as vm_discrepancy.py does for ms1_ppm and
+  fr_ppm. Rows with either value missing or non-finite are dropped and counted. Prepare fails if a Precursor.Id
+  occurs twice among the donors or a (peptide_id, charge) twice among the recipients. Donors are sorted by
+  Precursor.Id and recipients by (peptide_id, charge) before drawing.
+  Per seed, each simulated ion gets one donor drawn uniformly with replacement (numpy default_rng(seed + 11); prepare runs in the
+  checked timsim environment, which pins numpy) and takes that donor's (MS1, fragment) pair, which keeps the real MS1-MS2 correlation within
+  the donor population. The assignment is the same for every setting of a seed; settings differ only in which
+  part is applied and how it is transformed. The assignment table and its sha256 are saved per seed.
+  The injected bias equals the donor delta (ms1: Ms1.Apex.Mz.Delta / Precursor.Mz * 1e6; fragment:
+  Best.Fr.Mz.Delta / Best.Fr.Mz * 1e6), which assumes DIA-NN reports observed minus expected m/z.
+  Limits, stated before the data: the donors are accepted IDs, so the draw is conditional on identification
+  (missing tails, selection-induced correlation, some wrong IDs among the donors). The delta sign, units and
+  whether DIA-NN reports them before or after its mass calibration are taken from vm_discrepancy.py as used in
+  stage A; this row does not re-establish them. One fragment offset per ion makes all of its fragments move
+  together; neither this nor independent offsets is known to be conservative.
+
+settings:
+  replay-control-ma:
+    rewrite: none                        # same build, columns absent; the row's own control
+  ms1-real:
+    ions.mz_bias_ppm_ms1: donor MS1 delta
+  ms2-real:
+    ions.mz_bias_ppm_ms2: donor fragment delta
+  ms12-real:
+    ions.mz_bias_ppm_ms1: donor MS1 delta
+    ions.mz_bias_ppm_ms2: donor fragment delta
+  ms12-centred:
+    as ms12-real, each delta minus the donor median of that delta   # residuals without the shared offset
+  ms12-2x:
+    as ms12-real, both deltas multiplied by 2                         # headroom
+
+claim_scope: >
+  vm.mass-accuracy.fdp-bound and fdp-delta are evaluated over ms1-real, ms2-real and ms12-real only. Their delta
+  is against the baseline sims, as for every stress row. replay-control-ma, ms12-centred and ms12-2x are reported
+  without tolerance.
+
+interpretation: >
+  Frozen with the settings. The claims' pass or fail is reported as computed. Separately, the row counts as
+  evidence that DIA-NN's FDP is robust to this injected-offset construction (not to mass error in general) only if
+  all of the following hold; otherwise it is reported as "uninformative about robustness to this construction",
+  with the failing condition named, next to the pass/fail.
+  (0) both mass-accuracy claims pass.
+  (a) The manipulation took, on every seed of ms12-real: on accepted target precursors (Q.Value <= 0.01, Decoy
+  == 0), the 90% width (q95 - q05, numpy default linear quantile, non-finite values dropped and counted) of DIA-NN's
+  MS1 delta is >= 4.5 ppm and of the fragment delta >= 9.2 ppm (half of the smallest real width).
+  (b) Depth held, on every seed and each of ms1-real, ms2-real, ms12-real: accepted target precursors at 1% divided
+  by the same seed's baseline count is >= 0.70.
+  (c) The replay itself is small, on every seed: |FDP(replay-control-ma) - FDP(baseline)| <= 0.0025 and its
+  accepted-precursor count is within 0.95-1.05 of the baseline's.
+  A run with no accepted target precursors has undefined FDP and widths; any undefined value fails (a)-(c).
+
+guards:
+  - The replays run with fragmentation on (as the baseline); the MS1 hook applies only in MS1 frames.
+  - Every rt-spread guard that applies (prepare validation and read-back, seed pairing, config checks, log guards,
+    --verify on peptide_id and (peptide_id, charge), done.flag holding the freeze commit, timsim environment
+    sha256, real report sha256). The timsim environment is the one built from the freeze commit; its sha256 is
+    recorded by the job.
+  - The hook's unit tests (rustdf: fragment_mz_bias_tests, ms1_bias_shifts_rendered_ms1_but_not_the_stored_spectra)
+    pass at the freeze commit: absent, NULL or 0 changes nothing; a bias scales exactly that ion's rendered m/z
+    and nothing else; stored spectra used for isolation stay unshifted; conflicting, non-finite or non-positive
+    factors fail.
+  - Prepare fails unless at least 10,000 donors remain and every assigned value is finite. The read-back of the
+    prepared DB shows the intended bias on every ion and every other checked column equal to the baseline's.
+  - --verify fails unless the replay's truth DB carries the prepared bias values on its ions and keeps the same
+    (peptide_id, charge) set as replay-control-ma of that seed (the replay drops ions without scan signal, which
+    does not depend on m/z, so the sets should be identical).
+  - replay-control-ma's frame data (analysis.tdf_bin sha256) is compared with predictor-swap's replay-control and
+    reported; identity is not a gate.
+  - A failed job is rerun from scratch at the freeze commit. No setting or seed is dropped; a claim with a missing
+    setting x seed is not assessed. Values are reported unrounded; tolerances compare unrounded values.
+  - There is no minimum-effect criterion for the claims; see interpretation.
+  - True FDP uses the plain-library search, the primary estimand and vm.protocol.truth-rule, as for the baseline.
+    The search recipe, including --mass-acc 15 --mass-acc-ms1 15, is unchanged.
+
+reported_without_tolerance:
+  - per setting and per seed: FDP, FDP minus baseline, FDP minus replay-control-ma (paired means hide opposite
+    changes, so per-seed values are shown)
+  - injected offsets (the assignment tables) as distributions, independent of identification
+  - DIA-NN MS1 and fragment delta quantiles (5/50/95%) per run, against real LS10-12 and the baseline sims
+  - identification loss by injected-offset bin (ions accepted at 1% / ions simulated), bins of |offset| in ppm
+    with edges 0, 2, 4, 6, 8, 10, 15, 20, inf, separately for MS1 and fragment; descriptive only
+  - accepted-precursor depth against real 10 ng; DIA-NN RT and IM windows
+  - share of false hits that are modification-form confusions, and the part that differ only in Met oxidation
+
+not_in_scope:
+  - per-fragment independent offsets, intensity- or m/z-dependent error, and drift along the gradient
+  - the per-peak noise model and the search's mass window, which stay as in the baseline
+  - the claims cover these three seeds at matched complexity; they do not establish general error-rate control

@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use crate::sim::containers::{FramesSim, IonSim, PeptidesSim, ScansSim};
-use crate::sim::handle::TimsTofSyntheticsDataHandle;
+use crate::sim::handle::{biased_ion_spectrum, IonMzBias, TimsTofSyntheticsDataHandle};
 use crate::sim::projector::{IntensityStage, MzCoordSpace, RenderedEvent, RenderedSpectrum};
 use crate::sim::scheme::DataMode;
 use rayon::prelude::*;
@@ -41,9 +41,23 @@ pub struct TimsTofSyntheticsPrecursorFrameBuilder {
     /// Master seed for the simulation's noise. 0 keeps the legacy `thread_rng` behaviour
     /// for API users that never set it; TimSim sets it from the run's `sample_seed`.
     pub noise_seed: u64,
+    /// Persistent MS1 m/z error per precursor ion (`ions.mz_bias_ppm_ms1`); empty = none.
+    /// Applied only where MS1 spectra are rendered; isolation uses the unshifted spectra.
+    pub ms1_mz_bias: IonMzBias,
 }
 
 impl TimsTofSyntheticsPrecursorFrameBuilder {
+
+    /// The MS1 m/z bias for `frame_id`: the configured one in MS1 frames, none in any
+    /// other frame (e.g. an unfragmented MS2 frame rendered from precursor signal).
+    pub fn ms1_mz_bias_for(&self, frame_id: u32) -> &IonMzBias {
+        static NONE: std::sync::OnceLock<IonMzBias> = std::sync::OnceLock::new();
+        if self.precursor_frame_id_set.contains(&frame_id) {
+            &self.ms1_mz_bias
+        } else {
+            NONE.get_or_init(IonMzBias::new)
+        }
+    }
 
     /// Set the master seed for the m/z jitter, making a run's noise reproducible.
     pub fn set_noise_seed(&mut self, seed: u64) {
@@ -76,8 +90,11 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
         let peptides = handle.read_peptides_with_source(source)?;
         let scans = handle.read_scans()?;
         let frames = handle.read_frames()?;
+        let ms1_mz_bias = handle.read_precursor_mz_bias()?;
 
-        Ok(Self::from_entities(ions, peptides, scans, frames))
+        let mut builder = Self::from_entities(ions, peptides, scans, frames);
+        builder.ms1_mz_bias = ms1_mz_bias;
+        Ok(builder)
     }
 
     /// Construct the builder from already-loaded, in-memory entities instead of
@@ -100,6 +117,7 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
 
         Self {
             noise_seed: 0,
+            ms1_mz_bias: IonMzBias::new(),
             ions: TimsTofSyntheticsDataHandle::build_peptide_to_ion_map(&ions),
             peptides: TimsTofSyntheticsDataHandle::build_peptide_map(&peptides),
             scans: scans.clone(),
@@ -129,8 +147,9 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             return out;
         };
         out.reserve(peptide_ids.len() * 4);
+        let ms1_bias = self.ms1_mz_bias_for(frame_id);
         for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
-            let Some((ion_abundances, scan_occurrences, scan_abundances, _, spectra)) =
+            let Some((ion_abundances, scan_occurrences, scan_abundances, charges, spectra)) =
                 self.peptide_to_ions.get(peptide_id)
             else {
                 continue;
@@ -139,7 +158,8 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             for (index, ion_abundance) in ion_abundances.iter().enumerate() {
                 let scan_occurrence = &scan_occurrences[index];
                 let scan_abundance = &scan_abundances[index];
-                let spectrum = &spectra[index];
+                let biased = biased_ion_spectrum(&spectra[index], *peptide_id, charges[index], ms1_bias);
+                let spectrum = biased.as_ref().unwrap_or(&spectra[index]);
                 for (scan, scan_abu) in scan_occurrence.iter().zip(scan_abundance.iter()) {
                     let abundance_factor = abundance * ion_abundance * scan_abu * total_events;
                     out.push((*scan as i32, spectrum.clone() * abundance_factor as f64));
@@ -189,8 +209,9 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             return MzSpectrum::from_collection(specs);
         };
         specs.reserve(peptide_ids.len() * 4);
+        let ms1_bias = self.ms1_mz_bias_for(frame_id);
         for (peptide_id, frame_abundance) in peptide_ids.iter().zip(abundances.iter()) {
-            let Some((ion_abundances, _scan_occurrences, _scan_abundances, _, spectra)) =
+            let Some((ion_abundances, _scan_occurrences, _scan_abundances, charges, spectra)) =
                 self.peptide_to_ions.get(peptide_id)
             else {
                 continue;
@@ -199,7 +220,9 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
             for (index, ion_abundance) in ion_abundances.iter().enumerate() {
                 // Full mobility marginal: scan factor folded to 1.0 (no grid).
                 let abundance_factor = frame_abundance * ion_abundance * total_events;
-                specs.push(spectra[index].clone() * abundance_factor as f64);
+                let spectrum = biased_ion_spectrum(&spectra[index], *peptide_id, charges[index], ms1_bias)
+                    .unwrap_or_else(|| spectra[index].clone());
+                specs.push(spectrum * abundance_factor as f64);
             }
         }
         MzSpectrum::from_collection(specs)
@@ -410,7 +433,12 @@ impl TimsTofSyntheticsPrecursorFrameBuilder {
                     Some(*peptide_id as i32),
                 );
                 // TODO: make this configurable
-                let spectrum = ion.calculate_isotopic_spectrum_annotated(1e-3, 1e-8, 200, 1e-4);
+                let mut spectrum = ion.calculate_isotopic_spectrum_annotated(1e-3, 1e-8, 200, 1e-4);
+                if let Some(ppm) = self.ms1_mz_bias_for(frame_id).get(&(*peptide_id, charge)) {
+                    for mz in spectrum.mz.iter_mut() {
+                        *mz *= 1.0 + ppm * 1e-6;
+                    }
+                }
 
                 for (scan, scan_abu) in scan_occurrence.iter().zip(scan_abundance.iter()) {
                     let abundance_factor = abundance * ion_abundance * scan_abu * total_events;
@@ -559,6 +587,7 @@ mod tests {
         frame_to_rt.insert(1u32, 60.0f32);
 
         TimsTofSyntheticsPrecursorFrameBuilder {
+            ms1_mz_bias: Default::default(),
             noise_seed: 0,
             ions: BTreeMap::new(),
             peptides: BTreeMap::new(),
@@ -613,5 +642,38 @@ mod tests {
         assert!(isolation.is_none());
         assert_eq!(spectrum.intensity, *marginal.intensity);
         assert_eq!(spectrum.mz, *marginal.mz);
+    }
+
+    #[test]
+    fn ms1_bias_shifts_rendered_ms1_but_not_the_stored_spectra() {
+        let mut b = one_frame_builder();
+        b.precursor_frame_id_set.insert(1);
+        let unbiased: Vec<(i32, MzSpectrum)> = b.precursor_frame_contributions(1);
+        b.ms1_mz_bias.insert((10, 1), 10.0);
+        let biased = b.precursor_frame_contributions(1);
+        let factor = 1.0 + 10.0 * 1e-6;
+        assert_eq!(biased.len(), unbiased.len());
+        for ((scan, s), (uscan, u)) in biased.iter().zip(&unbiased) {
+            assert_eq!(scan, uscan);
+            assert_eq!(s.mz[0], u.mz[0] * factor);
+            assert_eq!(s.intensity.to_vec(), u.intensity.to_vec());
+        }
+        // Isolation reads peptide_to_ions, which stays unshifted.
+        assert_eq!(b.peptide_to_ions[&10].4[0].mz[0], 500.0);
+        // The non-IMS marginal shifts ion 10 only; ion 11 (unbiased) stays at 700.
+        let marginal = b.precursor_scan_marginal_spectrum(1);
+        assert!(marginal.mz.iter().any(|&m| (m - 500.0 * factor).abs() < 1e-9));
+        assert!(marginal.mz.iter().any(|&m| (m - 700.0).abs() < 1e-9));
+        // A bias on a charge the ion does not have changes nothing.
+        let mut other = one_frame_builder();
+        other.ms1_mz_bias.insert((10, 2), 10.0);
+        let o = other.precursor_frame_contributions(1);
+        assert_eq!(o[0].1.mz[0], unbiased[0].1.mz[0]);
+        // Outside MS1 frames (e.g. an unfragmented MS2 frame built from precursor signal)
+        // the bias does not apply.
+        let mut ms2 = one_frame_builder();
+        ms2.ms1_mz_bias.insert((10, 1), 10.0);
+        let m = ms2.precursor_frame_contributions(1);
+        assert_eq!(m[0].1.mz[0], unbiased[0].1.mz[0]);
     }
 }

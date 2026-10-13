@@ -10,7 +10,7 @@ use mscore::timstof::quadrupole::{IonTransmission, PASEFMeta, TimsTransmissionDD
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use rusqlite::Connection;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 /// Resolve the fragment-map collision-energy key for an applied CE (eV),
@@ -324,6 +324,62 @@ impl TimsTofSyntheticsDataHandle {
             }
         }
         Ok(found)
+    }
+
+    /// Read an optional persistent m/z error per precursor ion, in ppm, from `ions.<column>`
+    /// (`mz_bias_ppm_ms1` or `mz_bias_ppm_ms2`), keyed by (peptide_id, charge). An absent
+    /// column, NULL or 0 means no change. A non-finite value, a factor (1 + ppm * 1e-6) that
+    /// is not positive, or two different values for one key is an error. Used for stress
+    /// testing; TimSim never writes these columns itself.
+    pub fn read_ion_mz_bias(&self, column: &str) -> rusqlite::Result<IonMzBias> {
+        Self::assert_ident(column)?;
+        let mut bias = IonMzBias::new();
+        if !self.table_has_column("ions", column)? {
+            return Ok(bias);
+        }
+        let mut stmt = self
+            .connection
+            .prepare(&format!("SELECT peptide_id, charge, {column} FROM ions"))?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, u32>(0)?, row.get::<_, i8>(1)?, row.get::<_, Option<f64>>(2)?))
+        })?;
+        let mut seen: HashMap<(u32, i8), Option<f64>> = HashMap::new();
+        for row in rows {
+            let (peptide_id, charge, ppm) = row?;
+            if let Some(v) = ppm {
+                if !v.is_finite() || 1.0 + v * 1e-6 <= 0.0 {
+                    return Err(rusqlite::Error::InvalidParameterName(format!(
+                        "invalid {column} {v} for ion ({peptide_id}, {charge})"
+                    )));
+                }
+            }
+            if let Some(prev) = seen.insert((peptide_id, charge), ppm) {
+                if prev != ppm {
+                    return Err(rusqlite::Error::InvalidParameterName(format!(
+                        "conflicting {column} for ion ({peptide_id}, {charge})"
+                    )));
+                }
+            }
+        }
+        for (key, ppm) in seen {
+            if let Some(v) = ppm {
+                if v != 0.0 {
+                    bias.insert(key, v);
+                }
+            }
+        }
+        Ok(bias)
+    }
+
+    /// Persistent fragment m/z error per precursor ion (`ions.mz_bias_ppm_ms2`).
+    pub fn read_fragment_mz_bias(&self) -> rusqlite::Result<IonMzBias> {
+        self.read_ion_mz_bias("mz_bias_ppm_ms2")
+    }
+
+    /// Persistent MS1 m/z error per precursor ion (`ions.mz_bias_ppm_ms1`). Applied when
+    /// MS1 frames are rendered; quadrupole isolation keeps the unshifted m/z.
+    pub fn read_precursor_mz_bias(&self) -> rusqlite::Result<IonMzBias> {
+        self.read_ion_mz_bias("mz_bias_ppm_ms1")
     }
 
     /// Read the run's mobility environment from `experiment_conditions`, falling
@@ -1718,6 +1774,84 @@ impl TimsTofSyntheticsDataHandle {
     }
 }
 
+/// Persistent m/z error in ppm per precursor ion, keyed by (peptide_id, charge).
+pub type IonMzBias = HashMap<(u32, i8), f64>;
+
+/// `spectrum` with its m/z multiplied by (1 + ppm * 1e-6) if `bias` has this ion, else None.
+pub fn biased_ion_spectrum(
+    spectrum: &MzSpectrum,
+    peptide_id: u32,
+    charge: i8,
+    bias: &IonMzBias,
+) -> Option<MzSpectrum> {
+    bias.get(&(peptide_id, charge))
+        .map(|ppm| scaled_spectrum(spectrum, 1.0 + ppm * 1e-6))
+}
+
+/// A fragment-map value whose fragment m/z can be scaled by a factor.
+pub trait ScaleFragmentMz {
+    fn scale_fragment_mz(&mut self, factor: f64);
+}
+
+fn scaled_spectrum(spectrum: &MzSpectrum, factor: f64) -> MzSpectrum {
+    MzSpectrum::new(
+        spectrum.mz.iter().map(|mz| mz * factor).collect(),
+        spectrum.intensity.to_vec(),
+    )
+}
+
+impl ScaleFragmentMz for (PeptideProductIonSeriesCollection, Vec<MzSpectrum>) {
+    fn scale_fragment_mz(&mut self, factor: f64) {
+        for spectrum in self.1.iter_mut() {
+            *spectrum = scaled_spectrum(spectrum, factor);
+        }
+    }
+}
+
+impl ScaleFragmentMz for (PeptideProductIonSeriesCollection, Vec<MzSpectrumAnnotated>) {
+    fn scale_fragment_mz(&mut self, factor: f64) {
+        for spectrum in self.1.iter_mut() {
+            for mz in spectrum.mz.iter_mut() {
+                *mz *= factor;
+            }
+        }
+    }
+}
+
+impl ScaleFragmentMz for FragmentIonsWithComplementary {
+    /// Scales the fragment spectra and the per-fragment isotope distributions (m/z).
+    /// The complementary distributions are neutral masses used only for quadrupole
+    /// transmission and stay unchanged.
+    fn scale_fragment_mz(&mut self, factor: f64) {
+        for spectrum in self.fragment_spectra.iter_mut() {
+            *spectrum = scaled_spectrum(spectrum, factor);
+        }
+        for series in self.per_fragment_data.iter_mut() {
+            for fragment in series.iter_mut() {
+                for (mz, _) in fragment.fragment_distribution.iter_mut() {
+                    *mz *= factor;
+                }
+            }
+        }
+    }
+}
+
+/// Multiply every fragment m/z of each biased precursor ion by (1 + ppm * 1e-6), for
+/// all collision energies. An empty `bias` leaves `map` untouched.
+pub fn apply_fragment_mz_bias<V: ScaleFragmentMz + Send>(
+    map: &mut BTreeMap<(u32, i8, i32), V>,
+    bias: &IonMzBias,
+) {
+    if bias.is_empty() {
+        return;
+    }
+    map.par_iter_mut().for_each(|((peptide_id, charge, _), value)| {
+        if let Some(ppm) = bias.get(&(*peptide_id, *charge)) {
+            value.scale_fragment_mz(1.0 + ppm * 1e-6);
+        }
+    });
+}
+
 /// Data for a single fragment ion with its complementary distribution.
 #[derive(Debug, Clone)]
 pub struct FragmentIonTransmissionData {
@@ -1940,5 +2074,122 @@ mod scalar_reader_tests {
         assert_eq!(handle.read_ions_with_source(&src_acc).unwrap().len(), 1);
 
         let _ = std::fs::remove_file(&path);
+    }
+}
+
+#[cfg(test)]
+mod fragment_mz_bias_tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn handle_with_ions(sql: &str) -> TimsTofSyntheticsDataHandle {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(sql).unwrap();
+        TimsTofSyntheticsDataHandle { connection }
+    }
+
+    #[test]
+    fn read_bias_absent_zero_and_values() {
+        let absent = handle_with_ions("CREATE TABLE ions (peptide_id INTEGER, charge INTEGER);");
+        assert!(absent.read_fragment_mz_bias().unwrap().is_empty());
+
+        let h = handle_with_ions(
+            "CREATE TABLE ions (peptide_id INTEGER, charge INTEGER, mz_bias_ppm_ms2 REAL);
+             INSERT INTO ions VALUES (1, 2, 0.0), (1, 3, NULL), (2, 2, -4.5), (3, 1, 7.25);",
+        );
+        let bias = h.read_fragment_mz_bias().unwrap();
+        assert_eq!(bias.len(), 2);
+        assert_eq!(bias[&(2, 2)], -4.5);
+        assert_eq!(bias[&(3, 1)], 7.25);
+
+        let conflict = handle_with_ions(
+            "CREATE TABLE ions (peptide_id INTEGER, charge INTEGER, mz_bias_ppm_ms2 REAL);
+             INSERT INTO ions VALUES (2, 2, 1.0), (2, 2, 2.0);",
+        );
+        assert!(conflict.read_fragment_mz_bias().is_err());
+        let null_vs_value = handle_with_ions(
+            "CREATE TABLE ions (peptide_id INTEGER, charge INTEGER, mz_bias_ppm_ms2 REAL);
+             INSERT INTO ions VALUES (2, 2, NULL), (2, 2, 2.0);",
+        );
+        assert!(null_vs_value.read_fragment_mz_bias().is_err());
+        let non_positive_factor = handle_with_ions(
+            "CREATE TABLE ions (peptide_id INTEGER, charge INTEGER, mz_bias_ppm_ms2 REAL);
+             INSERT INTO ions VALUES (2, 2, -1000000.0);",
+        );
+        assert!(non_positive_factor.read_fragment_mz_bias().is_err());
+        // The MS1 and MS2 columns are read independently.
+        let both = handle_with_ions(
+            "CREATE TABLE ions (peptide_id INTEGER, charge INTEGER, mz_bias_ppm_ms1 REAL, mz_bias_ppm_ms2 REAL);
+             INSERT INTO ions VALUES (4, 2, -3.0, 6.0);",
+        );
+        assert_eq!(both.read_precursor_mz_bias().unwrap()[&(4, 2)], -3.0);
+        assert_eq!(both.read_fragment_mz_bias().unwrap()[&(4, 2)], 6.0);
+        assert!(absent.read_precursor_mz_bias().unwrap().is_empty());
+    }
+
+    fn spectrum_map() -> BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)> {
+        let mut map = BTreeMap::new();
+        for key in [(2, 2, 330), (2, 2, 350), (2, 3, 330), (5, 2, 330)] {
+            let spectra = vec![
+                MzSpectrum::new(vec![300.1, 450.25, 900.5], vec![1.0, 2.0, 3.0]),
+                MzSpectrum::new(vec![212.0], vec![4.0]),
+            ];
+            map.insert(key, (PeptideProductIonSeriesCollection::new(vec![]), spectra));
+        }
+        map
+    }
+
+    fn mz_of(map: &BTreeMap<(u32, i8, i32), (PeptideProductIonSeriesCollection, Vec<MzSpectrum>)>)
+        -> Vec<Vec<f64>> {
+        map.values().flat_map(|(_, s)| s.iter().map(|x| x.mz.to_vec())).collect()
+    }
+
+    #[test]
+    fn empty_bias_is_a_no_op() {
+        let mut map = spectrum_map();
+        let before = mz_of(&map);
+        apply_fragment_mz_bias(&mut map, &IonMzBias::new());
+        assert_eq!(mz_of(&map), before);
+    }
+
+    #[test]
+    fn bias_scales_only_the_biased_ion_at_every_collision_energy() {
+        let mut map = spectrum_map();
+        let reference = spectrum_map();
+        let mut bias = IonMzBias::new();
+        bias.insert((2, 2), 10.0);
+        apply_fragment_mz_bias(&mut map, &bias);
+        let factor = 1.0 + 10.0 * 1e-6;
+        for (key, (_, spectra)) in &map {
+            let (_, original) = &reference[key];
+            let f = if (key.0, key.1) == (2, 2) { factor } else { 1.0 };
+            for (s, o) in spectra.iter().zip(original) {
+                for (mz, omz) in s.mz.iter().zip(o.mz.iter()) {
+                    assert_eq!(*mz, omz * f);
+                }
+                assert_eq!(s.intensity.to_vec(), o.intensity.to_vec());
+            }
+        }
+    }
+
+    #[test]
+    fn bias_scales_transmission_fragment_distributions_not_complements() {
+        let mut data = FragmentIonsWithComplementary {
+            ion_series_collection: PeptideProductIonSeriesCollection::new(vec![]),
+            fragment_spectra: vec![MzSpectrum::new(vec![500.0], vec![1.0])],
+            precursor_isotope_distribution: vec![(1000.0, 1.0)],
+            per_fragment_data: vec![vec![FragmentIonTransmissionData {
+                fragment_distribution: vec![(500.0, 0.7), (500.5, 0.3)],
+                complementary_distribution: vec![(700.0, 1.0)],
+                predicted_intensity: 1.0,
+            }]],
+        };
+        data.scale_fragment_mz(1.0 + 4.0 * 1e-6);
+        let f = 1.0 + 4.0 * 1e-6;
+        assert_eq!(data.fragment_spectra[0].mz[0], 500.0 * f);
+        let frag = &data.per_fragment_data[0][0];
+        assert_eq!(frag.fragment_distribution, vec![(500.0 * f, 0.7), (500.5 * f, 0.3)]);
+        assert_eq!(frag.complementary_distribution, vec![(700.0, 1.0)]);
+        assert_eq!(data.precursor_isotope_distribution, vec![(1000.0, 1.0)]);
     }
 }

@@ -23,7 +23,7 @@ use rayon::ThreadPoolBuilder;
 use crate::sim::containers::{IsotopeTransmissionConfig, IsotopeTransmissionMode};
 use crate::sim::projector::{IntensityStage, MzCoordSpace, RenderedEvent, RenderedSpectrum};
 use crate::sim::scheme::{DataMode, InstrumentCapabilities, IsolationWindow};
-use crate::sim::handle::{FragmentIonsWithComplementary, TimsTofSyntheticsDataHandle};
+use crate::sim::handle::{apply_fragment_mz_bias, FragmentIonsWithComplementary, TimsTofSyntheticsDataHandle};
 use crate::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
 
 /// Vendor-neutral per-fragment-series spectrum (P6a MS2 physics kernel): scale one
@@ -154,6 +154,7 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             .map_err(|_| rusqlite::Error::InvalidQuery)?;
 
         let fragment_ions = handle.read_fragment_ions()?;
+        let fragment_mz_bias = handle.read_fragment_mz_bias()?;
 
         // P5e: gate the isotope-transmission config by instrument capabilities.
         // Default = Bruker timsTOF (no-op); P6 threads real Astral capabilities.
@@ -167,23 +168,26 @@ impl TimsTofSyntheticsFrameBuilderDIA {
 
         // Build transmission data if isotope transmission is enabled
         let fragment_ions_with_transmission = if isotope_config.is_enabled() {
-            Some(TimsTofSyntheticsDataHandle::build_fragment_ions_with_transmission_data(
+            let mut map = TimsTofSyntheticsDataHandle::build_fragment_ions_with_transmission_data(
                 &synthetics.peptides,
                 &fragment_ions,
                 num_threads,
-            ))
+            );
+            apply_fragment_mz_bias(&mut map, &fragment_mz_bias);
+            Some(map)
         } else {
             None
         };
 
         match with_annotations {
             true => {
-                let fragment_ions_annotated =
-                    Some(TimsTofSyntheticsDataHandle::build_fragment_ions_annotated(
-                        &synthetics.peptides,
-                        &fragment_ions,
-                        num_threads,
-                    ));
+                let mut map = TimsTofSyntheticsDataHandle::build_fragment_ions_annotated(
+                    &synthetics.peptides,
+                    &fragment_ions,
+                    num_threads,
+                );
+                apply_fragment_mz_bias(&mut map, &fragment_mz_bias);
+                let fragment_ions_annotated = Some(map);
                 Ok(Self {
                     noise_seed: 0,
                     path: path.to_str().unwrap().to_string(),
@@ -199,11 +203,13 @@ impl TimsTofSyntheticsFrameBuilderDIA {
             }
 
             false => {
-                let fragment_ions = Some(TimsTofSyntheticsDataHandle::build_fragment_ions(
+                let mut map = TimsTofSyntheticsDataHandle::build_fragment_ions(
                     &synthetics.peptides,
                     &fragment_ions,
                     num_threads,
-                ));
+                );
+                apply_fragment_mz_bias(&mut map, &fragment_mz_bias);
+                let fragment_ions = Some(map);
                 Ok(Self {
                     noise_seed: 0,
                     path: path.to_str().unwrap().to_string(),
@@ -1369,6 +1375,7 @@ mod p6a_fragment_kernel_tests {
         frame_to_rt.insert(2u32, 30.0f32);
 
         let precursor = TimsTofSyntheticsPrecursorFrameBuilder {
+            ms1_mz_bias: Default::default(),
             noise_seed: 0,
             ions: BTreeMap::new(),
             peptides: BTreeMap::new(),

@@ -19,7 +19,7 @@ use rayon::prelude::*;
 
 use crate::sim::containers::{FragmentIonSim, FramesSim, IonSim, PeptidesSim, ScansSim};
 use crate::sim::dda::TimsTofSyntheticsFrameBuilderDDA;
-use crate::sim::handle::TimsTofSyntheticsDataHandle;
+use crate::sim::handle::{apply_fragment_mz_bias, biased_ion_spectrum, IonMzBias, TimsTofSyntheticsDataHandle};
 use crate::sim::precursor::TimsTofSyntheticsPrecursorFrameBuilder;
 use crate::sim::projector::DistributionSource;
 
@@ -55,6 +55,11 @@ pub struct TimsTofLazyFrameBuilderDIA {
     /// Master seed for the simulation's noise. 0 keeps the legacy `thread_rng` behaviour
     /// for API users that never set it; TimSim sets it from the run's `sample_seed`.
     pub noise_seed: u64,
+    /// Persistent fragment m/z error per precursor ion (`ions.mz_bias_ppm_ms2`); empty = none.
+    pub fragment_mz_bias: IonMzBias,
+    /// Persistent MS1 m/z error per precursor ion (`ions.mz_bias_ppm_ms1`), applied in MS1
+    /// frames only; isolation uses the unshifted spectra. Empty = none.
+    pub ms1_mz_bias: IonMzBias,
 }
 
 impl TimsTofLazyFrameBuilderDIA {
@@ -103,9 +108,13 @@ impl TimsTofLazyFrameBuilderDIA {
 
         let transmission_settings = handle.get_transmission_dia();
         let fragmentation_settings = handle.get_collision_energy_dia();
+        let fragment_mz_bias = handle.read_fragment_mz_bias()?;
+        let ms1_mz_bias = handle.read_precursor_mz_bias()?;
 
         Ok(Self {
             noise_seed: 0,
+            fragment_mz_bias,
+            ms1_mz_bias,
             db_path: path.to_str().unwrap().to_string(),
             frames,
             scans,
@@ -199,11 +208,13 @@ impl TimsTofLazyFrameBuilderDIA {
 
         // Build fragment ions map if fragmentation is enabled
         let fragment_ions_map = if fragmentation {
-            Some(TimsTofSyntheticsDataHandle::build_fragment_ions(
+            let mut map = TimsTofSyntheticsDataHandle::build_fragment_ions(
                 &peptide_map,
                 &fragment_ions,
                 self.num_threads,
-            ))
+            );
+            apply_fragment_mz_bias(&mut map, &self.fragment_mz_bias);
+            Some(map)
         } else {
             None
         };
@@ -321,7 +332,7 @@ impl TimsTofLazyFrameBuilderDIA {
         let mut tims_spectra: Vec<TimsSpectrum> = Vec::with_capacity(estimated_capacity);
 
         for (peptide_id, abundance) in peptide_ids.iter().zip(abundances.iter()) {
-            let Some((ion_abundances, scan_occurrences, scan_abundances, _, spectra)) =
+            let Some((ion_abundances, scan_occurrences, scan_abundances, charges, spectra)) =
                 peptide_to_ions.get(peptide_id)
             else {
                 continue;
@@ -333,7 +344,12 @@ impl TimsTofLazyFrameBuilderDIA {
             for (index, ion_abundance) in ion_abundances.iter().enumerate() {
                 let scan_occurrence = &scan_occurrences[index];
                 let scan_abundance = &scan_abundances[index];
-                let spectrum = &spectra[index];
+                let biased = if self.precursor_frame_id_set.contains(&frame_id) {
+                    biased_ion_spectrum(&spectra[index], *peptide_id, charges[index], &self.ms1_mz_bias)
+                } else {
+                    None // unfragmented MS2 frame rendered from precursor signal: no MS1 bias
+                };
+                let spectrum = biased.as_ref().unwrap_or(&spectra[index]);
 
                 for (scan, scan_abu) in scan_occurrence.iter().zip(scan_abundance.iter()) {
                     let abundance_factor = abundance * ion_abundance * scan_abu * total_events;
@@ -638,6 +654,11 @@ impl TimsTofLazyFrameBuilderDDA {
         let frame_to_rt = TimsTofSyntheticsDataHandle::build_frame_to_rt(&frames);
         let scan_to_mobility = TimsTofSyntheticsDataHandle::build_scan_to_mobility(&scans);
 
+        if !handle.read_fragment_mz_bias()?.is_empty() || !handle.read_precursor_mz_bias()?.is_empty() {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "ions.mz_bias_ppm_ms1/ms2 are supported for DIA only".to_string(),
+            ));
+        }
         let transmission_settings = handle.get_transmission_dda();
 
         Ok(Self {
