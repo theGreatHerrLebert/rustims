@@ -26,6 +26,7 @@ claims:
   gist:
     what: "Protein-level error rates are measured with a separate protein-level entrapment search, with settings fixed in advance."
     why: "Protein-level error control can fail where peptide-level control holds, so it needs its own fixed method."
+    wrong_if: "Protein-level numbers come from the peptide-level search, or from settings chosen after the results were seen."
   assumptions:
   - Run-level PG.Q.Value is DIA-NN's per-run protein-group q-value.
   failure_modes:

@@ -28,6 +28,7 @@ claims:
     gist:
       what: "Whether a result on simulated data carries over to real data is decided by whether the simulation is harder or easier than real data, not by how far apart the two are."
       why: "It stops a simulation that is easier than reality from vouching for error rates on real data."
+      wrong_if: "A simulated pass is carried over to real data although the simulation is easier than real data on some feature."
     assumptions:
       - Harder data (wider peaks, larger mass and RT/IM error, weaker evidence scores) does not lower a
         tool's FDP. That is plausible but not guaranteed, because FDP control depends on whether false

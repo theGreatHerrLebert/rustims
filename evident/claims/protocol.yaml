@@ -23,6 +23,7 @@ claims:
     gist:
       what: "Every pass/fail threshold and rule was fixed and committed before any error-rate result was looked at."
       why: "This keeps thresholds from being tuned after the fact to make results pass."
+      wrong_if: "Any threshold, rule or estimand changed after a related result was opened, other than through a dated amendment or a new claim id."
     assumptions:
       - Real 10 ng FDRBench outputs (MOGON job 764353) existed on disk at the
         time of the commit but had not been opened. Only job markers and row
@@ -61,6 +62,7 @@ claims:
     gist:
       what: "The error rate is counted per run and per peptide ion at DIA-NN's 1% cutoff, with fixed search settings shared by real and simulated runs."
       why: "Real and simulated numbers then mean the same thing, and every other claim uses this one definition."
+      wrong_if: "Any reported error rate used another cutoff, level or search setting than the shared recipe without saying so."
     assumptions:
       - Run-level Q.Value is DIA-NN's precursor q-value within one run. Global
         and protein q-values are not used.
@@ -95,6 +97,7 @@ claims:
     gist:
       what: "On simulated runs, an accepted hit counts as wrong if that peptide ion was never simulated in that run."
       why: "This defines what 'true error rate' means in every simulation claim."
+      wrong_if: "A simulated peptide ion is counted as wrong, or a never-simulated one as right, for example through a sequence or modification notation mismatch."
     assumptions:
       - The baseline sims have no reference-signal overlay (6.5 ppm m/z jitter
         only), so every simulated signal comes from a known ion.
@@ -130,6 +133,7 @@ claims:
     gist:
       what: "Of the three simulation sizes, the one whose identification count is closest to the real runs is the one compared with real data."
       why: "Comparing against a simulation of very different size would bias every sim-vs-real comparison."
+      wrong_if: "The compared simulation size was not the closest by identification count, or the gap is large and goes unreported."
     assumptions:
       - Identification depth is a usable proxy for signal complexity at a fixed
         window scheme and gradient.
