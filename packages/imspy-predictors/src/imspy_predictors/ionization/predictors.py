@@ -115,20 +115,52 @@ class BinomialChargeStateDistributionModel(PeptideChargeStateDistribution):
             ncols=80,
             total=len(probabilities),
         ):
-            if self.normalize:
-                kept_prob_mass = np.sum(np.where(charges[1:] >= min_charge_contrib, charges[1:], 0))
-                if kept_prob_mass > 0:
-                    charges[1:] = charges[1:] / kept_prob_mass
-
-            for i, charge in enumerate(charges[1:], start=1):
-                if charge >= min_charge_contrib:
-                    r_table.append({
-                        'peptide_id': row.peptide_id,
-                        'charge': i,
-                        'relative_abundance': charge,
-                    })
+            for charge, abundance in kept_charge_states(charges, min_charge_contrib, self.normalize):
+                r_table.append({
+                    'peptide_id': row.peptide_id,
+                    'charge': charge,
+                    'relative_abundance': abundance,
+                })
 
         return pd.DataFrame(r_table)
+
+
+def kept_charge_states(
+    charges: NDArray,
+    min_charge_contrib: float,
+    normalize: bool = True,
+) -> List[tuple]:
+    """Select the charge states of one peptide that pass ``min_charge_contrib``.
+
+    Args:
+        charges: Probabilities indexed by charge, ``charges[0]`` being the uncharged state.
+        min_charge_contrib: Minimum probability for a charge state to be kept.
+        normalize: Rescale the kept probabilities to sum to 1.
+
+    Returns:
+        List of ``(charge, relative_abundance)`` pairs, all finite.
+
+    With normalisation, all charged probabilities are divided by the mass of the states that
+    pass the threshold, and the threshold is then applied to the rescaled values.
+
+    A peptide with many basic sites puts most of its binomial mass above ``max_charge``, which
+    is truncated away, so every remaining state can fall below ``min_charge_contrib`` and the
+    kept mass is zero. Dividing by it once made every state ``inf`` (and ``inf`` passes the
+    threshold), which reached ``Precursors.Intensity`` in the written ``.d`` (rustims#488). Such
+    a peptide is kept at its most probable charge instead.
+    """
+    charged = np.array(charges[1:])
+
+    if normalize:
+        kept_mass = np.sum(np.where(charged >= min_charge_contrib, charged, 0))
+        if kept_mass > 0:
+            charged = charged / kept_mass
+        else:
+            candidates = np.where(np.isfinite(charged) & (charged > 0), charged, 0)
+            if np.any(candidates > 0):
+                return [(int(np.argmax(candidates)) + 1, 1.0)]
+
+    return [(i, float(p)) for i, p in enumerate(charged, start=1) if p >= min_charge_contrib]
 
 
 # =============================================================================

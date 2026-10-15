@@ -195,3 +195,57 @@ def test_expect_existing_suppresses_reuse_warning(tmp_path):
         warnings.simplefilter("error", RuntimeWarning)
         TDFWriter(helper_handle=_FakeHelperHandle(), path=str(tmp_path),
                   exp_name="RAW.d", expect_existing=True)
+
+
+# --- Precursors non-finite guard (rustims#488) -------------------------------
+
+from imspy_simulation.tdf import validate_precursor_values  # noqa: E402
+
+
+def _precursors(**overrides):
+    df = pd.DataFrame({
+        "Id": [1, 2, 3],
+        "LargestPeakMz": [500.1, 600.2, 700.3],
+        "AverageMz": [500.4, 600.5, 700.6],
+        "MonoisotopicMz": [500.0, None, 700.0],
+        "ScanNumber": [400.0, 500.0, 600.0],
+        "Intensity": [1e4, 2e5, 3e6],
+    })
+    for column, values in overrides.items():
+        df[column] = values
+    return df
+
+
+def test_precursor_guard_passes_on_finite_values_and_null_mono_mz():
+    validate_precursor_values(_precursors())
+    validate_precursor_values(pd.DataFrame())
+
+
+def test_precursor_guard_raises_on_inf_intensity():
+    # The #488 shape: one peptide's ions carry Intensity = inf.
+    with pytest.raises(RuntimeError) as exc:
+        validate_precursor_values(_precursors(Intensity=[1e4, float("inf"), float("inf")]))
+    msg = str(exc.value)
+    assert "Intensity: 2 rows" in msg
+    assert "[2, 3]" in msg
+
+
+@pytest.mark.parametrize("column", ["LargestPeakMz", "AverageMz", "ScanNumber", "Intensity"])
+def test_precursor_guard_raises_on_nan_in_required_columns(column):
+    values = list(_precursors()[column])
+    values[0] = float("nan")
+    with pytest.raises(RuntimeError, match=column):
+        validate_precursor_values(_precursors(**{column: values}))
+
+
+def test_precursor_guard_raises_on_inf_mono_mz():
+    with pytest.raises(RuntimeError, match="MonoisotopicMz"):
+        validate_precursor_values(_precursors(MonoisotopicMz=[500.0, float("-inf"), None]))
+
+
+def test_precursor_guard_accepts_nullable_float_with_missing_mono_mz():
+    df = _precursors(MonoisotopicMz=pd.array([500.0, pd.NA, 700.0], dtype="Float64"))
+    validate_precursor_values(df)
+    df["Intensity"] = pd.array([1e4, float("inf"), 3e6], dtype="Float64")
+    with pytest.raises(RuntimeError, match="Intensity"):
+        validate_precursor_values(df)
