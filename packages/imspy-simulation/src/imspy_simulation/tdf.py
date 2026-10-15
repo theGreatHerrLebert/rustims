@@ -68,7 +68,7 @@ def validate_precursor_values(precursors: pd.DataFrame) -> None:
     for column in _PRECURSOR_FLOAT_COLUMNS:
         if column not in precursors.columns:
             continue
-        values = pd.to_numeric(precursors[column], errors="coerce").to_numpy(dtype=float)
+        values = pd.to_numeric(precursors[column], errors="coerce").to_numpy(dtype=float, na_value=np.nan)
         bad = np.isinf(values) if column == "MonoisotopicMz" else ~np.isfinite(values)
         if bad.any():
             problems[column] = (int(bad.sum()), precursors.loc[bad, "Id"].head(5).tolist())

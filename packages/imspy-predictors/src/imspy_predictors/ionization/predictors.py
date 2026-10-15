@@ -140,25 +140,27 @@ def kept_charge_states(
     Returns:
         List of ``(charge, relative_abundance)`` pairs, all finite.
 
-    A peptide with many basic sites puts most of its binomial mass above ``max_charge``, which
-    is truncated away, so every remaining state can fall below ``min_charge_contrib``. Dividing
-    by that zero kept mass once made every state ``inf`` (and ``inf`` passes the threshold),
-    which reached ``Precursors.Intensity`` in the written ``.d`` (rustims#488). Such a peptide
-    is kept at its most probable charge instead of being dropped.
-    """
-    charged = np.asarray(charges[1:], dtype=np.float64)
-    kept = [(i, p) for i, p in enumerate(charged, start=1) if p >= min_charge_contrib]
+    With normalisation, all charged probabilities are divided by the mass of the states that
+    pass the threshold, and the threshold is then applied to the rescaled values.
 
-    if not kept:
-        if not np.any(charged > 0):
-            return []
-        return [(int(np.argmax(charged)) + 1, 1.0)]
+    A peptide with many basic sites puts most of its binomial mass above ``max_charge``, which
+    is truncated away, so every remaining state can fall below ``min_charge_contrib`` and the
+    kept mass is zero. Dividing by it once made every state ``inf`` (and ``inf`` passes the
+    threshold), which reached ``Precursors.Intensity`` in the written ``.d`` (rustims#488). Such
+    a peptide is kept at its most probable charge instead.
+    """
+    charged = np.array(charges[1:], dtype=np.float64)
 
     if normalize:
-        kept_mass = sum(p for _, p in kept)
-        kept = [(i, p / kept_mass) for i, p in kept]
+        kept_mass = np.sum(np.where(charged >= min_charge_contrib, charged, 0))
+        if kept_mass > 0:
+            charged = charged / kept_mass
+        else:
+            candidates = np.where(np.isfinite(charged) & (charged > 0), charged, 0)
+            if np.any(candidates > 0):
+                return [(int(np.argmax(candidates)) + 1, 1.0)]
 
-    return [(i, float(p)) for i, p in kept]
+    return [(i, float(p)) for i, p in enumerate(charged, start=1) if p >= min_charge_contrib]
 
 
 # =============================================================================
