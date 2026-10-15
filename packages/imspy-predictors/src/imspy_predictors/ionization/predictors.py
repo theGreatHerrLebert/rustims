@@ -149,7 +149,7 @@ def kept_charge_states(
     threshold), which reached ``Precursors.Intensity`` in the written ``.d`` (rustims#488). Such
     a peptide is kept at its most probable charge instead.
     """
-    charged = np.array(charges[1:], dtype=np.float64)
+    charged = np.array(charges[1:])
 
     if normalize:
         kept_mass = np.sum(np.where(charged >= min_charge_contrib, charged, 0))

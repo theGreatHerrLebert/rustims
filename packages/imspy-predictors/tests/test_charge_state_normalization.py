@@ -17,7 +17,7 @@ HLA_488_PEPTIDE = "AVGKNKRLTKGGKKGAKKKVVD"
 
 def _selection_before_fix(charges, min_charge_contrib, normalize):
     """The loop body of simulate_charge_state_distribution_pandas before the fix, verbatim."""
-    charges = np.array(charges, dtype=np.float64)
+    charges = np.array(charges)
     if normalize:
         kept_prob_mass = np.sum(np.where(charges[1:] >= min_charge_contrib, charges[1:], 0))
         if kept_prob_mass > 0:
@@ -91,6 +91,11 @@ def test_fallback_never_picks_a_nan_state():
 def test_infinite_probability_yields_only_finite_abundances():
     out = kept_charge_states(np.array([0.0, 0.1, np.inf, 0.3, 0.05]), 0.25)
     assert all(np.isfinite(p) for _, p in out)
+
+
+def test_preserves_input_dtype_like_before():
+    charges = np.array([0.0, 0.1, 0.3, 0.3, 0.3], dtype=np.float32)
+    assert kept_charge_states(charges, 0.25) == _selection_before_fix(charges, 0.25, True)
 
 
 def test_does_not_mutate_input():
