@@ -50,6 +50,38 @@ def validate_frames_id_uniqueness(meta_df: pd.DataFrame) -> None:
     )
 
 
+_PRECURSOR_FLOAT_COLUMNS = ("LargestPeakMz", "AverageMz", "MonoisotopicMz", "ScanNumber", "Intensity")
+
+
+def validate_precursor_values(precursors: pd.DataFrame) -> None:
+    """Raise if a ``Precursors`` row carries an ``inf`` or ``NaN`` float.
+
+    SQLite stores non-finite REALs without complaint, so the writer would emit a `.d` that some
+    readers accept and others reject: timsrust >= 0.6 round-trips rows through JSON, which has no
+    infinity, and fails on the whole table. A charge-state normalisation that divided by zero
+    once put ``inf`` into ``Precursors.Intensity`` this way (rustims#488). ``MonoisotopicMz`` may
+    be missing (NULL), but never infinite.
+    """
+    if precursors.empty:
+        return
+    problems = {}
+    for column in _PRECURSOR_FLOAT_COLUMNS:
+        if column not in precursors.columns:
+            continue
+        values = pd.to_numeric(precursors[column], errors="coerce").to_numpy(dtype=float)
+        bad = np.isinf(values) if column == "MonoisotopicMz" else ~np.isfinite(values)
+        if bad.any():
+            problems[column] = (int(bad.sum()), precursors.loc[bad, "Id"].head(5).tolist())
+    if problems:
+        detail = "; ".join(f"{c}: {n} rows (Ids {ids})" for c, (n, ids) in problems.items())
+        raise RuntimeError(
+            f"Precursors table has non-finite values — {detail}. This indicates an upstream bug "
+            f"in the simulation pipeline (for Intensity, most commonly a non-finite ion "
+            f"relative_abundance from the charge-state model); refusing to write a `.d` that "
+            f"downstream readers would reject."
+        )
+
+
 # SQLite's default busy timeout (5 s via the sqlite3 module) is short enough
 # that ordinary contention surfaces as a hard failure; 30 s absorbs a slow
 # flush without masking a genuinely stuck lock.
@@ -643,6 +675,7 @@ class TDFWriter:
         # Deduplicate: each precursor ID should only appear once in the Precursors table
         # Keep the first occurrence (or could aggregate, but first is simpler)
         out_unique = out.drop_duplicates(subset=['Id'], keep='first')
+        validate_precursor_values(out_unique)
 
         # Create table with proper vendor schema
         cursor = self.conn.cursor()

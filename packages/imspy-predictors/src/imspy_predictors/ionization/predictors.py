@@ -115,20 +115,50 @@ class BinomialChargeStateDistributionModel(PeptideChargeStateDistribution):
             ncols=80,
             total=len(probabilities),
         ):
-            if self.normalize:
-                kept_prob_mass = np.sum(np.where(charges[1:] >= min_charge_contrib, charges[1:], 0))
-                if kept_prob_mass > 0:
-                    charges[1:] = charges[1:] / kept_prob_mass
-
-            for i, charge in enumerate(charges[1:], start=1):
-                if charge >= min_charge_contrib:
-                    r_table.append({
-                        'peptide_id': row.peptide_id,
-                        'charge': i,
-                        'relative_abundance': charge,
-                    })
+            for charge, abundance in kept_charge_states(charges, min_charge_contrib, self.normalize):
+                r_table.append({
+                    'peptide_id': row.peptide_id,
+                    'charge': charge,
+                    'relative_abundance': abundance,
+                })
 
         return pd.DataFrame(r_table)
+
+
+def kept_charge_states(
+    charges: NDArray,
+    min_charge_contrib: float,
+    normalize: bool = True,
+) -> List[tuple]:
+    """Select the charge states of one peptide that pass ``min_charge_contrib``.
+
+    Args:
+        charges: Probabilities indexed by charge, ``charges[0]`` being the uncharged state.
+        min_charge_contrib: Minimum probability for a charge state to be kept.
+        normalize: Rescale the kept probabilities to sum to 1.
+
+    Returns:
+        List of ``(charge, relative_abundance)`` pairs, all finite.
+
+    A peptide with many basic sites puts most of its binomial mass above ``max_charge``, which
+    is truncated away, so every remaining state can fall below ``min_charge_contrib``. Dividing
+    by that zero kept mass once made every state ``inf`` (and ``inf`` passes the threshold),
+    which reached ``Precursors.Intensity`` in the written ``.d`` (rustims#488). Such a peptide
+    is kept at its most probable charge instead of being dropped.
+    """
+    charged = np.asarray(charges[1:], dtype=np.float64)
+    kept = [(i, p) for i, p in enumerate(charged, start=1) if p >= min_charge_contrib]
+
+    if not kept:
+        if not np.any(charged > 0):
+            return []
+        return [(int(np.argmax(charged)) + 1, 1.0)]
+
+    if normalize:
+        kept_mass = sum(p for _, p in kept)
+        kept = [(i, p / kept_mass) for i, p in kept]
+
+    return [(i, float(p)) for i, p in kept]
 
 
 # =============================================================================
