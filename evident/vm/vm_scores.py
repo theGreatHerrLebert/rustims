@@ -31,8 +31,22 @@ def auc(target: np.ndarray, decoy: np.ndarray) -> float:
     return float((rt - len(target) * (len(target) + 1) / 2) / (len(target) * len(decoy)))
 
 
+def fragpipe_psms(arm_dir: Path, exp: str) -> pd.DataFrame:
+    """PSMs of one run. FragPipe writes a per-experiment psm.tsv when experiments are set, and otherwise one
+    combined psm.tsv per arm whose Spectrum column starts with '<run>_diatracer.'; read whichever exists."""
+    per_exp = arm_dir / exp / "psm.tsv"
+    if per_exp.exists():
+        return pd.read_csv(per_exp, sep="\t")
+    psm = pd.read_csv(arm_dir / "psm.tsv", sep="\t")
+    run = psm["Spectrum"].astype(str).str.rsplit(".", n=3).str[0]
+    psm = psm[run == f"{exp}_diatracer"]
+    if psm.empty:
+        raise ValueError(f"{arm_dir}/psm.tsv: no PSMs for run {exp!r} (expected Spectrum prefix '{exp}_diatracer.')")
+    return psm
+
+
 def fragpipe_run(arm_dir: Path, exp: str) -> dict:
-    psm = pd.read_csv(arm_dir / exp / "psm.tsv", sep="\t")
+    psm = fragpipe_psms(arm_dir, exp)
     vals = {}
     for k, col in FP_SCORES.items():
         x = psm[col].astype(float).to_numpy()

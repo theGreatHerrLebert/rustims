@@ -797,3 +797,17 @@ def test_diagnose_met_ox_hit_is_not_its_own_twin():
     assert r["twin_also_accepted"] == 0.0 and r["paired_with_accepted_twin"] == 0
     assert r["same_peak_share_0p1min_of_paired"] is None
     assert r["hit_rt_minus_twin_apex_min_q05_q50_q95"][1] == pytest.approx(0.02)
+
+
+def test_fragpipe_psms_splits_combined_arm_table(tmp_path):
+    from vm_scores import fragpipe_psms
+    pd.DataFrame({"Spectrum": ["LS10_diatracer.1.1.2", "LS11_diatracer.5.5.3", "LS10_diatracer.9.9.2",
+                               "jitter_50k_r1_diatracer.2.2.2"],
+                  "Hyperscore": [10.0, 11.0, 12.0, 13.0]}).to_csv(tmp_path / "psm.tsv", sep="\t", index=False)
+    assert fragpipe_psms(tmp_path, "LS10")["Hyperscore"].tolist() == [10.0, 12.0]
+    assert fragpipe_psms(tmp_path, "jitter_50k_r1")["Hyperscore"].tolist() == [13.0]
+    with pytest.raises(ValueError):
+        fragpipe_psms(tmp_path, "LS1")
+    (tmp_path / "LS12").mkdir()
+    pd.DataFrame({"Spectrum": ["x.1.1.2"], "Hyperscore": [1.0]}).to_csv(tmp_path / "LS12" / "psm.tsv", sep="\t", index=False)
+    assert len(fragpipe_psms(tmp_path, "LS12")) == 1

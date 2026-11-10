@@ -40,6 +40,8 @@ cp -a $OLD $TE || fail copy
 # venv scripts carry the old interpreter path; repoint every text file in bin/
 grep -rIl -- "$OLD/" $TE/bin | xargs -r sed -i "s#$OLD/#$TE/#g" || fail repoint
 sed -i "s#$OLD\$#$TE#; s#$OLD\"#$TE\"#; s#$OLD'#$TE'#" $TE/bin/activate* 2>/dev/null
+# pyvenv.cfg records the creating command ("... -m venv $OLD"); informational only, but the check below reads it
+sed -i "s#$OLD/#$TE/#g; s#$OLD\$#$TE#" $TE/pyvenv.cfg || fail repoint_cfg
 # nothing may still point into the baseline env: text in bin/, .pth and editable finders, symlink targets
 LEFT=$(grep -rIl -e "$OLD/" -e "$OLD\$" -e "$OLD\"" $TE/bin $TE/pyvenv.cfg 2>/dev/null; \
        find $TE/lib -name "*.pth" -o -name "__editable__*" | xargs -r grep -Il -e "$OLD/" -e "$OLD\$")
