@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["atomic_weights_mono_isotopic","atoms_isotopic_weights","isotopic_abundance"]};
